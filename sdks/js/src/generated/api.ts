@@ -3102,7 +3102,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Point a number at a Stream call
-         * @description Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+         * @description Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
          */
         readonly post: operations["attachPhoneNumber"];
         readonly delete?: never;

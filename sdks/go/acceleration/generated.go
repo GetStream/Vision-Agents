@@ -10940,7 +10940,7 @@ type ClientInterface interface {
 
 	// AttachPhoneNumberWithBody Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -10949,7 +10949,7 @@ type ClientInterface interface {
 
 	// AttachPhoneNumber Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15907,7 +15907,7 @@ func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors
 
 // AttachPhoneNumberWithBody Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes any type of body and a specified content type.
 //
@@ -15926,7 +15926,7 @@ func (c *Client) AttachPhoneNumberWithBody(ctx context.Context, e164 string, con
 
 // AttachPhoneNumber Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -29539,7 +29539,7 @@ type ClientWithResponsesInterface interface {
 
 	// AttachPhoneNumberWithBodyWithResponse Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29548,7 +29548,7 @@ type ClientWithResponsesInterface interface {
 
 	// AttachPhoneNumberWithResponse Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -49907,7 +49907,7 @@ func (c *ClientWithResponses) ReleasePhoneNumberWithResponse(ctx context.Context
 
 // AttachPhoneNumberWithBodyWithResponse Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -49922,7 +49922,7 @@ func (c *ClientWithResponses) AttachPhoneNumberWithBodyWithResponse(ctx context.
 
 // AttachPhoneNumberWithResponse Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
