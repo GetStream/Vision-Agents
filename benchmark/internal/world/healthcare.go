@@ -51,7 +51,7 @@ func registerHealthcare(s *Server) {
 		for _, raw := range appts {
 			a, _ := raw.(map[string]any)
 			if a != nil && asString(a["patient_id"]) == pid {
-				mine = append(mine, a)
+				mine = append(mine, cloneMap(a))
 			}
 		}
 		return map[string]any{"appointments": mine}, nil
@@ -85,7 +85,7 @@ func registerHealthcare(s *Server) {
 				a["location"] = loc
 			}
 			sess.State["appointment"] = a
-			return a, nil
+			return cloneMap(a), nil
 		}
 		return nil, fmt.Errorf("appointment not found")
 	})
