@@ -564,6 +564,30 @@ func (s *ManifestSuite) TestAToolMayNeedAScopeTheManifestNeverAsksFor() {
 	s.Equal([]ToolRule{{Name: "delete_channel", NeedsScopes: []string{"channels:read", "channels:manage"}}}, resolved.Sources[0].Tools)
 }
 
+// TestUnaskedScopesAreTheOnesScopesListLeavesOut: what both the mcp source and a config save
+// read to leave a tool out.
+func (s *ManifestSuite) TestUnaskedScopesAreTheOnesScopesListLeavesOut() {
+	m, err := ParseManifest(toolSource("      - name: delete_channel\n        needs_scopes: [channels:read, channels:manage]\n" +
+		"      - name: list_channels\n        needs_scopes: [channels:read]\n"))
+	s.Require().NoError(err)
+	rule := m.Sources[0]
+
+	s.Equal([]string{"channels:manage"}, rule.UnaskedScopes(m.Scopes.List, "delete_channel"))
+	s.Empty(rule.UnaskedScopes(m.Scopes.List, "list_channels"), "every scope it needs is asked for")
+	s.Empty(rule.UnaskedScopes(m.Scopes.List, "post_message"), "the manifest does not name it")
+}
+
+// TestTheMCPSourceIsTheFirstOfThatKind: a source of another kind is not the one whose tool rules
+// leave a tool out, wherever it sits.
+func (s *ManifestSuite) TestTheMCPSourceIsTheFirstOfThatKind() {
+	other := SourceRule{Kind: "rest", Tools: []ToolRule{{Name: "t", NeedsScopes: []string{"a"}}}}
+	first := SourceRule{Kind: SourceKindMCP, Endpoint: "first"}
+	second := SourceRule{Kind: SourceKindMCP, Endpoint: "second"}
+
+	s.Equal(&first, MCPSource([]SourceRule{other, first, second}))
+	s.Nil(MCPSource([]SourceRule{other}))
+}
+
 func (s *ManifestSuite) TestAToolNamedTwiceIsRejected() {
 	_, err := ParseManifest(toolSource("      - name: send\n        needs_scopes: [chat:write]\n      - name: send\n        needs_scopes: [chat:write]\n"))
 	s.ErrorContains(err, `sources[0].tools[1].name: "send" is named twice`)

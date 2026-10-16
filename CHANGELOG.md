@@ -622,6 +622,32 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A session can join a Stream call that already exists
+
+`POST /v1/agents/sessions` (with `start_voice`) and `POST /v1/agents/sessions/{id}/voice` take
+an optional `call: {type, id}`: an existing Stream call for the agent to join, such as the
+`default` call the people are already on. Left out, the agent joins `agent:<session id>` as
+before. A `call` without `start_voice` or together with `phone` is a 400. The call has to be in
+the Stream app the session acts in: one another session runs in another app is a 400. The
+router does not ask Stream whether the call exists. A device sending `call` is a 403, as with
+`history`, and the session socket's start frame takes none, since the socket carries its own
+audio.
+
+Voice stopped and started again goes back to the named call; naming a new call when voice is off
+moves it there, and naming a different one while voice is on is a 409. A session carried on from
+its row keeps the call; a fork does not. Two sessions joining one call as the same `user_id`
+leave the newest, as two sessions on `agent:<session id>` always did.
+
+A call runs on its own type's audio settings. The built-in `agent` type turns DTX and noise
+cancellation off so turn detection hears every word (AI-1291, GetStream/chat#18795); the
+`default` type has DTX on and noise cancellation on.
+
+Go takes it as `client.SessionOptions.Call` and `Session.Voice.Start(ctx, client.OnCall(type,
+id))`, and as `stream.Call.CallType`/`CallID`. `stream.Accelerated` (Python) now joins the call
+the agent was given: a call of any type but `agent` is sent as `call`, and the router chooses the
+session id, so a second session on the same call is not refused for reusing an id. An `agent`
+call is held by its call id as before. Other SDKs follow.
+
 ### A backend can give one session instructions of its own
 
 `POST /v1/agents/sessions` and the session socket's start frame take `instructions`: what the
@@ -2065,6 +2091,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - A voice id ElevenLabs does not have is refused on a shortcut that also reaches Cartesia or Inworld, such as `tts-quality`. The router fell back to them, so the stream started and failed on the first line (`Unknown voice: … not found!`, `voice ID must be a valid UUID`). They now take such an id only when their own voice listing holds it, in whatever order the candidates are ranked. This covers a voice shaped like an ElevenLabs id (20 letters and digits); a Cartesia UUID or a name such as `Ashley` routes as before, and a mistyped name on such a shortcut still fails on the first line (AI-1395).
 - An ElevenLabs voice that ElevenLabs does not have is refused when the voice opens, naming the closest voice in its library: `elevenlabs has no voice "Sara"; the closest in its library is "Sarah - Mature, Reassuring, Confident" (EXAVITQu4vr4xnSDxMaL)`. Any id was passed on, so a wrong one failed on the first line spoken. The `/v1/tts/stream` socket answers it as its `error` frame, a session's voice with a 400, and a recording as a failed job. A voice in the account, a Voice Library voice and a legacy voice still speak; Cartesia and Inworld voices are not checked (AI-1395).
 - A connector tool that needs a scope the connector never asks for is no longer offered: it is left out of `GET /v1/agents/connections/{id}/tools`, out of a validate's scope check and out of a session's tools. A manifest says so with `sources[].tools[].needs_scopes`, which may now name a scope outside `scopes.list`. The `metabase` connector's revision 2 so leaves out `execute_sql` and its 11 tools that write or schedule, which Metabase refused with `403` for the read and query grant it asks for; a connection made on revision 1 lists them until it consents again and is validated (AI-1394).
+- An agent config granting a connector tool the connector leaves out is refused when it is saved (create, replace, patch and `POST /v1/agents/sync`), with a 400 naming the binding, the tool and the scope the connector never asks for, such as `metabase`'s `execute_sql`. It saved, and a session then failed a required binding with `tool_unavailable` or quietly lost the tool. A binding with `tool_patterns` is not affected (AI-1400).
 - A recording sent to a live STT shortcut (`POST /v1/stt/recordings` with `en-low-latency`, or a router config whose STT is one) is transcribed by the batch models of the recorded shortcut for the same languages (`en-recorded`, `multilingual-recorded`). It reached Deepgram's batch endpoint with Flux, which Deepgram refuses (`V2_MODEL_ON_V1_LISTEN_ENDPOINT`). A live shortcut that names no language, such as `stt-fast`, goes by the recording's language hints: none or English only, `en-recorded`; any other language, `multilingual-recorded`. A recording pinned to a live-only model such as `deepgram/flux-general-en` is refused before any vendor is asked, naming the recorded shortcuts (AI-1396).
 - SIP trunks the router makes in Stream for calls, transfers and attached numbers now accept a call only with a password the vendor sends, or only from the vendor's addresses. A transfer takes the vendor's addresses as a call does, so a transfer on a vendor with no declared addresses and no password (Sinch, Bandwidth) is refused before anything is made. A number attached before this release keeps its old trunk, and attaching it again changes nothing; releasing it removes the trunk, but the same number may not be available to buy again.
 - Attaching a number that is already attached in the same app answers what it has and changes nothing. It made a second SIP trunk for the number, which Stream refuses, so a Go, JavaScript or .NET program that waits for calls failed on every start after its first.

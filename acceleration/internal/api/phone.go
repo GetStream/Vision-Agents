@@ -763,6 +763,13 @@ func (s *Server) callApp(ctx context.Context, customerID, callType, callID strin
 			}
 		}
 	}
+	return s.callPinApp(ctx, customerID, callType, callID)
+}
+
+// callPinApp is the Stream app a call no session is running in is in: the app its lines were
+// made in, else the customer's own. It is the app the session manager acts in for a new
+// session joining the call.
+func (s *Server) callPinApp(ctx context.Context, customerID, callType, callID string) (int64, error) {
 	if s.store != nil {
 		pin, found, err := s.store.CallPin(ctx, customerID, callType, callID)
 		if err != nil || found {

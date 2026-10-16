@@ -43,7 +43,7 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param agentId 
- * @param callId The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+ * @param callId The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
  * @param callType 
  * @param createdAt 
  * @param id 
@@ -85,7 +85,7 @@ internal data class Session (
     @SerialName(value = "agent_id")
     val agentId: kotlin.String,
 
-    /* The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing. */
+    /* The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing. */
     @SerialName(value = "call_id")
     val callId: kotlin.String,
 

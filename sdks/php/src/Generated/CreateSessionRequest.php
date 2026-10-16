@@ -17,6 +17,8 @@ final readonly class CreateSessionRequest
         public ?string $agentId = null,
         // Murmur while a participant is still talking, the way a person does.
         public ?bool $backchannel = null,
+        // An existing Stream call for the agent to join, such as the default call the people are already on, in place...
+        public ?SessionCall $call = null,
         // An agent config to start from. Everything else in this request overrides what the config says, so a caller...
         public ?string $configId = null,
         // The connection to use for each of the agent config's connector bindings chosen per session (connection.type...
@@ -60,7 +62,7 @@ final readonly class CreateSessionRequest
         public ?string $projectId = null,
         // Omit it and the config decides, or search-fast when there is no config.
         public ?string $search = null,
-        // Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, w...
+        // Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else a...
         public ?bool $startVoice = null,
         // A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and s...
         public ?string $sts = null,
@@ -95,6 +97,7 @@ final readonly class CreateSessionRequest
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::string($data, 'agent') : null,
             agentId: array_key_exists('agent_id', $data) && $data['agent_id'] !== null ? Json::string($data, 'agent_id') : null,
             backchannel: array_key_exists('backchannel', $data) && $data['backchannel'] !== null ? Json::bool($data, 'backchannel') : null,
+            call: array_key_exists('call', $data) && $data['call'] !== null ? SessionCall::fromArray(Json::object($data, 'call')) : null,
             configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
             connectorBindings: array_key_exists('connector_bindings', $data) && $data['connector_bindings'] !== null ? array_map(SessionConnectorBinding::fromArray(...), Json::objects($data, 'connector_bindings')) : null,
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
@@ -147,6 +150,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->backchannel !== null) {
             $out['backchannel'] = $this->backchannel;
+        }
+        if ($this->call !== null) {
+            $out['call'] = $this->call->toArray();
         }
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;

@@ -357,6 +357,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/backchannel`.
             internal var backchannel: Swift.Bool?
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/call`.
+            internal var call: Components.Schemas.SessionCall?
             /// An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/config_id`.
@@ -451,7 +453,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/search`.
             internal var search: Swift.String?
-            /// Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+            /// Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/start_voice`.
             internal var startVoice: Swift.Bool?
@@ -519,6 +521,7 @@ extension Components {
             ///   - agent: The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
             ///   - agentId: Keys transcripts and statistics. Empty means the call id.
             ///   - backchannel: Murmur while a participant is still talking, the way a person does.
+            ///   - call:
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
             ///   - connectorBindings: The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
             ///   - contextTruncated: Older history was omitted from the model context.
@@ -540,7 +543,7 @@ extension Components {
             ///   - phone:
             ///   - projectId: What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
             ///   - search: Omit it and the config decides, or search-fast when there is no config.
-            ///   - startVoice: Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+            ///   - startVoice: Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
             ///   - sts: A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - tags: Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
@@ -556,6 +559,7 @@ extension Components {
                 agent: Swift.String? = nil,
                 agentId: Swift.String? = nil,
                 backchannel: Swift.Bool? = nil,
+                call: Components.Schemas.SessionCall? = nil,
                 configId: Swift.String? = nil,
                 connectorBindings: [Components.Schemas.SessionConnectorBinding]? = nil,
                 contextTruncated: Swift.Bool? = nil,
@@ -593,6 +597,7 @@ extension Components {
                 self.agent = agent
                 self.agentId = agentId
                 self.backchannel = backchannel
+                self.call = call
                 self.configId = configId
                 self.connectorBindings = connectorBindings
                 self.contextTruncated = contextTruncated
@@ -631,6 +636,7 @@ extension Components {
                 case agent
                 case agentId = "agent_id"
                 case backchannel
+                case call
                 case configId = "config_id"
                 case connectorBindings = "connector_bindings"
                 case contextTruncated = "context_truncated"
@@ -1444,7 +1450,7 @@ extension Components {
             internal var agent: Swift.String?
             /// - Remark: Generated from `#/components/schemas/Session/agent_id`.
             internal var agentId: Swift.String
-            /// The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+            /// The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/call_id`.
             internal var callId: Swift.String
@@ -1569,7 +1575,7 @@ extension Components {
             /// - Parameters:
             ///   - agent: The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
             ///   - agentId:
-            ///   - callId: The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+            ///   - callId: The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
             ///   - callType:
             ///   - closedAt: When the session ended. Absent while it is still running.
             ///   - configId: The agent config the session ran under, empty for one that spelled itself out.
@@ -1711,6 +1717,35 @@ extension Components {
                 case userId = "user_id"
                 case video
                 case voice
+            }
+        }
+        /// An existing Stream call for the agent to join, by its type and id.
+        ///
+        /// - Remark: Generated from `#/components/schemas/SessionCall`.
+        internal struct SessionCall: Codable, Hashable, Sendable {
+            /// The call id.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionCall/id`.
+            internal var id: Swift.String
+            /// The call type, such as default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionCall/type`.
+            internal var _type: Swift.String
+            /// Creates a new `SessionCall`.
+            ///
+            /// - Parameters:
+            ///   - id: The call id.
+            ///   - _type: The call type, such as default.
+            internal init(
+                id: Swift.String,
+                _type: Swift.String
+            ) {
+                self.id = id
+                self._type = _type
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case id
+                case _type = "type"
             }
         }
         /// The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
@@ -2336,6 +2371,21 @@ extension Components {
             internal enum CodingKeys: String, CodingKey {
                 case maxFrames = "max_frames"
                 case source
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/StartSessionVoiceRequest`.
+        internal struct StartSessionVoiceRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/StartSessionVoiceRequest/call`.
+            internal var call: Components.Schemas.SessionCall?
+            /// Creates a new `StartSessionVoiceRequest`.
+            ///
+            /// - Parameters:
+            ///   - call:
+            internal init(call: Components.Schemas.SessionCall? = nil) {
+                self.call = call
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case call
             }
         }
         /// - Remark: Generated from `#/components/schemas/TextMatch`.
