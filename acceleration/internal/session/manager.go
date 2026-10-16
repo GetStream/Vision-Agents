@@ -81,6 +81,7 @@ type ManagerOptions struct {
 	STS *stsrouter.Router
 	// EOT optionally gates or resolves settled quiet-floor cascade candidates.
 	EOT          *audioturn.Client
+	Interruption *agent.InterruptionClient
 	EOTMode      agent.EOTMode
 	EOTThreshold float64
 
@@ -608,6 +609,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// starts on, so it can be moved onto the other one mid-call.
 			STS:                   m.options.STS,
 			EOT:                   m.options.EOT,
+			Interruption:          m.options.Interruption,
 			EOTMode:               m.options.EOTMode,
 			EOTThreshold:          m.options.EOTThreshold,
 			STSTarget:             spec.STSTarget,

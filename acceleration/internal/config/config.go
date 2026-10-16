@@ -78,22 +78,23 @@ type Config struct {
 	MockProviders bool `koanf:"mock_providers"`
 	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
 	// means no profiling endpoint.
-	PprofAddr  string     `koanf:"pprof_addr"`
-	Postgres   Postgres   `koanf:"postgres"`
-	Redis      Redis      `koanf:"redis"`
-	Node       Node       `koanf:"node"`
-	Shutdown   Shutdown   `koanf:"shutdown"`
-	Auth       Auth       `koanf:"auth"`
-	RateLimit  RateLimit  `koanf:"rate_limit"`
-	DataMove   DataMove   `koanf:"data_move"`
-	Stream     Stream     `koanf:"stream"`
-	EOT        EOT        `koanf:"eot"`
-	Agent      Agent      `koanf:"agent"`
-	Connectors Connectors `koanf:"connectors"`
-	Episodes   Episodes   `koanf:"episodes"`
-	Sandbox    Sandbox    `koanf:"sandbox"`
-	Models     Models     `koanf:"models"`
-	Telnyx     Telnyx     `koanf:"telnyx"`
+	PprofAddr    string       `koanf:"pprof_addr"`
+	Postgres     Postgres     `koanf:"postgres"`
+	Redis        Redis        `koanf:"redis"`
+	Node         Node         `koanf:"node"`
+	Shutdown     Shutdown     `koanf:"shutdown"`
+	Auth         Auth         `koanf:"auth"`
+	RateLimit    RateLimit    `koanf:"rate_limit"`
+	DataMove     DataMove     `koanf:"data_move"`
+	Stream       Stream       `koanf:"stream"`
+	EOT          EOT          `koanf:"eot"`
+	Interruption Interruption `koanf:"interruption"`
+	Agent        Agent        `koanf:"agent"`
+	Connectors   Connectors   `koanf:"connectors"`
+	Episodes     Episodes     `koanf:"episodes"`
+	Sandbox      Sandbox      `koanf:"sandbox"`
+	Models       Models       `koanf:"models"`
+	Telnyx       Telnyx       `koanf:"telnyx"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -314,6 +315,13 @@ type EOT struct {
 	Threshold   float64 `koanf:"threshold"`
 }
 
+type Interruption struct {
+	Endpoint  string        `koanf:"endpoint"`
+	TokenFile string        `koanf:"token_file"`
+	Threshold float64       `koanf:"threshold"`
+	Timeout   time.Duration `koanf:"timeout"`
+}
+
 // Telnyx is the account Telnyx numbers are bought on and the TeXML application they answer
 // on. The Telnyx provider still reads its own variables, which export writes back.
 type Telnyx struct {
@@ -361,10 +369,14 @@ var variables = map[string]string{
 	"stream.mint_url":   "ROUTER_STREAM_MINT_URL",
 	"stream.mint_token": "ROUTER_STREAM_MINT_TOKEN",
 
-	"eot.mode":          "ROUTER_EOT_MODE",
-	"eot.endpoint":      "ROUTER_EOT_URL",
-	"eot.id_token_file": "ROUTER_EOT_ID_TOKEN_FILE",
-	"eot.threshold":     "ROUTER_EOT_THRESHOLD",
+	"eot.mode":                "ROUTER_EOT_MODE",
+	"eot.endpoint":            "ROUTER_EOT_URL",
+	"eot.id_token_file":       "ROUTER_EOT_ID_TOKEN_FILE",
+	"eot.threshold":           "ROUTER_EOT_THRESHOLD",
+	"interruption.endpoint":   "ROUTER_INTERRUPTION_URL",
+	"interruption.token_file": "ROUTER_INTERRUPTION_TOKEN_FILE",
+	"interruption.threshold":  "ROUTER_INTERRUPTION_THRESHOLD",
+	"interruption.timeout":    "ROUTER_INTERRUPTION_TIMEOUT",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -419,7 +431,8 @@ func Defaults() Config {
 			PreviewQuiet:          120 * time.Millisecond,
 			ReplyHedge:            1200 * time.Millisecond,
 		},
-		EOT: EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
+		EOT:          EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
+		Interruption: Interruption{Threshold: 0.5, Timeout: 500 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes: Episodes{IdleAfter: time.Hour},
@@ -607,6 +620,9 @@ func (c Config) validate() error {
 		c.EOT.Threshold < 0 || c.EOT.Threshold > 1 {
 		return fmt.Errorf("config: eot.threshold must be between 0 and 1, got %v", c.EOT.Threshold)
 	}
+	if c.Interruption.Endpoint != "" && (!(c.Interruption.Threshold > 0 && c.Interruption.Threshold < 1) || c.Interruption.Timeout <= 0) {
+		return errors.New("config: interruption requires a threshold between 0 and 1 and a positive timeout")
+	}
 	if c.Episodes.IdleAfter <= 0 || c.Episodes.IdleAfter >= maxEpisodeIdle {
 		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
 			maxEpisodeIdle, c.Episodes.IdleAfter)
@@ -682,6 +698,10 @@ func (c Config) export() error {
 		"eot.mode":                      c.EOT.Mode,
 		"eot.id_token_file":             c.EOT.IDTokenFile,
 		"eot.threshold":                 fmt.Sprint(c.EOT.Threshold),
+		"interruption.endpoint":         c.Interruption.Endpoint,
+		"interruption.token_file":       c.Interruption.TokenFile,
+		"interruption.threshold":        fmt.Sprint(c.Interruption.Threshold),
+		"interruption.timeout":          c.Interruption.Timeout.String(),
 		"data_move.retention":           c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),

@@ -766,9 +766,10 @@ type AgentSuite struct {
 	// provider.
 	finds *stubSearch
 	// guards screens what the agent may be asked, when a test gives it a policy.
-	guards  *stubGuardrail
-	eot     *audioturn.Client
-	eotMode EOTMode
+	guards         *stubGuardrail
+	eot            *audioturn.Client
+	adaptiveClient *InterruptionClient
+	eotMode        EOTMode
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
@@ -799,6 +800,7 @@ func (s *AgentSuite) SetupTest() {
 	s.finds = nil
 	s.guards = nil
 	s.eot = nil
+	s.adaptiveClient = nil
 	s.eotMode = EOTModeGate
 	s.subagent = nil
 	s.skills = harness.Skills{}
@@ -1037,6 +1039,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		SearchTarget:       searchTarget,
 		Guardrail:          s.screening(),
 		EOT:                s.eot,
+		Interruption:       s.adaptiveClient,
 		EOTMode:            s.eotMode,
 		EOTThreshold:       0.5,
 		Logger:             logger,
