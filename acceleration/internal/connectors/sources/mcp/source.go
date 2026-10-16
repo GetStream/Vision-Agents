@@ -304,10 +304,11 @@ func sourceRule(m core.ResolvedManifest) *core.SourceRule {
 // and Open both read the list through open, so a validate, the tools it stores and a session
 // never see such a tool.
 func asked(m core.ResolvedManifest, rule *core.SourceRule, listed []*mcp.Tool) []*mcp.Tool {
+	if rule == nil {
+		return listed
+	}
 	return slices.DeleteFunc(listed, func(tool *mcp.Tool) bool {
-		return slices.ContainsFunc(needsScopes(rule, tool.Name), func(scope string) bool {
-			return !slices.Contains(m.Scopes.List, scope)
-		})
+		return len(rule.UnaskedScopes(m.Scopes.List, tool.Name)) > 0
 	})
 }
 
