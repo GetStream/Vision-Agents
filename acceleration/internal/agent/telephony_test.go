@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -81,19 +82,200 @@ func (s *AgentSuite) onACall() {
 type stubToolRunner struct {
 	result string
 	err    error
+	run    func(context.Context, llm.ToolCall) ([]llm.ContentPart, error)
 
 	mu   sync.Mutex
 	runs []llm.ToolCall
 }
 
-func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.runs = append(r.runs, call)
-	if r.err != nil {
-		return nil, r.err
+type appointment struct {
+	date string
+	time string
+}
+
+type appointmentBook struct {
+	mu          sync.Mutex
+	appointment appointment
+	wasRejected bool
+}
+
+func newAppointmentBook() *appointmentBook {
+	return &appointmentBook{appointment: appointment{date: "Friday", time: "10am"}}
+}
+
+func (b *appointmentBook) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	var arguments struct {
+		AppointmentID string `json:"appointment_id"`
+		Date          string `json:"new_date"`
+		Time          string `json:"new_time"`
 	}
-	return llm.TextParts(r.result), nil
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+		b.wasRejected = true
+		return nil, fmt.Errorf("appointment arguments are not JSON: %w", err)
+	}
+	if arguments.AppointmentID != "a2" || arguments.Date == "" || arguments.Time == "" {
+		b.wasRejected = true
+		return nil, errors.New("appointment id, date, and time are required")
+	}
+	b.appointment.date, b.appointment.time = arguments.Date, arguments.Time
+	return llm.TextParts("Appointment a2 is now Tuesday morning."), nil
+}
+
+func (b *appointmentBook) state() (appointment, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.appointment, b.wasRejected
+}
+
+func rescheduleAppointmentTool() harness.Tool {
+	return harness.Tool{
+		Name:        "reschedule_appointment",
+		Description: "move an existing appointment",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"appointment_id": map[string]any{"type": "string"},
+				"new_date":       map[string]any{"type": "string"},
+				"new_time":       map[string]any{"type": "string"},
+			},
+			"required": []any{"appointment_id", "new_date", "new_time"},
+		},
+	}
+}
+
+func (s *AgentSuite) TestAProseAskForAMultiFieldToolRecoversAndReschedules() {
+	s.recoversAnAppointmentFromProse(true)
+}
+
+func (s *AgentSuite) TestABodyOnlyCallForAMultiFieldToolRecoversAndReschedules() {
+	s.recoversAnAppointmentFromProse(false)
+}
+
+func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
+	book := newAppointmentBook()
+	s.runner = &stubToolRunner{run: book.Run}
+	s.tools = harness.Tools{Tools: []harness.Tool{rescheduleAppointmentTool()}}
+	s.join(false)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	callerText := "Please move appointment a2 from Friday at 10am to Tuesday morning."
+	s.says(participant, callerText)
+
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) > 0 && s.model.script(requests[0].ID) != nil
+	}, "the model was never asked about the appointment")
+	firstRequest := s.model.requests()[0]
+	firstScript := s.model.script(firstRequest.ID)
+	firstScript.OutputText("One moment, checking that appointment. ")
+	if asAsk {
+		firstScript.OutputText(`<ask skill="reschedule_appointment">Move the Friday 10am appointment to Tuesday morning.</ask>`)
+	} else {
+		firstScript.OutputText(`<call tool="reschedule_appointment">Move the Friday 10am appointment to Tuesday morning.</call>`)
+	}
+	firstScript.Done()
+
+	// The old behavior reaches the external runner with only the first required field.
+	// The fixed path instead wakes the model with a corrective note in this turn.
+	s.eventually(func() bool {
+		_, rejected := book.state()
+		if rejected {
+			return true
+		}
+		requests := s.model.requests()
+		return len(requests) > 1 && strings.Contains(requests[1].Instructions, "reschedule_appointment") &&
+			s.model.script(requests[1].ID) != nil
+	}, "neither a malformed call nor a corrective response was observed")
+	state, rejected := book.state()
+	s.Require().False(rejected, "a malformed prose body reached the appointment service")
+	s.Equal(appointment{date: "Friday", time: "10am"}, state,
+		"the appointment must stay unchanged until the corrected call runs")
+
+	requests := s.model.requests()
+	s.Require().GreaterOrEqual(len(requests), 2)
+	correction := requests[1]
+	s.Contains(correction.Instructions, "reschedule_appointment")
+	s.Contains(correction.Instructions, "appointment_id")
+	s.Contains(correction.Instructions, "new_date")
+	s.Contains(correction.Instructions, "new_time")
+	s.Contains(correction.Instructions, "not run")
+	s.Contains(correction.Input, llm.Message{Role: llm.User, Content: callerText})
+	s.Require().Len(correction.Tools, 1)
+	s.Equal("reschedule_appointment", correction.Tools[0].Name)
+	s.Equal([]any{"appointment_id", "new_date", "new_time"}, correction.Tools[0].Parameters["required"])
+	correctedScript := s.model.script(correction.ID)
+	s.Require().NotNil(correctedScript)
+	correctedScript.ToolCalls(llm.ToolCall{
+		ID:        "reschedule-correct",
+		Name:      "reschedule_appointment",
+		Arguments: `{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}`,
+	})
+	correctedScript.Done()
+
+	s.eventually(func() bool {
+		state, _ := book.state()
+		return state == (appointment{date: "Tuesday", time: "morning"})
+	}, "the corrected native call did not update the appointment")
+	run := s.awaitToolRan()
+	s.NoError(run.Err)
+	s.Equal("reschedule_appointment", run.Tool)
+	s.JSONEq(`{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}`, run.Arguments)
+	s.Contains(run.Result, "now Tuesday morning")
+
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) > 2 && s.model.script(requests[2].ID) != nil
+	}, "the tool result did not trigger a final response")
+	requests = s.model.requests()
+	final := requests[2]
+	s.Equal(1, countOfMessages(final.Input, llm.User), "the successful reply should need no second caller turn")
+	s.True(slices.ContainsFunc(final.Input, func(message llm.Message) bool {
+		return message.Role == llm.ToolResult && message.ToolCallID == "reschedule-correct" &&
+			strings.Contains(message.Content, "now Tuesday morning")
+	}), "the final response must receive the actual tool result")
+	audioBeforeFinal := len(s.edge.heard())
+	finalScript := s.model.script(final.ID)
+	finalScript.OutputText("Your appointment is now set for Tuesday morning.")
+	finalScript.Done()
+	s.eventually(func() bool { return s.spokenText("Tuesday morning") },
+		"the caller never heard the appointment update")
+	s.eventually(func() bool {
+		return len(s.edge.heard()) > audioBeforeFinal && slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == final.ID
+		})
+	}, "the successful answer produced no audio")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the agent stayed busy after the final answer")
+	_, rejected = book.state()
+	s.False(rejected, "the appointment service received malformed arguments")
+	s.Zero(countOf[Error](s.reported()), "the appointment handoff should not report an error")
+}
+
+func countOfMessages(messages []llm.Message, role llm.Role) int {
+	var count int
+	for _, message := range messages {
+		if message.Role == role {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	r.mu.Lock()
+	r.runs = append(r.runs, call)
+	err, result, run := r.err, r.result, r.run
+	r.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if run != nil {
+		return run(ctx, call)
+	}
+	return llm.TextParts(result), nil
 }
 
 func (r *stubToolRunner) asked() []llm.ToolCall {
