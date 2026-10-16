@@ -364,7 +364,7 @@ func (s *ChatLoginsSuite) TestAReopenedChatUsesTheConnectionTheLoginChose() {
 	s.Require().Equal(connectorEchoText, s.carryOn(events).ran["result"])
 	s.Eventually(func() bool {
 		var stored string
-		return s.store.DB().QueryRowContext(context.Background(),
+		return s.store.ShardDB().QueryRowContext(context.Background(),
 			"SELECT connector_selections::text FROM agent_sessions WHERE id = ?", opened.Id).Scan(&stored) == nil &&
 			stored == `[{"name": "crm", "connection_id": "`+chosen+`"}]`
 	}, settleFor, 20*time.Millisecond, "the session row keeps the connection the login chose")
@@ -567,7 +567,7 @@ func (s *ChatLoginsSuite) pinsOf(connection string) []string {
 // echoedOn is how many times session id ran crm's echo with what it was given, as recorded.
 func (s *ChatLoginsSuite) echoedOn(id string) int {
 	var ran int
-	if s.store.DB().QueryRowContext(context.Background(),
+	if s.store.ShardDB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM agent_response_items WHERE session_id = ? AND kind = ? AND tool_name = ? AND text = ?",
 		id, store.ItemToolResult, connectorEcho, connectorEchoText).Scan(&ran) != nil {
 		return -1

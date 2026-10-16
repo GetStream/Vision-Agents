@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -30,7 +32,7 @@ func (s *Store) CreateRecording(ctx context.Context, recording *Recording) error
 		recording.Tags = map[string]string{}
 	}
 
-	if _, err := s.db.NewInsert().Model(recording).Exec(ctx); err != nil {
+	if _, err := s.shard.NewInsert().Model(recording).Exec(ctx); err != nil {
 		return stack.Wrap(fmt.Errorf("store: create recording: %w", err))
 	}
 	return nil
@@ -38,7 +40,7 @@ func (s *Store) CreateRecording(ctx context.Context, recording *Recording) error
 
 // StartRecording marks a job as at the provider and records which one took it.
 func (s *Store) StartRecording(ctx context.Context, id, provider, model string) error {
-	_, err := s.db.NewUpdate().Model((*Recording)(nil)).
+	_, err := s.shard.NewUpdate().Model((*Recording)(nil)).
 		Set("status = ?", RecordingRunning).
 		Set("provider = ?", provider).
 		Set("model = ?", model).
@@ -61,7 +63,7 @@ func (s *Store) FinishRecording(ctx context.Context, id, provider, model string,
 		reason = failure.Error()
 	}
 
-	_, err := s.db.NewUpdate().Model((*Recording)(nil)).
+	_, err := s.shard.NewUpdate().Model((*Recording)(nil)).
 		Set("status = ?", status).
 		Set("provider = ?", provider).
 		Set("model = ?", model).
@@ -83,12 +85,15 @@ func (s *Store) Recording(ctx context.Context, customerID, id string) (Recording
 		return Recording{}, stack.Wrap(errors.New("store: a customer and a recording id are required"))
 	}
 
-	var recording Recording
-	err := s.db.NewSelect().Model(&recording).
-		Where("id = ?", id).
-		Where("customer_id = ?", customerID).
-		Limit(1).
-		Scan(ctx)
+	recording, err := whicheverShard(ctx, s, func(ctx context.Context, db bun.IDB) (Recording, error) {
+		var recording Recording
+		err := db.NewSelect().Model(&recording).
+			Where("id = ?", id).
+			Where("customer_id = ?", customerID).
+			Limit(1).
+			Scan(ctx)
+		return recording, err
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Recording{}, stack.Wrap(fmt.Errorf("store: there is no recording %s", id))
 	}

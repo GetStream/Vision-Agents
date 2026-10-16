@@ -408,3 +408,95 @@ func (s *ConfigSuite) TestTelnyxSettingsInAFileReachTheEnvironment() {
 	s.Equal("conn-1", os.Getenv("TELNYX_CONNECTION_ID"))
 	s.Equal("cHVibGlj", os.Getenv("TELNYX_PUBLIC_KEY"))
 }
+
+func (s *ConfigSuite) TestASingleNodeSetsNoShard() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Empty(config.Shard)
+	s.Empty(config.Postgres.ShardDSN)
+	s.Empty(config.Postgres.Shards)
+	s.Empty(config.Redis.Shard.Addr)
+}
+
+func (s *ConfigSuite) TestAShardIsReadFromAFile() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte(`
+shard: us-west1
+postgres:
+  dsn: postgres://global/router
+  shard_dsn: postgres://usw/router
+  shards:
+    us-east4: postgres://use/router
+    us-west1: postgres://usw/router
+redis:
+  addr: global:6379
+  shard:
+    addr: usw:6379
+`), 0o600))
+
+	config, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal("us-west1", config.Shard)
+	s.Equal("postgres://usw/router", config.Postgres.ShardDSN)
+	s.Equal(map[string]string{"us-east4": "postgres://use/router", "us-west1": "postgres://usw/router"}, config.Postgres.Shards)
+	s.Equal("usw:6379", config.Redis.Shard.Addr)
+}
+
+func (s *ConfigSuite) TestAShardIsReadFromTheEnvironment() {
+	s.T().Setenv("ROUTER_SHARD", "us-west1")
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://global/router")
+	s.T().Setenv("ROUTER_POSTGRES_SHARD_DSN", "postgres://usw/router")
+	s.T().Setenv("ROUTER_POSTGRES_SHARDS", "us-east4=postgres://use/router, us-west1=postgres://usw/router")
+	s.T().Setenv("ROUTER_REDIS_SHARD_ADDR", "usw:6379")
+
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Equal(map[string]string{"us-east4": "postgres://use/router", "us-west1": "postgres://usw/router"}, config.Postgres.Shards)
+	s.Equal("usw:6379", config.Redis.Shard.Addr)
+	s.Equal("us-east4=postgres://use/router,us-west1=postgres://usw/router", os.Getenv("ROUTER_POSTGRES_SHARDS"),
+		"written back the way it is read")
+}
+
+func (s *ConfigSuite) TestAShardDatabaseWithoutTheSharedOneIsRefused() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("postgres:\n  dsn: \"\"\n  shard_dsn: postgres://usw/router\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.ErrorContains(err, "set postgres.dsn")
+}
+
+func (s *ConfigSuite) TestAShardRedisWithoutTheSharedOneIsRefused() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("redis:\n  addr: \"\"\n  shard:\n    addr: usw:6379\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.ErrorContains(err, "set redis.addr")
+}
+
+func (s *ConfigSuite) TestShardsThatLeaveThisOneOutAreRefused() {
+	s.T().Setenv("ROUTER_SHARD", "us-west1")
+	s.T().Setenv("ROUTER_POSTGRES_SHARD_DSN", "postgres://usw/router")
+	s.T().Setenv("ROUTER_POSTGRES_SHARDS", "us-east4=postgres://use/router")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, `does not list this shard, "us-west1"`)
+}
+
+func (s *ConfigSuite) TestShardsWithoutThisOnesNameAreRefused() {
+	s.T().Setenv("ROUTER_POSTGRES_SHARDS", "us-east4=postgres://use/router")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, "set shard")
+}
+
+func (s *ConfigSuite) TestShardsListingThisOneElsewhereAreRefused() {
+	s.T().Setenv("ROUTER_SHARD", "us-west1")
+	s.T().Setenv("ROUTER_POSTGRES_SHARD_DSN", "postgres://usw/router")
+	s.T().Setenv("ROUTER_POSTGRES_SHARDS", "us-west1=postgres://other/router")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, "another DSN")
+}

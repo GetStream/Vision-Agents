@@ -7,6 +7,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -37,7 +38,11 @@ const maxConns = 40
 
 // Store reads and writes router statistics.
 type Store struct {
+	// db is the database every shard shares, and shard this one's, which is db for a
+	// deployment of one shard. peers are the other shards' (see shards.go).
 	db       *bun.DB
+	shard    *bun.DB
+	peers    []*bun.DB
 	LogDrops atomic.Int64
 	// shapes is what each table an export carries looks like, read from the catalogue
 	// once rather than kept in a list here that a migration could leave behind.
@@ -51,46 +56,80 @@ type Store struct {
 // Open connects to Postgres using a pgdriver DSN, for example
 // postgres://user:pass@localhost:5432/router?sslmode=disable.
 func Open(dsn string) (*Store, error) {
-	if dsn == "" {
-		return nil, errors.New("store: dsn is required")
-	}
+	return OpenShards(Options{DSN: dsn})
+}
 
+// connect opens a pool of at most conns connections.
+func connect(dsn string, conns int) *bun.DB {
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 	// database/sql keeps two idle connections by default, so every burst of writes past two
 	// dials Postgres and shakes hands over TLS again, and under load those handshakes are
 	// what times out. The pool is kept instead, and bounded so that two pods, each running
 	// overlapping generations, stay well inside the server's connection limit.
-	sqldb.SetMaxOpenConns(maxConns)
-	sqldb.SetMaxIdleConns(maxConns)
+	sqldb.SetMaxOpenConns(conns)
+	sqldb.SetMaxIdleConns(conns)
 	sqldb.SetConnMaxIdleTime(5 * time.Minute)
 	db := bun.NewDB(sqldb, pgdialect.New())
 	// A span per query, so a request's trace says which reads it waited on. Queries are
 	// recorded unformatted: the arguments of these are customer ids and api keys.
 	db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName("router")))
-	return &Store{db: db}, nil
+	return db
 }
 
-// DB exposes the bun handle so callers can run queries this store does not wrap.
+// DB exposes the shared database's bun handle so callers can run queries this store does
+// not wrap.
 func (s *Store) DB() *bun.DB { return s.db }
 
-// Close releases the connection pool.
-func (s *Store) Close() error { return s.db.Close() }
+// ShardDB is this shard's bun handle, where its calls, sessions and requests are. It is
+// DB when the deployment has one database.
+func (s *Store) ShardDB() *bun.DB { return s.shard }
 
-// Ping verifies the connection is usable.
-func (s *Store) Ping(ctx context.Context) error { return stack.Wrap(s.db.PingContext(ctx)) }
+// Close releases the connection pools.
+func (s *Store) Close() error {
+	return errors.Join(s.closeShards(), s.db.Close())
+}
 
-// Migrate applies every pending migration.
+// Ping verifies the shared database and this shard's are usable. Another shard being down
+// is not this router failing: it only leaves that shard's calls off a page.
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.db.PingContext(ctx); err != nil {
+		return stack.Wrap(err)
+	}
+	return stack.Wrap(s.shard.PingContext(ctx))
+}
+
+// Migrate applies every pending migration, to the shared database and to this shard's.
 func (s *Store) Migrate(ctx context.Context) error {
+	if err := s.migrate(ctx, s.db); err != nil {
+		return err
+	}
+	return s.migrateShard(ctx)
+}
+
+func (s *Store) migrate(ctx context.Context, db *bun.DB) error {
+	// Every shard's routers start against the shared database at once in a rollout, and
+	// two goose runs on one database collide, so one migrates while the others wait.
+	conn, err := db.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("store: migrate: %w", err)
+	}
+	defer conn.Close() //nolint:errcheck // the connection goes back to the pool either way
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock(hashtextextended('router.migrate', 0))"); err != nil {
+		return fmt.Errorf("store: migrate: lock: %w", err)
+	}
+	// Released by hand: closing hands the connection back to the pool, session and lock intact.
+	defer conn.ExecContext(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(hashtextextended('router.migrate', 0))") //nolint:errcheck // a failed unlock ends with the session
+
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("store: set dialect: %w", err)
 	}
-	if err := goose.UpContext(ctx, s.db.DB, "."); err != nil {
+	if err := goose.UpContext(ctx, db.DB, "."); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
 	}
 	// Attached here rather than in a migration of their own, so that a table added later
 	// is covered by the deployment reaching it rather than by somebody remembering.
-	return s.WatchDataChanges(ctx)
+	return s.watchDataChanges(ctx, db)
 }
 
 // MigrationDrift compares the migrations this binary carries with the ones the database applied,
@@ -165,10 +204,86 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 		request.StartedAt = time.Now().UTC()
 	}
 
-	if _, err := s.db.NewInsert().Model(request).Exec(ctx); err != nil {
+	if !s.Sharded() {
+		if _, err := s.db.NewInsert().Model(request).Exec(ctx); err != nil {
+			return fmt.Errorf("store: record request: %w", err)
+		}
+		return nil
+	}
+	if err := s.recordShardRequest(ctx, request); err != nil {
 		return fmt.Errorf("store: record request: %w", err)
 	}
 	return nil
+}
+
+// recordShardRequest writes a request to this shard and its log row, which a trigger writes
+// beside a request in one database, to the shared one with the rest of the logs. The two
+// writes are not one transaction: a log row missing is a gap in a timeline, where holding the
+// shared database's lock for the shard's insert would slow every request of the customer.
+func (s *Store) recordShardRequest(ctx context.Context, request *Request) error {
+	var configID, callID string
+	err := s.shard.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT set_config('router.request_logged', 'on', true)"); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(request).Exec(ctx); err != nil {
+			return err
+		}
+		if request.AgentID == "" {
+			return nil
+		}
+		var calls []Call
+		query := tx.NewSelect().Model(&calls).Column("config_id", "id").
+			Where("customer_id = ?", request.CustomerID).
+			Where("agent_id = ?", request.AgentID).
+			Where("started_at <= ?", request.StartedAt).
+			Order("started_at DESC").
+			Limit(1)
+		if request.CallID != "" {
+			query = query.Where("call_id = ?", request.CallID)
+		}
+		if err := query.Scan(ctx); err != nil {
+			return err
+		}
+		if len(calls) > 0 {
+			configID, callID = calls[0].ConfigID, calls[0].ID
+		}
+		return nil
+	})
+	if err != nil || request.AgentID == "" {
+		return err
+	}
+
+	outcome, severity := "completed", "info"
+	if !request.Success {
+		outcome, severity = "failed", "error"
+	}
+	entry := &AgentLog{
+		CustomerID: request.CustomerID, ConfigID: configID, AgentID: request.AgentID, SessionID: callID,
+		Source: "system", Severity: severity, EventType: "provider_request",
+		Message:    request.Modality + " request " + outcome,
+		OccurredAt: request.StartedAt, IngestedAt: time.Now().UTC(),
+		Details: map[string]any{
+			"provider": request.Provider, "model": request.Model, "request_id": strconv.FormatInt(request.ID, 10),
+			"duration_ms": request.LatencyMs, "input_tokens": request.InputTokens, "output_tokens": request.OutputTokens,
+			"cost_micros": request.CostMicros, "error_code": nullIfEmpty(request.ErrorCode),
+			"error_message": nullIfEmpty(request.ErrorMessage),
+		},
+	}
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 731))", entry.CustomerID); err != nil {
+			return err
+		}
+		_, err := tx.NewInsert().Model(entry).Exec(ctx)
+		return err
+	})
+}
+
+func nullIfEmpty(text string) *string {
+	if text == "" {
+		return nil
+	}
+	return &text
 }
 
 // ErrorCancelled is the error code of a request its caller gave up on, whether before the
@@ -252,7 +367,8 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
 		granularity.table(), granularity.truncateUnit(), notCancelled(""))
 
-	result, err := s.db.ExecContext(ctx, query, from, to)
+	// Each shard rolls up the requests it recorded, into its own rollups.
+	result, err := s.shard.ExecContext(ctx, query, from, to)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: rollup %s: %w", granularity, err))
 	}
@@ -313,7 +429,7 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
 		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."))
 
-	result, err := s.db.ExecContext(ctx, query, from, to)
+	result, err := s.shard.ExecContext(ctx, query, from, to)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: rollup %s tags: %w", granularity, err))
 	}
@@ -392,11 +508,15 @@ WHERE modality = ? AND customer_id = ?
 GROUP BY modality, customer_id, provider, model, bucket
 ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit(), notCancelled(""))
 
-	var buckets []Bucket
-	if err := s.db.NewRaw(query, modality, customerID, from, to, string(filter)).Scan(ctx, &buckets); err != nil {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]Bucket, error) {
+		var buckets []Bucket
+		err := db.NewRaw(query, modality, customerID, from, to, string(filter)).Scan(ctx, &buckets)
+		return buckets, err
+	})
+	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: customer stats by tag: %w", err))
 	}
-	return buckets, nil
+	return mergeBuckets(lists), nil
 }
 
 // CustomerTagStats returns what each value of one tag key cost, oldest bucket first. It
@@ -421,20 +541,23 @@ func (s *Store) CustomerTagStats(
 		return nil, stack.Wrap(errors.New("store: tag key is required"))
 	}
 
-	var buckets []TagBucket
-	err := s.db.NewSelect().
-		Table(granularity.tagTable()).
-		Where("modality = ?", modality).
-		Where("customer_id = ?", customerID).
-		Where("tag_key = ?", tagKey).
-		Where("bucket >= ?", from).
-		Where("bucket < ?", to).
-		Order("bucket ASC", "tag_value ASC").
-		Scan(ctx, &buckets)
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]TagBucket, error) {
+		var buckets []TagBucket
+		err := db.NewSelect().
+			Table(granularity.tagTable()).
+			Where("modality = ?", modality).
+			Where("customer_id = ?", customerID).
+			Where("tag_key = ?", tagKey).
+			Where("bucket >= ?", from).
+			Where("bucket < ?", to).
+			Order("bucket ASC", "tag_value ASC").
+			Scan(ctx, &buckets)
+		return buckets, err
+	})
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: customer tag stats: %w", err))
 	}
-	return buckets, nil
+	return mergeTagBuckets(lists), nil
 }
 
 // spendGroupByModality is the group_by that means "where the money went" rather than
@@ -487,68 +610,39 @@ func (s *Store) CustomerSpend(
 		valueExpr = "COALESCE(tags->>?, '')"
 		args = append(args, groupBy)
 	}
-	args = append(args, customerID, from, to, string(filter), limit)
+	args = append(args, customerID, from, to, string(filter))
 
+	// Each shard's groups unfolded, and the biggest picked over all of them: a group too small
+	// to keep in one shard may be the biggest once the others are added.
 	query := fmt.Sprintf(`
-WITH grouped AS (
-    SELECT
-        date_trunc('%s', started_at) AS bucket,
-        %s AS value,
-        cost_micros
-    FROM requests
-    WHERE customer_id = ?
-      AND started_at >= ? AND started_at < ?
-      AND tags @> ?::jsonb
-),
-biggest AS (
-    SELECT
-        value,
-        ROW_NUMBER() OVER (
-            ORDER BY SUM(cost_micros) DESC, COUNT(*) DESC, value ASC
-        ) AS rank
-    FROM grouped
-    WHERE value <> ''
-    GROUP BY value
-),
-folded AS (
-    SELECT
-        g.bucket AS bucket,
-        CASE
-            WHEN g.value = '' THEN ''
-            WHEN b.rank > ? THEN '%s'
-            ELSE g.value
-        END AS value,
-        g.cost_micros AS cost_micros
-    FROM grouped AS g
-    LEFT JOIN biggest AS b ON b.value = g.value
-)
 SELECT
-    bucket,
-    value,
+    date_trunc('%s', started_at) AS bucket,
+    %s AS value,
     COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
     COUNT(*) AS request_count
-FROM folded
-GROUP BY bucket, value
-ORDER BY bucket ASC, cost_micros_total DESC, value ASC`,
-		granularity.truncateUnit(), valueExpr, spendOther)
+FROM requests
+WHERE customer_id = ?
+  AND started_at >= ? AND started_at < ?
+  AND tags @> ?::jsonb
+GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr)
 
-	var buckets []SpendBucket
-	if err := s.db.NewRaw(query, args...).Scan(ctx, &buckets); err != nil {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]spendRow, error) {
+		var rows []spendRow
+		err := db.NewRaw(query, args...).Scan(ctx, &rows)
+		return rows, err
+	})
+	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: customer spend: %w", err))
 	}
-	return buckets, nil
+	return foldSpend(lists, limit), nil
 }
 
-// tagKeyRow is one cost label key paired with one of its largest values, which is how the
-// two levels come back from a single query.
-type tagKeyRow struct {
+// tagValueRow is what one value of one cost label key was spent on.
+type tagValueRow struct {
 	Key             string `bun:"key"`
-	ValueCount      int64  `bun:"value_count"`
+	Value           string `bun:"value"`
 	CostMicrosTotal int64  `bun:"cost_micros_total"`
 	RequestCount    int64  `bun:"request_count"`
-	Value           string `bun:"value"`
-	ValueCost       int64  `bun:"value_cost_micros_total"`
-	ValueRequests   int64  `bun:"value_request_count"`
 }
 
 // topTagValues is how many values of a key come back with it. Enough to see what drives the
@@ -582,102 +676,105 @@ func (s *Store) CustomerTagKeys(
 	// Coverage is measured against every request in the window, labelled or not, because a
 	// key on half the traffic breaks down half the bill and reading it as the whole of it
 	// is the mistake this number exists to prevent.
-	var total int64
-	err = s.db.NewSelect().
-		Table("requests").
-		ColumnExpr("COUNT(*)").
-		Where("customer_id = ?", customerID).
-		Where("started_at >= ?", from).
-		Where("started_at < ?", to).
-		Where("tags @> ?::jsonb", string(filter)).
-		Scan(ctx, &total)
+	type shardTags struct {
+		total  int64
+		values []tagValueRow
+	}
+	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (shardTags, error) {
+		var read shardTags
+		err := db.NewSelect().
+			Table("requests").
+			ColumnExpr("COUNT(*)").
+			Where("customer_id = ?", customerID).
+			Where("started_at >= ?", from).
+			Where("started_at < ?", to).
+			Where("tags @> ?::jsonb", string(filter)).
+			Scan(ctx, &read.total)
+		if err != nil || read.total == 0 {
+			return read, err
+		}
+		err = db.NewRaw(`
+SELECT tag.key AS key, tag.value AS value,
+       SUM(r.cost_micros) AS cost_micros_total, COUNT(*) AS request_count
+FROM requests AS r
+CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
+WHERE r.customer_id = ?
+  AND r.started_at >= ? AND r.started_at < ?
+  AND r.tags @> ?::jsonb
+GROUP BY tag.key, tag.value`, customerID, from, to, string(filter)).Scan(ctx, &read.values)
+		return read, err
+	})
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
+	}
+
+	var total int64
+	type valueKey struct{ key, value string }
+	var order []valueKey
+	values := map[valueKey]*tagValueRow{}
+	for _, answer := range answers {
+		total += answer.total
+		for _, row := range answer.values {
+			k := valueKey{row.Key, row.Value}
+			if values[k] == nil {
+				values[k] = &tagValueRow{Key: row.Key, Value: row.Value}
+				order = append(order, k)
+			}
+			values[k].CostMicrosTotal += row.CostMicrosTotal
+			values[k].RequestCount += row.RequestCount
+		}
 	}
 	if total == 0 {
 		return nil, nil
 	}
 
-	query := `
-WITH labelled AS (
-    SELECT tag.key AS key, tag.value AS value, r.cost_micros AS cost_micros
-    FROM requests AS r
-    CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
-    WHERE r.customer_id = ?
-      AND r.started_at >= ? AND r.started_at < ?
-      AND r.tags @> ?::jsonb
-),
-per_value AS (
-    SELECT
-        key,
-        value,
-        SUM(cost_micros) AS cost_micros_total,
-        COUNT(*) AS request_count
-    FROM labelled
-    GROUP BY key, value
-),
-ranked AS (
-    SELECT
-        key, value, cost_micros_total, request_count,
-        ROW_NUMBER() OVER (
-            PARTITION BY key
-            ORDER BY cost_micros_total DESC, request_count DESC, value ASC
-        ) AS rank
-    FROM per_value
-),
-per_key AS (
-    SELECT
-        key,
-        COUNT(*) AS value_count,
-        SUM(cost_micros_total) AS cost_micros_total,
-        SUM(request_count) AS request_count
-    FROM per_value
-    GROUP BY key
-)
-SELECT
-    k.key AS key,
-    k.value_count AS value_count,
-    k.cost_micros_total AS cost_micros_total,
-    k.request_count AS request_count,
-    r.value AS value,
-    r.cost_micros_total AS value_cost_micros_total,
-    r.request_count AS value_request_count
-FROM per_key AS k
-JOIN ranked AS r ON r.key = k.key AND r.rank <= ?
-ORDER BY k.cost_micros_total DESC, k.request_count DESC, k.key ASC, r.rank ASC`
-
-	var rows []tagKeyRow
-	err = s.db.NewRaw(query, customerID, from, to, string(filter), topTagValues).Scan(ctx, &rows)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
+	byKey := map[string]*TagKeySummary{}
+	ranked := map[string][]tagValueRow{}
+	var keys []string
+	for _, k := range order {
+		row := *values[k]
+		summary := byKey[row.Key]
+		if summary == nil {
+			summary = &TagKeySummary{Key: row.Key}
+			byKey[row.Key] = summary
+			keys = append(keys, row.Key)
+		}
+		summary.ValueCount++
+		summary.CostMicrosTotal += row.CostMicrosTotal
+		summary.RequestCount += row.RequestCount
+		ranked[row.Key] = append(ranked[row.Key], row)
 	}
+	slices.SortFunc(keys, func(a, b string) int {
+		return cmp.Or(cmp.Compare(byKey[b].CostMicrosTotal, byKey[a].CostMicrosTotal),
+			cmp.Compare(byKey[b].RequestCount, byKey[a].RequestCount), strings.Compare(a, b))
+	})
 
-	var keys []TagKeySummary
-	for _, row := range rows {
-		if len(keys) == 0 || keys[len(keys)-1].Key != row.Key {
-			keys = append(keys, TagKeySummary{
-				Key:             row.Key,
-				ValueCount:      row.ValueCount,
+	var summaries []TagKeySummary
+	for _, name := range keys {
+		key := byKey[name]
+		key.Coverage = float64(key.RequestCount) / float64(total)
+		rows := ranked[name]
+		slices.SortFunc(rows, func(a, b tagValueRow) int {
+			return cmp.Or(cmp.Compare(b.CostMicrosTotal, a.CostMicrosTotal),
+				cmp.Compare(b.RequestCount, a.RequestCount), strings.Compare(a.Value, b.Value))
+		})
+		for _, row := range rows[:min(topTagValues, len(rows))] {
+			// A deployment with no prices configured records every row at zero, so a share of
+			// spend would be a division by nothing. Requests are what is left to rank by.
+			share := float64(row.RequestCount) / float64(key.RequestCount)
+			if key.CostMicrosTotal > 0 {
+				share = float64(row.CostMicrosTotal) / float64(key.CostMicrosTotal)
+			}
+			key.TopValues = append(key.TopValues, TagValueSummary{
+				Value:           row.Value,
 				CostMicrosTotal: row.CostMicrosTotal,
 				RequestCount:    row.RequestCount,
-				Coverage:        float64(row.RequestCount) / float64(total),
+				Share:           share,
 			})
 		}
-		key := &keys[len(keys)-1]
-		// A deployment with no prices configured records every row at zero, so a share of
-		// spend would be a division by nothing. Requests are what is left to rank by.
-		share := float64(row.ValueRequests) / float64(key.RequestCount)
-		if key.CostMicrosTotal > 0 {
-			share = float64(row.ValueCost) / float64(key.CostMicrosTotal)
-		}
-		key.TopValues = append(key.TopValues, TagValueSummary{
-			Value:           row.Value,
-			CostMicrosTotal: row.ValueCost,
-			RequestCount:    row.ValueRequests,
-			Share:           share,
-		})
+		summaries = append(summaries, *key)
 	}
-	return keys, nil
+	return summaries, nil
 }
 
 // CustomerActivity returns how much one customer's agents were used per bucket, oldest
@@ -699,33 +796,23 @@ func (s *Store) CustomerActivity(
 	}
 
 	unit := granularity.truncateUnit()
-	query := fmt.Sprintf(`
-WITH seen AS (
-    SELECT
-        date_trunc('%[1]s', s.created_at) AS bucket,
-        COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
-        s.caller_kind AS caller_kind
+	// Who was seen is read apart from the counts: a person is one person however many shards
+	// they talked to in a bucket, and a guest who signed up is the account they became, which
+	// the shared database knows rather than the shard.
+	people := fmt.Sprintf(`
+SELECT DISTINCT bucket, user_id FROM (
+    SELECT date_trunc('%[1]s', s.created_at) AS bucket, s.user_id, s.caller_kind
     FROM agent_sessions AS s
-    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
-        AND g.kind = 'guest'
     WHERE s.customer_id = ? AND s.created_at >= ? AND s.created_at < ?
     UNION ALL
-    SELECT
-        date_trunc('%[1]s', a.created_at) AS bucket,
-        COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
-        s.caller_kind AS caller_kind
+    SELECT date_trunc('%[1]s', a.created_at) AS bucket, s.user_id, s.caller_kind
     FROM agent_responses AS a
     JOIN agent_sessions AS s ON s.id = a.session_id
-    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
-        AND g.kind = 'guest'
     WHERE a.customer_id = ? AND a.created_at >= ? AND a.created_at < ?
-),
-user_counts AS (
-    SELECT bucket, COUNT(*) AS n
-    FROM (SELECT DISTINCT bucket, user_id FROM seen WHERE user_id <> '' AND caller_kind <> 'anonymous') AS people
-    GROUP BY bucket
-),
-session_counts AS (
+) AS seen
+WHERE user_id <> '' AND caller_kind <> 'anonymous'`, unit)
+	query := fmt.Sprintf(`
+WITH session_counts AS (
     SELECT date_trunc('%[1]s', created_at) AS bucket, COUNT(*) AS n
     FROM agent_sessions
     WHERE customer_id = ? AND created_at >= ? AND created_at < ?
@@ -751,36 +838,105 @@ call_counts AS (
     GROUP BY bucket
 ),
 buckets AS (
-    SELECT bucket FROM user_counts
-    UNION SELECT bucket FROM session_counts
+    SELECT bucket FROM session_counts
     UNION SELECT bucket FROM message_counts
     UNION SELECT bucket FROM call_counts
 )
 SELECT
     b.bucket AS bucket,
-    COALESCE(u.n, 0) AS active_users,
     COALESCE(s.n, 0) AS sessions,
     COALESCE(m.n, 0) AS messages,
     COALESCE(c.n, 0) AS calls,
     COALESCE(c.voice_minutes, 0) AS voice_minutes,
     COALESCE(c.phone_minutes, 0) AS phone_minutes
 FROM buckets AS b
-LEFT JOIN user_counts AS u ON u.bucket = b.bucket
 LEFT JOIN session_counts AS s ON s.bucket = b.bucket
 LEFT JOIN message_counts AS m ON m.bucket = b.bucket
-LEFT JOIN call_counts AS c ON c.bucket = b.bucket
-ORDER BY b.bucket ASC`, unit)
+LEFT JOIN call_counts AS c ON c.bucket = b.bucket`, unit)
 
-	var buckets []ActivityBucket
-	err := s.db.NewRaw(query,
-		customerID, from, to,
-		customerID, from, to,
-		customerID, from, to,
-		customerID, from, to,
-		customerID, from, to,
-	).Scan(ctx, &buckets)
+	type seenUser struct {
+		Bucket time.Time `bun:"bucket"`
+		UserID string    `bun:"user_id"`
+	}
+	type shardActivity struct {
+		counts []ActivityBucket
+		seen   []seenUser
+	}
+	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (shardActivity, error) {
+		var read shardActivity
+		if err := db.NewRaw(query,
+			customerID, from, to,
+			customerID, from, to,
+			customerID, from, to,
+		).Scan(ctx, &read.counts); err != nil {
+			return read, err
+		}
+		err := db.NewRaw(people, customerID, from, to, customerID, from, to).Scan(ctx, &read.seen)
+		return read, err
+	})
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: customer activity: %w", err))
+	}
+
+	var seen []seenUser
+	ids := map[string]bool{}
+	for _, answer := range answers {
+		for _, user := range answer.seen {
+			seen = append(seen, user)
+			ids[user.UserID] = true
+		}
+	}
+	claimed := map[string]string{}
+	if len(ids) > 0 {
+		var guests []User
+		err := s.db.NewSelect().Model(&guests).Column("id", "claimed_by").
+			Where("customer_id = ?", customerID).
+			Where("kind = ?", UserKindGuest).
+			Where("claimed_by IS NOT NULL AND claimed_by <> ''").
+			Where("id IN (?)", bun.In(slices.Collect(maps.Keys(ids)))).
+			Scan(ctx)
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("store: customer activity: claimed guests: %w", err))
+		}
+		for _, guest := range guests {
+			claimed[guest.ID] = guest.ClaimedBy
+		}
+	}
+
+	byBucket := map[int64]*ActivityBucket{}
+	at := func(bucket time.Time) *ActivityBucket {
+		key := bucket.Unix()
+		if byBucket[key] == nil {
+			byBucket[key] = &ActivityBucket{Bucket: bucket}
+		}
+		return byBucket[key]
+	}
+	for _, answer := range answers {
+		for _, counted := range answer.counts {
+			b := at(counted.Bucket)
+			b.Sessions += counted.Sessions
+			b.Messages += counted.Messages
+			b.Calls += counted.Calls
+			b.VoiceMinutes += counted.VoiceMinutes
+			b.PhoneMinutes += counted.PhoneMinutes
+		}
+	}
+	type person struct {
+		bucket int64
+		id     string
+	}
+	counted := map[person]bool{}
+	for _, user := range seen {
+		id := cmp.Or(claimed[user.UserID], user.UserID)
+		if key := (person{user.Bucket.Unix(), id}); !counted[key] {
+			counted[key] = true
+			at(user.Bucket).ActiveUsers++
+		}
+	}
+
+	var buckets []ActivityBucket
+	for _, key := range slices.Sorted(maps.Keys(byBucket)) {
+		buckets = append(buckets, *byBucket[key])
 	}
 	return buckets, nil
 }
@@ -793,12 +949,17 @@ func (s *Store) CustomerConcurrencyPeak(ctx context.Context, customerID string, 
 		return ConcurrencyPeak{}, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
+	const spans = `
+SELECT GREATEST(created_at, ?0) AS opened, LEAST(COALESCE(closed_at, now()), ?1) AS closed
+FROM agent_sessions
+WHERE customer_id = ?2 AND created_at < ?1 AND (closed_at IS NULL OR closed_at > ?0)`
+	if len(s.peers) > 0 {
+		return s.peakAcrossShards(ctx, spans, customerID, from, to)
+	}
+
 	var peaks []ConcurrencyPeak
-	err := s.db.NewRaw(`
-WITH spans AS (
-    SELECT GREATEST(created_at, ?0) AS opened, LEAST(COALESCE(closed_at, now()), ?1) AS closed
-    FROM agent_sessions
-    WHERE customer_id = ?2 AND created_at < ?1 AND (closed_at IS NULL OR closed_at > ?0)
+	err := s.shard.NewRaw(`
+WITH spans AS (`+spans+`
 ),
 edges AS (
     SELECT opened AS at, 1 AS delta FROM spans WHERE closed > opened
@@ -821,6 +982,49 @@ SELECT sessions, at FROM running ORDER BY sessions DESC, at ASC LIMIT 1`,
 	return peaks[0], nil
 }
 
+// peakAcrossShards is CustomerConcurrencyPeak over sessions open in several shards at once,
+// which no one shard's query can see: it reads every shard's spans and walks their edges here,
+// in the order the query does.
+func (s *Store) peakAcrossShards(ctx context.Context, spans, customerID string, from, to time.Time) (ConcurrencyPeak, error) {
+	type span struct {
+		Opened time.Time `bun:"opened"`
+		Closed time.Time `bun:"closed"`
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]span, error) {
+		var read []span
+		err := db.NewRaw(spans, from, to, customerID).Scan(ctx, &read)
+		return read, err
+	})
+	if err != nil {
+		return ConcurrencyPeak{}, stack.Wrap(fmt.Errorf("store: concurrency peak: %w", err))
+	}
+	type edge struct {
+		at    time.Time
+		delta int64
+	}
+	var edges []edge
+	for _, list := range lists {
+		for _, open := range list {
+			if open.Closed.After(open.Opened) {
+				edges = append(edges, edge{open.Opened, 1}, edge{open.Closed, -1})
+			}
+		}
+	}
+	slices.SortFunc(edges, func(a, b edge) int {
+		return cmp.Or(a.at.Compare(b.at), cmp.Compare(a.delta, b.delta))
+	})
+	var peak ConcurrencyPeak
+	var running int64
+	for _, e := range edges {
+		running += e.delta
+		if running > peak.Sessions {
+			at := e.at
+			peak = ConcurrencyPeak{Sessions: running, At: &at}
+		}
+	}
+	return peak, nil
+}
+
 // CustomerToolUsage returns how every tool one customer's agents ran in a window was used,
 // most called first, and the same figures over all of them. A web search the agent made
 // has no result item, so it is not a tool call here.
@@ -829,7 +1033,7 @@ func (s *Store) CustomerToolUsage(ctx context.Context, customerID string, from, 
 		return ToolUsage{}, nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
-	var rows []struct {
+	type usageRow struct {
 		Tool      string   `bun:"tool"`
 		Overall   bool     `bun:"overall"`
 		Calls     int64    `bun:"calls"`
@@ -838,7 +1042,9 @@ func (s *Store) CustomerToolUsage(ctx context.Context, customerID string, from, 
 		AvgMs     *float64 `bun:"avg_ms"`
 		P99Ms     *float64 `bun:"p99_ms"`
 	}
-	err := s.db.NewRaw(`
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]usageRow, error) {
+		var rows []usageRow
+		err := db.NewRaw(`
 WITH ran AS (
     SELECT
         r.tool_name AS tool,
@@ -868,25 +1074,59 @@ SELECT
 FROM ran
 GROUP BY GROUPING SETS ((tool), ())
 ORDER BY overall DESC, calls DESC, tool ASC`,
-		charsPerToken, ItemToolResult, ItemToolCall, customerID, from, to,
-	).Scan(ctx, &rows)
+			charsPerToken, ItemToolResult, ItemToolCall, customerID, from, to,
+		).Scan(ctx, &rows)
+		return rows, err
+	})
 	if err != nil {
 		return ToolUsage{}, nil, stack.Wrap(fmt.Errorf("store: tool usage: %w", err))
 	}
 
-	var overall ToolUsage
-	tools := make([]ToolUsage, 0, len(rows))
-	for _, row := range rows {
-		usage := ToolUsage{
-			Tool: row.Tool, Calls: row.Calls, Failed: row.Failed,
-			AvgTokens: row.AvgTokens, AvgMs: row.AvgMs, P99Ms: row.P99Ms,
+	// Averages and the 99th percentile of several shards are each weighted by the calls behind
+	// them (see shard_merge.go); with one shard they are its own.
+	type usageKey struct {
+		tool    string
+		overall bool
+	}
+	var order []usageKey
+	sums := map[usageKey]*ToolUsage{}
+	tokens, ms, p99s, calls := map[usageKey][]*float64{}, map[usageKey][]*float64{}, map[usageKey][]*float64{}, map[usageKey][]int64{}
+	for _, rows := range lists {
+		for _, row := range rows {
+			k := usageKey{row.Tool, row.Overall}
+			if sums[k] == nil {
+				sums[k] = &ToolUsage{Tool: row.Tool}
+				order = append(order, k)
+			}
+			sums[k].Calls += row.Calls
+			sums[k].Failed += row.Failed
+			avgTokens := row.AvgTokens
+			tokens[k] = append(tokens[k], &avgTokens)
+			ms[k] = append(ms[k], row.AvgMs)
+			p99s[k] = append(p99s[k], row.P99Ms)
+			calls[k] = append(calls[k], row.Calls)
 		}
-		if row.Overall {
+	}
+	var overall ToolUsage
+	tools := make([]ToolUsage, 0, len(order))
+	for _, k := range order {
+		usage := *sums[k]
+		if avg := weighted(tokens[k], calls[k]); avg != nil {
+			usage.AvgTokens = *avg
+		}
+		usage.AvgMs, usage.P99Ms = weighted(ms[k], calls[k]), weighted(p99s[k], calls[k])
+		if len(lists) == 1 {
+			usage.AvgMs, usage.P99Ms = ms[k][0], p99s[k][0]
+		}
+		if k.overall {
 			overall = usage
 			continue
 		}
 		tools = append(tools, usage)
 	}
+	slices.SortStableFunc(tools, func(a, b ToolUsage) int {
+		return cmp.Or(cmp.Compare(b.Calls, a.Calls), strings.Compare(a.Tool, b.Tool))
+	})
 	return overall, tools, nil
 }
 
@@ -901,26 +1141,32 @@ func (s *Store) ModelRequests(ctx context.Context, modality string, since time.T
 		return nil, stack.Wrap(errors.New("store: modality is required"))
 	}
 
-	var rows []struct {
+	type modelRow struct {
 		Provider string `bun:"provider"`
 		Model    string `bun:"model"`
 		Requests int64  `bun:"requests"`
 	}
-	err := s.db.NewSelect().
-		Table("requests").
-		Column("provider", "model").
-		ColumnExpr("COUNT(*) AS requests").
-		Where("modality = ?", modality).
-		Where("started_at >= ?", since).
-		Group("provider", "model").
-		Scan(ctx, &rows)
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]modelRow, error) {
+		var rows []modelRow
+		err := db.NewSelect().
+			Table("requests").
+			Column("provider", "model").
+			ColumnExpr("COUNT(*) AS requests").
+			Where("modality = ?", modality).
+			Where("started_at >= ?", since).
+			Group("provider", "model").
+			Scan(ctx, &rows)
+		return rows, err
+	})
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: model requests: %w", err))
 	}
 
-	counts := make(map[string]int64, len(rows))
-	for _, row := range rows {
-		counts[row.Provider+"/"+row.Model] = row.Requests
+	counts := map[string]int64{}
+	for _, rows := range lists {
+		for _, row := range rows {
+			counts[row.Provider+"/"+row.Model] += row.Requests
+		}
 	}
 	return counts, nil
 }

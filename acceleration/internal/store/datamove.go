@@ -1,11 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +38,14 @@ type dataTable struct {
 	// filter is an extra predicate on an export, for a table that holds more than one
 	// kind of row.
 	filter string
+	// shard is a table kept in the shards rather than the shared database.
+	shard bool
+}
+
+// rollup is a table of counts per key that every shard keeps its own rows of, so an export of
+// several shards folds the rows of one key into one.
+func (t dataTable) rollup() bool {
+	return strings.HasPrefix(t.name, "stats_") || strings.HasPrefix(t.name, "turn_")
 }
 
 // dataTables is everything that belongs to a customer, parents first.
@@ -85,21 +96,21 @@ var dataTables = []dataTable{
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
 	{name: "users", customer: "customer_id"},
-	{name: "calls", customer: "customer_id"},
-	{name: "call_bridges", customer: "customer_id"},
-	{name: "recordings", customer: "customer_id"},
-	{name: "agent_sessions", customer: "customer_id"},
-	{name: "agent_session_tools", parent: "agent_sessions", parentColumn: "session_id"},
-	{name: "agent_responses", customer: "customer_id"},
-	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id"},
+	{name: "calls", customer: "customer_id", shard: true},
+	{name: "call_bridges", customer: "customer_id", shard: true},
+	{name: "recordings", customer: "customer_id", shard: true},
+	{name: "agent_sessions", customer: "customer_id", shard: true},
+	{name: "agent_session_tools", parent: "agent_sessions", parentColumn: "session_id", shard: true},
+	{name: "agent_responses", customer: "customer_id", shard: true},
+	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id", shard: true},
 	{name: "agent_logs", customer: "customer_id"},
-	{name: "requests", customer: "customer_id"},
-	{name: "stats_hourly", customer: "customer_id"},
-	{name: "stats_daily", customer: "customer_id"},
-	{name: "stats_tags_hourly", customer: "customer_id"},
-	{name: "stats_tags_daily", customer: "customer_id"},
-	{name: "turn_stats_hourly", customer: "customer_id"},
-	{name: "turn_latency_hourly", customer: "customer_id"},
+	{name: "requests", customer: "customer_id", shard: true},
+	{name: "stats_hourly", customer: "customer_id", shard: true},
+	{name: "stats_daily", customer: "customer_id", shard: true},
+	{name: "stats_tags_hourly", customer: "customer_id", shard: true},
+	{name: "stats_tags_daily", customer: "customer_id", shard: true},
+	{name: "turn_stats_hourly", customer: "customer_id", shard: true},
+	{name: "turn_latency_hourly", customer: "customer_id", shard: true},
 	// Only what this app decided. The organization's policy covers apps whose rows are
 	// not this caller's to read.
 	{name: "policies", customer: "scope_id", filter: "scope = 'app'"},
@@ -207,12 +218,159 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 		return 0, fmt.Errorf("store: export cursor: %w", err)
 	}
 
+	if !s.Sharded() && len(s.peers) == 0 {
+		for _, table := range dataTables {
+			if err := s.exportTable(ctx, tx, table, customerID, write); err != nil {
+				return 0, err
+			}
+		}
+		return cursor, nil
+	}
+
+	// Every shard is read at one moment of its own. No table of the shared database points at
+	// a shard's, so writing the shared tables first still writes every parent first.
+	var shards []bun.Tx
+	for _, db := range s.shards() {
+		shardTx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		if err != nil {
+			return 0, fmt.Errorf("store: export: shard: %w", err)
+		}
+		defer shardTx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
+		shards = append(shards, shardTx)
+	}
 	for _, table := range dataTables {
-		if err := s.exportTable(ctx, tx, table, customerID, write); err != nil {
-			return 0, err
+		if !table.shard {
+			if err := s.exportTable(ctx, tx, table, customerID, write); err != nil {
+				return 0, err
+			}
+		}
+	}
+	for _, table := range dataTables {
+		if !table.shard {
+			continue
+		}
+		if table.rollup() {
+			if err := s.exportRollup(ctx, shards, table, customerID, write); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		for _, shardTx := range shards {
+			if err := s.exportTable(ctx, shardTx, table, customerID, write); err != nil {
+				return 0, err
+			}
 		}
 	}
 	return cursor, nil
+}
+
+// exportRollup writes a rollup table's rows of every shard as one row per key: counts and
+// totals summed, a percentile weighted by the requests or turns behind it, as the dashboard
+// merges them, and uptime left for the importing side to work out again.
+func (s *Store) exportRollup(ctx context.Context, shards []bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
+	shape, err := s.shapeOf(ctx, table.name)
+	if err != nil {
+		return err
+	}
+	// row is the first shard's row of a key, the others folded into it; weights are the
+	// requests or turns behind each percentile so far.
+	type keyed struct {
+		row     map[string]any
+		weights map[string]float64
+	}
+	var order []string
+	byKey := map[string]*keyed{}
+	for _, shardTx := range shards {
+		err := s.exportTable(ctx, shardTx, table, customerID, func(_ string, raw json.RawMessage) error {
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.UseNumber()
+			var row map[string]any
+			if err := decoder.Decode(&row); err != nil {
+				return fmt.Errorf("store: export %s: %w", table.name, err)
+			}
+			delete(row, "uptime")
+			var key strings.Builder
+			for _, column := range shape.keys {
+				fmt.Fprintf(&key, "%v\x00", row[column])
+			}
+			weight := rollupWeight(row)
+			into := byKey[key.String()]
+			if into == nil {
+				into = &keyed{row: row, weights: map[string]float64{}}
+				for column, value := range row {
+					if _, ok := value.(json.Number); ok && isPercentile(column) {
+						into.weights[column] = weight
+					}
+				}
+				byKey[key.String()] = into
+				order = append(order, key.String())
+				return nil
+			}
+			for column, value := range row {
+				number, ok := value.(json.Number)
+				if !ok || slices.Contains(shape.keys, column) {
+					continue
+				}
+				if !isPercentile(column) {
+					was, _ := into.row[column].(json.Number)
+					into.row[column] = addNumbers(was, number)
+					continue
+				}
+				before := into.weights[column]
+				if before+weight > 0 {
+					was, _ := into.row[column].(json.Number)
+					x, _ := was.Float64()
+					y, _ := number.Float64()
+					into.row[column] = json.Number(strconv.FormatFloat((x*before+y*weight)/(before+weight), 'f', -1, 64))
+				}
+				into.weights[column] = before + weight
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	for _, key := range order {
+		encoded, err := json.Marshal(byKey[key].row)
+		if err != nil {
+			return fmt.Errorf("store: export %s: %w", table.name, err)
+		}
+		if err := write(table.name, encoded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rollupWeight is how many requests or turns a rollup row counts.
+func rollupWeight(row map[string]any) float64 {
+	for _, column := range []string{"request_count", "turn_count", "count"} {
+		if number, ok := row[column].(json.Number); ok {
+			weight, _ := number.Float64()
+			return weight
+		}
+	}
+	return 0
+}
+
+func isPercentile(column string) bool {
+	return strings.Contains(column, "_p50_") || strings.Contains(column, "_p95_") || strings.Contains(column, "_p99_")
+}
+
+// addNumbers sums two numbers, as integers while both are.
+func addNumbers(a, b json.Number) json.Number {
+	if a == "" {
+		return b
+	}
+	x, errX := a.Int64()
+	y, errY := b.Int64()
+	if errX == nil && errY == nil {
+		return json.Number(strconv.FormatInt(x+y, 10))
+	}
+	fx, _ := a.Float64()
+	fy, _ := b.Float64()
+	return json.Number(strconv.FormatFloat(fx+fy, 'f', -1, 64))
 }
 
 // changeWatermark is the highest sequence number every change at or below has committed.
@@ -285,7 +443,16 @@ func (t dataTable) selectRows(customerID string) (string, []any) {
 // It upserts, so importing the same export twice is the same as importing it once, which
 // is what lets a move be resumed after it was interrupted.
 func (s *Store) ImportRow(ctx context.Context, customerID, table string, row json.RawMessage) error {
-	return s.importRow(ctx, s.db, customerID, table, row)
+	spec, _ := dataTableByName(table)
+	return s.importRow(ctx, s.sideOf(spec), customerID, table, row)
+}
+
+// sideOf is the database a table's rows are written to here: this shard's or the shared one.
+func (s *Store) sideOf(table dataTable) *bun.DB {
+	if table.shard {
+		return s.shard
+	}
+	return s.db
 }
 
 func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table string, row json.RawMessage) error {
@@ -457,12 +624,34 @@ LIMIT ?`, changeWatermark), customerID, after, limit)
 }
 
 // ApplyChanges replays changes onto this deployment, in one transaction so a batch either
-// arrives or does not.
+// arrives or does not. With shards there is one for the shared tables and one for this
+// shard's, each replayed in order, as no row of one points at a row of the other.
 func (s *Store) ApplyChanges(ctx context.Context, customerID string, changes []DataChange) error {
 	if customerID == "" {
 		return errors.New("store: a customer id is required")
 	}
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	if !s.Sharded() {
+		return s.applyChanges(ctx, s.db, customerID, changes)
+	}
+	var shared, sharded []DataChange
+	for _, change := range changes {
+		if spec, _ := dataTableByName(change.Table); spec.shard {
+			sharded = append(sharded, change)
+		} else {
+			shared = append(shared, change)
+		}
+	}
+	if err := s.applyChanges(ctx, s.db, customerID, shared); err != nil {
+		return err
+	}
+	return s.applyChanges(ctx, s.shard, customerID, sharded)
+}
+
+func (s *Store) applyChanges(ctx context.Context, db *bun.DB, customerID string, changes []DataChange) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for _, change := range changes {
 			switch change.Op {
 			case ChangeDelete:
@@ -533,13 +722,18 @@ func (s *Store) PruneDataChanges(ctx context.Context, retention time.Duration) (
 	return result.RowsAffected()
 }
 
-// WatchDataChanges attaches the recording trigger to every table an export carries.
+// watchDataChanges attaches the recording trigger to every table an export carries, in one
+// database.
+//
+// Changes are only recorded for a customer StartDataCapture marked, which it does in the shared
+// database, so a shard's own tables record none: a deployment of several shards replicates the
+// shared tables, and a move off it carries the shards' rows as the export read them.
 //
 // It runs on every start rather than once in a migration, so a table added later is
 // covered by the deployment reaching it rather than by somebody remembering to write the
 // trigger by hand. Replacing a trigger that is already right costs a catalogue write at
 // startup and nothing afterwards.
-func (s *Store) WatchDataChanges(ctx context.Context) error {
+func (s *Store) watchDataChanges(ctx context.Context, db *bun.DB) error {
 	for _, table := range dataTables {
 		shape, err := s.shapeOf(ctx, table.name)
 		if err != nil {
@@ -557,7 +751,7 @@ func (s *Store) WatchDataChanges(ctx context.Context) error {
 CREATE OR REPLACE TRIGGER data_changes_recorded
 AFTER INSERT OR UPDATE OR DELETE ON %s
 FOR EACH ROW EXECUTE FUNCTION record_data_change(%s)`, table.name, strings.Join(arguments, ", "))
-		if _, err := s.db.ExecContext(ctx, query); err != nil {
+		if _, err := db.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("store: watch %s: %w", table.name, err)
 		}
 	}

@@ -168,7 +168,9 @@ func (s *Store) AgentLog(ctx context.Context, customer string, id int64) (*Agent
 	if err != nil {
 		return &row, err
 	}
-	if row.EventType == "provider_request" {
+	// A request's id is only unique in its own database, so with shards the log row's own
+	// details, which carry the error since 20260914175000_agent_log_failures.sql, are the answer.
+	if row.EventType == "provider_request" && !s.Sharded() {
 		rawID, _ := row.Details["request_id"].(string)
 		requestID, parseErr := strconv.ParseInt(rawID, 10, 64)
 		if parseErr == nil && requestID > 0 {

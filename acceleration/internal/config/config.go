@@ -17,7 +17,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,7 +78,11 @@ type Config struct {
 	MockProviders bool `koanf:"mock_providers"`
 	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
 	// means no profiling endpoint.
-	PprofAddr  string     `koanf:"pprof_addr"`
+	PprofAddr string `koanf:"pprof_addr"`
+	// Shard names the part of a deployment this router is in, when its calls are kept apart
+	// from what every part shares (see Postgres.ShardDSN and Redis.Shard). Empty is a
+	// deployment of one part.
+	Shard      string     `koanf:"shard"`
 	Postgres   Postgres   `koanf:"postgres"`
 	Redis      Redis      `koanf:"redis"`
 	Node       Node       `koanf:"node"`
@@ -104,12 +110,31 @@ type Models struct {
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
 // records nothing, which /health reports.
 type Postgres struct {
+	// DSN is the database every shard shares: tenancy, agents, connectors and phone numbers.
+	// A deployment of one shard keeps everything there.
 	DSN string `koanf:"dsn"`
+	// ShardDSN is where this shard writes the calls, sessions and requests it runs. Empty
+	// writes them to DSN.
+	ShardDSN string `koanf:"shard_dsn"`
+	// Shards is every shard's DSN by name, this one's included, which reads of calls,
+	// sessions and requests cover. Empty reads this shard's alone.
+	Shards map[string]string `koanf:"shards"`
 }
 
 // Redis holds live provider health and the daily counters. An empty address is a router
 // that routes without them.
 type Redis struct {
+	// Addr is the Redis every shard shares: caches, counters and which node holds a session.
+	Addr     string `koanf:"addr"`
+	Username string `koanf:"username"`
+	Password string `koanf:"password"`
+	// Shard is this shard's own Redis, for provider health and a session's events. An empty
+	// address uses the shared one.
+	Shard ShardRedis `koanf:"shard"`
+}
+
+// ShardRedis is one shard's own Redis.
+type ShardRedis struct {
 	Addr     string `koanf:"addr"`
 	Username string `koanf:"username"`
 	Password string `koanf:"password"`
@@ -286,35 +311,42 @@ type Telnyx struct {
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
 var variables = map[string]string{
-	"addr":                "ROUTER_ADDR",
-	"public_url":          "ROUTER_PUBLIC_URL",
-	"log_level":           "ROUTER_LOG_LEVEL",
-	"dashboard_url":       "DASHBOARD_BASE_URL",
-	"trusted_proxies":     "ROUTER_TRUSTED_PROXIES",
-	"routing_config":      "ROUTER_CONFIG",
-	"phone_config":        "ROUTER_PHONE_CONFIG",
-	"voices_bucket_url":   "ROUTER_VOICES_BUCKET_URL",
-	"mock_providers":      "ROUTER_MOCK_PROVIDERS",
-	"pprof_addr":          "ROUTER_PPROF_ADDR",
-	"postgres.dsn":        "ROUTER_POSTGRES_DSN",
-	"redis.addr":          "ROUTER_REDIS_ADDR",
-	"redis.username":      "ROUTER_REDIS_USERNAME",
-	"redis.password":      "ROUTER_REDIS_PASSWORD",
-	"node.advertise":      "ROUTER_NODE_ADVERTISE",
-	"node.listen":         "ROUTER_NODE_LISTEN",
-	"listen_fd":           "ROUTER_LISTEN_FD",
-	"shutdown.drain":      "ROUTER_SHUTDOWN_DRAIN",
-	"auth.mode":           "ROUTER_AUTH_MODE",
-	"auth.kek":            "ROUTER_AUTH_KEK",
-	"auth.ops_key":        "ROUTER_AUTH_OPS_KEY",
-	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
-	"stream.api_key":      "STREAM_API_KEY",
-	"stream.api_secret":   "STREAM_API_SECRET",
-	"stream.base_url":     "STREAM_BASE_URL",
-	"stream.user_token":   "STREAM_USER_TOKEN",
-	"stream.tenancy":      "ROUTER_STREAM_TENANCY",
-	"stream.fallback":     "ROUTER_STREAM_FALLBACK",
-	"stream.app_id":       "ROUTER_STREAM_APP_ID",
+	"addr":               "ROUTER_ADDR",
+	"public_url":         "ROUTER_PUBLIC_URL",
+	"log_level":          "ROUTER_LOG_LEVEL",
+	"dashboard_url":      "DASHBOARD_BASE_URL",
+	"trusted_proxies":    "ROUTER_TRUSTED_PROXIES",
+	"routing_config":     "ROUTER_CONFIG",
+	"phone_config":       "ROUTER_PHONE_CONFIG",
+	"voices_bucket_url":  "ROUTER_VOICES_BUCKET_URL",
+	"mock_providers":     "ROUTER_MOCK_PROVIDERS",
+	"pprof_addr":         "ROUTER_PPROF_ADDR",
+	"shard":              "ROUTER_SHARD",
+	"postgres.dsn":       "ROUTER_POSTGRES_DSN",
+	"postgres.shard_dsn": "ROUTER_POSTGRES_SHARD_DSN",
+	"postgres.shards":    "ROUTER_POSTGRES_SHARDS",
+	"redis.addr":         "ROUTER_REDIS_ADDR",
+	"redis.username":     "ROUTER_REDIS_USERNAME",
+	"redis.password":     "ROUTER_REDIS_PASSWORD",
+
+	"redis.shard.addr":     "ROUTER_REDIS_SHARD_ADDR",
+	"redis.shard.username": "ROUTER_REDIS_SHARD_USERNAME",
+	"redis.shard.password": "ROUTER_REDIS_SHARD_PASSWORD",
+	"node.advertise":       "ROUTER_NODE_ADVERTISE",
+	"node.listen":          "ROUTER_NODE_LISTEN",
+	"listen_fd":            "ROUTER_LISTEN_FD",
+	"shutdown.drain":       "ROUTER_SHUTDOWN_DRAIN",
+	"auth.mode":            "ROUTER_AUTH_MODE",
+	"auth.kek":             "ROUTER_AUTH_KEK",
+	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
+	"data_move.retention":  "ROUTER_DATA_MOVE_RETENTION",
+	"stream.api_key":       "STREAM_API_KEY",
+	"stream.api_secret":    "STREAM_API_SECRET",
+	"stream.base_url":      "STREAM_BASE_URL",
+	"stream.user_token":    "STREAM_USER_TOKEN",
+	"stream.tenancy":       "ROUTER_STREAM_TENANCY",
+	"stream.fallback":      "ROUTER_STREAM_FALLBACK",
+	"stream.app_id":        "ROUTER_STREAM_APP_ID",
 
 	"stream.mint_url":   "ROUTER_STREAM_MINT_URL",
 	"stream.mint_token": "ROUTER_STREAM_MINT_TOKEN",
@@ -344,6 +376,10 @@ var variables = map[string]string{
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
 var lists = map[string]bool{"trusted_proxies": true}
+
+// pairs are the settings written as a comma-separated variable of name=value and as a
+// mapping in YAML.
+var pairs = map[string]bool{"postgres.shards": true}
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -459,6 +495,9 @@ func environment() *env.Env {
 			if lists[key] {
 				return key, splitList(value)
 			}
+			if pairs[key] {
+				return key, splitPairs(value)
+			}
 			return key, value
 		},
 	})
@@ -499,6 +538,31 @@ func (c Config) validate() error {
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
+	}
+	return c.validateShard()
+}
+
+// validateShard refuses shard settings that would write a shard's calls where no reader
+// looks for them.
+func (c Config) validateShard() error {
+	if c.Postgres.ShardDSN != "" && c.Postgres.DSN == "" {
+		return errors.New("config: postgres.shard_dsn is a shard's half of postgres.dsn: set postgres.dsn")
+	}
+	if c.Redis.Shard.Addr != "" && c.Redis.Addr == "" {
+		return errors.New("config: redis.shard.addr is a shard's half of redis.addr: set redis.addr")
+	}
+	if len(c.Postgres.Shards) == 0 {
+		return nil
+	}
+	if c.Shard == "" {
+		return errors.New("config: postgres.shards names every shard: set shard to this one's name")
+	}
+	own, listed := c.Postgres.Shards[c.Shard]
+	if !listed {
+		return fmt.Errorf("config: postgres.shards does not list this shard, %q", c.Shard)
+	}
+	if own != c.Postgres.ShardDSN {
+		return fmt.Errorf("config: postgres.shards lists shard %q at another DSN than postgres.shard_dsn", c.Shard)
 	}
 	return nil
 }
@@ -546,10 +610,16 @@ func (c Config) export() error {
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"pprof_addr":                    c.PprofAddr,
+		"shard":                         c.Shard,
 		"postgres.dsn":                  c.Postgres.DSN,
+		"postgres.shard_dsn":            c.Postgres.ShardDSN,
+		"postgres.shards":               joinPairs(c.Postgres.Shards),
 		"redis.addr":                    c.Redis.Addr,
 		"redis.username":                c.Redis.Username,
 		"redis.password":                c.Redis.Password,
+		"redis.shard.addr":              c.Redis.Shard.Addr,
+		"redis.shard.username":          c.Redis.Shard.Username,
+		"redis.shard.password":          c.Redis.Shard.Password,
 		"node.advertise":                c.Node.Advertise,
 		"node.listen":                   c.Node.Listen,
 		"listen_fd":                     listenFD(c.ListenFD),
@@ -607,6 +677,29 @@ func splitList(raw string) []string {
 		}
 	}
 	return entries
+}
+
+// splitPairs reads a comma-separated variable of name=value entries. An entry with no name
+// is dropped, the same as an empty one.
+func splitPairs(raw string) map[string]string {
+	entries := map[string]string{}
+	for _, entry := range splitList(raw) {
+		name, value, _ := strings.Cut(entry, "=")
+		if name = strings.TrimSpace(name); name != "" {
+			entries[name] = strings.TrimSpace(value)
+		}
+	}
+	return entries
+}
+
+// joinPairs writes what splitPairs reads, in name order so the variable is the same every
+// time.
+func joinPairs(entries map[string]string) string {
+	written := make([]string, 0, len(entries))
+	for _, name := range slices.Sorted(maps.Keys(entries)) {
+		written = append(written, name+"="+entries[name])
+	}
+	return strings.Join(written, ",")
 }
 
 // listenFD writes an inherited socket back, or nothing for none: descriptor zero is standard

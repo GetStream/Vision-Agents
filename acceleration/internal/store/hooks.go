@@ -113,12 +113,16 @@ func (s *Store) CallByAgentInApp(ctx context.Context, scope AppScope, agentID st
 	if agentID == "" {
 		return Call{}, errors.New("store: an agent id is required")
 	}
-	var calls []Call
-	err := s.db.NewSelect().Model(&calls).Where("agent_id = ?", agentID).
-		ApplyQueryBuilder(scope.where).Order("started_at DESC").Limit(20).Scan(ctx)
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]Call, error) {
+		var calls []Call
+		err := db.NewSelect().Model(&calls).Where("agent_id = ?", agentID).
+			ApplyQueryBuilder(scope.where).Order("started_at DESC").Limit(20).Scan(ctx)
+		return calls, err
+	})
 	if err != nil {
 		return Call{}, fmt.Errorf("store: call by agent: %w", err)
 	}
+	calls := merged(lists, func(a, b Call) int { return b.StartedAt.Compare(a.StartedAt) }, 20)
 	switch customers(calls, func(c Call) string { return c.CustomerID }) {
 	case 0:
 		return Call{}, unknownCall(agentID)

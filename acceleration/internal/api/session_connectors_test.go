@@ -427,7 +427,7 @@ func (s *SessionConnectorsSuite) toolRanOn(as *testClient, events *websocket.Con
 func (s *SessionConnectorsSuite) storedSelections(id string) string {
 	var stored string
 	s.Require().Eventually(func() bool {
-		return s.store.DB().QueryRowContext(context.Background(),
+		return s.store.ShardDB().QueryRowContext(context.Background(),
 			"SELECT connector_selections::text FROM agent_sessions WHERE id = ?", id).Scan(&stored) == nil
 	}, settleFor, 20*time.Millisecond)
 	return stored

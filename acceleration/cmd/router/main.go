@@ -515,6 +515,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Address:  settings.Redis.Addr,
 			Username: settings.Redis.Username,
 			Password: settings.Redis.Password,
+			Shard: live.Shard{
+				Address:  settings.Redis.Shard.Addr,
+				Username: settings.Redis.Shard.Username,
+				Password: settings.Redis.Shard.Password,
+			},
 		})
 		if err != nil {
 			return err
@@ -1003,11 +1008,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// node needs the sessions reachable from whichever node a socket lands on. The relay
 	// is what reaches them, and Redis is all it takes: a single-node deployment gets one
 	// anyway and nothing is published that nobody asks for.
-	var sessionRelay *relay.Bus
+	// The relay is the shard's, since a session's frames only travel between the nodes of the
+	// shard running it. Work for a node's workers is asked for from any shard, so it travels
+	// on the shared Redis.
+	var sessionRelay, workBus *relay.Bus
 	if liveClient != nil {
-		sessionRelay, err = relay.New(relay.Options{Redis: liveClient.Redis(), Logger: logger})
+		sessionRelay, err = relay.New(relay.Options{Redis: liveClient.ShardRedis(), Logger: logger})
 		if err != nil {
 			return err
+		}
+		workBus = sessionRelay
+		if liveClient.ShardRedis() != liveClient.Redis() {
+			if workBus, err = relay.New(relay.Options{Redis: liveClient.Redis(), Logger: logger}); err != nil {
+				return err
+			}
 		}
 	} else {
 		logger.Warn("no redis configured, so a session is only reachable on the node running it",
@@ -1017,8 +1031,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// A worker waits on whichever node its socket landed on, and a session needing it may be
 	// running on any other.
 	var everyWorker *node.Workers
-	if sessionRelay != nil && directory != nil {
-		everyWorker, err = node.NewWorkers(ctx, workers, directory, sessionRelay, logger)
+	if workBus != nil && directory != nil {
+		everyWorker, err = node.NewWorkers(ctx, workers, directory, workBus, logger)
 		if err != nil {
 			return err
 		}
@@ -1447,7 +1461,11 @@ func openStore(ctx context.Context, settings config.Config) (*store.Store, error
 	if settings.Postgres.DSN == "" {
 		return nil, errors.New("this needs a database: set postgres.dsn")
 	}
-	pgStore, err := store.Open(settings.Postgres.DSN)
+	pgStore, err := store.OpenShards(store.Options{
+		DSN:      settings.Postgres.DSN,
+		ShardDSN: settings.Postgres.ShardDSN,
+		Shards:   settings.Postgres.Shards,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1505,6 +1523,7 @@ func newDirectory(
 	return node.NewDirectory(node.DirectoryOptions{
 		Redis:   liveClient.Redis(),
 		Address: address,
+		Shard:   settings.Shard,
 		Logger:  logger,
 	})
 }

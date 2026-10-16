@@ -4,6 +4,8 @@ import (
 	"context"
 	"math/rand/v2"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -36,6 +38,10 @@ func (s *Server) onOwningNode(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if r.Header.Get("Upgrade") != "" {
+			s.proxySocket(w, r, address)
+			return
+		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), forwardTimeout)
 		defer cancel()
@@ -58,11 +64,6 @@ func (s *Server) owningNode(r *http.Request) (string, bool) {
 	if r.Header.Get(node.ForwardedHeader) != "" {
 		return "", false
 	}
-	// A socket cannot be carried over a call that answers once, and does not need to be:
-	// the relay reaches a session's events wherever the socket lands.
-	if r.Header.Get("Upgrade") != "" {
-		return "", false
-	}
 	id, ok := sessionInPath(r.URL.Path)
 	if !ok {
 		return "", false
@@ -82,7 +83,36 @@ func (s *Server) owningNode(r *http.Request) (string, bool) {
 	if address == "" || address == s.directory.Address() {
 		return "", false
 	}
+	// A socket cannot be carried over a call that answers once, and within a shard does not
+	// need to be: the relay reaches a session's events wherever the socket lands. The relay
+	// is the shard's own, so a socket for a session another shard runs is proxied there.
+	if r.Header.Get("Upgrade") != "" {
+		other, err := s.directory.InAnotherShard(r.Context(), address)
+		if err != nil {
+			s.logger.Warn("could not find out which shard a node is in", "node", address, "error", err)
+			return "", false
+		}
+		return address, other
+	}
 	return address, true
+}
+
+// proxySocket carries a socket to the node running its session, upgrade and all, for as long
+// as it stays open. The node at the other end answers it as one that landed there.
+func (s *Server) proxySocket(w http.ResponseWriter, r *http.Request, address string) {
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(out *httputil.ProxyRequest) {
+			out.SetURL(&url.URL{Scheme: "http", Host: address})
+			out.Out.Host = r.Host
+			out.Out.Header.Set(node.ForwardedHeader, "1")
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			s.logger.Error("could not reach the node running a session",
+				"node", address, "path", r.URL.Path, "error", err)
+			writeError(w, unavailable(unreachableNode))
+		},
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 // sessionInPath returns the session a path is about, if it is about one.
