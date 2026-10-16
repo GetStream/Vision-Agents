@@ -1117,6 +1117,20 @@ func (s *ConfigsSuite) TestAFixedBindingGrantingAToolItsConnectorLeavesOutIsRefu
 	s.Contains(failure, leftOutSQL)
 }
 
+// TestAGrantIsJudgedByTheMCPSourceAlone: a source of another kind carrying a rule for the
+// tool does not leave it out, as the mcp source's filter reads the mcp source only.
+func (s *ConfigsSuite) TestAGrantIsJudgedByTheMCPSourceAlone() {
+	manifest := core.Manifest{Sources: []core.SourceRule{
+		{Kind: "rest", Tools: []core.ToolRule{{Name: "execute_sql", NeedsScopes: []string{"agent:sql:run"}}}},
+		{Kind: core.SourceKindMCP},
+	}}
+	binding := AgentConnectorBinding{Name: "metabase", ConnectorId: "metabase", Tools: []ConnectorToolGrant{{Name: "execute_sql"}}}
+
+	complaint, ok := leftOutGrant(binding, manifest)
+
+	s.True(ok, complaint)
+}
+
 func (s *ConfigsSuite) TestReplacingOrPatchingInAToolTheConnectorLeavesOutIsRefused() {
 	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
 

@@ -639,13 +639,15 @@ func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindi
 // needs a scope the connector never asks for: no session would be offered it. A pattern
 // matches only what the connector lists, so tool_patterns never reach one.
 func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string, bool) {
+	source := core.MCPSource(manifest.Sources)
+	if source == nil {
+		return "", true
+	}
 	for _, tool := range binding.Tools {
-		for _, source := range manifest.Sources {
-			if unasked := source.UnaskedScopes(manifest.Scopes.List, tool.Name); len(unasked) > 0 {
-				return fmt.Sprintf("connector binding %q grants %q, which connector %q leaves out: it needs %s, "+
-					"which the connector never asks for", binding.Name, tool.Name, binding.ConnectorId,
-					strings.Join(unasked, ", ")), false
-			}
+		if unasked := source.UnaskedScopes(manifest.Scopes.List, tool.Name); len(unasked) > 0 {
+			return fmt.Sprintf("connector binding %q grants %q, which connector %q leaves out: it needs %s, "+
+				"which the connector never asks for", binding.Name, tool.Name, binding.ConnectorId,
+				strings.Join(unasked, ", ")), false
 		}
 	}
 	return "", true
