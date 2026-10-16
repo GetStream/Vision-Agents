@@ -71,9 +71,9 @@ class SyncAgentRequest:
                 They are subscribed to in the same knowledge base as the files, so one lookup covers both.
             left_out_connectors (list[LeftOutConnector] | Unset): The connectors agent.yaml names that the client left out
                 of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the
-                config, so the dashboard can say what the agent is missing. Sent only alongside connectors, else the sync is
-                refused: a sync that sends connectors replaces the stored ones with these, or with none when this is left out,
-                and a sync that sends neither leaves them alone. At most 64, as connectors.
+                config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a
+                sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync
+                that sends neither leaves them alone. At most 64, as connectors.
             llm (str | Unset):
             mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
                 login.

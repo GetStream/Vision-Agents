@@ -6990,7 +6990,7 @@ type SyncAgentRequest struct {
 	// KnowledgeUrls The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both.
 	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty"`
 
-	// LeftOutConnectors The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. Sent only alongside connectors, else the sync is refused: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors.
+	// LeftOutConnectors The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors.
 	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
 	Llm               *string             `json:"llm,omitempty"`
 
