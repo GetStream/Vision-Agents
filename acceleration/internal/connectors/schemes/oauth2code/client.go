@@ -259,7 +259,7 @@ func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.Re
 	}
 	raw, err := read(response.Body)
 	if err != nil {
-		return client{}, err
+		return client{}, fmt.Errorf("%w: %w", ErrRegistration, err)
 	}
 	var registered struct {
 		ClientID     string                `json:"client_id"`

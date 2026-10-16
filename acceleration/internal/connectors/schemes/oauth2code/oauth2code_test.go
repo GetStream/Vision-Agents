@@ -252,6 +252,66 @@ func (s *OAuth2CodeSuite) TestARefusedRegistrationWithoutAnErrorBodySaysItsStatu
 	s.Equal("oauth2code: register: HTTP 400", err.Error())
 }
 
+// TestARefusedRegistrationQuotesAtMost256BytesOfItsError: the error member is the provider's
+// too, bounded like the description.
+func (s *OAuth2CodeSuite) TestARefusedRegistrationQuotesAtMost256BytesOfItsError() {
+	srv, _ := s.registrar(http.StatusBadRequest, `{"error":"`+strings.Repeat("e", 1000)+`"}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().ErrorIs(err, oauth2code.ErrRegistration)
+	s.Equal("oauth2code: register: HTTP 400: "+strings.Repeat("e", 256), err.Error())
+}
+
+// TestARefusedRegistrationWithJSONButNoErrorSaysItsStatus: JSON that is not RFC 7591's error
+// response is the server's to fill, so none of it is quoted.
+func (s *OAuth2CodeSuite) TestARefusedRegistrationWithJSONButNoErrorSaysItsStatus() {
+	srv, _ := s.registrar(http.StatusBadRequest, `{"message":"x"}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().ErrorIs(err, oauth2code.ErrRegistration)
+	s.Equal("oauth2code: register: HTTP 400", err.Error())
+}
+
+// TestARefusedRegistrationQuotesOnlyTheHostOfAURLInItsDescription: a server may echo what it
+// was sent, and a URL's query is not for the answer.
+func (s *OAuth2CodeSuite) TestARefusedRegistrationQuotesOnlyTheHostOfAURLInItsDescription() {
+	srv, _ := s.registrar(http.StatusBadRequest, `{"error":"invalid_redirect_uri","error_description":"https://idp.example/x?t=1"}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().ErrorIs(err, oauth2code.ErrRegistration)
+	s.Equal("oauth2code: register: HTTP 400: invalid_redirect_uri: https://idp.example", err.Error())
+}
+
+// TestARegistrationServerThatDropsTheRequestIsARegistrationError: the API answers a
+// customer-and-DCR connector's registration errors with the app's own OAuth client path, by
+// ErrRegistration.
+func (s *OAuth2CodeSuite) TestARegistrationServerThatDropsTheRequestIsARegistrationError() {
+	srv := s.registrarHandling(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) })
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.ErrorIs(err, oauth2code.ErrRegistration)
+}
+
+func (s *OAuth2CodeSuite) TestARegistrationAnswerWithoutAClientIDIsARegistrationError() {
+	srv, _ := s.registrar(http.StatusCreated, `{}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.ErrorIs(err, oauth2code.ErrRegistration)
+}
+
+func (s *OAuth2CodeSuite) TestARegistrationAnswerOverOneMiBIsARegistrationError() {
+	srv, _ := s.registrar(http.StatusCreated, `{"client_id":"`+strings.Repeat("x", 1<<20)+`"}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.ErrorIs(err, oauth2code.ErrRegistration)
+}
+
 func (s *OAuth2CodeSuite) TestARegisteredClientSecretBasicClientAuthenticatesWithBasic() {
 	s.connectsAsRegistered(core.AuthClientSecretBasic)
 }
@@ -704,22 +764,27 @@ func asMetadata(issuer, authorize string) map[string]any {
 // and the client metadata each registration sent.
 func (s *OAuth2CodeSuite) registrar(status int, body string) (*httptest.Server, <-chan map[string]any) {
 	sent := make(chan map[string]any, 1)
-	srv := s.metadataServer(func(base string) map[string]any {
+	srv := s.registrarHandling(func(w http.ResponseWriter, r *http.Request) {
+		var metadata map[string]any
+		s.NoError(json.NewDecoder(r.Body).Decode(&metadata))
+		sent <- metadata
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	})
+	return srv, sent
+}
+
+// registrarHandling is a server whose metadata names /register, answered by handle.
+func (s *OAuth2CodeSuite) registrarHandling(handle http.HandlerFunc) *httptest.Server {
+	return s.metadataServer(func(base string) map[string]any {
 		metadata := asMetadata(base, base+"/authorize")
 		metadata["registration_endpoint"] = base + "/register"
 		return map[string]any{
 			"/.well-known/oauth-authorization-server": metadata,
-			"/register": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var metadata map[string]any
-				s.NoError(json.NewDecoder(r.Body).Decode(&metadata))
-				sent <- metadata
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(status)
-				_, _ = io.WriteString(w, body)
-			}),
+			"/register": handle,
 		}
 	})
-	return srv, sent
 }
 
 // registering is the Linear manifest pointed at srv, registering its client there.
