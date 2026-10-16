@@ -494,6 +494,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getConsentReturnUrls" => {
+          method: :get, path: "/v1/agents/consent-return-urls",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getConversationCommand" => {
           method: :get, path: "/v1/agents/conversations/{cid}/commands/{request_id}",
           path_params: %w[cid request_id].freeze, query: %w[agent_id].freeze,
@@ -1178,6 +1184,12 @@ module GetStream
           body: "ConnectorProviderAppRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "setConsentReturnUrls" => {
+          method: :put, path: "/v1/agents/consent-return-urls",
+          path_params: [].freeze, query: [].freeze,
+          body: "ConsentReturnUrls", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "setOperatorProviderApp" => {
           method: :put, path: "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
           path_params: %w[customer_id id].freeze, query: [].freeze,
@@ -1744,6 +1756,10 @@ module GetStream
         "ConnectorToolGrant" => {
           properties: %w[name schema_digest].freeze,
           required: %w[name].freeze, open: false
+        }.freeze,
+        "ConsentReturnUrls" => {
+          properties: %w[urls].freeze,
+          required: %w[urls].freeze, open: false
         }.freeze,
         "Contact" => {
           properties: %w[attempts call_id error id instructions state to_number vendor_call_id].freeze,

@@ -34,9 +34,9 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+ * The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, not_implemented 501, unavailable 503.
  *
- * Values: invalid_request,authentication,permission,not_found,method_not_allowed,not_acceptable,conflict,gone,payload_too_large,unsupported_media_type,rate_limited,`internal`,unavailable,unknown_default_open_api
+ * Values: invalid_request,authentication,permission,not_found,method_not_allowed,not_acceptable,conflict,gone,payload_too_large,unsupported_media_type,rate_limited,`internal`,not_implemented,unavailable,unknown_default_open_api
  */
 @Serializable(with = ErrorTypeSerializer::class)
 internal enum class ErrorType(val value: kotlin.String) {
@@ -76,6 +76,9 @@ internal enum class ErrorType(val value: kotlin.String) {
 
     @SerialName(value = "internal")
     `internal`("internal"),
+
+    @SerialName(value = "not_implemented")
+    not_implemented("not_implemented"),
 
     @SerialName(value = "unavailable")
     unavailable("unavailable"),

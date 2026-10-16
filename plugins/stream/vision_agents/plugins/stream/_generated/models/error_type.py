@@ -10,6 +10,7 @@ class ErrorType(StrEnum):
     METHOD_NOT_ALLOWED = "method_not_allowed"
     NOT_ACCEPTABLE = "not_acceptable"
     NOT_FOUND = "not_found"
+    NOT_IMPLEMENTED = "not_implemented"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     PERMISSION = "permission"
     RATE_LIMITED = "rate_limited"

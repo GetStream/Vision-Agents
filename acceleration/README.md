@@ -279,7 +279,10 @@ away. That is a `settings` document on the app row — `allow_anonymous` and `al
 both defaulting to yes — read in the same query that resolves the API key. A level an app
 refuses is answered 403 at the door rather than given a narrower API, so a new endpoint
 cannot forget, and a missing key or a missing app row admits: `proxy` and `noauth` resolve
-no app row here at all, so the levels are enforced in `api_key` mode only.
+no app row here at all, so the levels are enforced in `api_key` mode only. The same document
+holds `consent_return_urls`, the app's own pages a connector consent may return to, which
+the app's backend sets with `PUT /v1/agents/consent-return-urls`; outside `api_key` mode that
+answers 501.
 
 The kind is part of the identity and not a property of it, which is what makes an anonymous
 claim harmless: an anonymous caller saying `user_id=alice` is stored as anonymous alice and

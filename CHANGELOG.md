@@ -114,7 +114,7 @@ A failure was `{"error": "..."}`; it is now an envelope, `ErrorResponse`, holdin
 `type` is an `ErrorType` and decides the status: `invalid_request` 400, `authentication` 401,
 `permission` 403, `not_found` 404, `method_not_allowed` 405, `not_acceptable` 406, `conflict`
 409, `gone` 410, `payload_too_large` 413, `unsupported_media_type` 415, `rate_limited` 429,
-`internal` 500 and `unavailable` 503. `code` is what to branch on: each type has a code of its own
+`internal` 500, `not_implemented` 501 and `unavailable` 503. `code` is what to branch on: each type has a code of its own
 name, and the failures worth telling apart have their own (`validation_failed`,
 `missing_customer`, `not_configured`, `agent_config_not_found` and the other `*_not_found`). More
 codes may be added. A failure that is not the caller's is a 500 of type `internal` saying only
@@ -302,8 +302,9 @@ still route, but are no longer listed.
 `apps` gains a `settings` JSONB column, read in the same query that resolves an API key.
 `allow_anonymous` and `allow_guest` both default to yes; an app that sets either to `false`
 answers 403 to that level of caller on every path. It applies in `api_key` mode, the only
-one where the app is a row in these tables. There is no endpoint for it yet: it is an
-`UPDATE` by hand.
+one where the app is a row in these tables. There is no endpoint for either yet: it is an
+`UPDATE` by hand. `consent_return_urls`, in the same document, has one of its own
+(`PUT /v1/agents/consent-return-urls`).
 
 ### A server-side caller may name a user, and reading a session is open to devices
 
@@ -621,6 +622,21 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
 
 ## New Features
+
+### An app registers the pages its connector consents may return to
+
+`PUT /v1/agents/consent-return-urls` (`setConsentReturnUrls`) replaces the app's list of
+consent return URLs, `{"urls": [...]}`, and `GET` on the same path (`getConsentReturnUrls`)
+reads it back, `[]` when there are none. Both are server-side only. Each URL is absolute,
+https or http on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`), with no user name,
+password or fragment, at most 2048 bytes, and listed once; at most 10 per app. A list that
+breaks any of these is a 400 and leaves the stored one as it was. An empty list removes the
+key. The list is kept as `consent_return_urls` in the app's `settings` document and written
+without touching the other keys there.
+
+Nothing reads the list yet: every consent still finishes on the dashboard. A router that
+does not run with `ROUTER_AUTH_MODE=api_key` keeps no settings for an app and answers both
+with a 501 of the new `ErrorType` `not_implemented`.
 
 ### An agent config says which agent.yaml connectors its last sync left out
 

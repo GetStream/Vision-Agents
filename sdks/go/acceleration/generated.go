@@ -976,6 +976,7 @@ const (
 	ErrorTypeMethodNotAllowed     ErrorType = "method_not_allowed"
 	ErrorTypeNotAcceptable        ErrorType = "not_acceptable"
 	ErrorTypeNotFound             ErrorType = "not_found"
+	ErrorTypeNotImplemented       ErrorType = "not_implemented"
 	ErrorTypePayloadTooLarge      ErrorType = "payload_too_large"
 	ErrorTypePermission           ErrorType = "permission"
 	ErrorTypeRateLimited          ErrorType = "rate_limited"
@@ -1001,6 +1002,8 @@ func (e ErrorType) Valid() bool {
 	case ErrorTypeNotAcceptable:
 		return true
 	case ErrorTypeNotFound:
+		return true
+	case ErrorTypeNotImplemented:
 		return true
 	case ErrorTypePayloadTooLarge:
 		return true
@@ -4216,6 +4219,12 @@ type ConnectorToolGrant struct {
 	SchemaDigest *string `json:"schema_digest,omitempty"`
 }
 
+// ConsentReturnUrls The pages of the app's own that a connector consent may return to, besides the dashboard. Nothing reads the list yet: every consent still finishes on the dashboard.
+type ConsentReturnUrls struct {
+	// Urls Absolute URLs of at most 2048 bytes each, kept exactly as sent. Each is https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3). None carries a user name, a password or a fragment (RFC 6749 section 3.1.2), and none is listed twice. Empty when none are registered.
+	Urls []string `json:"urls"`
+}
+
 // Contact defines model for Contact.
 type Contact struct {
 	Attempts int `json:"attempts"`
@@ -4693,7 +4702,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, not_implemented, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -4702,7 +4711,7 @@ type ErrorDetail struct {
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
 
-	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, not_implemented 501, unavailable 503.
 	Type ErrorType `json:"type"`
 }
 
@@ -4711,7 +4720,7 @@ type ErrorResponse struct {
 	Error ErrorDetail `json:"error"`
 }
 
-// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, not_implemented 501, unavailable 503.
 type ErrorType string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
@@ -8321,6 +8330,9 @@ type SetConnectorOAuthClientJSONRequestBody = ConnectorOAuthClientRequest
 // SetConnectorProviderAppJSONRequestBody defines body for SetConnectorProviderApp for application/json ContentType.
 type SetConnectorProviderAppJSONRequestBody = ConnectorProviderAppRequest
 
+// SetConsentReturnUrlsJSONRequestBody defines body for SetConsentReturnUrls for application/json ContentType.
+type SetConsentReturnUrlsJSONRequestBody = ConsentReturnUrls
+
 // CreateGuestUserJSONRequestBody defines body for CreateGuestUser for application/json ContentType.
 type CreateGuestUserJSONRequestBody = GuestUserRequest
 
@@ -9654,6 +9666,43 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
 	SetConnectorProviderApp(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConsentReturnUrls Read the pages that may finish the app's connector consents
+	//
+	// The app's consent return URLs as they were registered, an empty list when there are none.
+	//
+	// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/consent-return-urls (the `GetConsentReturnUrls` operationId).
+	GetConsentReturnUrls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetConsentReturnUrlsWithBody Set the pages that may finish the app's connector consents
+	//
+	// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+	//
+	// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+	SetConsentReturnUrlsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetConsentReturnUrls Set the pages that may finish the app's connector consents
+	//
+	// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+	//
+	// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+	SetConsentReturnUrls(ctx context.Context, body SetConsentReturnUrlsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConversationCommand What a command in this conversation ended as
 	//
@@ -13206,6 +13255,73 @@ func (c *Client) SetConnectorProviderAppWithBody(ctx context.Context, id string,
 // Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
 func (c *Client) SetConnectorProviderApp(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetConnectorProviderAppRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConsentReturnUrls Read the pages that may finish the app's connector consents
+//
+// The app's consent return URLs as they were registered, an empty list when there are none.
+//
+// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/consent-return-urls (the `GetConsentReturnUrls` operationId).
+func (c *Client) GetConsentReturnUrls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsentReturnUrlsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetConsentReturnUrlsWithBody Set the pages that may finish the app's connector consents
+//
+// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+//
+// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+func (c *Client) SetConsentReturnUrlsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetConsentReturnUrlsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetConsentReturnUrls Set the pages that may finish the app's connector consents
+//
+// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+//
+// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+func (c *Client) SetConsentReturnUrls(ctx context.Context, body SetConsentReturnUrlsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetConsentReturnUrlsRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -20195,6 +20311,73 @@ func NewSetConnectorProviderAppRequestWithBody(server string, id string, content
 	}
 
 	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/provider-app", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetConsentReturnUrlsRequest constructs an http.Request for the GetConsentReturnUrls method
+func NewGetConsentReturnUrlsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/consent-return-urls")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetConsentReturnUrlsRequest calls the generic SetConsentReturnUrls builder with application/json body
+func NewSetConsentReturnUrlsRequest(server string, body SetConsentReturnUrlsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetConsentReturnUrlsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSetConsentReturnUrlsRequestWithBody constructs an http.Request for the SetConsentReturnUrls method, with any body, and a specified content type
+func NewSetConsentReturnUrlsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/consent-return-urls")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -28118,6 +28301,45 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
 	SetConnectorProviderAppWithResponse(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConnectorProviderAppResponse, error)
 
+	// GetConsentReturnUrlsWithResponse Read the pages that may finish the app's connector consents
+	//
+	// The app's consent return URLs as they were registered, an empty list when there are none.
+	//
+	// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/consent-return-urls (the `GetConsentReturnUrls` operationId).
+	GetConsentReturnUrlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetConsentReturnUrlsResponse, error)
+
+	// SetConsentReturnUrlsWithBodyWithResponse Set the pages that may finish the app's connector consents
+	//
+	// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+	//
+	// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+	SetConsentReturnUrlsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetConsentReturnUrlsResponse, error)
+
+	// SetConsentReturnUrlsWithResponse Set the pages that may finish the app's connector consents
+	//
+	// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+	//
+	// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+	SetConsentReturnUrlsWithResponse(ctx context.Context, body SetConsentReturnUrlsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConsentReturnUrlsResponse, error)
+
 	// GetConversationCommandWithResponse What a command in this conversation ended as
 	//
 	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -35300,6 +35522,158 @@ func (r SetConnectorProviderAppResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetConnectorProviderAppResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConsentReturnUrlsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConsentReturnUrls
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConsentReturnUrlsResponse) GetJSON200() *ConsentReturnUrls {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetConsentReturnUrlsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConsentReturnUrlsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetConsentReturnUrlsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConsentReturnUrlsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r GetConsentReturnUrlsResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConsentReturnUrlsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConsentReturnUrlsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConsentReturnUrlsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConsentReturnUrlsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetConsentReturnUrlsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConsentReturnUrls
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetConsentReturnUrlsResponse) GetJSON200() *ConsentReturnUrls {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetConsentReturnUrlsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetConsentReturnUrlsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetConsentReturnUrlsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetConsentReturnUrlsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r SetConsentReturnUrlsResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r SetConsentReturnUrlsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetConsentReturnUrlsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetConsentReturnUrlsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetConsentReturnUrlsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -47640,6 +48014,63 @@ func (c *ClientWithResponses) SetConnectorProviderAppWithResponse(ctx context.Co
 	return ParseSetConnectorProviderAppResponse(rsp)
 }
 
+// GetConsentReturnUrlsWithResponse Read the pages that may finish the app's connector consents
+//
+// The app's consent return URLs as they were registered, an empty list when there are none.
+//
+// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/consent-return-urls (the `GetConsentReturnUrls` operationId).
+func (c *ClientWithResponses) GetConsentReturnUrlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetConsentReturnUrlsResponse, error) {
+	rsp, err := c.GetConsentReturnUrls(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConsentReturnUrlsResponse(rsp)
+}
+
+// SetConsentReturnUrlsWithBodyWithResponse Set the pages that may finish the app's connector consents
+//
+// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+//
+// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+func (c *ClientWithResponses) SetConsentReturnUrlsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetConsentReturnUrlsResponse, error) {
+	rsp, err := c.SetConsentReturnUrlsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetConsentReturnUrlsResponse(rsp)
+}
+
+// SetConsentReturnUrlsWithResponse Set the pages that may finish the app's connector consents
+//
+// Replaces the app's whole list of consent return URLs with the one sent, and answers it. An empty list removes them all. Other app settings are left as they are.
+//
+// Answered 501 by a router that does not run with ROUTER_AUTH_MODE=api_key, which keeps no settings for the app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/consent-return-urls (the `SetConsentReturnUrls` operationId).
+func (c *ClientWithResponses) SetConsentReturnUrlsWithResponse(ctx context.Context, body SetConsentReturnUrlsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConsentReturnUrlsResponse, error) {
+	rsp, err := c.SetConsentReturnUrls(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetConsentReturnUrlsResponse(rsp)
+}
+
 // GetConversationCommandWithResponse What a command in this conversation ended as
 //
 // Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -55079,6 +55510,128 @@ func ParseSetConnectorProviderAppResponse(rsp *http.Response) (*SetConnectorProv
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConsentReturnUrlsResponse parses an HTTP response from a GetConsentReturnUrlsWithResponse call
+func ParseGetConsentReturnUrlsResponse(rsp *http.Response) (*GetConsentReturnUrlsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConsentReturnUrlsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConsentReturnUrls
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetConsentReturnUrlsResponse parses an HTTP response from a SetConsentReturnUrlsWithResponse call
+func ParseSetConsentReturnUrlsResponse(rsp *http.Response) (*SetConsentReturnUrlsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetConsentReturnUrlsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConsentReturnUrls
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
 
 	}
 

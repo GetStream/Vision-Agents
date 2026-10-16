@@ -3539,6 +3539,12 @@ pub struct ConnectorToolGrant {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub schema_digest: ::std::option::Option<::std::string::String>,
 }
+///The pages of the app's own that a connector consent may return to, besides the dashboard. Nothing reads the list yet: every consent still finishes on the dashboard.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ConsentReturnUrls {
+    ///Absolute URLs of at most 2048 bytes each, kept exactly as sent. Each is https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3). None carries a user name, a password or a fragment (RFC 6749 section 3.1.2), and none is listed twice. Empty when none are registered.
+    pub urls: ::std::vec::Vec<::std::string::String>,
+}
 ///`Contact`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Contact {
@@ -4509,7 +4515,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, not_implemented, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -4523,7 +4529,7 @@ pub struct ErrorDetail {
 pub struct ErrorResponse {
     pub error: ErrorDetail,
 }
-///The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+///The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, not_implemented 501, unavailable 503.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4561,6 +4567,8 @@ pub enum ErrorType {
     RateLimited,
     #[serde(rename = "internal")]
     Internal,
+    #[serde(rename = "not_implemented")]
+    NotImplemented,
     #[serde(rename = "unavailable")]
     Unavailable,
 }
@@ -4579,6 +4587,7 @@ impl ::std::fmt::Display for ErrorType {
             Self::UnsupportedMediaType => f.write_str("unsupported_media_type"),
             Self::RateLimited => f.write_str("rate_limited"),
             Self::Internal => f.write_str("internal"),
+            Self::NotImplemented => f.write_str("not_implemented"),
             Self::Unavailable => f.write_str("unavailable"),
         }
     }
@@ -4599,6 +4608,7 @@ impl ::std::str::FromStr for ErrorType {
             "unsupported_media_type" => Ok(Self::UnsupportedMediaType),
             "rate_limited" => Ok(Self::RateLimited),
             "internal" => Ok(Self::Internal),
+            "not_implemented" => Ok(Self::NotImplemented),
             "unavailable" => Ok(Self::Unavailable),
             _ => Err("invalid value".into()),
         }

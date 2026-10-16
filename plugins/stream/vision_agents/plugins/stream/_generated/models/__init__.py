@@ -154,6 +154,7 @@ from .connector_provider_app_request import ConnectorProviderAppRequest
 from .connector_setup import ConnectorSetup
 from .connector_setup_step import ConnectorSetupStep
 from .connector_tool_grant import ConnectorToolGrant
+from .consent_return_urls import ConsentReturnUrls
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
@@ -600,6 +601,7 @@ __all__ = (
     "ConnectorSetup",
     "ConnectorSetupStep",
     "ConnectorToolGrant",
+    "ConsentReturnUrls",
     "Contact",
     "ContactState",
     "ContactsRequest",

@@ -1057,6 +1057,35 @@ impl Client {
         )
         .await
     }
+    /// Read the pages that may finish the app's connector consents
+    ///
+    /// `GET /v1/agents/consent-return-urls` (`getConsentReturnUrls`).
+    pub async fn get_consent_return_urls(&self) -> Result<types::ConsentReturnUrls> {
+        self.send(
+            Method::GET,
+            "/v1/agents/consent-return-urls",
+            None::<&()>,
+            None::<&()>,
+            "getConsentReturnUrls",
+        )
+        .await
+    }
+    /// Set the pages that may finish the app's connector consents
+    ///
+    /// `PUT /v1/agents/consent-return-urls` (`setConsentReturnUrls`).
+    pub async fn set_consent_return_urls(
+        &self,
+        body: &types::ConsentReturnUrls,
+    ) -> Result<types::ConsentReturnUrls> {
+        self.send(
+            Method::PUT,
+            "/v1/agents/consent-return-urls",
+            None::<&()>,
+            Some(body),
+            "setConsentReturnUrls",
+        )
+        .await
+    }
     /// What a command in this conversation ended as
     ///
     /// `GET /v1/agents/conversations/{cid}/commands/{request_id}` (`getConversationCommand`).
