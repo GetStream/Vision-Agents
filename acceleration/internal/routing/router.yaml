@@ -1830,7 +1830,7 @@ tts:
         ]
       realtime: false
       tier: high-quality
-      supports: [speed, stability, similarity, format]
+      supports: [stability, similarity, format]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified

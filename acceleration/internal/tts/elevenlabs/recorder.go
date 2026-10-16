@@ -41,6 +41,12 @@ type RecorderOptions struct {
 	APIKey  string
 	VoiceID string
 	Model   string
+	// Stability and Similarity are the values the recording will be asked to speak with,
+	// nil for none. They are only checked here, against 0 to 1, so a caller's bad value is
+	// refused when the recorder is built rather than answered by a 422 that counts against
+	// the model's health; what is sent comes from the recording.
+	Stability  *float64
+	Similarity *float64
 	// Style is voice_settings.style, nil for none. Only the models before v3 take it.
 	Style *float64
 	// BaseURL overrides the endpoint, for a proxy or a test server.
@@ -75,6 +81,12 @@ func NewRecorder(options RecorderOptions) (*Recorder, error) {
 	if options.Model == "" {
 		options.Model = RecorderModel
 	}
+	if err := inRange("stability", options.Stability); err != nil {
+		return nil, err
+	}
+	if err := inRange("similarity", options.Similarity); err != nil {
+		return nil, err
+	}
 	if err := styleFor(options.Model, options.Style); err != nil {
 		return nil, err
 	}
@@ -105,7 +117,9 @@ func (r *Recorder) Provider() string { return ProviderName }
 // Model is the model identifier used in stats.
 func (r *Recorder) Model() string { return r.options.Model }
 
-// Voice is the speaker of a recording that names none.
+// Voice is the speaker of a recording that names none. It makes the recorder a tts.Voiced
+// like the live voices, so a caller can ask which voice a built recorder will use; nothing
+// in production does yet.
 func (r *Recorder) Voice() string { return r.options.VoiceID }
 
 // Record speaks the text and returns the file.

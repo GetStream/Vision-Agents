@@ -89,8 +89,7 @@ caller cannot tell the difference from the audio, and the whole point of routing
 did not have to know which vendor answered. So options become `Terms()`, and only models whose
 `supports:` lists every term asked for are candidates.
 
-Today the batch entry `elevenlabs/eleven_v3` declares `[speed, stability, similarity, format]`,
-which is the recorded path. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
+Today the batch entry `elevenlabs/eleven_v3` declares `[stability, similarity, format]`, which is the recorded path; it declares no `speed`, so a recording that asks for one is refused. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
 declare `[speed, stability, similarity]`, sent as `voice_settings` when each context opens (stability 0.5,
 similarity 0.8 when not asked); a speed outside 0.7–1.2 or a stability or similarity outside
 0–1 is refused when the provider is built. The dialogue models (v3 conversational, v4, v4
@@ -105,15 +104,15 @@ then add `speed` to their `supports:`. Adding to that list means sending the fie
 provider's package under [`internal/tts`](../../../acceleration/internal/tts) first.
 
 An agent's voice session passes no voice options: `startVoice` builds its request with a
-target and a voice only (`internal/agent/pipeline.go`), and the agent config has no `speed`
+target and a voice, and no voice options (`internal/agent/pipeline.go`), and the agent config has no `speed`
 or other voice setting since it was taken out on purpose ("a voice speaks at its own pace").
 A speed, stability, similarity or overwrite reaches a voice only through a request to
 `/v1/tts/stream` or `/v1/tts/recordings`.
 
-The batch `speed` is the one declaration the vendor docs do not clearly back. `voice_settings.speed`
-is documented at 0.7–1.2 for text to speech generally, but v3's documented voice setting is
-`stability` alone, and its dialogue socket accepts nothing else. Confirm against a live
-recording before trusting it, and drop the term if v3 ignores it.
+Batch v3 has no `speed` because it ignores one. Live on 2026-10-16 a speed of 0.7, 1.0, 1.2 and
+1.5 all got a 200 from `eleven_v3`, in times that did not follow the speed, where Flash answered
+1.5 with a 400. None of the ElevenLabs pages opened (best-practices, models,
+text-to-speech/convert) says so either way, so re-probe before adding it back.
 
 Voice ids are not a term. They are resolved by the voice catalogue in
 [`internal/tts/voices`](../../../acceleration/internal/tts/voices), so a name that no provider

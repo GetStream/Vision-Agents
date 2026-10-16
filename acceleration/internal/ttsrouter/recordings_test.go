@@ -137,3 +137,36 @@ func (s *RecordingsSuite) TestAStyleTheRecordingModelHasNoPlaceForIsRefused() {
 	s.ErrorContains(err, "style is not taken by eleven_v3")
 	s.Empty(s.asked, "nothing is spoken with the style dropped")
 }
+
+func (s *RecordingsSuite) TestARecordingAskingForASpeedIsRefusedRatherThanSpokenAtItsOwnPace() {
+	// The built-in recording voice is eleven_v3, which ignores speed (live, 2026-10-16: a
+	// speed of 0.7 to 1.5 all gave a 200), so it does not declare it.
+	speed := 0.8
+	_, _, err := s.newRecordings().Record(s.ctx, Recording{
+		CustomerID: "acme",
+		Options:    options.TTS{Target: "en-recorded", Voice: "library-voice", Speed: &speed},
+		Text:       "hello",
+	})
+
+	s.Require().Error(err)
+	s.ErrorContains(err, "speed")
+	s.Empty(s.asked, "nothing is spoken with the speed dropped")
+}
+
+func (s *RecordingsSuite) TestAStabilityOrSimilarityOutsideZeroToOneIsRefusedBeforeTheCall() {
+	// Live on 2026-10-16 eleven_v3 answered 422 to 1.5, which would count against its health.
+	above := 1.5
+	for name, asked := range map[string]options.TTS{
+		"stability":  {Target: "en-recorded", Voice: "library-voice", Stability: &above},
+		"similarity": {Target: "en-recorded", Voice: "library-voice", Similarity: &above},
+	} {
+		s.Run(name, func() {
+			s.asked = nil
+			_, _, err := s.newRecordings().Record(s.ctx, Recording{CustomerID: "acme", Options: asked, Text: "hello"})
+
+			s.Require().ErrorIs(err, routing.ErrRequest, "the caller's mistake, not counted against the model")
+			s.ErrorContains(err, name+" 1.5 is outside 0 to 1")
+			s.Empty(s.asked, "nothing is recorded")
+		})
+	}
+}

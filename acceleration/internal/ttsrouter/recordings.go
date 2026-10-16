@@ -35,7 +35,10 @@ func DefaultRecorderRegistry() *Recorders {
 			VoiceID: voiceOr(settings.VoiceID, spec.Voice),
 			Model:   spec.Model,
 			Style:   settings.VoiceSettings.Style,
-			Logger:  spec.Logger,
+			// Checked against 0 to 1 here, before the call, as the live voices do.
+			Stability:  spec.TTS.Stability,
+			Similarity: spec.TTS.Similarity,
+			Logger:     spec.Logger,
 		})
 		if err != nil {
 			return nil, elevenlabsRefusal(spec.Model, err)
