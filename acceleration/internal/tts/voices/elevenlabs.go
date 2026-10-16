@@ -1,11 +1,14 @@
 package voices
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -198,6 +201,75 @@ func (e *ElevenLabs) Preview(ctx context.Context, id string) (Speech, error) {
 		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs has published no sample of %s", id))
 	}
 	return fetchPreview(ctx, e.client, elevenlabs.ProviderName, voice.PreviewURL, nil, "audio/mpeg")
+}
+
+// Exists reports whether ElevenLabs will speak in a voice.
+//
+// A voice in this account is found by id. A voice from the public Voice Library is not,
+// yet it speaks (ElevenLabs adds it to the account the first time it does), so a voice the
+// account lacks is searched for there too, whose search matches ids as well as names. Both
+// live on 2026-10-16: GET /v1/voices/cVOjvbxC2c4mOyGcx3AH answered voice_not_found and
+// /v1/shared-voices?search= of the same id returned it.
+func (e *ElevenLabs) Exists(ctx context.Context, id string) (bool, error) {
+	base := strings.TrimSuffix(e.options.BaseURL, "/")
+	response, err := e.get(ctx, base+"/v1/voices/"+url.PathEscape(id))
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return true, nil
+	}
+
+	// The code is what says the voice is missing, not the status: the same lookup answered
+	// it with a 404 and, later on 2026-10-16, a 400, which is also what a bad key gets.
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+	var failure struct {
+		Detail struct {
+			Code string `json:"code"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal(body, &failure) != nil || failure.Detail.Code != "voice_not_found" {
+		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup (http %d): %s",
+			response.StatusCode, bytes.TrimSpace(body)))
+	}
+
+	shared, err := e.get(ctx, base+"/v1/shared-voices?search="+url.QueryEscape(id))
+	if err != nil {
+		return false, err
+	}
+	defer shared.Body.Close()
+	if shared.StatusCode < 200 || shared.StatusCode >= 300 {
+		return false, refused(elevenlabs.ProviderName, shared)
+	}
+	var listed struct {
+		Voices []struct {
+			VoiceID string `json:"voice_id"`
+		} `json:"voices"`
+	}
+	if err := json.NewDecoder(shared.Body).Decode(&listed); err != nil {
+		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs library search: decode: %w", err))
+	}
+	// The search also matches names, so only the id itself counts.
+	for _, voice := range listed.Voices {
+		if voice.VoiceID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (e *ElevenLabs) get(ctx context.Context, address string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	request.Header.Set("xi-api-key", e.options.APIKey)
+	response, err := e.client.Do(request)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup: %w", err))
+	}
+	return response, nil
 }
 
 // Delete takes the voice back off ElevenLabs.

@@ -17,14 +17,16 @@ import (
 //
 // A session names a voice once, and the router may try three providers before one takes
 // the call. A provider's own library voice is passed straight through, so nothing about
-// existing configs changes.
+// existing configs changes, unless the provider says it has no such voice.
 type Resolver struct {
-	store *appconfig.Store
+	store   *appconfig.Store
+	library *Catalogue
 }
 
-// NewResolver returns a resolver backed by the configuration store.
-func NewResolver(backing *appconfig.Store) *Resolver {
-	return &Resolver{store: backing}
+// NewResolver returns a resolver backed by the configuration store. The library, which may
+// be nil, is what checks a voice that is not the customer's own.
+func NewResolver(backing *appconfig.Store, library *Catalogue) *Resolver {
+	return &Resolver{store: backing, library: library}
 }
 
 // ResolveVoice returns the id this provider knows the voice by.
@@ -34,14 +36,15 @@ func NewResolver(backing *appconfig.Store) *Resolver {
 // name that is then not theirs is an error rather than a name handed to a provider whose
 // library may have someone else under it. One that is theirs, but that this provider was
 // never given, comes back as routing.ErrVoiceNotPrepared so the router moves on to a
-// provider that has it.
+// provider that has it. One the provider says it does not have is refused as the caller's
+// mistake (routing.Refused), naming the closest voice in its library.
 func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error) {
 	asked, theirs := strings.CutPrefix(voice, options.OwnVoicePrefix)
 	if r.store == nil || customerID == "" || asked == "" {
 		if theirs {
 			return "", notTheirs(asked)
 		}
-		return voice, nil
+		return r.passThrough(ctx, provider, voice)
 	}
 
 	own, err := r.own(ctx, customerID, asked)
@@ -49,7 +52,7 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 		if theirs {
 			return "", notTheirs(asked)
 		}
-		return voice, nil
+		return r.passThrough(ctx, provider, voice)
 	}
 	if err != nil {
 		return "", err
@@ -63,6 +66,19 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 		return "", err
 	}
 	return externalID, nil
+}
+
+// passThrough hands a voice that is not the customer's own to the provider as asked, once
+// the provider's library has not said it is missing. A voice the request's overwrites
+// replace is not asked of the provider, so it is not checked.
+func (r *Resolver) passThrough(ctx context.Context, provider, voice string) (string, error) {
+	if r.library == nil || routing.VoiceOverwritten(ctx) {
+		return voice, nil
+	}
+	if err := r.library.Check(ctx, provider, voice); err != nil {
+		return "", routing.Refused(err)
+	}
+	return voice, nil
 }
 
 // notTheirs is what a voice asked for with the prefix and not found under it comes back

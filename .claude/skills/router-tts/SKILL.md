@@ -120,6 +120,33 @@ has is a 404 rather than a routing failure. `custom:` in front of one says it is
 customer's own and nothing else, so a name that is not theirs is refused rather than passed to
 the provider's library.
 
+A voice that is not the customer's own is checked when the voice opens (`Resolver.ResolveVoice`,
+`Catalogue.Check`), for every caller: the socket, a session's agent and a recording.
+
+- A voice in the provider's cached listing (`libraryTTL`, an hour) goes through with no
+  round trip. Any other voice is looked up, and one that exists is remembered for an hour.
+- Only the provider's own "no such voice" refuses. ElevenLabs answers that as
+  `detail.code: voice_not_found`, with a 404 or a 400, so the code decides and not the status.
+  The refusal is `routing.ErrRequest` and names the closest listed voice by edit distance over
+  id and name. `Select` then tries the next candidate in the priority list, and when none
+  takes the voice the caller gets the refusal, not "every candidate failed".
+- A lookup that fails another way (a bad key, a 5xx, past `lookupTimeout`, 3s) lets the voice
+  through as before. An unreadable listing still refuses, without a suggestion.
+- ElevenLabs looks twice, `GET /v1/voices/{id}` and then `GET /v1/shared-voices?search={id}`,
+  matched on the exact id. The first alone says `voice_not_found` for a Voice Library voice
+  that speaks (ElevenLabs adds it to the account the first time it does). Do not probe a
+  Voice Library voice with a synthesis: that adds it to the account.
+- `/v1/voices?show_legacy=false` leaves legacy voices out of the listing, so
+  `21m00Tcm4TlvDq8ikWAM` is looked up, found and spoken. "Not in the listing" is not a
+  refusal.
+- A "no such voice" answer is remembered for `rememberFor` (30s), and so is a failed listing
+  or lookup per provider, so one `Start` that tries five ElevenLabs models asks once and the
+  refusal is worded once; a failing or hanging vendor costs one lookup per window, not one per open.
+- A candidate whose `overwrites.<vendor>.voice_id` is set is not checked: the overwrite is the
+  voice spoken (`routing.VoiceOverwritten`, `ttsrouter/registry.go` `voiceOr`), so the
+  request's `voice` is never asked of the provider.
+- Not checked: Cartesia and Inworld voices (their listers have no `Exists`), a router with no database (no resolver) and the standalone `cmd/agent` binary.
+
 ## Three things that narrow candidates without being terms
 
 - `providers` is a priority list tried in the order written, and this router's half of it is
