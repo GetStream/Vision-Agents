@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -23,6 +24,15 @@ const libraryTTL = time.Hour
 // 0.49-0.83s, so both fit with room to spare; past it the voice goes through unchecked,
 // since a slow vendor must not hold up a call.
 const lookupTimeout = 3 * time.Second
+
+// rememberFor is how long Check keeps a "no such voice" answer and a failed list or
+// lookup. A request to open a stream tries one candidate per model of the same vendor, so
+// the same refused voice is asked about once per model within milliseconds; a vendor that
+// is down or hangs would otherwise cost lookupTimeout on every open. Half a minute covers
+// one Start and a burst of retries, and is short enough that a voice added to the library,
+// or a vendor that came back, is seen on the next try. It is our own choice, not a
+// vendor's figure.
+const rememberFor = 30 * time.Second
 
 // Library is one voice a provider offers, in the terms a person picking one cares about.
 // Everything but the id and the name is optional, because no two vendors describe a voice
@@ -70,9 +80,24 @@ type Catalogue struct {
 	cached  map[string]cachedVoices
 	// found is when a voice missing from its provider's listing was last found to exist,
 	// by provider and id, so a valid one is not looked up on every stream that opens.
-	found  map[string]time.Time
-	now    func() time.Time
-	lookup time.Duration
+	found map[string]time.Time
+	// missing is the refusal a voice its provider does not have was last given, by
+	// provider and id.
+	missing map[string]missed
+	// unlisted and unfound are when a provider's listing and its voice lookup last
+	// failed, and with what, by provider: a failing vendor is not asked again for
+	// rememberFor.
+	unlisted map[string]missed
+	unfound  map[string]missed
+	now      func() time.Time
+	lookup   time.Duration
+	logger   *slog.Logger
+}
+
+// missed is an answer Catalogue remembers for rememberFor.
+type missed struct {
+	err error
+	at  time.Time
 }
 
 type cachedVoices struct {
@@ -83,11 +108,15 @@ type cachedVoices struct {
 // NewCatalogue returns a catalogue nobody has registered a provider with yet.
 func NewCatalogue() *Catalogue {
 	return &Catalogue{
-		listers: map[string]Lister{},
-		cached:  map[string]cachedVoices{},
-		found:   map[string]time.Time{},
-		now:     time.Now,
-		lookup:  lookupTimeout,
+		listers:  map[string]Lister{},
+		cached:   map[string]cachedVoices{},
+		found:    map[string]time.Time{},
+		missing:  map[string]missed{},
+		unlisted: map[string]missed{},
+		unfound:  map[string]missed{},
+		now:      time.Now,
+		lookup:   lookupTimeout,
+		logger:   slog.Default(),
 	}
 }
 
@@ -193,8 +222,26 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 	if slices.ContainsFunc(library, func(voice Library) bool { return voice.ID == id }) {
 		return nil
 	}
+
+	c.mu.Lock()
+	refusal, refused := c.missing[key]
+	failure, failed := c.unfound[provider]
+	c.mu.Unlock()
+	if refused && c.now().Sub(refusal.at) < rememberFor {
+		return refusal.err
+	}
+	if failed && c.now().Sub(failure.at) < rememberFor {
+		return nil
+	}
+
 	exists, err := finder.Exists(ctx, id)
 	if err != nil {
+		// The voice goes through unchecked, and nothing else shows that the check is off.
+		c.logger.Warn("could not look a voice up at its provider, letting it through",
+			"provider", provider, "error", err)
+		c.mu.Lock()
+		c.unfound[provider] = missed{err: err, at: c.now()}
+		c.mu.Unlock()
 		return nil
 	}
 	if exists {
@@ -204,25 +251,40 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 		return nil
 	}
 
-	nearest, ok := closest(library, id)
-	if !ok {
-		return stack.Wrap(fmt.Errorf("voices: %s has no voice %q", provider, id))
+	message := fmt.Errorf("voices: %s has no voice %q", provider, id)
+	if nearest, ok := closest(library, id); ok {
+		message = fmt.Errorf("voices: %s has no voice %q; the closest in its library is %q (%s)",
+			provider, id, nearest.Name, nearest.ID)
 	}
-	return stack.Wrap(fmt.Errorf("voices: %s has no voice %q; the closest in its library is %q (%s)",
-		provider, id, nearest.Name, nearest.ID))
+	refusal = missed{err: stack.Wrap(message), at: c.now()}
+	c.mu.Lock()
+	c.missing[key] = refusal
+	c.mu.Unlock()
+	return refusal.err
 }
 
 func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister) ([]Library, error) {
 	c.mu.Lock()
 	held, ok := c.cached[provider]
 	fresh := ok && c.now().Sub(held.at) < libraryTTL
+	failure, failed := c.unlisted[provider]
 	c.mu.Unlock()
 	if fresh {
 		return held.voices, nil
 	}
+	if failed && c.now().Sub(failure.at) < rememberFor {
+		if ok {
+			return held.voices, nil
+		}
+		return nil, stack.Wrap(fmt.Errorf("voices: list %s: %w", provider, failure.err))
+	}
 
 	voices, err := lister.List(ctx)
 	if err != nil {
+		c.logger.Warn("could not list a provider's voices", "provider", provider, "error", err)
+		c.mu.Lock()
+		c.unlisted[provider] = missed{err: err, at: c.now()}
+		c.mu.Unlock()
 		// A stale list is better than none: the picker keeps working through a vendor
 		// outage, and the only cost is a voice added in the last hour being missing.
 		if ok {

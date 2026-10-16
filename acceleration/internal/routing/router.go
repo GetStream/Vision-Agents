@@ -71,6 +71,16 @@ type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }
 
+type voiceOverwritten struct{}
+
+// VoiceOverwritten reports that the voice being resolved is not the one that will be
+// spoken: this candidate's overwrites name a voice_id, which wins over the request's.
+// A resolver has no reason to check a voice nobody will ask the provider for.
+func VoiceOverwritten(ctx context.Context) bool {
+	_, ok := ctx.Value(voiceOverwritten{}).(bool)
+	return ok
+}
+
 // CustomProvider is what a customer's own model is routed under: custom/<name>.
 const CustomProvider = "custom"
 
@@ -445,7 +455,13 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 			return provider, candidate.Config, nil
 		}
 		if errors.Is(err, ErrRequest) {
-			refusals = append(refusals, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+			// One vendor's models refuse the same voice in the same words, and saying it
+			// once per model would bury it.
+			if !slices.ContainsFunc(refusals, func(seen error) bool {
+				return strings.HasSuffix(seen.Error(), ": "+err.Error())
+			}) {
+				refusals = append(refusals, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+			}
 			if errors.Is(err, ErrOverwrite) {
 				overwritten = candidate.Config.Provider
 			}
@@ -576,7 +592,14 @@ func (r *Router[P]) resolveEntry(ctx context.Context, customerID, target string,
 func (r *Router[P]) startCandidate(ctx context.Context, request Request, candidate Candidate) (P, error) {
 	var zero P
 
-	voice, err := r.voice(ctx, request, candidate.Config.Provider)
+	voiceCtx := ctx
+	var named struct {
+		VoiceID string `json:"voice_id"`
+	}
+	if json.Unmarshal(r.overwrites(request, candidate.Config.Provider), &named) == nil && named.VoiceID != "" {
+		voiceCtx = context.WithValue(ctx, voiceOverwritten{}, true)
+	}
+	voice, err := r.voice(voiceCtx, request, candidate.Config.Provider)
 	if err != nil {
 		return zero, err
 	}

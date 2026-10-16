@@ -183,6 +183,15 @@ func (s *CatalogueSuite) TestAVoiceAskedForByItsNameIsPointedToItsId() {
 	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)")
 }
 
+func (s *CatalogueSuite) TestACapitalisedNameIsMatchedToTheVoiceWithoutRegardToCase() {
+	s.library()
+
+	err := s.catalogue.Check(s.ctx, "elevenlabs", "SARAH")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)")
+}
+
 func (s *CatalogueSuite) TestAMistypedIdIsMatchedToTheVoiceItWasMeantToBe() {
 	s.library()
 
@@ -218,6 +227,59 @@ func (s *CatalogueSuite) TestALookupThatFailsLetsTheVoiceThrough() {
 	finder.err = errors.New("voices: elevenlabs lookup (http 503)")
 
 	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+}
+
+func (s *CatalogueSuite) TestAVoiceTheProviderDoesNotHaveIsLookedUpOnceNoMatterHowOftenItIsAsked() {
+	finder := s.library()
+
+	var first error
+	for i := range 5 {
+		err := s.catalogue.Check(s.ctx, "elevenlabs", "Sara")
+		s.Require().Error(err)
+		if i == 0 {
+			first = err
+		}
+		s.Equal(first.Error(), err.Error())
+	}
+	s.Equal(1, finder.lookups, "one Start asks about the same voice once per model")
+
+	s.clock = s.clock.Add(rememberFor + time.Second)
+	s.Require().Error(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+	s.Equal(2, finder.lookups, "a voice added to the library is seen soon enough")
+}
+
+func (s *CatalogueSuite) TestAListingThatCannotBeRefreshedIsNotAskedForOnEveryOpen() {
+	finder := s.library()
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", sarah.ID))
+	s.Equal(1, finder.asked)
+
+	s.clock = s.clock.Add(libraryTTL + time.Minute)
+	finder.countingLister.err = errors.New("gateway")
+	for range 10 {
+		s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", sarah.ID), "the stale listing still has her")
+	}
+	s.Equal(2, finder.asked, "one failed refresh, then none until the window has passed")
+	s.Zero(finder.lookups)
+
+	s.clock = s.clock.Add(rememberFor + time.Second)
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", sarah.ID))
+	s.Equal(3, finder.asked)
+}
+
+func (s *CatalogueSuite) TestAProviderThatCannotBeReadFromIsNotAskedOnEveryOpen() {
+	finder := s.library()
+	finder.countingLister.err = errors.New("gateway")
+	finder.err = errors.New("voices: elevenlabs lookup (http 401)")
+
+	for range 10 {
+		s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+	}
+	s.Equal(1, finder.asked)
+	s.Equal(1, finder.lookups)
+
+	s.clock = s.clock.Add(rememberFor + time.Second)
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+	s.Equal(2, finder.lookups, "a provider that came back is checked again")
 }
 
 func (s *CatalogueSuite) TestALookupThatTakesTooLongLetsTheVoiceThrough() {
@@ -392,6 +454,62 @@ func (s *LibrarySuite) TestAnElevenLabsLookupRefusedForAnotherReasonIsAnError() 
 
 	s.Require().Error(err, "a bad key says nothing about the voice")
 	s.Contains(err.Error(), "invalid_api_key")
+}
+
+func (s *LibrarySuite) TestAnElevenLabsLibrarySearchThatFailsIsAnErrorNotAMissingVoice() {
+	s.routes["/v1/voices/Sara"] = voiceNotFound
+	s.statuses["/v1/voices/Sara"] = http.StatusNotFound
+	s.routes["/v1/shared-voices"] = `{"detail":"boom"}`
+	s.statuses["/v1/shared-voices"] = http.StatusInternalServerError
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "Sara")
+
+	s.Require().Error(err)
+	s.False(exists)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsLibrarySearchThatCannotBeReadIsAnErrorNotAMissingVoice() {
+	s.routes["/v1/voices/Sara"] = voiceNotFound
+	s.statuses["/v1/voices/Sara"] = http.StatusNotFound
+	s.routes["/v1/shared-voices"] = `not json`
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "Sara")
+
+	s.Require().Error(err)
+	s.False(exists)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsLookupThatCannotReachTheVendorIsAnError() {
+	lookup := s.elevenLabs()
+	s.server.Close()
+
+	exists, err := lookup.Exists(s.ctx, "Sara")
+
+	s.Require().Error(err)
+	s.False(exists)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsSearchThatCannotReachTheVendorIsAnError() {
+	s.routes["/v1/voices/Sara"] = voiceNotFound
+	s.statuses["/v1/voices/Sara"] = http.StatusNotFound
+	// The lookup is answered, then the vendor goes away before the search.
+	s.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/voices/Sara" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(voiceNotFound))
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		s.Require().True(ok)
+		conn, _, err := hijacker.Hijack()
+		s.Require().NoError(err)
+		_ = conn.Close()
+	})
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "Sara")
+
+	s.Require().Error(err)
+	s.False(exists)
 }
 
 func (s *LibrarySuite) TestAVoiceIdIsLookedUpAsOnePathSegment() {

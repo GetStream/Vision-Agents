@@ -69,9 +69,10 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 }
 
 // passThrough hands a voice that is not the customer's own to the provider as asked, once
-// the provider's library has not said it is missing.
+// the provider's library has not said it is missing. A voice the request's overwrites
+// replace is not asked of the provider, so it is not checked.
 func (r *Resolver) passThrough(ctx context.Context, provider, voice string) (string, error) {
-	if r.library == nil {
+	if r.library == nil || routing.VoiceOverwritten(ctx) {
 		return voice, nil
 	}
 	if err := r.library.Check(ctx, provider, voice); err != nil {

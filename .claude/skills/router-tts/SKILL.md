@@ -139,9 +139,13 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
 - `/v1/voices?show_legacy=false` leaves legacy voices out of the listing, so
   `21m00Tcm4TlvDq8ikWAM` is looked up, found and spoken. "Not in the listing" is not a
   refusal.
-- Not checked: Cartesia and Inworld voices (their listers have no `Exists`), the
-  `elevenlabs.voice_id` and `inworld.voice_id` overwrites (they bypass the resolver),
-  a router with no database (no resolver) and the standalone `cmd/agent` binary.
+- A "no such voice" answer is remembered for `rememberFor` (30s), and so is a failed listing
+  or lookup per provider, so one `Start` that tries five ElevenLabs models asks once and the
+  refusal is worded once; a failing or hanging vendor costs one lookup per window, not one per open.
+- A candidate whose `overwrites.<vendor>.voice_id` is set is not checked: the overwrite is the
+  voice spoken (`routing.VoiceOverwritten`, `ttsrouter/registry.go` `voiceOr`), so the
+  request's `voice` is never asked of the provider.
+- Not checked: Cartesia and Inworld voices (their listers have no `Exists`), a router with no database (no resolver) and the standalone `cmd/agent` binary.
 
 ## Three things that narrow candidates without being terms
 
