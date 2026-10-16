@@ -41,7 +41,7 @@ binding on agent config "support": name linear, connection.type session, tools [
 | `ROUTER_CONNECTORS_ENABLED=true` | Off by default |
 | `ROUTER_AUTH_KEK` (or `ROUTER_AUTH_KEK_V<n>` + `ROUTER_AUTH_KEK_VERSION`) | Seals the credentials. The router refuses to start without it when connectors are on. Changing it makes stored credentials unreadable |
 | `ROUTER_PUBLIC_URL` | The provider sends the browser back to `<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback`. The dashboard shows this redirect URI on each OAuth connector |
-| `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin. Unset, it reports to the wrong place and the dashboard waits forever |
+| `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin, unless the consent was started with a `return_url`, which then replaces it. Unset, a consent without one reports to the wrong place and the dashboard waits forever |
 | `ROUTER_CORS_ORIGINS` | The dashboard origin, when the browser calls the router directly |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | Stream's own OAuth client for a connector whose manifest lists `operator` (for example `SLACK_MCP_CLIENT_ID` for `slack`, `SLACK_BOT_MCP_CLIENT_ID` for `slack_bot`). Without it, the app must set its own client |
 

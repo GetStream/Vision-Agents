@@ -47,6 +47,7 @@ from .audit_resource_type import AuditResourceType
 from .audit_source import AuditSource
 from .authorization import Authorization
 from .authorization_kind import AuthorizationKind
+from .authorization_request import AuthorizationRequest
 from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
 from .budget import Budget
@@ -497,6 +498,7 @@ __all__ = (
     "AuditSource",
     "Authorization",
     "AuthorizationKind",
+    "AuthorizationRequest",
     "AuthorizePluginRequest",
     "AvailableNumber",
     "Budget",

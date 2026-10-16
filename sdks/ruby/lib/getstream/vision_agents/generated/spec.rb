@@ -101,7 +101,7 @@ module GetStream
         "createAuthorization" => {
           method: :post, path: "/v1/agents/connections/{id}/authorizations",
           path_params: %w[id].freeze, query: [].freeze,
-          body: nil, body_required: false,
+          body: "AuthorizationRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "createCallToken" => {
@@ -1480,6 +1480,10 @@ module GetStream
         "Authorization" => {
           properties: %w[expires_at handoff_token id kind launch_url].freeze,
           required: %w[id kind launch_url handoff_token expires_at].freeze, open: false
+        }.freeze,
+        "AuthorizationRequest" => {
+          properties: %w[return_url].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "AuthorizePluginRequest" => {
           properties: %w[instance_url].freeze,

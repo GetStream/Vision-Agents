@@ -7,13 +7,17 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.authorization import Authorization
+from ...models.authorization_request import AuthorizationRequest
 from ...models.error_response import ErrorResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
+    *,
+    body: AuthorizationRequest | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -22,6 +26,12 @@ def _get_kwargs(
         ),
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -79,22 +89,25 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: AuthorizationRequest | Unset = UNSET,
 ) -> Response[Authorization | ErrorResponse]:
     """Start a consent
 
      Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one
-    connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it
-    says it is ready; the browser then goes to the provider and comes back to the router, which stores
-    the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
-    failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. The consent runs on the connector's latest revision, and the connection reads that revision
-    once the consent connects it. Who may start it is who may read the connection. Needs
-    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    connected before. Open launch_url in a popup from a page of return_url's origin, or of the
+    dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
+    browser then goes to the provider and comes back to the router, which stores the grant and sends the
+    browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
+    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
+    with another provider account keeps the old grant. The consent runs on the connector's latest
+    revision, and the connection reads that revision once the consent connects it. Who may start it is
+    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The connection, as returned when it was created.
+        body (AuthorizationRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -106,6 +119,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -119,22 +133,25 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: AuthorizationRequest | Unset = UNSET,
 ) -> Authorization | ErrorResponse | None:
     """Start a consent
 
      Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one
-    connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it
-    says it is ready; the browser then goes to the provider and comes back to the router, which stores
-    the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
-    failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. The consent runs on the connector's latest revision, and the connection reads that revision
-    once the consent connects it. Who may start it is who may read the connection. Needs
-    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    connected before. Open launch_url in a popup from a page of return_url's origin, or of the
+    dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
+    browser then goes to the provider and comes back to the router, which stores the grant and sends the
+    browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
+    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
+    with another provider account keeps the old grant. The consent runs on the connector's latest
+    revision, and the connection reads that revision once the consent connects it. Who may start it is
+    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The connection, as returned when it was created.
+        body (AuthorizationRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,6 +164,7 @@ def sync(
     return sync_detailed(
         id=id,
         client=client,
+        body=body,
     ).parsed
 
 
@@ -154,22 +172,25 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: AuthorizationRequest | Unset = UNSET,
 ) -> Response[Authorization | ErrorResponse]:
     """Start a consent
 
      Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one
-    connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it
-    says it is ready; the browser then goes to the provider and comes back to the router, which stores
-    the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
-    failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. The consent runs on the connector's latest revision, and the connection reads that revision
-    once the consent connects it. Who may start it is who may read the connection. Needs
-    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    connected before. Open launch_url in a popup from a page of return_url's origin, or of the
+    dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
+    browser then goes to the provider and comes back to the router, which stores the grant and sends the
+    browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
+    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
+    with another provider account keeps the old grant. The consent runs on the connector's latest
+    revision, and the connection reads that revision once the consent connects it. Who may start it is
+    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The connection, as returned when it was created.
+        body (AuthorizationRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,6 +202,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -192,22 +214,25 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: AuthorizationRequest | Unset = UNSET,
 ) -> Authorization | ErrorResponse | None:
     """Start a consent
 
      Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one
-    connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it
-    says it is ready; the browser then goes to the provider and comes back to the router, which stores
-    the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
-    failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. The consent runs on the connector's latest revision, and the connection reads that revision
-    once the consent connects it. Who may start it is who may read the connection. Needs
-    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    connected before. Open launch_url in a popup from a page of return_url's origin, or of the
+    dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
+    browser then goes to the provider and comes back to the router, which stores the grant and sends the
+    browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
+    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
+    with another provider account keeps the old grant. The consent runs on the connector's latest
+    revision, and the connection reads that revision once the consent connects it. Who may start it is
+    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The connection, as returned when it was created.
+        body (AuthorizationRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,5 +246,6 @@ async def asyncio(
         await asyncio_detailed(
             id=id,
             client=client,
+            body=body,
         )
     ).parsed
