@@ -68,7 +68,11 @@ func originAllowed(mode auth.Mode, origin string) bool {
 	if err != nil {
 		return false
 	}
-	host := parsed.Hostname()
+	return loopbackHost(parsed.Hostname())
+}
+
+// loopbackHost reports whether a URL's host is this machine: localhost, 127.0.0.0/8 or ::1.
+func loopbackHost(host string) bool {
 	if host == "localhost" {
 		return true
 	}

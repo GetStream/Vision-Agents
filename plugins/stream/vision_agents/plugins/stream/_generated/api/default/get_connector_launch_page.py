@@ -60,10 +60,10 @@ def sync_detailed(
 ) -> Response[ErrorResponse | str]:
     """The page a consent starts on
 
-     The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the
-    dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes
-    there. Unauthenticated because a browser opens it; the page names no attempt and is the same for
-    every one.
+     The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by
+    the dashboard when the consent has none. The page waits for that origin to post the handoff token,
+    trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens
+    it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 
     Args:
         id (str):
@@ -94,10 +94,10 @@ def sync(
 ) -> ErrorResponse | str | None:
     """The page a consent starts on
 
-     The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the
-    dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes
-    there. Unauthenticated because a browser opens it; the page names no attempt and is the same for
-    every one.
+     The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by
+    the dashboard when the consent has none. The page waits for that origin to post the handoff token,
+    trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens
+    it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 
     Args:
         id (str):
@@ -123,10 +123,10 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | str]:
     """The page a consent starts on
 
-     The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the
-    dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes
-    there. Unauthenticated because a browser opens it; the page names no attempt and is the same for
-    every one.
+     The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by
+    the dashboard when the consent has none. The page waits for that origin to post the handoff token,
+    trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens
+    it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 
     Args:
         id (str):
@@ -155,10 +155,10 @@ async def asyncio(
 ) -> ErrorResponse | str | None:
     """The page a consent starts on
 
-     The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the
-    dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes
-    there. Unauthenticated because a browser opens it; the page names no attempt and is the same for
-    every one.
+     The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by
+    the dashboard when the consent has none. The page waits for that origin to post the handoff token,
+    trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens
+    it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 
     Args:
         id (str):

@@ -95,6 +95,36 @@ func (s *SourceSuite) TestTheScopesAToolNeedsComeFromTheManifest() {
 	}
 }
 
+// TestAToolNeedingAScopeTheManifestNeverAsksForIsNotListed (AI-1394): large also needs
+// channels:manage, which scopes.list does not hold, so no consent grants it.
+func (s *SourceSuite) TestAToolNeedingAScopeTheManifestNeverAsksForIsNotListed() {
+	specs, err := s.source.Discover(s.ctx, s.unasked())
+
+	s.Require().NoError(err)
+	var names []string
+	for _, spec := range specs {
+		names = append(names, spec.Name)
+	}
+	s.ElementsMatch([]string{contracttest.ToolEcho, contracttest.ToolBroken}, names)
+}
+
+// TestAToolNeedingAScopeTheManifestNeverAsksForIsNotOffered: a grant for it, pinned before the
+// manifest said so, offers nothing and the call never reaches the provider.
+func (s *SourceSuite) TestAToolNeedingAScopeTheManifestNeverAsksForIsNotOffered() {
+	set, err := s.source.Open(s.ctx, s.unasked(), s.grants(contracttest.ToolEcho, contracttest.ToolLarge))
+	s.Require().NoError(err)
+	defer set.Close()
+
+	var names []string
+	for _, tool := range set.Tools() {
+		names = append(names, tool.Name)
+	}
+	s.Equal([]string{"crm__" + contracttest.ToolEcho}, names)
+	_, err = set.Call(s.ctx, llm.ToolCall{Name: "crm__" + contracttest.ToolLarge, Arguments: `{}`})
+	s.Error(err)
+	s.Zero(s.provider.calls(contracttest.ToolLarge))
+}
+
 func (s *SourceSuite) TestEveryRequestCarriesTheConnectionsCredential() {
 	set := s.open(contracttest.ToolEcho)
 	_, err := set.Call(s.ctx, llm.ToolCall{Name: "crm__echo", Arguments: `{"text":"hi"}`})
@@ -290,6 +320,15 @@ func (s *SourceSuite) binding() core.ResolvedBinding {
 	return s.provider.binding(s.T(), s.resolver, "crm")
 }
 
+// unasked is the suite's binding whose manifest says large needs channels:read and
+// channels:manage, which its scopes.list never asks for.
+func (s *SourceSuite) unasked() core.ResolvedBinding {
+	binding := s.binding()
+	binding.Manifest.Sources[0].Tools = append(binding.Manifest.Sources[0].Tools,
+		core.ToolRule{Name: contracttest.ToolLarge, NeedsScopes: []string{"channels:read", "channels:manage"}})
+	return binding
+}
+
 func (s *SourceSuite) grants(tools ...string) []core.ToolGrant {
 	specs, err := s.source.Discover(s.ctx, s.binding())
 	s.Require().NoError(err)
@@ -311,11 +350,13 @@ func (s *SourceSuite) open(tools ...string) core.Toolset {
 	return set
 }
 
-// manifest is a connector whose mcp source runs at endpoint, saying echo needs channels:read.
+// manifest is a connector whose mcp source runs at endpoint, asking for channels:read and
+// saying echo needs it.
 func manifest(endpoint string) core.ResolvedManifest {
 	return core.ResolvedManifest{
 		ConnectorID: "custom_crm",
 		Endpoints:   map[string]string{"mcp": endpoint},
+		Scopes:      core.ScopePolicy{List: []string{"channels:read"}},
 		Sources: []core.SourceRule{{Kind: Kind, Endpoint: "mcp", Tools: []core.ToolRule{
 			{Name: contracttest.ToolEcho, NeedsScopes: []string{"channels:read"}},
 		}}},

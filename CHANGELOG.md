@@ -640,6 +640,27 @@ it has one. An agent with no config and no `instructions` now sends `DEFAULT_INS
 `config` and no `instructions` of its own is unchanged: the default is not sent over its
 folder's instructions.
 
+### A connector consent can go back to the app's own page
+
+`POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`) takes an optional
+`return_url` (AI-1383): a page of the app's own that the consent goes back to, with
+`connection_id` and `status` added to its query and its own query kept, whether the consent
+connected, was denied or failed. Open `launch_url` in a popup from a page of that URL's origin:
+the launch page takes the handoff from that origin only. It must be https, or http on
+`localhost`, `127.0.0.0/8` or `[::1]` for local development, with no user name or password and
+no fragment, at most 2048 bytes; anything else is a 400 `invalid_request` naming the rule.
+A host must be ASCII (write an internationalized one in punycode, `xn--`) and not an IPv4-mapped
+IPv6 address, since a browser's origin would not match the origin the launch page names. The
+query comes back re-encoded with its keys sorted (`?a=1&a=2&b` becomes
+`?a=1&a=2&b=&connection_id=…&status=…`), and a `connection_id` or `status` already in it is
+replaced by the router's. A consent that has a `return_url` no longer sends the person back to
+"the dashboard" in the launch page's own messages. The operation used to ignore a body; it now
+reads one, so a body that is not a JSON object (`null`, `{`, a `text/plain` one) is a 400 or 415
+where it was a 201; no known caller sends one.
+Without it, nothing changes: the dashboard opens the launch page and the consent goes back to
+the dashboard, as does a consent the chat starts. The generated clients are regenerated: Go's
+`CreateAuthorization` and Rust's `create_authorization` now take the request body.
+
 ### Built-in BigQuery and Metabase connectors
 
 The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase` (AI-1381).
@@ -2040,6 +2061,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A connector tool that needs a scope the connector never asks for is no longer offered: it is left out of `GET /v1/agents/connections/{id}/tools`, out of a validate's scope check and out of a session's tools. A manifest says so with `sources[].tools[].needs_scopes`, which may now name a scope outside `scopes.list`. The `metabase` connector's revision 2 so leaves out `execute_sql` and its 11 tools that write or schedule, which Metabase refused with `403` for the read and query grant it asks for; a connection made on revision 1 lists them until it consents again and is validated (AI-1394).
+- A recording sent to a live STT shortcut (`POST /v1/stt/recordings` with `en-low-latency`, or a router config whose STT is one) is transcribed by the batch models of the recorded shortcut for the same languages (`en-recorded`, `multilingual-recorded`). It reached Deepgram's batch endpoint with Flux, which Deepgram refuses (`V2_MODEL_ON_V1_LISTEN_ENDPOINT`). A live shortcut that names no language, such as `stt-fast`, goes by the recording's language hints: none or English only, `en-recorded`; any other language, `multilingual-recorded`. A recording pinned to a live-only model such as `deepgram/flux-general-en` is refused before any vendor is asked, naming the recorded shortcuts (AI-1396).
 - SIP trunks the router makes in Stream for calls, transfers and attached numbers now accept a call only with a password the vendor sends, or only from the vendor's addresses. A transfer takes the vendor's addresses as a call does, so a transfer on a vendor with no declared addresses and no password (Sinch, Bandwidth) is refused before anything is made. A number attached before this release keeps its old trunk, and attaching it again changes nothing; releasing it removes the trunk, but the same number may not be available to buy again.
 - Attaching a number that is already attached in the same app answers what it has and changes nothing. It made a second SIP trunk for the number, which Stream refuses, so a Go, JavaScript or .NET program that waits for calls failed on every start after its first.
 - An agent.yaml connector whose `connection:` the app does not have no longer stops the Go SDK's folder sync (`Agent.Sync`). The agent syncs without that connector's tools, and a warning names the agent, the connector and the connection; the next sync adds the connector once the connection exists. A label shared by several connections still fails, and so does a missing connection on an entry with `required: true`, whose error says to add the connection or drop `required` (AI-1368).

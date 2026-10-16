@@ -54,7 +54,7 @@ reproducible, so the checksum a pod reports traces back to a commit.
 Staging and the benchmark release (`perfbench -target benchmark`, nobody else's traffic) ship
 a router without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in
 the private repo; `rocky fastdeploy --service accelerate-staging` (or `accelerate-benchmark`)
-builds this checkout and swaps it in, in 11-20 s warm. There is no prod release yet.
+builds this checkout and swaps it in, in 11-20 s warm.
 
 - It needs `source ~/.config/rocky/gcp.env`, Docker, Go and gcloud, and an arm64 machine:
   the build runs natively and these releases' pods run arm64 only. It builds the working tree,
@@ -81,6 +81,25 @@ builds this checkout and swaps it in, in 11-20 s warm. There is no prod release 
 - To check a deploy, run perfbench against the benchmark release during the swap and confirm
   every call held, nothing answered 5xx, and devrun logged `pid N (sha) drained in ...,
   exit 0` for each old router once its last call ended.
+
+## Production
+
+Production is three shards, us-east4, us-west1 and europe-west4, behind
+`accelerate-prod.gcp.stream-io-api.com`; the load balancer sends a caller to the closest
+one, and any shard serves any app. Each runs the router with its own Postgres and Redis
+beside the global ones in us-east4 (`acceleration/README.md`, "Shards"). The runbook is
+`infra/docs/accelerate_shards_rollout.md` in the private repo.
+
+A release is a tagged build, published once, then deployed per shard:
+
+- `rocky launch upload` both architectures once; the binary is shared by every shard.
+- `rocky launch deploy --shard <cluster> --env prod` per shard. The registry lock is global,
+  so the three pointer moves run one after another; the restarts they trigger run in parallel.
+- Migrations run on start and take an advisory lock, so shards starting together are safe.
+  A migration has to be right for both databases: the global tables and the shard tables
+  share one migration set.
+- Prod runs with the overlap deploy on, so a restarted pod drains its calls (up to 1 h),
+  but `rocky fastdeploy` does not reach the prod clusters yet: deploy with `launch deploy`.
 
 ## Before and after
 

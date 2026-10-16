@@ -552,9 +552,16 @@ func (s *ManifestSuite) TestTheScopesAToolNeedsReachTheResolvedManifest() {
 	s.Equal([]SourceRule{{Kind: "mcp", Endpoint: "mcp", Tools: []ToolRule{{Name: "list_channels", NeedsScopes: []string{"channels:read"}}}}}, resolved.Sources)
 }
 
-func (s *ManifestSuite) TestAToolNeedingAScopeTheManifestNeverAsksForIsRejected() {
-	_, err := ParseManifest(toolSource("      - name: list_channels\n        needs_scopes: [channels:history]\n"))
-	s.ErrorContains(err, `sources[0].tools[0].needs_scopes: "channels:history" is not in scopes.list`)
+// TestAToolMayNeedAScopeTheManifestNeverAsksFor: the source leaves such a tool out (AI-1394),
+// so saying so is how a manifest hides a tool no consent can grant.
+func (s *ManifestSuite) TestAToolMayNeedAScopeTheManifestNeverAsksFor() {
+	m, err := ParseManifest(toolSource("      - name: delete_channel\n        needs_scopes: [channels:read, channels:manage]\n"))
+	s.Require().NoError(err)
+
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+
+	s.Require().NoError(err)
+	s.Equal([]ToolRule{{Name: "delete_channel", NeedsScopes: []string{"channels:read", "channels:manage"}}}, resolved.Sources[0].Tools)
 }
 
 func (s *ManifestSuite) TestAToolNamedTwiceIsRejected() {
