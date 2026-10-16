@@ -590,6 +590,9 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Connectors == nil {
 		config.Connectors = []ConnectorBinding{}
 	}
+	if config.LeftOutConnectors == nil {
+		config.LeftOutConnectors = []LeftOutConnector{}
+	}
 	if config.PluginEvents == nil {
 		config.PluginEvents = []PluginEvent{}
 	}
