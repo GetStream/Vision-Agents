@@ -1000,9 +1000,15 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(err)
 	}
 
+	allowedIPs, err := s.allowlistFor(held.Vendor)
+	if err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
+
 	trunkID, bridge, err := stream.CreateTrunk(ctx, Trunk{
-		Name:    "transfer-" + request.CallID,
-		Numbers: []string{request.From},
+		Name:       "transfer-" + request.CallID,
+		Numbers:    []string{request.From},
+		AllowedIPs: allowedIPs,
 	})
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)

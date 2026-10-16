@@ -107,12 +107,17 @@ func (s *AppsSuite) vendorOnAnAllowlist() onAnAllowlist {
 	declared, ok := s.config().Lookup("vonage")
 	s.Require().True(ok)
 	s.Require().NotEmpty(declared.Signalling, "the test needs a vendor that declares its addresses")
+	return onAnAllowlist{e164: s.numberOn("vonage"), signalling: declared.Signalling}
+}
 
-	vonage := &stub{vendor: "vonage"}
+// numberOn registers a stub for the vendor next to the suite's own and gives the suite's
+// customer a number on it.
+func (s *AppsSuite) numberOn(vendor string) string {
+	other := &stub{vendor: vendor}
 	registry := NewRegistry(s.config())
 	registry.Register(s.vendor.vendor, func() (Provider, error) { return s.vendor, nil })
-	registry.Register(vonage.vendor, func() (Provider, error) { return vonage, nil })
-	for _, name := range append(s.credentials(s.vendor.vendor), s.credentials(vonage.vendor)...) {
+	registry.Register(other.vendor, func() (Provider, error) { return other, nil })
+	for _, name := range append(s.credentials(s.vendor.vendor), s.credentials(other.vendor)...) {
 		s.T().Setenv(name, "set")
 	}
 	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
@@ -121,9 +126,9 @@ func (s *AppsSuite) vendorOnAnAllowlist() onAnAllowlist {
 
 	e164 := "+1512" + uuid.NewString()[:7]
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
-		E164: e164, Vendor: vonage.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+		E164: e164, Vendor: other.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
-	return onAnAllowlist{e164: e164, signalling: declared.Signalling}
+	return e164
 }
 
 // planStub is a vendor that fetches its call plan when the call is answered, and renders
@@ -654,4 +659,46 @@ func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
 	s.ErrorContains(err, "ROUTER_AUTH_KEK", "the error names what to set")
 	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
 	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
+}
+
+func (s *AppsSuite) TestATransfersTrunkHasAPasswordTheVendorIsGiven() {
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.NotEmpty(password)
+	s.Empty(allowed)
+	s.Equal(password, s.vendor.dialed.Bridge.Password)
+}
+
+func (s *AppsSuite) TestATransferOnAVendorThatCannotSendAPasswordHasItsAddressesAndNoPassword() {
+	vonage := s.vendorOnAnAllowlist()
+
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: vonage.e164, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.Equal(vonage.signalling, allowed, "without them the vendor's leg is challenged and cannot answer")
+	s.Empty(password)
+}
+
+func (s *AppsSuite) TestATransferOnAVendorWithNoAddressesAndNoPasswordIsRefusedBeforeAnythingIsMade() {
+	declared, ok := s.config().Lookup("sinch")
+	s.Require().True(ok)
+	s.Require().Empty(declared.Signalling)
+	sinch := s.numberOn("sinch")
+
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: sinch, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().Error(err)
+	s.Empty(s.deployment.Trunks())
 }
