@@ -2898,7 +2898,7 @@ namespace GetStream.VisionAgents.Models
         public string? Label { get; set; } = default!;
 
         /// <summary>
-        /// What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+        /// What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("last_validation")]
         public ConnectionLastValidation? LastValidation { get; set; } = default!;

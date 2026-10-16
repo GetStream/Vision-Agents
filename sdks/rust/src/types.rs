@@ -2381,7 +2381,7 @@ pub struct Connection {
     pub inputs: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub label: ::std::option::Option<::std::string::String>,
-    ///What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+    ///What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub last_validation: ::std::option::Option<ConnectionLastValidation>,
     ///What the provider said about the account when it was connected, such as a workspace id. Empty until then.
