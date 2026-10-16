@@ -464,6 +464,7 @@ final class CreateSessionRequest {
     this.navigating,
     this.phone,
     this.projectId,
+    this.returnUrl,
     this.search,
     this.startVoice,
     this.sts,
@@ -586,6 +587,10 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.project_id'),
       },
+      returnUrl: switch (json['return_url']) {
+        null => null,
+        final Object value => _string(value, 'CreateSessionRequest.return_url'),
+      },
       search: switch (json['search']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.search'),
@@ -666,6 +671,7 @@ final class CreateSessionRequest {
   final bool? navigating;
   final SessionPhone? phone;
   final String? projectId;
+  final String? returnUrl;
   final String? search;
   final bool? startVoice;
   final String? sts;
@@ -705,6 +711,7 @@ final class CreateSessionRequest {
     'navigating': ?navigating,
     if (phone case final value?) 'phone': value.toJson(),
     'project_id': ?projectId,
+    'return_url': ?returnUrl,
     'search': ?search,
     'start_voice': ?startVoice,
     'sts': ?sts,

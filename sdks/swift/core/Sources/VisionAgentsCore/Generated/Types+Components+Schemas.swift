@@ -447,6 +447,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/project_id`.
             internal var projectId: Swift.String?
+            /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/return_url`.
+            internal var returnUrl: Swift.String?
             /// Omit it and the config decides, or search-fast when there is no config.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/search`.
@@ -539,6 +543,7 @@ extension Components {
             ///   - navigating: The agent placed this call, so let recordings finish and answer their menus.
             ///   - phone:
             ///   - projectId: What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+            ///   - returnUrl: The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
             ///   - search: Omit it and the config decides, or search-fast when there is no config.
             ///   - startVoice: Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
             ///   - sts: A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -576,6 +581,7 @@ extension Components {
                 navigating: Swift.Bool? = nil,
                 phone: Components.Schemas.SessionPhone? = nil,
                 projectId: Swift.String? = nil,
+                returnUrl: Swift.String? = nil,
                 search: Swift.String? = nil,
                 startVoice: Swift.Bool? = nil,
                 sts: Swift.String? = nil,
@@ -613,6 +619,7 @@ extension Components {
                 self.navigating = navigating
                 self.phone = phone
                 self.projectId = projectId
+                self.returnUrl = returnUrl
                 self.search = search
                 self.startVoice = startVoice
                 self.sts = sts
@@ -651,6 +658,7 @@ extension Components {
                 case navigating
                 case phone
                 case projectId = "project_id"
+                case returnUrl = "return_url"
                 case search
                 case startVoice = "start_voice"
                 case sts

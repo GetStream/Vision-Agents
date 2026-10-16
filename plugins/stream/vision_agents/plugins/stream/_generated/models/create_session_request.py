@@ -97,6 +97,15 @@ class CreateSessionRequest:
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
         project_id (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
             breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+        return_url (str | Unset): The app's own page a login or step-up the chat asks for goes back to, as
+            createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the
+            browser comes back to it with connection_id and status added to its query. The same rules as
+            createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the
+            rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is
+            kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device
+            may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller
+            alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent
+            lands.
         search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
         start_voice (bool | Unset): Start voice as the session opens, as startSessionVoice does: the agent joins the
             call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held
@@ -142,6 +151,7 @@ class CreateSessionRequest:
     navigating: bool | Unset = False
     phone: SessionPhone | Unset = UNSET
     project_id: str | Unset = UNSET
+    return_url: str | Unset = UNSET
     search: str | Unset = UNSET
     start_voice: bool | Unset = False
     sts: str | Unset = UNSET
@@ -228,6 +238,8 @@ class CreateSessionRequest:
 
         project_id = self.project_id
 
+        return_url = self.return_url
+
         search = self.search
 
         start_voice = self.start_voice
@@ -312,6 +324,8 @@ class CreateSessionRequest:
             field_dict["phone"] = phone
         if project_id is not UNSET:
             field_dict["project_id"] = project_id
+        if return_url is not UNSET:
+            field_dict["return_url"] = return_url
         if search is not UNSET:
             field_dict["search"] = search
         if start_voice is not UNSET:
@@ -442,6 +456,8 @@ class CreateSessionRequest:
 
         project_id = d.pop("project_id", UNSET)
 
+        return_url = d.pop("return_url", UNSET)
+
         search = d.pop("search", UNSET)
 
         start_voice = d.pop("start_voice", UNSET)
@@ -509,6 +525,7 @@ class CreateSessionRequest:
             navigating=navigating,
             phone=phone,
             project_id=project_id,
+            return_url=return_url,
             search=search,
             start_voice=start_voice,
             sts=sts,

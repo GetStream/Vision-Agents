@@ -60,6 +60,10 @@ type SessionOptions struct {
 	// per session, by alias. Each must be the caller's own; a binding with the agent's fixed
 	// connection cannot be given one.
 	ConnectorBindings map[string]string
+	// ReturnURL is the app's own page a login or step-up the conversation asks for goes back
+	// to, with connection_id and status added to its query; its origin is the page that opens
+	// the consent's launch_url. Empty sends them back to the dashboard.
+	ReturnURL string
 
 	// Tools are the caller's own, for this conversation only. Nil uses the agent's, which is
 	// the usual arrangement.
@@ -281,6 +285,7 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		StartVoice:      pointer(options.StartVoice),
 		Instructions:    pointer(options.Instructions),
 		UserId:          pointer(options.UserID),
+		ReturnUrl:       pointer(options.ReturnURL),
 	}
 	if len(options.Custom) > 0 {
 		custom := options.Custom

@@ -530,6 +530,36 @@ func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
 	}
 }
 
+func TestAReturnURLGoesOverAsTheSessionsReturnURL(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{ReturnURL: "https://app.example/connectors/done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions"); body["return_url"] != "https://app.example/connectors/done" {
+		t.Errorf("return_url went over as %v", body["return_url"])
+	}
+}
+
+func TestNoReturnURLSendsNone(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions"); body["return_url"] != nil {
+		t.Errorf("a session with no ReturnURL sent return_url %v", body["return_url"])
+	}
+}
+
 func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
 	backend := newRouter(t)
 	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}

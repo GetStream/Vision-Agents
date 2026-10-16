@@ -4603,6 +4603,12 @@ namespace GetStream.VisionAgents.Models
         public string? ProjectId { get; set; } = default!;
 
         /// <summary>
+        /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("return_url")]
+        public string? ReturnUrl { get; set; } = default!;
+
+        /// <summary>
         /// Omit it and the config decides, or search-fast when there is no config.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("search")]

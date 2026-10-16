@@ -640,6 +640,21 @@ it has one. An agent with no config and no `instructions` now sends `DEFAULT_INS
 `config` and no `instructions` of its own is unchanged: the default is not sent over its
 folder's instructions.
 
+### A login the chat asks for can go back to the app's own page
+
+`POST /v1/agents/sessions` (`createSession`) and the session socket's `start` frame take an
+optional `return_url` (AI-1384): the app's own page that the logins and step-ups the chat asks
+for go back to, as `createAuthorization`'s `return_url` does for a consent the backend starts.
+A page of that URL's origin opens the `connector_authorization` attachment's or the
+`connector_scope_required` frame's `launch_url` and posts it `handoff_token`; the browser then
+comes back to the URL with `connection_id` and `status` added to its query. The same rules
+apply as on `createAuthorization`, and a URL they refuse is a 400 `invalid_request` starting
+`return_url:` (an error frame on the socket), with no session created. The session keeps it:
+a chat carried on after it ended, in this process or another, and a fork, go back to the same
+page. An end user's device may send it, since a consent the chat asks for is only ever for
+the caller's own connection and shown to the caller alone. The Go SDK's `SessionOptions` has
+`ReturnURL`. Without it, nothing changes: those consents go back to the dashboard.
+
 ### A connector consent can go back to the app's own page
 
 `POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`) takes an optional
@@ -658,7 +673,7 @@ replaced by the router's. A consent that has a `return_url` no longer sends the 
 reads one, so a body that is not a JSON object (`null`, `{`, a `text/plain` one) is a 400 or 415
 where it was a 201; no known caller sends one.
 Without it, nothing changes: the dashboard opens the launch page and the consent goes back to
-the dashboard, as does a consent the chat starts. The generated clients are regenerated: Go's
+the dashboard, as does a consent the chat starts (until AI-1384, above). The generated clients are regenerated: Go's
 `CreateAuthorization` and Rust's `create_authorization` now take the request body.
 
 ### Built-in BigQuery and Metabase connectors
