@@ -1266,6 +1266,13 @@ image input, on Meta's Standard tier that does not train on requests. It needs
 `META_API_KEY`, and no shortcut prefers it: it is reached by name or as failover. The
 `meta` provider now accepts the `max` reasoning effort, above `xhigh`.
 
+### Meta's Muse Wonder 1.0 in the built-in LLM config
+
+`meta/muse-wonder-1.0`, Meta's most capable model on the Model API, is now in the default
+`router.yaml`, in the high-quality tier with image input, at $4 in, $0.20 cached and $20 out
+per million tokens. It takes the same efforts as Spark, `minimal` to `max`, and no shortcut
+prefers it: it is reached by name or as failover.
+
 ### An agent can be given a guardrail: `guardrail.md`
 
 A `guardrail.md` beside `instructions.md` says what the agent may be asked about. Every

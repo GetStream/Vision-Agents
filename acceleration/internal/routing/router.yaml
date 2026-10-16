@@ -2538,6 +2538,31 @@ llm:
         per_million_cached_input_tokens: 0.15
         per_million_output_tokens: 4.25
 
+    # Muse Wonder 1.0, Meta's most capable model on the same Model API, 52 on the Artificial
+    # Analysis Intelligence Index at max effort, beside Gemini 4 Argon and GPT-6 Astra, at
+    # around 184 output tokens a second, several times either. AA publishes no score at the
+    # low effort the provider asks for, so it carries speed only. The efforts, tool_choice
+    # and image input are Spark's; max stays Wonder and never reaches Wonder Full, which is
+    # in Muse Code only. There is no contributor variant and no long-context premium, and
+    # the API allows 3,000 requests and 4M tokens a minute. Nothing prefers it; it is
+    # reached by name or as failover in the quality tier. The data policy is Spark's.
+    - provider: meta
+      model: muse-wonder-1.0
+      description: "Meta's Muse Wonder, their most capable model, for long agentic work. Reads images and always thinks first."
+      benchmark: { output_tokens_per_second: 184 }
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 4.00
+        per_million_cached_input_tokens: 0.20
+        per_million_output_tokens: 20.00
+
     # The open-weight models, and the hosts that serve them.
     #
     # The weights are the same wherever they run, so a second host of a model already
