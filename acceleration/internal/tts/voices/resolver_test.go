@@ -53,3 +53,14 @@ func (s *ResolverSuite) TestAVoiceAskedForAsTheirOwnIsNeverLookedUpInALibrary() 
 	s.EqualError(err, `voices: "Rachel" is not one of this customer's voices`)
 	s.Equal(0, s.library.lookups)
 }
+
+func (s *ResolverSuite) TestAVoiceAskedForAsTheirOwnLeavesNoProviderOutAndIsNeverLookedUp() {
+	unvouched := s.resolver.Unvouched(s.ctx, "acme", options.OwnVoicePrefix+"Sara", []string{"elevenlabs", "cartesia"})
+
+	s.Empty(unvouched)
+	s.Equal(0, s.library.lookups)
+}
+
+func (s *ResolverSuite) TestAVoiceTheLibraryRefusedLeavesOutTheProvidersThatCannotVouchForIt() {
+	s.Equal([]string{"cartesia"}, s.resolver.Unvouched(s.ctx, "acme", "Sara", []string{"cartesia", "elevenlabs"}))
+}

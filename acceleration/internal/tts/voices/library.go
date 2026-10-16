@@ -267,6 +267,51 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 	return refusal.err
 }
 
+// Unvouched names, out of providers, the ones a voice may not be handed: once a provider
+// that looks voices up says it has no such voice, every other one whose own listing does
+// not hold that id. A listed name does not vouch, since Cartesia's and Inworld's voices
+// are spoken by id. A provider that looks voices up is never named, since Check refuses
+// the voice there itself, naming the closest. When none refuses, because none looks voices
+// up or the lookup failed, nobody is named and the voice goes where it always went.
+func (c *Catalogue) Unvouched(ctx context.Context, voice string, providers []string) []string {
+	if !slices.ContainsFunc(providers, func(provider string) bool {
+		return c.Finds(provider) && c.Check(ctx, provider, voice) != nil
+	}) {
+		return nil
+	}
+	var unvouched []string
+	for _, provider := range providers {
+		if !c.Finds(provider) && !c.lists(ctx, provider, voice) {
+			unvouched = append(unvouched, provider)
+		}
+	}
+	return unvouched
+}
+
+// Finds reports a provider whose library can say a voice does not exist.
+func (c *Catalogue) Finds(provider string) bool {
+	c.mu.Lock()
+	lister := c.listers[provider]
+	c.mu.Unlock()
+	_, finds := lister.(Finder)
+	return finds
+}
+
+// lists reports a provider whose listing holds the voice's id, read as Check reads it:
+// cached, and bounded by the lookup timeout. A listing that cannot be read holds nothing.
+func (c *Catalogue) lists(ctx context.Context, provider, voice string) bool {
+	c.mu.Lock()
+	lister, ok := c.listers[provider]
+	c.mu.Unlock()
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, c.lookup, errLookupTimeout)
+	defer cancel()
+	library, _ := c.listOne(ctx, provider, lister)
+	return slices.ContainsFunc(library, func(listed Library) bool { return listed.ID == voice })
+}
+
 // errLookupTimeout is the cause of the open path's own lookup deadline, so a vendor that
 // hangs can be told from a caller whose context ended.
 var errLookupTimeout = errors.New("voices: lookup timed out")

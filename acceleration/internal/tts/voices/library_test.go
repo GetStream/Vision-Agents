@@ -362,6 +362,76 @@ func (s *CatalogueSuite) TestAProviderWithNoLibraryIsNotChecked() {
 	s.NoError(s.catalogue.Check(s.ctx, "inworld", "Sara"))
 }
 
+// otherVendors registers Cartesia, whose listing holds a voice under its id and another
+// whose name is "Sara", and Inworld, whose listing holds Sara by id. Neither looks voices up.
+func (s *CatalogueSuite) otherVendors() (cartesia, inworld *countingLister) {
+	cartesia = &countingLister{voices: []Library{
+		{ID: "a0e99841-438c-4a64-b679-ae501e7d6091", Name: "Barbershop Man"},
+		{ID: "694f9389-aac1-45b6-b726-9d9369183238", Name: "Sara"},
+	}}
+	inworld = &countingLister{voices: []Library{{ID: "Sara", Name: "Sara"}}}
+	s.catalogue.Register("cartesia", cartesia)
+	s.catalogue.Register("inworld", inworld)
+	return cartesia, inworld
+}
+
+func (s *CatalogueSuite) TestAVoiceALookupRefusedIsVouchedForOnlyWhereItsIdIsListed() {
+	s.library()
+	s.otherVendors()
+
+	unvouched := s.catalogue.Unvouched(s.ctx, "Sara", []string{"cartesia", "elevenlabs", "inworld", "fish"})
+
+	s.Equal([]string{"cartesia", "fish"}, unvouched,
+		"Inworld lists Sara's id; Cartesia only a name, which it cannot speak; Fish lists nothing")
+}
+
+func (s *CatalogueSuite) TestAVoiceTheLookingProviderHasLeavesEveryoneIn() {
+	s.library()
+	cartesia, _ := s.otherVendors()
+
+	s.Empty(s.catalogue.Unvouched(s.ctx, sarah.ID, []string{"cartesia", "elevenlabs", "fish"}))
+	s.Equal(0, cartesia.asked, "nobody else is listed when nobody refused")
+}
+
+func (s *CatalogueSuite) TestALookupThatFailsLeavesEveryoneIn() {
+	s.library().err = errors.New("gateway")
+	s.otherVendors()
+
+	s.Empty(s.catalogue.Unvouched(s.ctx, "Sara", []string{"cartesia", "elevenlabs", "fish"}))
+}
+
+func (s *CatalogueSuite) TestWithoutAProviderThatLooksVoicesUpNobodyIsAskedOrLeftOut() {
+	finder := s.library()
+	cartesia, inworld := s.otherVendors()
+
+	s.Empty(s.catalogue.Unvouched(s.ctx, "Sara", []string{"cartesia", "inworld", "fish"}))
+	s.Equal(0, cartesia.asked+inworld.asked+finder.asked+finder.lookups)
+}
+
+func (s *CatalogueSuite) TestAListingThatCannotBeReadVouchesForNothing() {
+	s.library()
+	_, inworld := s.otherVendors()
+	inworld.err = errors.New("gateway")
+
+	s.Equal([]string{"inworld"}, s.catalogue.Unvouched(s.ctx, "Sara", []string{"elevenlabs", "inworld"}))
+}
+
+// hangingLister holds a listing until it is given up on.
+type hangingLister struct{ countingLister }
+
+func (l *hangingLister) List(ctx context.Context) ([]Library, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (s *CatalogueSuite) TestAListingThatTakesTooLongVouchesForNothing() {
+	s.library()
+	s.catalogue.Register("inworld", &hangingLister{})
+	s.catalogue.lookup = 10 * time.Millisecond
+
+	s.Equal([]string{"inworld"}, s.catalogue.Unvouched(s.ctx, "Sara", []string{"elevenlabs", "inworld"}))
+}
+
 // LibrarySuite covers what each provider makes of its vendor's answer.
 type LibrarySuite struct {
 	suite.Suite

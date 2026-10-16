@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
@@ -31,7 +32,8 @@ const suggestion = `the closest in its library is "Sarah - Mature, Reassuring, C
 
 // UnknownVoiceSuite is every way a voice is asked for, the socket, a session's agent and a
 // recording, run against a router whose resolver checks the stub provider's library, as
-// cmd/router builds it.
+// cmd/router builds it. Every shortcut also reaches plain, a vendor with no library, as
+// tts-quality reaches Cartesia and Inworld after ElevenLabs.
 type UnknownVoiceSuite struct {
 	RouterSuite
 }
@@ -41,6 +43,10 @@ func TestUnknownVoiceSuite(t *testing.T) {
 	catalogue := voices.NewCatalogue()
 	catalogue.Register("stub", sarahOnly{})
 	suite.ttsVoices = voices.NewResolver(nil, catalogue)
+	suite.ttsConfig = routableConfig()
+	suite.ttsConfig.Providers = append(suite.ttsConfig.Providers, routing.ProviderConfig{
+		Provider: "plain", Model: "plain-model", Languages: []string{"en"}, Realtime: true, Terms: everyTerm,
+	})
 	runSuite(t, suite)
 }
 

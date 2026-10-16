@@ -376,6 +376,9 @@ func recorderRegistry() *ttsrouter.Recorders {
 	registry.Register("stub", func(spec routing.Spec) (tts.Recorder, error) {
 		return &recordedVoice{model: spec.Model}, nil
 	})
+	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
+		return &recordedVoice{model: spec.Model}, nil
+	})
 	return registry
 }
 

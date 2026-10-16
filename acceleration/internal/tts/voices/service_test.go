@@ -206,6 +206,20 @@ func (s *ServiceSuite) TestTheirOwnVoiceIsNeverLookedUpInTheProvidersLibrary() {
 	s.Equal(0, library.lookups)
 }
 
+func (s *ServiceSuite) TestTheirOwnVoiceLeavesNoProviderOutAndIsNeverLookedUp() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+	// A library that says no voice outside its listing exists.
+	library := &findingLister{exists: map[string]bool{}}
+	catalogue := NewCatalogue()
+	catalogue.Register("elevenlabs", library)
+
+	unvouched := NewResolver(s.configs, catalogue).Unvouched(s.ctx, "acme", "founder", []string{"elevenlabs", "cartesia"})
+
+	s.Empty(unvouched, "Cartesia may have been given it, and is asked as before")
+	s.Equal(0, library.lookups)
+}
+
 func (s *ServiceSuite) TestAVoiceAskedForAsTheirOwnResolvesTheSameWayAsABareName() {
 	voice := s.recorded()
 	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))

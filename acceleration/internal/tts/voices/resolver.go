@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -22,6 +23,8 @@ type Resolver struct {
 	store   *appconfig.Store
 	library *Catalogue
 }
+
+var _ routing.VoiceVetter = (*Resolver)(nil)
 
 // NewResolver returns a resolver backed by the configuration store. The library, which may
 // be nil, is what checks a voice that is not the customer's own.
@@ -66,6 +69,24 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 		return "", err
 	}
 	return externalID, nil
+}
+
+// Unvouched names the providers the voice may not be handed as asked, see
+// routing.VoiceVetter. A voice asked for as the customer's own, or that is theirs, is
+// resolved per provider as before, so it names none; so does a store that cannot say,
+// whose error the candidates then meet in ResolveVoice. Without a provider that looks
+// voices up there is nothing to ask, so neither the store nor a vendor is.
+func (r *Resolver) Unvouched(ctx context.Context, customerID, voice string, providers []string) []string {
+	if r.library == nil || strings.HasPrefix(voice, options.OwnVoicePrefix) ||
+		!slices.ContainsFunc(providers, r.library.Finds) {
+		return nil
+	}
+	if r.store != nil && customerID != "" {
+		if _, err := r.own(ctx, customerID, voice); !errors.Is(err, store.ErrNoVoice) {
+			return nil
+		}
+	}
+	return r.library.Unvouched(ctx, voice, providers)
 }
 
 // passThrough hands a voice that is not the customer's own to the provider as asked, once

@@ -128,8 +128,17 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
 - Only the provider's own "no such voice" refuses. ElevenLabs answers that as
   `detail.code: voice_not_found`, with a 404 or a 400, so the code decides and not the status.
   The refusal is `routing.ErrRequest` and names the closest listed voice by edit distance over
-  id and name. `Select` then tries the next candidate in the priority list, and when none
-  takes the voice the caller gets the refusal, not "every candidate failed".
+  id and name. When none takes the voice the caller gets the refusal, not "every candidate failed".
+- A refused voice is not handed to a vendor that cannot look voices up (Cartesia, Inworld,
+  any vendor with no library): it would start and fail on the first line (`tts-quality` did,
+  on Inworld and Cartesia, before AI-1395's second PR). `Select` asks the resolver once,
+  before the first candidate (`routing.VoiceVetter`, `Resolver.Unvouched`,
+  `Catalogue.Unvouched`), so the answer does not depend on which vendor health ranks first.
+  Such a vendor still takes the voice when its own cached listing holds that id: a listed
+  name does not count, since Cartesia and Inworld speak a voice by id. A listing that cannot
+  be read holds nothing.
+- Nothing is left out when no candidate can look the voice up, when the lookup failed, for a
+  customer's own voice, for `custom:`, or for a candidate whose overwrites name a `voice_id`.
 - A lookup that fails another way (a bad key, a 5xx, past `lookupTimeout`, 3s) lets the voice
   through as before. An unreadable listing still refuses, without a suggestion.
 - ElevenLabs looks twice, `GET /v1/voices/{id}` and then `GET /v1/shared-voices?search={id}`,
@@ -145,7 +154,7 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
 - A candidate whose `overwrites.<vendor>.voice_id` is set is not checked: the overwrite is the
   voice spoken (`routing.VoiceOverwritten`, `ttsrouter/registry.go` `voiceOr`), so the
   request's `voice` is never asked of the provider.
-- Not checked: Cartesia and Inworld voices (their listers have no `Exists`), a router with no database (no resolver) and the standalone `cmd/agent` binary.
+- Not checked: Cartesia and Inworld voices on a target with no ElevenLabs candidate (their listers have no `Exists`), a router with no database (no resolver) and the standalone `cmd/agent` binary.
 
 ## Three things that narrow candidates without being terms
 
