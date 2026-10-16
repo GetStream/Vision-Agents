@@ -305,6 +305,14 @@ func (s *ElevenLabsSuite) TestAStyleOfZeroIsSentRatherThanTakenForNone() {
 		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
 }
 
+func (s *ElevenLabsSuite) TestAStyleOfOneIsSentRatherThanRefused() {
+	// One is the top of the documented 0 to 1 range, so it is a style a caller can ask for.
+	style := 1.0
+
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8,"style":1}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
+}
+
 func (s *ElevenLabsSuite) TestAStyleOutsideZeroToOneIsRefused() {
 	// Live on 2026-10-16 ElevenLabs refused 1.5 and -0.2 on Flash v2.5, "expected to be
 	// greater or equal to 0.0 and less or equal to 1.0".
