@@ -20,7 +20,7 @@ chunk belongs to.
 
 ## The four, and what each calls the same thing
 
-| Option | OpenAI `gpt-realtime-2` | xAI `grok-voice-think-fast-2.0` | Alibaba `qwen3.5-omni-plus-realtime` | Google `gemini-3.1-flash-live-preview` |
+| Option | OpenAI `gpt-realtime-2` | xAI `grok-voice-3.0` | Alibaba `qwen3.5-omni-plus-realtime` | Google `gemini-3.1-flash-live-preview` |
 | --- | --- | --- | --- | --- |
 | protocol | Realtime events over a socket | the same events; xAI documents it as OpenAI-compatible | the same events, older spellings kept | `BidiGenerateContent`, the Live API |
 | audio in / out | 24 kHz / 24 kHz | 24 kHz / 24 kHz | 16 kHz / 24 kHz | 16 kHz / 24 kHz |

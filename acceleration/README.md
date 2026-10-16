@@ -539,7 +539,7 @@ target. The agent's `llm` field and its optional `subagent` do not select that b
 | `gemini/gemini-3.8-live`                  | low-latency  | tokens: $3.00 in, $12.00 out per million     |
 | `gemini/gemini-3.1-flash-live-preview`    | low-latency  | tokens: $3.00 in, $12.00 out per million     |
 | `gemini/gemini-3.8-live-extended-thinking` | high-quality | tokens: $3.00 in, $12.00 out per million    |
-| `xai/grok-voice-think-fast-2.0`           | low-latency  | the caller's audio: $3.00 an hour            |
+| `xai/grok-voice-3.0`                      | low-latency  | the caller's audio: $4.80 an hour            |
 | `qwen/qwen3.5-omni-plus-realtime`         | low-latency  | the caller's audio: $0.03 an hour            |
 | `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 

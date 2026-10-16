@@ -2032,7 +2032,7 @@ sts:
     # from their per-endpoint table, and what the backend calls it makes keep is not said.
     - provider: openai
       model: gpt-live-1
-      description: "Tops the Artificial Analysis board and keeps talking while a tool runs, but is slower to first audio and cannot see. Backend tokens are billed on top."
+      description: "Near the top of the Artificial Analysis board and keeps talking while a tool runs, but is slower to first audio and cannot see. Backend tokens are billed on top."
       languages: [en, pt]
       realtime: true
       tier: high-quality
@@ -2043,13 +2043,15 @@ sts:
       price:
         per_audio_hour: 3.0
 
-    # xAI's Grok Voice over its OpenAI-compatible socket. It does not see, and it reports
-    # no usage, so it is priced by the caller's audio: $0.05 a minute of conversation on
-    # the launch pricing, which undercounts the model's own speaking time. xAI's API terms
-    # match their transcription ones: no training, thirty days.
+    # xAI's Grok Voice 3.0 over its OpenAI-compatible socket, which grok-voice-latest
+    # points at; 2.0 is deprecated. Top of the Artificial Analysis speech-to-speech index
+    # at 86.9, 0.81s to first audio. It does not see, and it reports no usage, so it is
+    # priced by the caller's audio: $0.08 a minute of conversation, plus $0.004 a typed
+    # turn not counted here, which undercounts the model's own speaking time. xAI's API
+    # terms match their transcription ones: no training, thirty days.
     - provider: xai
-      model: grok-voice-think-fast-2.0
-      description: "xAI's Grok Voice. Fast, cannot see, and priced by the minute of caller audio."
+      model: grok-voice-3.0
+      description: "xAI's Grok Voice 3.0. Tops the Artificial Analysis board, fast, cannot see, and priced by the minute of caller audio."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2058,7 +2060,7 @@ sts:
         trains_on_data: "no"
         retention: 30d
       price:
-        per_audio_hour: 3.0
+        per_audio_hour: 4.8
 
     # Alibaba's Qwen 3.5 Omni, top of the Artificial Analysis quality board and by far the
     # cheapest, at $0.03 an hour of input on that board. It takes no tools and no typed
