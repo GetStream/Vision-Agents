@@ -216,7 +216,7 @@ func (s *Source) open(ctx context.Context, b core.ResolvedBinding, client *http.
 	}()
 	select {
 	case got := <-done:
-		return got.session, got.listed, got.err
+		return got.session, asked(b.Manifest, rule, got.listed), got.err
 	case <-startup.Done():
 		// The SDK's Connect can outlast its context: against a server that never answers it
 		// returns only when the client's Timeout cuts the request (go-sdk v1.8.0), 10 s for
@@ -297,6 +297,18 @@ func sourceRule(m core.ResolvedManifest) *core.SourceRule {
 		return nil
 	}
 	return &m.Sources[index]
+}
+
+// asked is listed without each tool the manifest says needs a scope its scopes.list never
+// asks for (AI-1394): no consent grants that scope, so a call could only be refused. Discover
+// and Open both read the list through open, so a validate, the tools it stores and a session
+// never see such a tool.
+func asked(m core.ResolvedManifest, rule *core.SourceRule, listed []*mcp.Tool) []*mcp.Tool {
+	return slices.DeleteFunc(listed, func(tool *mcp.Tool) bool {
+		return slices.ContainsFunc(needsScopes(rule, tool.Name), func(scope string) bool {
+			return !slices.Contains(m.Scopes.List, scope)
+		})
+	})
 }
 
 // needsScopes is what the manifest says the tool needs.
