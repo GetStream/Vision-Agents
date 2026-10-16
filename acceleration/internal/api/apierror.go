@@ -32,6 +32,7 @@ const (
 	ErrorTypeUnsupportedMediaType ErrorType = "unsupported_media_type"
 	ErrorTypeRateLimited          ErrorType = "rate_limited"
 	ErrorTypeInternal             ErrorType = "internal"
+	ErrorTypeNotImplemented       ErrorType = "not_implemented"
 	ErrorTypeUnavailable          ErrorType = "unavailable"
 )
 
@@ -54,6 +55,7 @@ var errorTypes = []struct {
 	{ErrorTypeUnsupportedMediaType, http.StatusUnsupportedMediaType, "unsupported_media_type"},
 	{ErrorTypeRateLimited, http.StatusTooManyRequests, "rate_limited"},
 	{ErrorTypeInternal, http.StatusInternalServerError, "internal_error"},
+	{ErrorTypeNotImplemented, http.StatusNotImplemented, "not_implemented"},
 	{ErrorTypeUnavailable, http.StatusServiceUnavailable, "unavailable"},
 }
 
@@ -66,7 +68,7 @@ func (ErrorType) Schema(registry huma.Registry) *huma.Schema {
 		"it is answered with: invalid_request 400, authentication 401, permission 403, "+
 		"not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, "+
 		"payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, "+
-		"unavailable 503.", values...)
+		"not_implemented 501, unavailable 503.", values...)
 }
 
 // Codes a failure is told apart by when its type alone does not say enough. Every other
@@ -169,7 +171,7 @@ func (*ErrorResponse) TransformSchema(_ huma.Registry, schema *huma.Schema) *hum
 type ErrorDetail struct {
 	Message string    `json:"message" doc:"What went wrong, for a person to read. Its wording may change; branch on code."`
 	Type    ErrorType `json:"type"`
-	Code    string    `json:"code" doc:"What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know."`
+	Code    string    `json:"code" doc:"What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, not_implemented, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know."`
 	DocURL  string    `json:"doc_url" format:"uri" doc:"Where the code is explained."`
 }
 
@@ -215,6 +217,12 @@ func payloadTooLarge(message string) APIError {
 
 func rateLimited(message string) APIError {
 	return newAPIError(ErrorTypeRateLimited, message)
+}
+
+// notImplemented is an operation this kind of deployment cannot serve at all, whatever the
+// request says: the server does not support the functionality (RFC 9110 section 15.6.2).
+func notImplemented(message string) APIError {
+	return newAPIError(ErrorTypeNotImplemented, message)
 }
 
 func unavailable(message string) APIError {
