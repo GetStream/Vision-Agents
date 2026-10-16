@@ -628,10 +628,12 @@ A sync (`POST /v1/agents/sync`) takes `left_out_connectors`: the agent.yaml conn
 client left out of `connectors` because the app has no connection by the id or label they
 name, each as `{name, connector_id, connection}`. The router stores them as sent and serves
 them, read-only, as `left_out_connectors` on the agent config (GET, list and the sync's
-answer), so the dashboard can say what the agent is missing. They are read only alongside
-`connectors`: a sync that sends `connectors` replaces them, and one that leaves `connectors`
-out leaves them alone. A save or a patch of the config keeps them. The Go SDK's `Agent.Sync`
-sends them, beside the warning it already logs. A config with none left out answers as it
+answer), so the dashboard can say what the agent is missing. They go only alongside
+`connectors`, else the sync is refused with a 400: a sync that sends `connectors` replaces
+them, and one that sends neither leaves them alone. A save or a patch of the config keeps them. The Go SDK's `Agent.Sync`
+sends them, beside the warning it already logs, and leaves out of the list an entry longer
+than the router takes (the warning still names it). A sync that left a connector out sends a
+hash of its own, so an agent an earlier SDK synced with the same missing connection stores the list. A config with none left out answers as it
 did (AI-1371).
 
 ### ElevenLabs style exaggeration through the `elevenlabs` overwrite

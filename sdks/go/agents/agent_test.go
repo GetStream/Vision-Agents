@@ -1099,8 +1099,9 @@ func TestSyncLeavesOutAConnectorWhoseConnectionIsMissing(t *testing.T) {
 	}
 }
 
-// The router is told what was left out, so it can show it. The rest of the body, the hash
-// above all, is what 7f4c3e16 sent for the same directory, before the list was sent.
+// The router is told what was left out, so it can show it. The hash is not the one 7f4c3e16
+// sent for this directory (87c8a2808cd085a316aa2942c6b827a8), before the list was sent: the
+// router stored that one without the list, and would answer unchanged to it.
 func TestSyncSendsTheConnectorsItLeftOut(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: company\n  - name: code\n    connector: github\n    connection: team\n")
@@ -1115,10 +1116,38 @@ func TestSyncSendsTheConnectorsItLeftOut(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const want = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"87c8a2808cd085a316aa2942c6b827a8",` +
+	const want = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"370694e1e9f5b6495455c9b89fce3218",` +
 		`"left_out_connectors":[{"connection":"company","connector_id":"issues","name":"issues"},{"connection":"team","connector_id":"github","name":"code"}],"name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != want {
 		t.Errorf("body = %s", router.syncRaw)
+	}
+}
+
+// An entry over the router's caps is warned about but not sent in the list, so the router
+// does not refuse the whole sync over it. The hash still covers it.
+func TestSyncLeavesAnOverLongLeftOutEntryOutOfTheList(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	label := strings.Repeat("c", 121)
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: "+label+"\n  - name: code\n    connector: github\n    connection: team\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(logged.String(), "connector=issues connection="+label) {
+		t.Errorf("no warning for the long label in %q", logged.String())
+	}
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].LeftOutConnectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "code" {
+		t.Errorf("left_out_connectors went as %+v", sent)
 	}
 }
 

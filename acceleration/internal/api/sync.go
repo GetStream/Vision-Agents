@@ -43,7 +43,7 @@ type SyncAgentRequest struct {
 	McpServers        *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
 	Channels          *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Connectors        *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
-	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. Read only alongside connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that leaves connectors out leaves them alone. At most 64, as connectors."`
+	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. Sent only alongside connectors, else the sync is refused: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors."`
 	Keyterms          *[]string                  `json:"keyterms,omitempty"`
 	Sandbox           *Sandbox                   `json:"sandbox,omitempty"`
 	Harness           *Harness                   `json:"harness,omitempty"`
@@ -391,6 +391,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	}
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
 		return complaint, false
+	}
+	if body.LeftOutConnectors != nil && body.Connectors == nil {
+		return "left_out_connectors goes with connectors: send connectors too, an empty list if none is bound", false
 	}
 	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
 		return complaint, false
