@@ -89,7 +89,7 @@ func (r *Recordings) Transcribe(
 	target := recording.Options.Target
 	if len(recording.Options.Providers) == 0 {
 		var err error
-		if target, err = r.Config().Recorded(target); err != nil {
+		if target, err = r.Config().Recorded(target, recording.Options.Languages); err != nil {
 			return stt.Transcription{}, routing.ProviderConfig{}, err
 		}
 	}

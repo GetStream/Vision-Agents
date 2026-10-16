@@ -2,6 +2,7 @@ package sttrouter
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -59,22 +60,44 @@ func (s *RecordingsSuite) TestEveryLiveShortcutForALanguageHasTheRecordedOneForT
 		"multi-language-realtime-best": "multilingual-recorded",
 		"multi-language-slow-best":     "multilingual-recorded",
 	} {
-		target, err := s.config.Recorded(live)
+		target, err := s.config.Recorded(live, nil)
 		s.Require().NoErrorf(err, "alias %s", live)
 		s.Equalf(recorded, target, "alias %s", live)
 	}
 }
 
-func (s *RecordingsSuite) TestALiveShortcutWithNoRecordedOneIsRefusedBeforeAnyVendorIsAsked() {
-	// stt-fast names no language, so nothing says which recorded shortcut it would mean.
-	_, served, err := s.recordings.Transcribe(s.ctx, Recording{
-		CustomerID: "acme",
-		Options:    options.STT{Target: "stt-fast"},
-	})
+func (s *RecordingsSuite) TestARecordingToAShortcutWithNoLanguageGoesByItsLanguageHints() {
+	for _, live := range []string{"stt-fast", "stt-accurate"} {
+		for hints, recorded := range map[string]string{
+			"":      "en-recorded",
+			"en":    "en-recorded",
+			"en-US": "en-recorded",
+			"es":    "multilingual-recorded",
+			"en,es": "multilingual-recorded",
+		} {
+			var languages []string
+			if hints != "" {
+				languages = strings.Split(hints, ",")
+			}
+			target, err := s.config.Recorded(live, languages)
+			s.Require().NoErrorf(err, "%s %v", live, languages)
+			s.Equalf(recorded, target, "%s %v", live, languages)
+		}
+		s.Equal("deepgram/nova-3", s.servedBy(options.STT{Target: live, Languages: []string{"es"}}))
+	}
+}
 
-	s.ErrorContains(err, "en-recorded")
-	s.ErrorContains(err, "multilingual-recorded")
-	s.Empty(served.Provider, "no candidate was chosen")
+func (s *RecordingsSuite) TestARecordingPinnedToALiveOnlyModelIsRefusedBeforeAnyVendorIsAsked() {
+	for _, pinned := range []string{"deepgram/flux-general-en", "deepgram/flux-general-multi"} {
+		_, served, err := s.recordings.Transcribe(s.ctx, Recording{
+			CustomerID: "acme",
+			Options:    options.STT{Target: pinned},
+		})
+
+		s.ErrorContainsf(err, "en-recorded", pinned)
+		s.ErrorContainsf(err, "multilingual-recorded", pinned)
+		s.Emptyf(served.Provider, "%s: no candidate was chosen", pinned)
+	}
 }
 
 func (s *RecordingsSuite) TestARecordedShortcutIsServedByItsOwnMembers() {

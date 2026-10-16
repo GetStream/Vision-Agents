@@ -208,24 +208,35 @@ func (s *RoutingSuite) TestARecordingToALiveShortcutGoesToTheRecordedOneForItsLa
 	config.Aliases["en-recorded"] = Alias{Languages: []string{"en"}, RequireRecorded: true}
 	config.Aliases["multilingual-recorded"] = Alias{Multilingual: true, RequireRecorded: true}
 
-	english, err := config.Recorded("en-low-latency")
+	english, err := config.Recorded("en-low-latency", nil)
 	s.Require().NoError(err)
 	s.Equal("en-recorded", english)
-	multilingual, err := config.Recorded("multilingual-low-latency")
+	multilingual, err := config.Recorded("multilingual-low-latency", nil)
 	s.Require().NoError(err)
 	s.Equal("multilingual-recorded", multilingual)
 }
 
 func (s *RoutingSuite) TestARecordingToAShortcutThatIsNotLiveOnlyStaysWhereItWasSent() {
 	// en-high-accuracy takes either half here, so the batch model is already among its own.
-	target, err := s.config().Recorded("en-high-accuracy")
+	target, err := s.config().Recorded("en-high-accuracy", nil)
 	s.Require().NoError(err)
 	s.Equal("en-high-accuracy", target)
 }
 
 func (s *RoutingSuite) TestARecordingToALiveShortcutInAConfigWithNoRecordedOneAsksForABatchModel() {
-	_, err := s.config().Recorded("en-low-latency")
+	_, err := s.config().Recorded("en-low-latency", nil)
 	s.EqualError(err, "routing: en-low-latency is a shortcut for live calls; name a batch model for a recording")
+}
+
+func (s *RoutingSuite) TestARecordingPinnedToALiveOnlyModelIsRefusedAndToABatchOneIsNot() {
+	config := s.config()
+	config.Aliases["en-recorded"] = Alias{Languages: []string{"en"}, RequireRecorded: true}
+
+	_, err := config.Recorded("quick/en", nil)
+	s.EqualError(err, "routing: quick/en is a model for live calls; send a recording to en-recorded, or name a batch model")
+	target, err := config.Recorded("batchy/offline-en", nil)
+	s.Require().NoError(err)
+	s.Equal("batchy/offline-en", target)
 }
 
 func (s *RoutingSuite) TestOfferedShortcutsAreTheTitledOnesInTheOrderWritten() {
