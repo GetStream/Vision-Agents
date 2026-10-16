@@ -1397,6 +1397,68 @@ func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
 	s.JSONEq(`{"digits":"1"}`, requested[0].Call.Arguments)
 }
 
+func rescheduleAppointmentTool(required any) Tool {
+	return Tool{
+		Name:        "reschedule_appointment",
+		Description: "move an appointment",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"appointment_id": map[string]any{"type": "string"},
+				"new_date":       map[string]any{"type": "string"},
+				"new_time":       map[string]any{"type": "string"},
+			},
+			"required": required,
+		},
+	}
+}
+
+func (s *HarnessSuite) TestProseQueryAndStructuredJSONKeepTheirToolArguments() {
+	s.tools = Tools{Tools: []Tool{
+		{
+			Name:        "search_appointments",
+			Description: "search appointments",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"query": map[string]any{"type": "string"}},
+				"required":   []any{"query"},
+			},
+		},
+		rescheduleAppointmentTool([]any{"appointment_id", "new_date", "new_time"}),
+	}}
+	s.build(false)
+	s.respond("turn-1", "Find appointment a2 and move it")
+
+	s.reply("turn-1", `<ask skill="search_appointments">appointment a2</ask>`+
+		`<ask skill="reschedule_appointment">{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}</ask>`)
+
+	asked := s.harness.TakeAsked()
+	s.Require().Len(asked, 2)
+	s.JSONEq(`{"query":"appointment a2"}`, asked[0].Arguments)
+	s.Equal(`{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}`, asked[1].Arguments)
+	s.False(s.harness.Pending(), "valid prose and structured arguments need no correction")
+}
+
+func (s *HarnessSuite) TestRepeatingAnIncompleteMultiFieldToolRequestDoesNotLoop() {
+	s.tools = Tools{Tools: []Tool{rescheduleAppointmentTool([]string{"appointment_id", "new_date", "new_time"})}}
+	s.build(false)
+	s.respond("turn-1", "Move appointment a2 from Friday to Tuesday morning")
+	s.reply("turn-1", `<ask skill="reschedule_appointment">Move it to Tuesday morning.</ask>`)
+	s.True(s.harness.Pending(), "the malformed request needs one corrective response")
+	s.Empty(s.harness.TakeAsked(), "the prose body cannot fill the tool's required fields")
+
+	s.respond("turn-2", "")
+	s.reply("turn-2", `<ask skill="reschedule_appointment">Move it to Tuesday morning.</ask>`)
+	s.False(s.harness.Pending(), "repeating the malformed request cannot earn another turn")
+	s.Empty(s.harness.TakeAsked(), "a repeated incomplete request still cannot run")
+
+	s.respond("turn-3", "are you there")
+	requests := s.fast.requests()
+	s.Require().Len(requests, 3)
+	s.Contains(requests[2].Instructions, "reschedule_appointment was not run",
+		"the caller still receives the correction on the next ordinary turn")
+}
+
 func (s *HarnessSuite) TestAToolCallWrittenAsATagIsRun() {
 	// Gemma writes a call after the tags it has seen. Spoken, it books nothing while the
 	// reply says it did.
