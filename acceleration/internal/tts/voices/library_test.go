@@ -3,6 +3,7 @@ package voices
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -52,6 +53,16 @@ func (l *findingLister) Exists(ctx context.Context, id string) (bool, error) {
 	}
 	return l.exists[id], l.err
 }
+
+// Shaped is ElevenLabs' own rule.
+func (*findingLister) Shaped(id string) bool { return (*ElevenLabs)(nil).Shaped(id) }
+
+// unknownID has the shape of an ElevenLabs voice id and is no voice: WWSD asked staging
+// for it on 2026-10-16.
+const unknownID = "ZZZZnotARealVoice123"
+
+// cartesiaID is a voice Cartesia lists.
+const cartesiaID = "a0e99841-438c-4a64-b679-ae501e7d6091"
 
 // sarah is how ElevenLabs lists one of its premade voices.
 var sarah = Library{ID: "EXAVITQu4vr4xnSDxMaL", Name: "Sarah - Mature, Reassuring, Confident"}
@@ -242,6 +253,16 @@ func (s *CatalogueSuite) TestALookupThatFailsLetsTheVoiceThrough() {
 	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
 }
 
+func (s *CatalogueSuite) TestAnIdTheProviderSaysIsNotOneOfItsOwnPassesAndLeavesTheCheckOn() {
+	finder := s.library()
+	finder.err = fmt.Errorf("voices: elevenlabs lookup: %w", errNotAVoiceID)
+	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", cartesiaID))
+	finder.err = nil
+
+	s.ErrorContains(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"), `elevenlabs has no voice "Sara"`,
+		"an id that is no voice of ElevenLabs' says nothing about ElevenLabs being down")
+}
+
 func (s *CatalogueSuite) TestAVoiceTheProviderDoesNotHaveIsLookedUpOnceNoMatterHowOftenItIsAsked() {
 	finder := s.library()
 
@@ -360,6 +381,86 @@ func (s *CatalogueSuite) TestAProviderWithNoLibraryIsNotChecked() {
 	s.library()
 
 	s.NoError(s.catalogue.Check(s.ctx, "inworld", "Sara"))
+}
+
+// otherVendors registers Cartesia, whose listing holds a voice under its id and another
+// named unknownID, and Inworld, whose listing holds unknownID by id. Neither looks voices up.
+func (s *CatalogueSuite) otherVendors() (cartesia, inworld *countingLister) {
+	cartesia = &countingLister{voices: []Library{
+		{ID: cartesiaID, Name: "Barbershop Man"},
+		{ID: "694f9389-aac1-45b6-b726-9d9369183238", Name: unknownID},
+	}}
+	inworld = &countingLister{voices: []Library{{ID: unknownID, Name: unknownID}}}
+	s.catalogue.Register("cartesia", cartesia)
+	s.catalogue.Register("inworld", inworld)
+	return cartesia, inworld
+}
+
+func (s *CatalogueSuite) TestAVoiceALookupRefusedIsVouchedForOnlyWhereItsIdIsListed() {
+	s.library()
+	s.otherVendors()
+
+	unvouched := s.catalogue.Unvouched(s.ctx, unknownID, []string{"cartesia", "elevenlabs", "inworld", "fish"})
+
+	s.Equal([]string{"cartesia", "fish"}, unvouched,
+		"Inworld lists the id; Cartesia only a name, which it cannot speak; Fish lists nothing")
+}
+
+func (s *CatalogueSuite) TestAVoiceNotShapedLikeAnElevenLabsIdIsNotLookedUpOrLeftOut() {
+	finder := s.library()
+	s.otherVendors()
+
+	for _, voice := range []string{"Sara", "Ashley", cartesiaID, "5619d38c-cf51-4d8e-9575-48f61a280413", ""} {
+		s.Empty(s.catalogue.Unvouched(s.ctx, voice, []string{"elevenlabs", "cartesia", "inworld", "fish"}), voice)
+	}
+	s.Equal(0, finder.lookups, "a name or another vendor's id is no ElevenLabs voice")
+}
+
+func (s *CatalogueSuite) TestAVoiceTheLookingProviderHasLeavesEveryoneIn() {
+	s.library()
+	cartesia, _ := s.otherVendors()
+
+	s.Empty(s.catalogue.Unvouched(s.ctx, sarah.ID, []string{"cartesia", "elevenlabs", "fish"}))
+	s.Equal(0, cartesia.asked, "nobody else is listed when nobody refused")
+}
+
+func (s *CatalogueSuite) TestALookupThatFailsLeavesEveryoneIn() {
+	s.library().err = errors.New("gateway")
+	s.otherVendors()
+
+	s.Empty(s.catalogue.Unvouched(s.ctx, unknownID, []string{"cartesia", "elevenlabs", "fish"}))
+}
+
+func (s *CatalogueSuite) TestWithoutAProviderThatLooksVoicesUpNobodyIsAskedOrLeftOut() {
+	finder := s.library()
+	cartesia, inworld := s.otherVendors()
+
+	s.Empty(s.catalogue.Unvouched(s.ctx, unknownID, []string{"cartesia", "inworld", "fish"}))
+	s.Equal(0, cartesia.asked+inworld.asked+finder.asked+finder.lookups)
+}
+
+func (s *CatalogueSuite) TestAListingThatCannotBeReadVouchesForNothing() {
+	s.library()
+	_, inworld := s.otherVendors()
+	inworld.err = errors.New("gateway")
+
+	s.Equal([]string{"inworld"}, s.catalogue.Unvouched(s.ctx, unknownID, []string{"elevenlabs", "inworld"}))
+}
+
+// hangingLister holds a listing until it is given up on.
+type hangingLister struct{ countingLister }
+
+func (l *hangingLister) List(ctx context.Context) ([]Library, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (s *CatalogueSuite) TestAListingThatTakesTooLongVouchesForNothing() {
+	s.library()
+	s.catalogue.Register("inworld", &hangingLister{})
+	s.catalogue.lookup = 10 * time.Millisecond
+
+	s.Equal([]string{"inworld"}, s.catalogue.Unvouched(s.ctx, unknownID, []string{"elevenlabs", "inworld"}))
 }
 
 // LibrarySuite covers what each provider makes of its vendor's answer.
@@ -492,6 +593,29 @@ func (s *LibrarySuite) TestElevenLabsSaysAVoiceNobodyHasDoesNotExist() {
 
 	s.Require().NoError(err)
 	s.False(exists)
+}
+
+func (s *LibrarySuite) TestElevenLabsSaysAnIdNotShapedLikeItsOwnIsNoneOfItsVoices() {
+	// How ElevenLabs answered a Cartesia voice id, live on 2026-10-16.
+	s.routes["/v1/voices/"+cartesiaID] = `{"detail":{"type":"invalid_request","code":"bad_request",` +
+		`"message":"An invalid ID has been received.","status":"invalid_uid"}}`
+	s.statuses["/v1/voices/"+cartesiaID] = http.StatusBadRequest
+
+	exists, err := s.elevenLabs().Exists(s.ctx, cartesiaID)
+
+	s.Require().ErrorIs(err, errNotAVoiceID)
+	s.False(exists)
+	s.Equal([]string{"/v1/voices/" + cartesiaID}, s.seen, "nobody searches the library for it")
+}
+
+func (s *LibrarySuite) TestOnlyTwentyLettersAndDigitsAreShapedLikeAnElevenLabsVoiceId() {
+	for _, id := range []string{"21m00Tcm4TlvDq8ikWAM", "NOpBlnGInO9m6vDvFkFC", "pNInz6obpgDQGcFmaJgB", unknownID} {
+		s.True(s.elevenLabs().Shaped(id), id)
+	}
+	for _, id := range []string{"Sara", "Ashley", cartesiaID, "21m00Tcm4TlvDq8ikWA", "21m00Tcm4TlvDq8ikWAMx",
+		"21m00Tcm4TlvDq8ikWA-", "custom:21m00Tcm4Tlv", ""} {
+		s.False(s.elevenLabs().Shaped(id), id)
+	}
 }
 
 func (s *LibrarySuite) TestAnElevenLabsLookupRefusedForAnotherReasonIsAnError() {

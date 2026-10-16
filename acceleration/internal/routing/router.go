@@ -71,6 +71,17 @@ type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }
 
+// VoiceVetter is a VoiceResolver asked once per request, before any candidate is tried,
+// which providers may not be handed the voice as asked. A provider that cannot look a voice
+// up takes any id and fails on the first line spoken, so once one that can says the voice
+// does not exist, the others may take it only if their own library vouches for it. Asking
+// before the first candidate is what keeps the answer the same in whatever order health
+// ranked them. A provider it names is left out; a provider it never names refuses the voice
+// itself, in ResolveVoice.
+type VoiceVetter interface {
+	Unvouched(ctx context.Context, customerID, voice string, providers []string) []string
+}
+
 type voiceOverwritten struct{}
 
 // VoiceOverwritten reports that the voice being resolved is not the one that will be
@@ -433,6 +444,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		return zero, ProviderConfig{}, err
 	}
 	untried(candidates, request.Failed)
+	candidates = r.vouched(ctx, request, candidates)
 
 	var failures, refusals []error
 	// overwritten is the vendor whose candidate refused its overwrite block. An overwrite
@@ -593,10 +605,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	var zero P
 
 	voiceCtx := ctx
-	var named struct {
-		VoiceID string `json:"voice_id"`
-	}
-	if json.Unmarshal(r.overwrites(request, candidate.Config.Provider), &named) == nil && named.VoiceID != "" {
+	if r.voiceOverwritten(request, candidate.Config.Provider) {
 		voiceCtx = context.WithValue(ctx, voiceOverwritten{}, true)
 	}
 	voice, err := r.voice(voiceCtx, request, candidate.Config.Provider)
@@ -659,6 +668,35 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	}
 
 	return provider, nil
+}
+
+// voiceOverwritten reports that this provider's overwrites name a voice_id, which is
+// spoken in place of the request's voice.
+func (r *Router[P]) voiceOverwritten(request Request, provider string) bool {
+	var named struct {
+		VoiceID string `json:"voice_id"`
+	}
+	return json.Unmarshal(r.overwrites(request, provider), &named) == nil && named.VoiceID != ""
+}
+
+// vouched leaves out the candidates the voice may not be handed to, see VoiceVetter. A
+// provider whose overwrites name a voice is not asked about: the voice it speaks is its own.
+func (r *Router[P]) vouched(ctx context.Context, request Request, candidates []Candidate) []Candidate {
+	vetter, ok := r.voices.(VoiceVetter)
+	if !ok || request.Voice == "" {
+		return candidates
+	}
+	var asked []string
+	for _, candidate := range candidates {
+		provider := candidate.Config.Provider
+		if !slices.Contains(asked, provider) && !r.voiceOverwritten(request, provider) {
+			asked = append(asked, provider)
+		}
+	}
+	unvouched := vetter.Unvouched(ctx, request.CustomerID, request.Voice, asked)
+	return slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+		return slices.Contains(unvouched, candidate.Config.Provider)
+	})
 }
 
 // overwrites is the block this candidate was given, out of whichever modality's options

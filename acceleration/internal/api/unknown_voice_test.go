@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
@@ -26,12 +27,20 @@ func (sarahOnly) Preview(context.Context, string) (voices.Speech, error) {
 
 func (sarahOnly) Exists(context.Context, string) (bool, error) { return false, nil }
 
-// suggestion is what a refusal of "Sara" names.
+// Shaped is ElevenLabs' own rule.
+func (sarahOnly) Shaped(id string) bool { return (*voices.ElevenLabs)(nil).Shaped(id) }
+
+// unknownVoice has the shape of an ElevenLabs voice id and is no voice: WWSD asked staging
+// for it on 2026-10-16.
+const unknownVoice = "ZZZZnotARealVoice123"
+
+// suggestion is what a refusal of unknownVoice names.
 const suggestion = `the closest in its library is "Sarah - Mature, Reassuring, Confident" (stub-sarah)`
 
 // UnknownVoiceSuite is every way a voice is asked for, the socket, a session's agent and a
 // recording, run against a router whose resolver checks the stub provider's library, as
-// cmd/router builds it.
+// cmd/router builds it. Every shortcut also reaches plain, a vendor with no library, as
+// tts-quality reaches Cartesia and Inworld after ElevenLabs.
 type UnknownVoiceSuite struct {
 	RouterSuite
 }
@@ -41,6 +50,10 @@ func TestUnknownVoiceSuite(t *testing.T) {
 	catalogue := voices.NewCatalogue()
 	catalogue.Register("stub", sarahOnly{})
 	suite.ttsVoices = voices.NewResolver(nil, catalogue)
+	suite.ttsConfig = routableConfig()
+	suite.ttsConfig.Providers = append(suite.ttsConfig.Providers, routing.ProviderConfig{
+		Provider: "plain", Model: "plain-model", Languages: []string{"en"}, Realtime: true, Terms: everyTerm,
+	})
 	runSuite(t, suite)
 }
 
@@ -49,11 +62,11 @@ func (s *UnknownVoiceSuite) SetupTest() {
 }
 
 func (s *UnknownVoiceSuite) TestASocketOpenedWithAVoiceTheProviderDoesNotHaveIsRefusedNamingTheClosest() {
-	speaking := s.speak("Sara")
+	speaking := s.speak(unknownVoice)
 
 	refused := s.await(speaking, "error")
 
-	s.Contains(refused["error"], `stub has no voice "Sara"; `+suggestion)
+	s.Contains(refused["error"], `stub has no voice "ZZZZnotARealVoice123"; `+suggestion)
 	s.await(speaking, "closed")
 }
 
@@ -65,7 +78,7 @@ func (s *UnknownVoiceSuite) TestASocketOpenedWithAVoiceInTheLibraryStarts() {
 
 func (s *UnknownVoiceSuite) TestASessionAskedToSpeakInAVoiceTheProviderDoesNotHaveIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
-		CreateSessionRequest{Voice: pointerTo("Sara"), StartVoice: pointerTo(true)})
+		CreateSessionRequest{Voice: pointerTo(unknownVoice), StartVoice: pointerTo(true)})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, suggestion)
@@ -76,7 +89,7 @@ func (s *UnknownVoiceSuite) TestARecordingInAVoiceTheProviderDoesNotHaveFailsNam
 	// A recording is routed once its job runs, so a refusal is the job's answer, as any
 	// other refused recording's is.
 	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
-		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"voice": "Sara"}}, &spoken))
+		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"voice": unknownVoice}}, &spoken))
 
 	s.Equal(RecordingStatusFailed, spoken.Status)
 	s.Contains(value(spoken.Error), suggestion)
