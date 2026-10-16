@@ -1,3 +1,4 @@
+import re
 from typing import AsyncIterator
 
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
@@ -23,3 +24,17 @@ async def collect_simple_response(
             "simple_response() ended without yielding an LLMResponseFinal chunk"
         )
     return deltas, final_response
+
+
+def strip_code_fences(text: str) -> str:
+    """Return ``text`` without a surrounding markdown code fence, if any."""
+    cleaned = text.strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    info_string, newline, body = cleaned.partition("\n")
+    if newline and re.fullmatch(r"[\w-]*", info_string.strip()):
+        cleaned = body
+    return cleaned.strip()

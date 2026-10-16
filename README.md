@@ -44,6 +44,54 @@ plus extra credits via the Maker Program.
 
 Follow the [quickstart guide](https://visionagents.ai/introduction/quickstart) to build your first agent.
 
+## Command-line interface
+
+The `vision-agents` CLI scaffolds and runs agent projects:
+
+```bash
+uvx vision-agents init my-agent           # scaffold a new project
+vision-agents agent run                   # run one agent in the console
+vision-agents agent serve                 # start the HTTP server
+vision-agents agent simulate scenarios/   # run scenarios and write a report
+```
+
+`agent` resolves the project's `Runner` from `[tool.vision-agents.agent] entrypoint` in `pyproject.toml`
+and forwards the remaining arguments to it, so `uv run agent.py simulate scenarios/` works too.
+
+### Simulations
+
+`vision-agents agent simulate <dir-or-file>` plays every scenario against your agent in text mode. A caller
+model follows the scenario brief, your agent replies turn by turn, and a judge model rules on each criterion
+once the conversation ends. It prints a table with the scenario, variations, pass@k, turns, P50 turn latency
+and failed criteria, writes `report.json` and `report.md` with the full transcripts and verdicts, and exits
+`0` when every scenario passed, `1` when any failed and `2` when it could not reach a verdict (a judge or
+provider error, a bad `--judge`, or missing or malformed scenario files), so it can gate CI.
+
+A scenario is a TOML file:
+
+```toml
+name = "refund"
+scenario = "You bought shoes last week that do not fit and want a refund."
+criteria = [
+  "The agent asks for the order number",
+  "The agent explains the refund policy",
+]
+max_turns = 8    # optional, default 12
+variations = 1   # optional, default 1
+```
+
+| Option | What it does |
+|---|---|
+| `--repeat N` | Run every variation `N` times. |
+| `--variations N` | Phrase each brief `N` ways (the brief as written is always the first); overrides the file. |
+| `--judge MODEL` | Model that plays the caller and judges: `provider/model` such as `gemini/gemini-2.5-flash` (default), or `module:attribute` naming a callable that returns an LLM. |
+| `--report DIR` | Where `report.json` and `report.md` go (default `simulation-report/`). |
+| `--filter NAME` | Only run scenarios whose name contains `NAME`. |
+
+Simulations run the agent's LLM locally in text mode, so the agent needs a text LLM such as `gemini.LLM`.
+Realtime (audio) LLMs and agents that hand their calls to a remote pipeline are not supported here; use the
+hosted simulations on the dashboard for those.
+
 ## See It In Action
 
 https://github.com/user-attachments/assets/d1258ac2-ca98-4019-80e4-41ec5530117e
