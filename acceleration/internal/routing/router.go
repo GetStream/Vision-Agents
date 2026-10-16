@@ -65,7 +65,8 @@ var ErrVoiceNotPrepared = errors.New("routing: this provider has not been given 
 // It exists because a customer's own voice is one row to us and a different id at every
 // provider, and the router only learns which provider it has once it is picking between
 // them. A name that is not a customer's own voice is returned unchanged, so a provider's
-// library voices keep working without going near this.
+// library voices keep working, unless the provider says it has no such voice: that is
+// refused as an ErrRequest.
 type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,12 @@ import (
 // in the course of a week, not a call, and listing them again on every keystroke in a
 // picker would spend a vendor's rate limit on an answer that has not changed.
 const libraryTTL = time.Hour
+
+// lookupTimeout bounds what Check may add to opening a stream. Live on 2026-10-16
+// ElevenLabs answered a voice lookup in 0.59-0.91s and a Voice Library search in
+// 0.49-0.83s, so both fit with room to spare; past it the voice goes through unchecked,
+// since a slow vendor must not hold up a call.
+const lookupTimeout = 3 * time.Second
 
 // Library is one voice a provider offers, in the terms a person picking one cares about.
 // Everything but the id and the name is optional, because no two vendors describe a voice
@@ -48,6 +55,12 @@ type Lister interface {
 	Preview(ctx context.Context, id string) (Speech, error)
 }
 
+// Finder is a Lister that can also say whether a voice outside its listing exists. A
+// provider whose library is not a Finder has every voice passed through unchecked.
+type Finder interface {
+	Exists(ctx context.Context, id string) (bool, error)
+}
+
 // Catalogue reads the voices every provider that publishes a library offers. Providers
 // that do not publish one are absent rather than empty: a picker has to be able to say
 // "type the id yourself" rather than "this provider has no voices".
@@ -55,7 +68,11 @@ type Catalogue struct {
 	mu      sync.Mutex
 	listers map[string]Lister
 	cached  map[string]cachedVoices
-	now     func() time.Time
+	// found is when a voice missing from its provider's listing was last found to exist,
+	// by provider and id, so a valid one is not looked up on every stream that opens.
+	found  map[string]time.Time
+	now    func() time.Time
+	lookup time.Duration
 }
 
 type cachedVoices struct {
@@ -68,7 +85,9 @@ func NewCatalogue() *Catalogue {
 	return &Catalogue{
 		listers: map[string]Lister{},
 		cached:  map[string]cachedVoices{},
+		found:   map[string]time.Time{},
 		now:     time.Now,
+		lookup:  lookupTimeout,
 	}
 }
 
@@ -149,6 +168,50 @@ func (c *Catalogue) Preview(ctx context.Context, provider, id string) (Speech, e
 	return lister.Preview(ctx, id)
 }
 
+// Check refuses a voice its provider says it does not have, naming the closest voice in
+// that provider's library so the caller can see what they meant.
+//
+// Only the provider's own "no such voice" refuses. A voice in the cached listing is not
+// looked up at all, and a lookup that fails or times out lets the voice through as it
+// always went, because refusing a voice that may exist is worse than the first line
+// failing. A provider with no library, or one that cannot look a voice up, is not checked.
+func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
+	key := provider + "/" + id
+	c.mu.Lock()
+	lister, ok := c.listers[provider]
+	found, seen := c.found[key]
+	c.mu.Unlock()
+	finder, finds := lister.(Finder)
+	if !ok || !finds || (seen && c.now().Sub(found) < libraryTTL) {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.lookup)
+	defer cancel()
+	// An unreadable listing only costs the suggestion: the lookup still answers.
+	library, _ := c.listOne(ctx, provider, lister)
+	if slices.ContainsFunc(library, func(voice Library) bool { return voice.ID == id }) {
+		return nil
+	}
+	exists, err := finder.Exists(ctx, id)
+	if err != nil {
+		return nil
+	}
+	if exists {
+		c.mu.Lock()
+		c.found[key] = c.now()
+		c.mu.Unlock()
+		return nil
+	}
+
+	nearest, ok := closest(library, id)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("voices: %s has no voice %q", provider, id))
+	}
+	return stack.Wrap(fmt.Errorf("voices: %s has no voice %q; the closest in its library is %q (%s)",
+		provider, id, nearest.Name, nearest.ID))
+}
+
 func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister) ([]Library, error) {
 	c.mu.Lock()
 	held, ok := c.cached[provider]
@@ -174,4 +237,47 @@ func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister)
 	c.cached[provider] = cachedVoices{voices: voices, at: c.now()}
 	c.mu.Unlock()
 	return voices, nil
+}
+
+// closest is the library voice whose id, name, or name before its description is the
+// fewest edits from what was asked, compared without case: a mistyped id and a
+// remembered name both land near the voice that was meant.
+func closest(library []Library, asked string) (Library, bool) {
+	asked = strings.ToLower(asked)
+	var (
+		nearest Library
+		fewest  = -1
+	)
+	for _, voice := range library {
+		// ElevenLabs names a voice "Sarah - Mature, Reassuring, Confident".
+		short, _, _ := strings.Cut(voice.Name, "-")
+		for _, known := range []string{voice.ID, voice.Name, strings.TrimSpace(short)} {
+			if edits := distance(asked, strings.ToLower(known)); fewest < 0 || edits < fewest {
+				nearest, fewest = voice, edits
+			}
+		}
+	}
+	return nearest, fewest >= 0
+}
+
+// distance is the Levenshtein distance between two strings, in runes.
+func distance(a, b string) int {
+	from, to := []rune(a), []rune(b)
+	previous := make([]int, len(to)+1)
+	current := make([]int, len(to)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i := 1; i <= len(from); i++ {
+		current[0] = i
+		for j := 1; j <= len(to); j++ {
+			substitution := previous[j-1]
+			if from[i-1] != to[j-1] {
+				substitution++
+			}
+			current[j] = min(previous[j]+1, current[j-1]+1, substitution)
+		}
+		previous, current = current, previous
+	}
+	return previous[len(to)]
 }

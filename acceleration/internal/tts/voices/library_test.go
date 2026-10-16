@@ -30,6 +30,29 @@ func (l *countingLister) Preview(_ context.Context, id string) (Speech, error) {
 	return Speech{Audio: []byte(id), ContentType: "audio/mpeg"}, nil
 }
 
+// findingLister is a countingLister that can also look a voice up, as ElevenLabs can. A
+// voice it is asked about exists when it is in exists; err is any other answer, and slow
+// holds the lookup until it is given up on.
+type findingLister struct {
+	countingLister
+	exists  map[string]bool
+	err     error
+	slow    bool
+	lookups int
+}
+
+func (l *findingLister) Exists(ctx context.Context, id string) (bool, error) {
+	l.lookups++
+	if l.slow {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	return l.exists[id], l.err
+}
+
+// sarah is how ElevenLabs lists one of its premade voices.
+var sarah = Library{ID: "EXAVITQu4vr4xnSDxMaL", Name: "Sarah - Mature, Reassuring, Confident"}
+
 type CatalogueSuite struct {
 	suite.Suite
 	ctx       context.Context
@@ -128,13 +151,116 @@ func (s *CatalogueSuite) TestPreviewGoesToTheProviderThatOwnsTheVoice() {
 	s.Require().Error(err)
 }
 
+// library is a provider whose listing holds Sarah and Roger, and that has nothing else.
+func (s *CatalogueSuite) library() *findingLister {
+	finder := &findingLister{
+		countingLister: countingLister{voices: []Library{
+			{ID: "CwhRBWXzGAHq8TQ4Fs17", Name: "Roger - Laid-Back, Casual, Resonant"}, sarah,
+		}},
+		exists: map[string]bool{},
+	}
+	s.catalogue.Register("elevenlabs", finder)
+	return finder
+}
+
+func (s *CatalogueSuite) TestAVoiceTheProviderDoesNotHaveIsRefusedNamingTheClosestInItsLibrary() {
+	s.library()
+
+	err := s.catalogue.Check(s.ctx, "elevenlabs", "Sara")
+
+	s.Require().Error(err)
+	s.Equal(`voices: elevenlabs has no voice "Sara"; the closest in its library is `+
+		`"Sarah - Mature, Reassuring, Confident" (EXAVITQu4vr4xnSDxMaL)`, err.Error())
+}
+
+func (s *CatalogueSuite) TestAVoiceAskedForByItsNameIsPointedToItsId() {
+	s.library()
+
+	// A provider speaks only ids, and its listing puts a description after the name.
+	err := s.catalogue.Check(s.ctx, "elevenlabs", "Sarah")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)")
+}
+
+func (s *CatalogueSuite) TestAMistypedIdIsMatchedToTheVoiceItWasMeantToBe() {
+	s.library()
+
+	err := s.catalogue.Check(s.ctx, "elevenlabs", "EXAVITQu4vr4xnSDxMaX")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)")
+}
+
+func (s *CatalogueSuite) TestAVoiceInTheListingIsNotLookedUp() {
+	finder := s.library()
+
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", sarah.ID))
+	s.Equal(0, finder.lookups, "the common case costs no round trip")
+}
+
+func (s *CatalogueSuite) TestAVoiceFoundOutsideTheListingIsLookedUpOnlyOnceAnHour() {
+	finder := s.library()
+	// A legacy voice: left out of the listing, still spoken.
+	finder.exists["21m00Tcm4TlvDq8ikWAM"] = true
+
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", "21m00Tcm4TlvDq8ikWAM"))
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", "21m00Tcm4TlvDq8ikWAM"))
+	s.Equal(1, finder.lookups)
+
+	s.clock = s.clock.Add(libraryTTL + time.Minute)
+	s.Require().NoError(s.catalogue.Check(s.ctx, "elevenlabs", "21m00Tcm4TlvDq8ikWAM"))
+	s.Equal(2, finder.lookups)
+}
+
+func (s *CatalogueSuite) TestALookupThatFailsLetsTheVoiceThrough() {
+	finder := s.library()
+	finder.err = errors.New("voices: elevenlabs lookup (http 503)")
+
+	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+}
+
+func (s *CatalogueSuite) TestALookupThatTakesTooLongLetsTheVoiceThrough() {
+	finder := s.library()
+	finder.slow = true
+	s.catalogue.lookup = 10 * time.Millisecond
+
+	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+}
+
+func (s *CatalogueSuite) TestAnUnreadableLibraryStillRefusesButSuggestsNothing() {
+	finder := s.library()
+	finder.countingLister.err = errors.New("gateway")
+
+	err := s.catalogue.Check(s.ctx, "elevenlabs", "Sara")
+
+	s.Require().Error(err)
+	s.Equal(`voices: elevenlabs has no voice "Sara"`, err.Error())
+}
+
+func (s *CatalogueSuite) TestAProviderThatCannotLookAVoiceUpIsNotChecked() {
+	lister := &countingLister{voices: []Library{sarah}}
+	s.catalogue.Register("cartesia", lister)
+
+	s.NoError(s.catalogue.Check(s.ctx, "cartesia", "Sara"))
+	s.Equal(0, lister.asked)
+}
+
+func (s *CatalogueSuite) TestAProviderWithNoLibraryIsNotChecked() {
+	s.library()
+
+	s.NoError(s.catalogue.Check(s.ctx, "inworld", "Sara"))
+}
+
 // LibrarySuite covers what each provider makes of its vendor's answer.
 type LibrarySuite struct {
 	suite.Suite
 	ctx    context.Context
 	routes map[string]string
-	seen   []string
-	server *httptest.Server
+	// statuses is what a route answers with other than a 200.
+	statuses map[string]int
+	seen     []string
+	server   *httptest.Server
 }
 
 func TestLibrarySuite(t *testing.T) {
@@ -144,6 +270,7 @@ func TestLibrarySuite(t *testing.T) {
 func (s *LibrarySuite) SetupTest() {
 	s.ctx = context.Background()
 	s.routes = map[string]string{}
+	s.statuses = map[string]int{}
 	s.seen = nil
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.seen = append(s.seen, r.URL.RequestURI())
@@ -155,6 +282,9 @@ func (s *LibrarySuite) SetupTest() {
 		if r.URL.Path == "/sample.mp3" {
 			// The bucket ElevenLabs serves samples from labels every one of them as text.
 			w.Header().Set("Content-Type", "text/plain")
+		}
+		if status, ok := s.statuses[r.URL.Path]; ok {
+			w.WriteHeader(status)
 		}
 		_, _ = w.Write([]byte(body))
 	}))
@@ -208,6 +338,72 @@ func (s *LibrarySuite) TestAVoiceWithNoPublishedSampleIsRefusedRatherThanSynthes
 
 	s.Require().Error(err)
 	s.Contains(err.Error(), "no sample")
+}
+
+// voiceNotFound is how ElevenLabs answered a lookup of a voice it does not have, live on
+// 2026-10-16.
+const voiceNotFound = `{"detail":{"type":"not_found","code":"voice_not_found",` +
+	`"message":"A voice with ID 'Sara' was not found.","status":"voice_not_found"}}`
+
+func (s *LibrarySuite) elevenLabs() *ElevenLabs {
+	finder, err := NewElevenLabs(ElevenLabsOptions{APIKey: "k", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+	return finder
+}
+
+func (s *LibrarySuite) TestElevenLabsFindsAVoiceInTheAccount() {
+	s.routes["/v1/voices/21m00Tcm4TlvDq8ikWAM"] = `{"voice_id":"21m00Tcm4TlvDq8ikWAM"}`
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "21m00Tcm4TlvDq8ikWAM")
+
+	s.Require().NoError(err)
+	s.True(exists)
+}
+
+func (s *LibrarySuite) TestElevenLabsFindsAVoiceLibraryVoiceTheAccountHasNotAdded() {
+	s.routes["/v1/voices/cVOjvbxC2c4mOyGcx3AH"] = voiceNotFound
+	s.statuses["/v1/voices/cVOjvbxC2c4mOyGcx3AH"] = http.StatusBadRequest
+	s.routes["/v1/shared-voices"] = `{"voices":[{"voice_id":"cVOjvbxC2c4mOyGcx3AH"}]}`
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "cVOjvbxC2c4mOyGcx3AH")
+
+	s.Require().NoError(err)
+	s.True(exists, "ElevenLabs speaks a Voice Library voice the account never added")
+	s.Contains(s.seen, "/v1/shared-voices?search=cVOjvbxC2c4mOyGcx3AH")
+}
+
+func (s *LibrarySuite) TestElevenLabsSaysAVoiceNobodyHasDoesNotExist() {
+	s.routes["/v1/voices/Rachel"] = voiceNotFound
+	s.statuses["/v1/voices/Rachel"] = http.StatusNotFound
+	// The search matches names too, so a name finds somebody else's voices.
+	s.routes["/v1/shared-voices"] = `{"voices":[{"voice_id":"vbL38HT4L93tShaai4rW","name":"Rachel"}]}`
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "Rachel")
+
+	s.Require().NoError(err)
+	s.False(exists)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsLookupRefusedForAnotherReasonIsAnError() {
+	s.routes["/v1/voices/Sara"] = `{"detail":{"type":"authentication_error","code":"invalid_api_key"}}`
+	s.statuses["/v1/voices/Sara"] = http.StatusBadRequest
+
+	_, err := s.elevenLabs().Exists(s.ctx, "Sara")
+
+	s.Require().Error(err, "a bad key says nothing about the voice")
+	s.Contains(err.Error(), "invalid_api_key")
+}
+
+func (s *LibrarySuite) TestAVoiceIdIsLookedUpAsOnePathSegment() {
+	s.routes["/v1/voices/../user"] = voiceNotFound
+	s.statuses["/v1/voices/../user"] = http.StatusBadRequest
+	s.routes["/v1/shared-voices"] = `{"voices":[]}`
+
+	exists, err := s.elevenLabs().Exists(s.ctx, "../user")
+
+	s.Require().NoError(err)
+	s.False(exists)
+	s.Equal("/v1/voices/..%2Fuser", s.seen[0], "a caller's voice cannot reach another endpoint with our key")
 }
 
 func (s *LibrarySuite) TestCartesiaReadsEveryPageAndAsksForThePreviewUrl() {
