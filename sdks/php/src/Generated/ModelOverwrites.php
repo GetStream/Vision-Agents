@@ -14,7 +14,9 @@ use GetStream\VisionAgents\Json;
  * here overrides the config, and a caller reading a session back wants to see what they
  * changed in one place rather than diffed against a config they would have to fetch. Only the
  * safe knobs are here. Instructions and tools are not, because a caller able to rewrite those
- * could make a session impersonate a different agent.
+ * could make a session impersonate a different agent. A backend sets one session's
+ * instructions with the instructions of CreateSessionRequest instead, which a device may not
+ * send.
  */
 final readonly class ModelOverwrites
 {

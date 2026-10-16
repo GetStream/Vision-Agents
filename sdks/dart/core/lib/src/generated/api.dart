@@ -453,6 +453,7 @@ final class CreateSessionRequest {
     this.history,
     this.id,
     this.incognito,
+    this.instructions,
     this.keyterms,
     this.languages,
     this.llm,
@@ -534,6 +535,10 @@ final class CreateSessionRequest {
       incognito: switch (json['incognito']) {
         null => null,
         final Object value => _bool(value, 'CreateSessionRequest.incognito'),
+      },
+      instructions: switch (json['instructions']) {
+        null => null,
+        final Object value => _string(value, 'CreateSessionRequest.instructions'),
       },
       keyterms: switch (json['keyterms']) {
         null => null,
@@ -650,6 +655,7 @@ final class CreateSessionRequest {
   final List<HistoryMessage>? history;
   final String? id;
   final bool? incognito;
+  final String? instructions;
   final List<String>? keyterms;
   final List<String>? languages;
   final String? llm;
@@ -688,6 +694,7 @@ final class CreateSessionRequest {
     if (history case final value?) 'history': [for (final item in value) item.toJson()],
     'id': ?id,
     'incognito': ?incognito,
+    'instructions': ?instructions,
     'keyterms': ?keyterms,
     'languages': ?languages,
     'llm': ?llm,

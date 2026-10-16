@@ -492,6 +492,23 @@ func TestHistoryTheCallerKeptGoesOverInOrder(t *testing.T) {
 	}
 }
 
+func TestInstructionsGoOverOnlyWhenGiven(t *testing.T) {
+	for given, sent := range map[string]any{"": nil, "Be a customer whose order never came.": "Be a customer whose order never came."} {
+		backend := newRouter(t)
+		agent := backend.client(t).Agent("docs")
+
+		session, err := agent.Sessions.Create(t.Context(), SessionOptions{Instructions: given})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(t.Context())
+
+		if body := backend.body(t, "POST", "/v1/agents/sessions"); body["instructions"] != sent {
+			t.Errorf("instructions %q went over as %v", given, body["instructions"])
+		}
+	}
+}
+
 func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
 	backend := newRouter(t)
 	agent := backend.client(t).Agent("docs")
@@ -1328,4 +1345,3 @@ func TestTheAppsSettingsSayWhereItsWorkIsWritten(t *testing.T) {
 		t.Errorf("the router was asked %v", backend.asked)
 	}
 }
-
