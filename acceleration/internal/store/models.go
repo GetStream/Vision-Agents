@@ -1565,7 +1565,10 @@ type AgentSession struct {
 	// ConnectorSelections are the connections the caller picked for the config's session
 	// bindings, which a fork re-resolves. References only, never a credential.
 	ConnectorSelections []SessionConnectorSelection `bun:"connector_selections,type:jsonb,notnull"`
-	State               string                      `bun:"state,notnull"`
+	// ReturnURL is where the consents the session asks for in the chat go back to. Empty,
+	// stored as NULL, is the dashboard. Never shown in the session's own answer.
+	ReturnURL string `bun:"return_url,nullzero"`
+	State     string `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`

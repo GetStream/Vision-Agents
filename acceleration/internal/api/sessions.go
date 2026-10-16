@@ -502,6 +502,8 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
 	spec.ConnectorSelections = selectionsOf(*row)
+	// And so do their consents, back to the page the chat was opened with.
+	spec.ReturnURL = row.ReturnURL
 	return spec, nil
 }
 
@@ -630,6 +632,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.ConnectorSelections = append(spec.ConnectorSelections,
 			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
 	}
+	spec.ReturnURL = value(request.ReturnUrl)
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
 	if request.Tags != nil {
@@ -910,6 +913,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Text: true,
 		}
 		spec.ConnectorSelections = selectionsOf(*row)
+		spec.ReturnURL = row.ReturnURL
 		parentID = row.ID
 		if row.ConversationID != "" {
 			recall = &session.Recall{AgentID: row.AgentID, ConversationID: row.ConversationID}
@@ -934,6 +938,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.ConnectorSelections = spec.ConnectorSelections
+		fresh.ReturnURL = spec.ReturnURL
 		spec = fresh
 	}
 

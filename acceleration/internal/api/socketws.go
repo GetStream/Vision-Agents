@@ -94,9 +94,9 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = connection.SetReadDeadline(time.Time{})
 
-	// The start frame carries POST /v1/agents/sessions's body, so a device is refused here
-	// what it is refused there.
-	if failure, refused := refuseServerSideFields(ctx, start.Session); refused {
+	// The start frame carries POST /v1/agents/sessions's body, so a request is refused here
+	// as it is refused there.
+	if failure, refused := refuseSessionRequest(ctx, start.Session); refused {
 		refuseWith(failure)
 		return
 	}

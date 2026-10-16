@@ -58,10 +58,11 @@ func documentHandWritten(api huma.API) {
 			"own connection lacks access the provider asked for (insufficient_scope or a claims " +
 			"challenge), and a step-up consent was begun for it: name (the binding's alias), " +
 			"connector_id, connection_id, scopes (what the provider asked for, empty for a claims " +
-			"challenge), authorization_id, launch_url, handoff_token and expires_at. The dashboard " +
+			"challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the " +
+			"session's return_url's origin, or the dashboard for a session created without one, " +
 			"opens launch_url in a popup and posts it handoff_token, as for a createAuthorization " +
-			"without return_url: the launch page takes the handoff from the dashboard's origin only, " +
-			"and the consent goes back to the dashboard. The old " +
+			"with that return_url: the launch page takes the handoff from that origin only, and the " +
+			"consent goes back to the session's return_url, or else to the dashboard. The old " +
 			"grant keeps working until the step-up succeeds, and the same call works afterwards in " +
 			"the same session. While that step-up is open, calls refused for the same access send " +
 			"no second event.\n" +
@@ -76,9 +77,11 @@ func documentHandWritten(api huma.API) {
 			"the message is sent again with the attachment's status set to connected. " +
 			"A connector_authorization attachment asks the end user to connect a connector binding " +
 			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
-			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: the " +
-			"dashboard opens launch_url in a popup and posts it handoff_token, as for a " +
-			"createAuthorization without return_url, and the consent goes back to the dashboard. " +
+			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page " +
+			"of the session's return_url's origin, or the dashboard for a session created without " +
+			"one, opens launch_url in a popup and posts it handoff_token, as for a " +
+			"createAuthorization with that return_url, and the consent goes back to the session's " +
+			"return_url, or else to the dashboard. " +
 			"Once the user finishes that login the message is sent again with status connected and " +
 			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +

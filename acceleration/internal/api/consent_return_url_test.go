@@ -50,10 +50,7 @@ func (s *AuthorizationsSuite) TestAConsentStartedWithAReturnURLIsLaunchedFromIts
 	page := alice.get(started.LaunchURL)
 	finished := alice.finish(s.consent(alice.handOff(started)))
 
-	expected := strings.Replace(baseLaunchPage, `"https://dashboard.example"`, `"https://app.example"`, 1)
-	expected = strings.Replace(expected, "Start again from the dashboard.", "Start again from the page that opened this.", 1)
-	expected = strings.Replace(expected, "Start from the dashboard, so", "Start from the page that opened this, so", 1)
-	s.Equal(expected, s.launchPage(page),
+	s.Equal(launchPageFrom("https://app.example"), s.launchPage(page),
 		"the base page, with the return_url's origin in place of the dashboard's and no word of a dashboard")
 	s.Equal("https://app.example/connectors/done?"+url.Values{
 		"connection_id": {id}, "status": {consentConnected}, "tab": {"tools"}, "from": {"chat"},
@@ -275,10 +272,26 @@ func (s *AuthorizationsSuite) assertReturnURLRefused(why, returnURL string) {
 // launchPage is a launch page's body with its nonce written NONCE, after checking the nonce is
 // the one its Content-Security-Policy allows.
 func (s *AuthorizationsSuite) launchPage(response *http.Response) string {
+	return launchPageIn(&s.RouterSuite, response)
+}
+
+// launchPageIn is launchPage for any suite.
+func launchPageIn(s *RouterSuite, response *http.Response) string {
 	s.Require().Equal(http.StatusOK, response.StatusCode)
 	nonce := regexp.MustCompile(`'nonce-([A-Za-z0-9_-]+)'`).FindStringSubmatch(response.Header.Get("Content-Security-Policy"))
 	s.Require().Len(nonce, 2)
-	return strings.ReplaceAll(s.body(response), nonce[1], "NONCE")
+	defer response.Body.Close()
+	read, err := readAll(response)
+	s.Require().NoError(err)
+	return strings.ReplaceAll(string(read), nonce[1], "NONCE")
+}
+
+// launchPageFrom is the base page as an attempt with a return_url of origin serves it: that
+// origin in place of the dashboard's, and no word of a dashboard.
+func launchPageFrom(origin string) string {
+	page := strings.Replace(baseLaunchPage, `"https://dashboard.example"`, `"`+origin+`"`, 1)
+	page = strings.Replace(page, "Start again from the dashboard.", "Start again from the page that opened this.", 1)
+	return strings.Replace(page, "Start from the dashboard, so", "Start from the page that opened this, so", 1)
 }
 
 // returnedTo is where the callback sends the browser of a consent started with returnURL.

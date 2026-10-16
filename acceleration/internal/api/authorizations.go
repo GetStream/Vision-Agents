@@ -268,8 +268,9 @@ func ConnectorConsents(records *store.Store, registry core.Registry, secrets *au
 		if err != nil {
 			return session.Consent{}, err
 		}
-		// The chat names no page of the app's to go back to, so its consents finish on the dashboard.
-		begun, err := c.begin(ctx, connection, request.StepUp, "")
+		// The session's return_url, which refuseSessionRequest checked as createAuthorization
+		// checks its own; a session created without one finishes its consents on the dashboard.
+		begun, err := c.begin(ctx, connection, request.StepUp, request.ReturnURL)
 		if err != nil {
 			return session.Consent{}, err
 		}
