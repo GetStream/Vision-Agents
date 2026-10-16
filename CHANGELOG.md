@@ -622,6 +622,32 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A session can join a Stream call that already exists
+
+`POST /v1/agents/sessions` (with `start_voice`) and `POST /v1/agents/sessions/{id}/voice` take
+an optional `call: {type, id}`: an existing Stream call for the agent to join, such as the
+`default` call the people are already on. Left out, the agent joins `agent:<session id>` as
+before. A `call` without `start_voice` or together with `phone` is a 400. The call has to be in
+the Stream app the session acts in: one another session runs in another app is a 400. The
+router does not ask Stream whether the call exists. A device sending `call` is a 403, as with
+`history`, and the session socket's start frame takes none, since the socket carries its own
+audio.
+
+Voice stopped and started again goes back to the named call; naming a new call when voice is off
+moves it there, and naming a different one while voice is on is a 409. A session carried on from
+its row keeps the call; a fork does not. Two sessions joining one call as the same `user_id`
+leave the newest, as two sessions on `agent:<session id>` always did.
+
+A call runs on its own type's audio settings. The built-in `agent` type turns DTX and noise
+cancellation off so turn detection hears every word (AI-1291, GetStream/chat#18795); the
+`default` type has DTX on and noise cancellation on.
+
+Go takes it as `client.SessionOptions.Call` and `Session.Voice.Start(ctx, client.OnCall(type,
+id))`, and as `stream.Call.CallType`/`CallID`. `stream.Accelerated` (Python) now joins the call
+the agent was given: a call of any type but `agent` is sent as `call`, and the router chooses the
+session id, so a second session on the same call is not refused for reusing an id. An `agent`
+call is held by its call id as before. Other SDKs follow.
+
 ### A backend can give one session instructions of its own
 
 `POST /v1/agents/sessions` and the session socket's start frame take `instructions`: what the

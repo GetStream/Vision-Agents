@@ -4310,6 +4310,9 @@ type CreateSessionRequest struct {
 	// Backchannel Murmur while a participant is still talking, the way a person does.
 	Backchannel *bool `json:"backchannel,omitempty"`
 
+	// Call An existing Stream call for the agent to join, by its type and id.
+	Call *SessionCall `json:"call,omitempty"`
+
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
@@ -4372,7 +4375,7 @@ type CreateSessionRequest struct {
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
 
-	// StartVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+	// StartVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
 	StartVoice *bool `json:"start_voice,omitempty"`
 
 	// Sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -6113,7 +6116,7 @@ type Session struct {
 	Agent   *string `json:"agent,omitempty"`
 	AgentId string  `json:"agent_id"`
 
-	// CallId The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+	// CallId The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
 	CallId   string `json:"call_id"`
 	CallType string `json:"call_type"`
 
@@ -6192,6 +6195,15 @@ type Session struct {
 
 	// Voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// SessionCall An existing Stream call for the agent to join, by its type and id.
+type SessionCall struct {
+	// Id The call id.
+	Id string `json:"id"`
+
+	// Type The call type, such as default.
+	Type string `json:"type"`
 }
 
 // SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
@@ -6719,6 +6731,12 @@ type SpendBucket struct {
 	//
 	// Example: support
 	Value string `json:"value"`
+}
+
+// StartSessionVoiceRequest defines model for StartSessionVoiceRequest.
+type StartSessionVoiceRequest struct {
+	// Call An existing Stream call for the agent to join, by its type and id.
+	Call *SessionCall `json:"call,omitempty"`
 }
 
 // StatsBucket defines model for StatsBucket.
@@ -8377,6 +8395,9 @@ type SaySessionJSONRequestBody = SayRequest
 
 // SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
 type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
+
+// StartSessionVoiceJSONRequestBody defines body for StartSessionVoice for application/json ContentType.
+type StartSessionVoiceJSONRequestBody = StartSessionVoiceRequest
 
 // CreateSimulationJSONRequestBody defines body for CreateSimulation for application/json ContentType.
 type CreateSimulationJSONRequestBody = SimulationRequest
@@ -10248,14 +10269,27 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
 	StopSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartSessionVoice Start voice on a session
+	// StartSessionVoiceWithBody Start voice on a session
 	//
-	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-	StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	StartSessionVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartSessionVoice Start voice on a session
+	//
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoice(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
@@ -14448,15 +14482,38 @@ func (c *Client) StopSessionVoice(ctx context.Context, id string, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// StartSessionVoice Start voice on a session
+// StartSessionVoiceWithBody Start voice on a session
 //
-// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-func (c *Client) StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartSessionVoiceRequest(c.Server, id)
+func (c *Client) StartSessionVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSessionVoiceRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartSessionVoice Start voice on a session
+//
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *Client) StartSessionVoice(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSessionVoiceRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -22583,8 +22640,19 @@ func NewStopSessionVoiceRequest(server string, id string) (*http.Request, error)
 	return req, nil
 }
 
-// NewStartSessionVoiceRequest constructs an http.Request for the StartSessionVoice method
-func NewStartSessionVoiceRequest(server string, id string) (*http.Request, error) {
+// NewStartSessionVoiceRequest calls the generic StartSessionVoice builder with application/json body
+func NewStartSessionVoiceRequest(server string, id string, body StartSessionVoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartSessionVoiceRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewStartSessionVoiceRequestWithBody constructs an http.Request for the StartSessionVoice method, with any body, and a specified content type
+func NewStartSessionVoiceRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -22609,10 +22677,12 @@ func NewStartSessionVoiceRequest(server string, id string) (*http.Request, error
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -28822,16 +28892,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
 	StopSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionVoiceResponse, error)
 
-	// StartSessionVoiceWithResponse Start voice on a session
+	// StartSessionVoiceWithBodyWithResponse Start voice on a session
 	//
-	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-	StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
+	StartSessionVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
+
+	// StartSessionVoiceWithResponse Start voice on a session
+	//
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoiceWithResponse(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
@@ -38728,8 +38809,12 @@ type StartSessionVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -38749,9 +38834,19 @@ func (r StartSessionVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r StartSessionVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -48733,17 +48828,34 @@ func (c *ClientWithResponses) StopSessionVoiceWithResponse(ctx context.Context, 
 	return ParseStopSessionVoiceResponse(rsp)
 }
 
-// StartSessionVoiceWithResponse Start voice on a session
+// StartSessionVoiceWithBodyWithResponse Start voice on a session
 //
-// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-func (c *ClientWithResponses) StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
-	rsp, err := c.StartSessionVoice(ctx, id, reqEditors...)
+func (c *ClientWithResponses) StartSessionVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
+	rsp, err := c.StartSessionVoiceWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartSessionVoiceResponse(rsp)
+}
+
+// StartSessionVoiceWithResponse Start voice on a session
+//
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *ClientWithResponses) StartSessionVoiceWithResponse(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
+	rsp, err := c.StartSessionVoice(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -57893,12 +58005,26 @@ func ParseStartSessionVoiceResponse(rsp *http.Response) (*StartSessionVoiceRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

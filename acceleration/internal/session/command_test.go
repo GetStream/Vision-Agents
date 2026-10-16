@@ -424,7 +424,7 @@ func (s *SessionSuite) TestStartingVoiceJoinsTheCallNamedAfterTheSessionWithItsH
 	}
 	created := s.writes(Spec{Recall: &Recall{Messages: recalled}})
 
-	s.Require().NoError(created.StartVoice(s.ctx))
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 
 	s.True(created.Voicing())
 	s.Equal(created.ID(), created.Spec().CallID)
@@ -440,7 +440,7 @@ func (s *SessionSuite) TestStoppingVoiceLeavesTheCallAndCarriesOnInWriting() {
 		{Role: llm.Assistant, Content: "It ships on Friday."},
 	}
 	created := s.writes(Spec{Recall: &Recall{Messages: recalled}})
-	s.Require().NoError(created.StartVoice(s.ctx))
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 
 	s.Require().NoError(created.StopVoice(s.ctx))
 
@@ -455,8 +455,8 @@ func (s *SessionSuite) TestStartingVoiceTwiceJoinsTheCallOnce() {
 	s.manages()
 	created := s.writes(Spec{})
 
-	s.Require().NoError(created.StartVoice(s.ctx))
-	s.Require().NoError(created.StartVoice(s.ctx))
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 
 	s.Len(s.edges, 1)
 }
@@ -466,7 +466,7 @@ func (s *SessionSuite) TestAnEndedSessionCannotStartVoice() {
 	created := s.writes(Spec{})
 	created.Close()
 
-	s.Error(created.StartVoice(s.ctx))
+	s.Error(created.StartVoice(s.ctx, Call{}))
 	s.Empty(s.edges)
 }
 

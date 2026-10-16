@@ -181,14 +181,32 @@ class TestAccelerated:
         assert router.created["stt"] == "realtime-best"
         assert router.created["tts"] == "sonic_36"
 
-    async def test_the_session_is_held_by_the_call_id_with_voice(
+    async def test_a_default_call_is_named_and_the_router_picks_the_session_id(
         self, router: Router, joined: stream.Accelerated
     ):
+        assert router.created is not None
+        assert router.created["call"] == {"type": "default", "id": "call-1"}
+        assert router.created["start_voice"] is True
+        assert "id" not in router.created
+
+    async def test_an_agent_call_is_held_by_the_call_id_with_voice(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        await llm.join_remote(
+            RemoteCall(
+                call_type="agent",
+                call_id="call-6",
+                agent_user_id="agent",
+                instructions="",
+            )
+        )
+        await llm.leave_remote()
+
         # The session's call is agent:<session id>, the call the agent joined.
         assert router.created is not None
-        assert router.created["id"] == "call-1"
+        assert router.created["id"] == "call-6"
         assert router.created["start_voice"] is True
-        for field in ("call_id", "call_type", "text"):
+        for field in ("call", "call_id", "call_type", "text"):
             assert field not in router.created
 
     async def test_an_agent_without_a_config_plays_the_instructions_it_was_given(

@@ -88,9 +88,13 @@ type Config struct {
 type Call struct {
 	// SessionID is the UUID to hold the session by. Empty lets the router choose one.
 	SessionID string
-	// Voice has the agent join the session's own call, agent:<session id>. False holds the
-	// conversation in writing instead.
+	// Voice has the agent join the session's call: CallType and CallID, else its own,
+	// agent:<session id>. False holds the conversation in writing instead.
 	Voice bool
+	// CallType and CallID name an existing Stream call for the agent to join, such as the
+	// default call the people are already on. Both empty is agent:<session id>.
+	CallType string
+	CallID   string
 	// UserID is who the agent joins the call as.
 	UserID string
 	// UserName is the agent's display name in the call.
@@ -410,6 +414,9 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	}
 	if call.Voice {
 		request.StartVoice = &call.Voice
+	}
+	if call.CallID != "" {
+		request.Call = &acceleration.SessionCall{Type: call.CallType, Id: call.CallID}
 	}
 
 	if call.Incognito {

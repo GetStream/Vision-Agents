@@ -502,7 +502,8 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
 	spec.ConnectorSelections = selectionsOf(*row)
-	return spec, nil
+	// The row keeps the call voice was last on, which voice goes back to once started.
+	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }
 
 // selectionsOf are the connections a stored session's caller chose for its session bindings.
@@ -576,6 +577,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	// A phone call is a call from the start. Anything else is held in writing until voice
 	// is started, which start_voice does as the session opens.
 	spec.Text = !value(request.StartVoice) && request.Phone == nil
+	if request.Call != nil {
+		spec.CallType, spec.CallID = request.Call.Type, request.Call.Id
+	}
 	// The conversation is kept in Stream Chat unless it is incognito, which Normalize turns
 	// off, so any Chat client can read it back, typed and spoken.
 	spec.PersistConversation = true
@@ -891,7 +895,8 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	case parent.Live != nil:
 		// A fork is held in writing whatever the parent is doing: one person talks to one
 		// agent, and voice is started on the fork when it is wanted there.
-		spec = parent.Live.Spec().Written()
+		// The fork's own call is agent:<fork id>, never the call the parent was on.
+		spec = parent.Live.Spec().Written().Holding(session.Call{})
 		spec.Phone, spec.Edge = nil, nil
 		parentID = parent.Live.ID()
 		if spec.Incognito {

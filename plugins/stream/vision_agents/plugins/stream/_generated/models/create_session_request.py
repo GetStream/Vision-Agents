@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
+    from ..models.session_call import SessionCall
     from ..models.session_connector_binding import SessionConnectorBinding
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
@@ -35,6 +36,7 @@ class CreateSessionRequest:
             since there is no sensible answer when they disagree.
         agent_id (str | Unset): Keys transcripts and statistics. Empty means the call id.
         backchannel (bool | Unset): Murmur while a participant is still talking, the way a person does. Default: False.
+        call (SessionCall | Unset): An existing Stream call for the agent to join, by its type and id.
         config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
             config says, so a caller can reuse a configuration and still change one thing about this call.
         connector_bindings (list[SessionConnectorBinding] | Unset): The connection to use for each of the agent config's
@@ -99,8 +101,8 @@ class CreateSessionRequest:
             breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
         search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
         start_voice (bool | Unset): Start voice as the session opens, as startSessionVoice does: the agent joins the
-            call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held
-            in writing until voice is started. Default: False.
+            call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the
+            conversation is held in writing until voice is started. Default: False.
         sts (str | Unset): A speech-to-speech target. Naming one makes the session native once voice is started: the
             model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the
             config decides.
@@ -122,6 +124,7 @@ class CreateSessionRequest:
     agent: str | Unset = UNSET
     agent_id: str | Unset = UNSET
     backchannel: bool | Unset = False
+    call: SessionCall | Unset = UNSET
     config_id: str | Unset = UNSET
     connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
     context_truncated: bool | Unset = UNSET
@@ -163,6 +166,10 @@ class CreateSessionRequest:
         agent_id = self.agent_id
 
         backchannel = self.backchannel
+
+        call: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.call, Unset):
+            call = self.call.to_dict()
 
         config_id = self.config_id
 
@@ -272,6 +279,8 @@ class CreateSessionRequest:
             field_dict["agent_id"] = agent_id
         if backchannel is not UNSET:
             field_dict["backchannel"] = backchannel
+        if call is not UNSET:
+            field_dict["call"] = call
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
         if connector_bindings is not UNSET:
@@ -348,6 +357,7 @@ class CreateSessionRequest:
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
+        from ..models.session_call import SessionCall
         from ..models.session_connector_binding import SessionConnectorBinding
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
@@ -360,6 +370,13 @@ class CreateSessionRequest:
         agent_id = d.pop("agent_id", UNSET)
 
         backchannel = d.pop("backchannel", UNSET)
+
+        _call = d.pop("call", UNSET)
+        call: SessionCall | Unset
+        if isinstance(_call, Unset):
+            call = UNSET
+        else:
+            call = SessionCall.from_dict(_call)
 
         config_id = d.pop("config_id", UNSET)
 
@@ -489,6 +506,7 @@ class CreateSessionRequest:
             agent=agent,
             agent_id=agent_id,
             backchannel=backchannel,
+            call=call,
             config_id=config_id,
             connector_bindings=connector_bindings,
             context_truncated=context_truncated,
