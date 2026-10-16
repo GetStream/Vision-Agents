@@ -1156,12 +1156,12 @@ impl ::std::convert::TryFrom<::std::string::String> for AuditSource {
 pub struct Authorization {
     ///When the attempt ends, 10 minutes after it began. A callback after that is refused.
     pub expires_at: ::std::string::String,
-    ///Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+    ///Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
     pub handoff_token: ::std::string::String,
     ///The attempt.
     pub id: ::std::string::String,
     pub kind: AuthorizationKind,
-    ///The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+    ///The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
     pub launch_url: ::std::string::String,
 }
 ///consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
@@ -1214,6 +1214,13 @@ impl ::std::convert::TryFrom<::std::string::String> for AuthorizationKind {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`AuthorizationRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AuthorizationRequest {
+    ///The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub return_url: ::std::option::Option<::std::string::String>,
 }
 ///`AuthorizePluginRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

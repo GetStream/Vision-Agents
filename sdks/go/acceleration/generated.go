@@ -3011,7 +3011,7 @@ type Authorization struct {
 	// ExpiresAt When the attempt ends, 10 minutes after it began. A callback after that is refused.
 	ExpiresAt time.Time `json:"expires_at"`
 
-	// HandoffToken Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+	// HandoffToken Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
 	HandoffToken string `json:"handoff_token"`
 
 	// Id The attempt.
@@ -3020,12 +3020,18 @@ type Authorization struct {
 	// Kind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
 	Kind AuthorizationKind `json:"kind"`
 
-	// LaunchUrl The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+	// LaunchUrl The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
 	LaunchUrl string `json:"launch_url"`
 }
 
 // AuthorizationKind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
 type AuthorizationKind string
+
+// AuthorizationRequest defines model for AuthorizationRequest.
+type AuthorizationRequest struct {
+	// ReturnUrl The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+	ReturnUrl *string `json:"return_url,omitempty"`
+}
 
 // AuthorizePluginRequest defines model for AuthorizePluginRequest.
 type AuthorizePluginRequest struct {
@@ -8303,6 +8309,9 @@ type SetPluginClientJSONRequestBody = SetPluginClientRequest
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 type CreateConnectionJSONRequestBody = ConnectionRequest
 
+// CreateAuthorizationJSONRequestBody defines body for CreateAuthorization for application/json ContentType.
+type CreateAuthorizationJSONRequestBody = AuthorizationRequest
+
 // PutConnectionCredentialsJSONRequestBody defines body for PutConnectionCredentials for application/json ContentType.
 type PutConnectionCredentialsJSONRequestBody = ConnectionCredentials
 
@@ -9283,14 +9292,27 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
 	GetConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateAuthorization Start a consent
+	// CreateAuthorizationWithBody Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
+	// Takes any type of body and a specified content type.
+	//
 	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
-	CreateAuthorization(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateAuthorizationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAuthorization Start a consent
+	//
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+	CreateAuthorization(ctx context.Context, id string, body CreateAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PutConnectionCredentialsWithBody Set a connection's credentials
 	//
@@ -9493,14 +9515,14 @@ type ClientInterface interface {
 
 	// FinishConnectorConsent Finish a consent
 	//
-	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with connection_id and status added to its query: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
 	//
 	// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
 	FinishConnectorConsent(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConnectorLaunchPage The page a consent starts on
 	//
-	// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+	// The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by the dashboard when the consent has none. The page waits for that origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 	//
 	// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
 	GetConnectorLaunchPage(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12474,15 +12496,38 @@ func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-// CreateAuthorization Start a consent
+// CreateAuthorizationWithBody Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
+// Takes any type of body and a specified content type.
+//
 // Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
-func (c *Client) CreateAuthorization(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateAuthorizationRequest(c.Server, id)
+func (c *Client) CreateAuthorizationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAuthorizationRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAuthorization Start a consent
+//
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+func (c *Client) CreateAuthorization(ctx context.Context, id string, body CreateAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAuthorizationRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12884,7 +12929,7 @@ func (c *Client) ReceiveConnectorEvent(ctx context.Context, connectorId string, 
 
 // FinishConnectorConsent Finish a consent
 //
-// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with connection_id and status added to its query: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
 //
 // Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
 func (c *Client) FinishConnectorConsent(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12901,7 +12946,7 @@ func (c *Client) FinishConnectorConsent(ctx context.Context, params *FinishConne
 
 // GetConnectorLaunchPage The page a consent starts on
 //
-// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+// The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by the dashboard when the consent has none. The page waits for that origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 //
 // Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
 func (c *Client) GetConnectorLaunchPage(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18809,8 +18854,19 @@ func NewGetConnectionRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewCreateAuthorizationRequest constructs an http.Request for the CreateAuthorization method
-func NewCreateAuthorizationRequest(server string, id string) (*http.Request, error) {
+// NewCreateAuthorizationRequest calls the generic CreateAuthorization builder with application/json body
+func NewCreateAuthorizationRequest(server string, id string, body CreateAuthorizationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateAuthorizationRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateAuthorizationRequestWithBody constructs an http.Request for the CreateAuthorization method, with any body, and a specified content type
+func NewCreateAuthorizationRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -18835,10 +18891,12 @@ func NewCreateAuthorizationRequest(server string, id string) (*http.Request, err
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -27706,16 +27764,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
 	GetConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error)
 
-	// CreateAuthorizationWithResponse Start a consent
+	// CreateAuthorizationWithBodyWithResponse Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
-	CreateAuthorizationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error)
+	CreateAuthorizationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error)
+
+	// CreateAuthorizationWithResponse Start a consent
+	//
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+	CreateAuthorizationWithResponse(ctx context.Context, id string, body CreateAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error)
 
 	// PutConnectionCredentialsWithBodyWithResponse Set a connection's credentials
 	//
@@ -27934,7 +28003,7 @@ type ClientWithResponsesInterface interface {
 
 	// FinishConnectorConsentWithResponse Finish a consent
 	//
-	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with connection_id and status added to its query: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27943,7 +28012,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetConnectorLaunchPageWithResponse The page a consent starts on
 	//
-	// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+	// The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by the dashboard when the consent has none. The page waits for that origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -47006,17 +47075,34 @@ func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id 
 	return ParseGetConnectionResponse(rsp)
 }
 
-// CreateAuthorizationWithResponse Start a consent
+// CreateAuthorizationWithBodyWithResponse Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
-func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error) {
-	rsp, err := c.CreateAuthorization(ctx, id, reqEditors...)
+func (c *ClientWithResponses) CreateAuthorizationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error) {
+	rsp, err := c.CreateAuthorizationWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAuthorizationResponse(rsp)
+}
+
+// CreateAuthorizationWithResponse Start a consent
+//
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Context, id string, body CreateAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error) {
+	rsp, err := c.CreateAuthorization(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -47354,7 +47440,7 @@ func (c *ClientWithResponses) ReceiveConnectorEventWithResponse(ctx context.Cont
 
 // FinishConnectorConsentWithResponse Finish a consent
 //
-// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with connection_id and status added to its query: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47369,7 +47455,7 @@ func (c *ClientWithResponses) FinishConnectorConsentWithResponse(ctx context.Con
 
 // GetConnectorLaunchPageWithResponse The page a consent starts on
 //
-// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+// The launch_url of an authorization, opened in a popup by a page of the return_url's origin, or by the dashboard when the consent has none. The page waits for that origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt, and one unknown, expired or finished is the dashboard's page.
 //
 // Returns a wrapper object for the known response body format(s).
 //

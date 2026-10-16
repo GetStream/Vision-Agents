@@ -1383,7 +1383,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset ExpiresAt { get; set; } = default!;
 
         /// <summary>
-        /// Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+        /// Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("handoff_token")]
         public string HandoffToken { get; set; } = default!;
@@ -1398,10 +1398,31 @@ namespace GetStream.VisionAgents.Models
         public string Kind { get; set; } = default!;
 
         /// <summary>
-        /// The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+        /// The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("launch_url")]
         public string LaunchUrl { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AuthorizationRequest
+    {
+
+        /// <summary>
+        /// The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("return_url")]
+        public string? ReturnUrl { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
