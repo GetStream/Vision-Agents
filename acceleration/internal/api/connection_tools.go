@@ -80,6 +80,11 @@ const codeToolSchemaChanged = "connector_tool_schema_changed"
 // marked broken (AI-1002): saving its credentials again moves it, the same remedy, so one code.
 const codeCredentialRejected = "connector_credential_rejected"
 
+// codeConsentRefused is the code of a connection's last validation that is not a validate's:
+// the provider refused a consent for a connection that was not connected, with an RFC 6749
+// section 4.1.2.1 error other than access_denied (Server.recordRefusal). New (AI-1379).
+const codeConsentRefused = "connector_consent_refused"
+
 func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionValidationStatus",
 		"connected: the credential works and the tools were listed. pending: no credentials yet. "+

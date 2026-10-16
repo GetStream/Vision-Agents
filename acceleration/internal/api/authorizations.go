@@ -87,6 +87,14 @@ const (
 		"Create a new connection for that account."
 )
 
+// unauthorizedClientHint follows a consent the provider refused with unauthorized_client, «The
+// client is not authorized to request an authorization code using this method» (RFC 6749
+// section 4.1.2.1), with the redirect URI the provider's admin allows it with. Gong answers it
+// until its tech admin adds the router as an MCP integration (staging, 2026-10-16T15:11:14Z,
+// AI-1379; providers/gong.yaml).
+const unauthorizedClientHint = "The provider does not let this client sign in for your organization: " +
+	"an admin at the provider may need to allow it, with the redirect URI %s."
+
 // Where a consent ended, sent to the dashboard as the status query parameter.
 const (
 	consentConnected       = "connected"
@@ -709,8 +717,10 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	if refused != nil {
 		// Any other error the provider sent back: its description is kept as the denied line
 		// keeps it, not as AuthorizationError.Error carries it, raw and whole.
+		description := core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code"))
 		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "provider_code", refused.Code,
-			"error_description", core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code")))
+			"error_description", description)
+		s.recordRefusal(ctx, connection, core.LoggedDescription(refused.Code, query.Get("state"), query.Get("code")), description)
 		return consentFailed
 	}
 	if err != nil {
@@ -770,6 +780,34 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		}
 	}
 	return consentConnected
+}
+
+// recordRefusal keeps why the provider refused a consent as the connection's last validation,
+// which the dashboard shows on the connection, so its person reads why and not only that the
+// consent failed. code and description are already cut as a log line has them
+// (core.LoggedDescription), so neither holds the callback's state or code. A connected
+// connection keeps its grant and the last validate of that grant, as on base.
+func (s *Server) recordRefusal(ctx context.Context, connection store.ConnectorConnection, code, description string) {
+	if connection.Status == store.ConnectionConnected {
+		return
+	}
+	reason := "The provider refused the consent with " + code
+	if description != "" {
+		reason += ": " + description
+	}
+	if !strings.HasSuffix(reason, ".") {
+		reason += "."
+	}
+	if code == "unauthorized_client" {
+		reason += " " + fmt.Sprintf(unauthorizedClientHint, connectorCallbackURL(s.publicURL))
+	}
+	err := s.store.PutConnectorConnectionValidation(ctx, &store.ConnectorConnectionValidation{
+		ConnectionID: connection.ID, Revision: connection.Revision, Status: validationFailed,
+		Code: codeConsentRefused, Error: reason, CheckedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		s.logger.Error("could not record why a consent was refused", "connection", connection.ID, "error", err)
+	}
 }
 
 // beforeComplete runs the hook the manifest names at before_complete, if any, on a copy of

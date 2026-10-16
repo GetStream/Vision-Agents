@@ -251,6 +251,7 @@ func (s *AuthorizationsSuite) TestADeniedConsentLeavesTheConnectionPending() {
 	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(id).Status)
 	s.Equal(1, s.get(id).Revision)
 	s.Equal(exchanges, s.provider.Hits(fakeprovider.PathToken), "nothing was exchanged")
+	s.Nil(s.get(id).LastValidation, "as on base ab4884e0 (probe-base.txt): a denial leaves no reason")
 }
 
 // TestADeniedConsentIsLoggedWithTheProvidersDescription: one line names the connection, the
@@ -319,6 +320,68 @@ func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedOtherwiseIsLoggedWit
 	s.LessOrEqual(len(strings.TrimSuffix(description, "\"\n")), core.DescriptionBytes)
 	s.False(strings.Contains(s.logged.String(), state), "the state is not logged")
 	s.False(strings.Contains(s.logged.String(), code), "the code is not logged")
+}
+
+// TestAConsentTheProviderRefusedLeavesItsReasonAsTheLastValidation: an error other than
+// access_denied still lands on the dashboard saying failed and leaves the connection pending, as
+// on base ab4884e0, and now leaves the provider's code and description as the connection's last
+// validation, which the dashboard shows on it: without the callback's state and code, its URL
+// kept to the host (AI-1379).
+func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedLeavesItsReasonAsTheLastValidation() {
+	id := s.connection("")
+	state, code := "", "code-"+s.utils.uuid()
+
+	response := s.refuse(id, "invalid_scope", func(sent url.Values) string {
+		state = sent.Get("state")
+		sent.Set("code", code)
+		return "scope refused for " + state + " and " + code + " at https://idp.example/scopes?code=" + code
+	})
+
+	s.Equal(s.landing(id, consentFailed), response.Header.Get("Location"))
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionPending), got.Status)
+	s.Require().NotNil(got.LastValidation)
+	s.Equal(ConnectionValidationStatus(validationFailed), got.LastValidation.Status)
+	s.Equal("connector_consent_refused", got.LastValidation.Code)
+	s.Equal("The provider refused the consent with invalid_scope: scope refused for [redacted] and [redacted] at https://idp.example.",
+		got.LastValidation.Error)
+	s.WithinDuration(time.Now(), got.LastValidation.CheckedAt, time.Minute)
+}
+
+// TestAConsentRefusedAsAnUnauthorizedClientNamesTheAdminStep: Gong's answer on staging
+// (2026-10-16T15:11:14Z) before its admin added the router as an MCP integration. The reason
+// says an admin at the provider may need to allow this client, with the router's redirect URI.
+func (s *AuthorizationsSuite) TestAConsentRefusedAsAnUnauthorizedClientNamesTheAdminStep() {
+	id := s.connection("")
+
+	s.refuse(id, "unauthorized_client", func(url.Values) string {
+		return "This MCP client is not authorized for your company. Please ask your Gong technical admin to authorize it."
+	})
+
+	got := s.get(id).LastValidation
+	s.Require().NotNil(got)
+	s.Equal("The provider refused the consent with unauthorized_client: This MCP client is not authorized for your company. "+
+		"Please ask your Gong technical admin to authorize it. The provider does not let this client sign in for your organization: "+
+		"an admin at the provider may need to allow it, with the redirect URI https://router.example/v1/agents/connectors/oauth/callback.", got.Error)
+}
+
+// TestARefusedReconnectKeepsTheConnectedGrantsLastValidation: a connected connection keeps its
+// status and what its last validate found when a reconnect is refused, as on base ab4884e0
+// (probe-base.txt): its grant still works, so a refusal is not what its last check found.
+func (s *AuthorizationsSuite) TestARefusedReconnectKeepsTheConnectedGrantsLastValidation() {
+	id := s.connection("")
+	s.connect(id)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil))
+	before := s.get(id)
+	s.Require().NotNil(before.LastValidation)
+
+	response := s.refuse(id, "unauthorized_client", func(url.Values) string { return "not for your company" })
+
+	s.Equal(s.landing(id, consentFailed), response.Header.Get("Location"))
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), got.Status)
+	s.Equal(before.Revision, got.Revision)
+	s.Equal(before.LastValidation, got.LastValidation)
 }
 
 // TestAConsentWhoseConnectionCannotBeReadIsLogged: a connection row the store cannot read
@@ -1175,6 +1238,22 @@ func (s *AuthorizationsSuite) start(id string) Authorization {
 	var started Authorization
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/authorizations", nil, &started))
 	return started
+}
+
+// refuse is a consent the provider sends back with error code, and the error_description
+// describe returns for the callback's query, which it may also change.
+func (s *AuthorizationsSuite) refuse(id, code string, describe func(url.Values) string) *http.Response {
+	alice := s.browser()
+	authorize := alice.handOff(s.start(id))
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.ConsentDenied)
+	callback := s.consent(authorize)
+	query := callback.Query()
+	query.Set("error", code)
+	query.Set("error_description", describe(query))
+	callback.RawQuery = query.Encode()
+	response := alice.get(callback.String())
+	s.Require().Equal(http.StatusFound, response.StatusCode)
+	return response
 }
 
 // connect is a whole consent that ends connected.
