@@ -227,14 +227,8 @@ extension APIProtocol {
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)`.
-    internal func deleteSession(
-        path: Operations.DeleteSession.Input.Path,
-        headers: Operations.DeleteSession.Input.Headers = .init()
-    ) async throws -> Operations.DeleteSession.Output {
-        try await deleteSession(Operations.DeleteSession.Input(
-            path: path,
-            headers: headers
-        ))
+    internal func deleteSession(path: Operations.DeleteSession.Input.Path) async throws -> Operations.DeleteSession.Output {
+        try await deleteSession(Operations.DeleteSession.Input(path: path))
     }
     /// Continue a conversation as a new one
     ///
@@ -317,12 +311,10 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
     internal func rewindSession(
         path: Operations.RewindSession.Input.Path,
-        headers: Operations.RewindSession.Input.Headers = .init(),
         body: Operations.RewindSession.Input.Body
     ) async throws -> Operations.RewindSession.Output {
         try await rewindSession(Operations.RewindSession.Input(
             path: path,
-            headers: headers,
             body: body
         ))
     }
@@ -334,14 +326,8 @@ extension APIProtocol {
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/stop`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)`.
-    internal func stopSession(
-        path: Operations.StopSession.Input.Path,
-        headers: Operations.StopSession.Input.Headers = .init()
-    ) async throws -> Operations.StopSession.Output {
-        try await stopSession(Operations.StopSession.Input(
-            path: path,
-            headers: headers
-        ))
+    internal func stopSession(path: Operations.StopSession.Input.Path) async throws -> Operations.StopSession.Output {
+        try await stopSession(Operations.StopSession.Input(path: path))
     }
     /// Start voice on a session
     ///

@@ -14,6 +14,10 @@ endpoint the spec does not mark ``x-client-accessible`` is server-side only, and
 SDK that had a method for one would only be offering callers a 403. ``--check`` verifies the
 filter still agrees with the spec without regenerating.
 
+Only the successes are generated. ``FailureMiddleware`` throws every other status before the
+generated client reads it, so the generator is handed a copy of the spec without them rather
+than writing a decoder per error, per operation, that nothing ever reaches.
+
 WebSockets are not generated. OpenAPI cannot describe a socket past the upgrade, so the
 session events socket is hand-written in ``SessionSocket.swift``.
 
@@ -22,6 +26,7 @@ Usage:
     uv run sdks/swift/generate.py --check
 """
 
+import json
 import shutil
 import subprocess
 import sys
@@ -86,6 +91,21 @@ def audit(spec: dict) -> list[str]:
     return complaints
 
 
+def successes(spec: dict) -> dict:
+    """The spec as the generator should see it: each operation's 2xx responses and nothing
+    else, and no account of the router's auth atop every generated file."""
+    spec["info"].pop("description", None)
+    for operations in spec["paths"].values():
+        for operation in operations.values():
+            if isinstance(operation, dict) and "responses" in operation:
+                operation["responses"] = {
+                    status: response
+                    for status, response in operation["responses"].items()
+                    if status.startswith("2")
+                }
+    return spec
+
+
 def main(argv: list[str]) -> int:
     if not SPEC.exists():
         print(f"no spec at {SPEC}", file=sys.stderr)
@@ -113,12 +133,14 @@ def main(argv: list[str]) -> int:
 
     config = work / "openapi-generator-config.yaml"
     config.write_text(yaml.safe_dump(CONFIG, sort_keys=False))
+    trimmed = work / "openapi.json"
+    trimmed.write_text(json.dumps(successes(spec)))
 
     result = subprocess.run(
         [
             str(generator),
             "generate",
-            str(SPEC),
+            str(trimmed),
             "--config",
             str(config),
             "--output-directory",
