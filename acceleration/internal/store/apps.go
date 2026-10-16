@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -108,6 +109,38 @@ func (s *Store) AppSettingsFor(ctx context.Context, appID string) (AppSettings, 
 		return AppSettings{}, stack.Wrap(fmt.Errorf("store: app settings: %w", err))
 	}
 	return app.Settings, nil
+}
+
+// SetConsentReturnURLs replaces the app's consent return URLs and leaves every other key of
+// its settings as it is. None removes the key, so the document reads as it did before any
+// were registered.
+//
+// It is one UPDATE rather than a read of the document and a write of all of it. Why: two
+// writers of different keys at once, such as this and an operator's UPDATE of allow_guest,
+// would otherwise each write the document it read and lose the other's key. Under READ
+// COMMITTED the second UPDATE of the row waits for the first and applies its jsonb_set to
+// the row the first committed
+// (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED,
+// opened 2026-10-16).
+func (s *Store) SetConsentReturnURLs(ctx context.Context, appID string, urls []string) error {
+	update := s.db.NewUpdate().Model((*App)(nil)).Where("id = ?", appID)
+	if len(urls) == 0 {
+		update = update.Set("settings = settings - 'consent_return_urls'")
+	} else {
+		encoded, err := json.Marshal(urls)
+		if err != nil {
+			return stack.Wrap(fmt.Errorf("store: consent return urls: %w", err))
+		}
+		update = update.Set("settings = jsonb_set(settings, '{consent_return_urls}', ?::jsonb)", string(encoded))
+	}
+	result, err := update.Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: consent return urls: %w", err))
+	}
+	if updated, err := result.RowsAffected(); err == nil && updated == 0 {
+		return ErrNoApp
+	}
+	return nil
 }
 
 // ErrNoApp says no app has that id.

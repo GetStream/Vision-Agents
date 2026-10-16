@@ -129,3 +129,95 @@ func (s *StoreSuite) TestAnAppNeedsAnOrganizationAndAName() {
 	s.Error(s.store.CreateApp(s.ctx, &App{OrganizationID: "org-1"}))
 	s.Error(s.store.CreateOrganization(s.ctx, &Organization{}))
 }
+
+// settingsDocument is the app's settings as Postgres holds them, keys and all.
+func (s *StoreSuite) settingsDocument(appID string) string {
+	var document string
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT settings::text FROM apps WHERE id = ?", appID).Scan(&document))
+	return document
+}
+
+// guardedApp is an app that has turned guests away, for a test that another key survives.
+func (s *StoreSuite) guardedApp() App {
+	org := Organization{Name: "acme"}
+	s.Require().NoError(s.store.CreateOrganization(s.ctx, &org))
+	no := false
+	app := App{OrganizationID: org.ID, Name: "production", Settings: AppSettings{AllowGuest: &no}}
+	s.Require().NoError(s.store.CreateApp(s.ctx, &app))
+	return app
+}
+
+func (s *StoreSuite) TestTheConsentReturnURLsAreReadBackAsTheyWereSet() {
+	app := s.app()
+	urls := []string{"https://app.example/connected?tab=tools", "http://localhost:3000/done"}
+
+	s.Require().NoError(s.store.SetConsentReturnURLs(s.ctx, app.ID, urls))
+
+	settings, err := s.store.AppSettingsFor(s.ctx, app.ID)
+	s.Require().NoError(err)
+	s.Equal(urls, settings.ConsentReturnURLs)
+}
+
+func (s *StoreSuite) TestSettingTheConsentReturnURLsKeepsTheAppsOtherSettings() {
+	app := s.guardedApp()
+
+	s.Require().NoError(s.store.SetConsentReturnURLs(s.ctx, app.ID, []string{"https://app.example/done"}))
+
+	s.JSONEq(`{"allow_guest": false, "consent_return_urls": ["https://app.example/done"]}`, s.settingsDocument(app.ID))
+}
+
+// An app that registers nothing, or clears what it registered, keeps the document it had.
+// The two documents are what the base sha stored for an app created with no settings and
+// with allow_guest false (probe in the PR).
+func (s *StoreSuite) TestClearingTheConsentReturnURLsLeavesTheDocumentAsItWas() {
+	plain, guarded := s.app(), s.guardedApp()
+	s.Equal(`{}`, s.settingsDocument(plain.ID))
+	s.Equal(`{"allow_guest": false}`, s.settingsDocument(guarded.ID))
+
+	for _, app := range []App{plain, guarded} {
+		s.Require().NoError(s.store.SetConsentReturnURLs(s.ctx, app.ID, []string{"https://app.example/done"}))
+		s.Require().NoError(s.store.SetConsentReturnURLs(s.ctx, app.ID, nil))
+	}
+
+	s.Equal(`{}`, s.settingsDocument(plain.ID))
+	s.Equal(`{"allow_guest": false}`, s.settingsDocument(guarded.ID))
+}
+
+// Another writer holding the row, such as an operator's UPDATE of allow_guest, commits while
+// the URLs are being set: both keys are kept.
+func (s *StoreSuite) TestAKeyAnotherWriterSetsMeanwhileIsKept() {
+	app := s.app()
+	operator, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = operator.Rollback() }()
+	_, err = operator.ExecContext(s.ctx, `UPDATE apps SET settings = jsonb_set(settings, '{allow_guest}', 'false') WHERE id = ?`, app.ID)
+	s.Require().NoError(err)
+
+	set := make(chan error, 1)
+	go func() { set <- s.store.SetConsentReturnURLs(s.ctx, app.ID, []string{"https://app.example/done"}) }()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(s.ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%consent_return_urls%'`).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the setter waits for the operator's row lock")
+	s.Require().NoError(operator.Commit())
+
+	s.Require().NoError(<-set)
+	s.JSONEq(`{"allow_guest": false, "consent_return_urls": ["https://app.example/done"]}`, s.settingsDocument(app.ID))
+}
+
+func (s *StoreSuite) TestSettingOneAppsConsentReturnURLsLeavesAnotherAppsAlone() {
+	mine, theirs := s.app(), s.guardedApp()
+
+	s.Require().NoError(s.store.SetConsentReturnURLs(s.ctx, mine.ID, []string{"https://app.example/done"}))
+
+	settings, err := s.store.AppSettingsFor(s.ctx, theirs.ID)
+	s.Require().NoError(err)
+	s.Nil(settings.ConsentReturnURLs)
+	s.Equal(`{"allow_guest": false}`, s.settingsDocument(theirs.ID))
+}
+
+func (s *StoreSuite) TestSettingTheConsentReturnURLsOfNoAppIsErrNoApp() {
+	s.ErrorIs(s.store.SetConsentReturnURLs(s.ctx, "no-such-app", []string{"https://app.example/done"}), ErrNoApp)
+}

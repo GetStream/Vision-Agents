@@ -1441,6 +1441,9 @@ type AppSettings struct {
 	// out on the way.
 	AllowAnonymous *bool `json:"allow_anonymous,omitempty"`
 	AllowGuest     *bool `json:"allow_guest,omitempty"`
+	// ConsentReturnURLs are the pages of the app's own that may finish a connector
+	// consent, each exactly as it was registered. None is the dashboard alone.
+	ConsentReturnURLs []string `json:"consent_return_urls,omitempty"`
 }
 
 // AnonymousAllowed reports whether the app takes callers who presented no token.
