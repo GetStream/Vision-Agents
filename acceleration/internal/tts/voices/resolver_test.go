@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -62,5 +63,17 @@ func (s *ResolverSuite) TestAVoiceAskedForAsTheirOwnLeavesNoProviderOutAndIsNeve
 }
 
 func (s *ResolverSuite) TestAVoiceTheLibraryRefusedLeavesOutTheProvidersThatCannotVouchForIt() {
-	s.Equal([]string{"cartesia"}, s.resolver.Unvouched(s.ctx, "acme", "Sara", []string{"cartesia", "elevenlabs"}))
+	s.Equal([]string{"cartesia"}, s.resolver.Unvouched(s.ctx, "acme", unknownID, []string{"cartesia", "elevenlabs"}))
+}
+
+func (s *ResolverSuite) TestAVoiceNoProviderLooksUpIsNeverAskedOfTheStore() {
+	catalogue := NewCatalogue()
+	catalogue.Register("elevenlabs", s.library)
+	// A store with no database behind it: asking it panics.
+	resolver := NewResolver(new(appconfig.Store), catalogue)
+
+	s.NotPanics(func() {
+		s.Empty(resolver.Unvouched(s.ctx, "acme", cartesiaID, []string{"elevenlabs", "cartesia"}))
+	})
+	s.Equal(0, s.library.lookups)
 }

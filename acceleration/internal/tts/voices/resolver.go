@@ -72,13 +72,15 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 }
 
 // Unvouched names the providers the voice may not be handed as asked, see
-// routing.VoiceVetter. A voice asked for as the customer's own, or that is theirs, is
-// resolved per provider as before, so it names none; so does a store that cannot say,
-// whose error the candidates then meet in ResolveVoice. Without a provider that looks
-// voices up there is nothing to ask, so neither the store nor a vendor is.
+// routing.VoiceVetter. A voice that is the customer's own is resolved per provider as
+// before, so it names none; so does a store that cannot say, whose error the candidates
+// then meet in ResolveVoice. Without a provider that looks this voice up (Catalogue.vets)
+// there is nothing to ask, so neither the store nor a vendor is: a name, another vendor's
+// id and one asked for as their own (options.OwnVoicePrefix) go where they always went.
 func (r *Resolver) Unvouched(ctx context.Context, customerID, voice string, providers []string) []string {
-	if r.library == nil || strings.HasPrefix(voice, options.OwnVoicePrefix) ||
-		!slices.ContainsFunc(providers, r.library.Finds) {
+	if r.library == nil || !slices.ContainsFunc(providers, func(provider string) bool {
+		return r.library.vets(provider, voice)
+	}) {
 		return nil
 	}
 	if r.store != nil && customerID != "" {

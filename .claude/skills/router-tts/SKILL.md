@@ -137,6 +137,16 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
   Such a vendor still takes the voice when its own cached listing holds that id: a listed
   name does not count, since Cartesia and Inworld speak a voice by id. A listing that cannot
   be read holds nothing.
+- That first ask is made only for a voice shaped like an ElevenLabs id: 20 letters and digits
+  (`Finder.Shaped`; ElevenLabs does not document the format, every id seen live on 2026-10-16
+  has it). A Cartesia UUID, an Inworld name such as `Ashley`, a mistyped name such as
+  `Rachell`, `custom:` and no voice are not asked about and route as #989 left them: a name
+  ElevenLabs refuses on a shortcut that also reaches Cartesia or Inworld still starts there
+  and fails on the first line. Staging's Inworld key cannot list voices (403, 2026-10-16), so
+  leaving Inworld out for a name its listing does not vouch for would refuse every Inworld voice.
+- ElevenLabs answers an id that cannot be one of its voices, such as a Cartesia UUID, with
+  400 `detail.status: invalid_uid` (live 2026-10-16). `Exists` returns `errNotAVoiceID`, and
+  `Check` lets the voice through without a warning and without turning the check off.
 - Nothing is left out when no candidate can look the voice up, when the lookup failed, for a
   customer's own voice, for `custom:`, or for a candidate whose overwrites name a `voice_id`.
 - A lookup that fails another way (a bad key, a 5xx, past `lookupTimeout`, 3s) lets the voice

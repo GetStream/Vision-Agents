@@ -207,16 +207,30 @@ func (s *ServiceSuite) TestTheirOwnVoiceIsNeverLookedUpInTheProvidersLibrary() {
 }
 
 func (s *ServiceSuite) TestTheirOwnVoiceLeavesNoProviderOutAndIsNeverLookedUp() {
-	voice := s.recorded()
-	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+	// Named as an ElevenLabs id would be, so only that it is theirs keeps it from a lookup.
+	_, err := s.service.Create(s.ctx, "acme", unknownID, "")
+	s.Require().NoError(err)
 	// A library that says no voice outside its listing exists.
 	library := &findingLister{exists: map[string]bool{}}
 	catalogue := NewCatalogue()
 	catalogue.Register("elevenlabs", library)
 
-	unvouched := NewResolver(s.configs, catalogue).Unvouched(s.ctx, "acme", "founder", []string{"elevenlabs", "cartesia"})
+	unvouched := NewResolver(s.configs, catalogue).Unvouched(s.ctx, "acme", unknownID, []string{"elevenlabs", "cartesia"})
 
 	s.Empty(unvouched, "Cartesia may have been given it, and is asked as before")
+	s.Equal(0, library.lookups)
+}
+
+func (s *ServiceSuite) TestAStoreThatCannotSayWhoseVoiceItIsLeavesNoProviderOut() {
+	library := &findingLister{exists: map[string]bool{}}
+	catalogue := NewCatalogue()
+	catalogue.Register("elevenlabs", library)
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	unvouched := NewResolver(s.configs, catalogue).Unvouched(ctx, "acme", unknownID, []string{"elevenlabs", "cartesia"})
+
+	s.Empty(unvouched, "the candidates meet the store's error in ResolveVoice, as before")
 	s.Equal(0, library.lookups)
 }
 

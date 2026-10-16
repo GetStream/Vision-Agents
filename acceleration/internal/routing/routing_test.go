@@ -1255,6 +1255,18 @@ func (s *RoutingSuite) TestAProviderWhoseOverwriteNamesAVoiceIsNotAskedAboutTheR
 	s.Equal([]string{"lush"}, asked)
 }
 
+func (s *RoutingSuite) TestARequestWithNoVoiceIsNotVetted() {
+	var asked []string
+	router := s.newRouterResolving(vetting{unvouched: []string{"quick"}, asked: &asked},
+		func(spec Spec) (*stubProvider, error) { return &stubProvider{model: spec.Model}, nil })
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err, "a provider's default voice is its own")
+	s.Equal("quick/en", config.Name())
+	s.Nil(asked, "nothing to ask about")
+}
+
 func (s *RoutingSuite) TestProvidersListsEveryConfiguredModelInOrder() {
 	providers := s.newRouter().Providers(s.ctx)
 

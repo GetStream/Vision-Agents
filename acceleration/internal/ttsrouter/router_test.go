@@ -286,6 +286,9 @@ func (l sarahOnly) Exists(context.Context, string) (bool, error) {
 	return false, l.err
 }
 
+// Shaped is ElevenLabs' own rule.
+func (sarahOnly) Shaped(id string) bool { return (*voices.ElevenLabs)(nil).Shaped(id) }
+
 // listed is a library that lists its voices and cannot look any other up, as Cartesia's and
 // Inworld's cannot.
 type listed []voices.Library
@@ -298,7 +301,7 @@ func (listed) Preview(context.Context, string) (voices.Speech, error) {
 
 // vendorVoices resolves voices as cmd/router does with every vendor's key: ElevenLabs'
 // library looks a voice up, Cartesia's and Inworld's only list theirs.
-func vendorVoices(elevenlabs sarahOnly, cartesia, inworld listed) routing.VoiceResolver {
+func vendorVoices(elevenlabs sarahOnly, cartesia, inworld voices.Lister) routing.VoiceResolver {
 	catalogue := voices.NewCatalogue()
 	catalogue.Register("elevenlabs", elevenlabs)
 	catalogue.Register("cartesia", cartesia)
@@ -309,9 +312,12 @@ func vendorVoices(elevenlabs sarahOnly, cartesia, inworld listed) routing.VoiceR
 // unknownVoice is the id WWSD asked staging for on 2026-10-16.
 const unknownVoice = "ZZZZnotARealVoice123"
 
+// cartesiaVoice is a voice Cartesia lists.
+const cartesiaVoice = "a0e99841-438c-4a64-b679-ae501e7d6091"
+
 // stockVoices is a Cartesia and an Inworld library that hold neither unknownVoice nor Sara.
 var stockVoices = [2]listed{
-	{{ID: "a0e99841-438c-4a64-b679-ae501e7d6091", Name: "Barbershop Man"}},
+	{{ID: cartesiaVoice, Name: "Barbershop Man"}},
 	{{ID: "Ashley", Name: "Ashley"}},
 }
 
@@ -346,15 +352,78 @@ func (s *TTSRouterSuite) TestAVoiceElevenLabsRefusedIsRefusedWhenAnotherVendorIs
 func (s *TTSRouterSuite) TestAVoiceElevenLabsRefusedIsSpokenByAVendorWhoseLibraryListsIt() {
 	var built []routing.Spec
 	router := s.newStubbedRouterResolving(&built,
-		vendorVoices(sarahOnly{}, stockVoices[0], listed{{ID: "Sara", Name: "Sara"}}))
+		vendorVoices(sarahOnly{}, stockVoices[0], listed{{ID: unknownVoice, Name: unknownVoice}}))
 
-	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "tts-quality", Voice: "Sara"})
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "tts-quality", Voice: unknownVoice})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = session.Close() })
 
 	s.Equal("inworld", session.Provider())
 	s.Require().Len(built, 1, "nothing was built for ElevenLabs or Cartesia")
-	s.Equal("Sara", built[0].Voice)
+	s.Equal(unknownVoice, built[0].Voice)
+}
+
+func (s *TTSRouterSuite) TestACartesiaVoiceOnAShortcutIsNeverLookedUpAtElevenLabs() {
+	for _, voice := range []string{cartesiaVoice, "5619d38c-cf51-4d8e-9575-48f61a280413"} {
+		for _, target := range []string{"tts-quality", "tts-fast"} {
+			var built []routing.Spec
+			lookups := 0
+			router := s.newStubbedRouterResolving(&built,
+				vendorVoices(sarahOnly{lookups: &lookups}, stockVoices[0], stockVoices[1]))
+
+			session, err := router.Start(s.ctx, Request{
+				CustomerID: "acme", Target: target, Voice: voice,
+				Options: options.TTS{Providers: []string{"cartesia", "elevenlabs"}},
+			})
+			s.Require().NoError(err, "%s on %s, listed or not", voice, target)
+			s.T().Cleanup(func() { _ = session.Close() })
+
+			s.Equal("cartesia", session.Provider(), voice)
+			s.Equal(0, lookups, "%s on %s: no ElevenLabs lookup before Cartesia speaks", voice, target)
+		}
+	}
+}
+
+func (s *TTSRouterSuite) TestANameNoListingCanBeReadForIsNotLookedUpOrRefused() {
+	var built []routing.Spec
+	lookups := 0
+	router := s.newStubbedRouterResolving(&built,
+		vendorVoices(sarahOnly{lookups: &lookups}, stockVoices[0], failingListing{}))
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme", Target: "tts-quality", Voice: "Ashley",
+		Options: options.TTS{Providers: []string{"inworld", "elevenlabs"}},
+	})
+	s.Require().NoError(err, "Inworld's key may not list voices, and Ashley is one of them")
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("inworld", session.Provider())
+	s.Equal(0, lookups)
+}
+
+func (s *TTSRouterSuite) TestAVoiceElevenLabsRefusedIsStillRefusedAfterACartesiaVoice() {
+	var built []routing.Spec
+	lookups := 0
+	router := s.newStubbedRouterResolving(&built,
+		vendorVoices(sarahOnly{lookups: &lookups}, stockVoices[0], stockVoices[1]))
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "tts-fast", Voice: cartesiaVoice})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+	s.Require().Equal(0, lookups, "ElevenLabs answers a Cartesia id with an error, so it is never asked")
+
+	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "tts-quality", Voice: unknownVoice})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, `elevenlabs has no voice "ZZZZnotARealVoice123"; the closest in its library is`)
+	s.Len(built, 1, "only the Cartesia voice was built")
+}
+
+// failingListing is a library that cannot be listed, as Inworld's answered staging's key
+// on 2026-10-16: 403, "api key does not have required scopes".
+type failingListing struct{ listed }
+
+func (failingListing) List(context.Context) ([]voices.Library, error) {
+	return nil, errors.New("inworld refused the voice (http 403): api key does not have required scopes")
 }
 
 func (s *TTSRouterSuite) TestAShortcutSpeaksAVoiceElevenLabsHasOnElevenLabs() {
@@ -426,7 +495,7 @@ func checkingVoices(lookups *int) routing.VoiceResolver {
 
 func (s *TTSRouterSuite) TestAVoiceOneVendorDoesNotHaveIsSpokenByTheNextInThePriorityList() {
 	var built []routing.Spec
-	router := s.newStubbedRouterResolving(&built, vendorVoices(sarahOnly{}, listed{{ID: "Sara"}}, nil))
+	router := s.newStubbedRouterResolving(&built, vendorVoices(sarahOnly{}, listed{{ID: "Sara"}}, listed{}))
 
 	session, err := router.Start(s.ctx, Request{
 		CustomerID: "acme",
