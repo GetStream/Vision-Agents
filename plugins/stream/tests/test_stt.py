@@ -64,6 +64,8 @@ class Router:
         # answering holds every handshake while it is clear, as a slow router does.
         self.answering = asyncio.Event()
         self.answering.set()
+        # asked is set when a handshake reaches the router.
+        self.asked = asyncio.Event()
 
     def app(self) -> web.Application:
         app = web.Application()
@@ -81,6 +83,7 @@ class Router:
         return await asyncio.wait_for(self.heard.get(), SETTLE)
 
     async def _stream(self, request: web.Request) -> web.StreamResponse:
+        self.asked.set()
         await self.answering.wait()
         if self.dropping:
             assert request.transport is not None
@@ -298,7 +301,9 @@ class TestSTT:
         await stt.process_audio(audio(100), ALICE)
         await router.next_heard()
         router.answering.clear()
+        router.asked.clear()
         await stt.process_audio(audio(200), BOB)
+        await asyncio.wait_for(router.asked.wait(), SETTLE)
 
         await stt.close()
         router.answering.set()
