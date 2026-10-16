@@ -16,7 +16,7 @@ use GetStream\VisionAgents\Json;
 final readonly class ConnectionLastValidation
 {
     public function __construct(
-        // When the validate ran.
+        // When the validate ran, or the provider refused the consent.
         public \DateTimeImmutable $checkedAt,
         public ConnectionValidationStatus|string $status,
         // The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed...

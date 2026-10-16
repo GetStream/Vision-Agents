@@ -2898,7 +2898,7 @@ namespace GetStream.VisionAgents.Models
         public string? Label { get; set; } = default!;
 
         /// <summary>
-        /// What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+        /// What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("last_validation")]
         public ConnectionLastValidation? LastValidation { get; set; } = default!;
@@ -3096,13 +3096,13 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// When the validate ran.
+        /// When the validate ran, or the provider refused the consent.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("checked_at")]
         public System.DateTimeOffset CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string? Code { get; set; } = default!;

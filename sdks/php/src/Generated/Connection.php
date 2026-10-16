@@ -48,7 +48,7 @@ final readonly class Connection
         // When the current credential expires. Absent when there is none or it does not.
         public ?\DateTimeImmutable $expiresAt = null,
         public ?string $label = null,
-        // What the last validate (POST .../validate) of the connection's current credentials found. Absent until the...
+        // What the last validate (POST .../validate) of the connection's current credentials found, or, for a connect...
         public ?ConnectionLastValidation $lastValidation = null,
     ) {
     }
