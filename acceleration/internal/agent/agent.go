@@ -1140,6 +1140,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 			})
 			continue
 		}
+		a.retireListener(attendance.Participant.ID)
 		a.unbind(attendance.Participant)
 		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
 		a.emitter.Send(ParticipantLeft{
@@ -1195,6 +1196,9 @@ func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
 	// and retiring that would put us back where we started.
 	if a.listeners[participantID] == session {
 		delete(a.listeners, participantID)
+		if a.cadence != nil {
+			a.cadence.EndProgress(participantID)
+		}
 	}
 	// The voice, though, goes either way: a diarised label belongs to the session that
 	// made it up, so whichever session serves this participant next has to be listened to
@@ -1206,6 +1210,19 @@ func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
 	// reading. Doing it twice is safe, which is what lets Close race with this.
 	if err := session.Close(); err != nil {
 		a.logger.Debug("closing a dropped transcriber failed", "error", err)
+	}
+}
+
+// retireListener closes the current participant session. Its event consumer clears that
+// participant's open-utterance guarantee after buffered transcripts have drained.
+func (a *Agent) retireListener(participantID string) {
+	a.mu.Lock()
+	session := a.listeners[participantID]
+	a.mu.Unlock()
+	if session != nil {
+		if err := session.Close(); err != nil {
+			a.logger.Debug("closing a departed transcriber failed", "error", err)
+		}
 	}
 }
 
@@ -1241,7 +1258,7 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			if typed.Clean {
 				a.logger.Debug("the transcriber closed",
 					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
-				continue
+				return
 			}
 			a.logger.Warn("the transcriber dropped, a new one opens on the next audio",
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)

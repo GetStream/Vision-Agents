@@ -436,6 +436,49 @@ func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
 		"the later words take the floor while the agent is still talking")
 }
 
+func (s *ConverseSuite) TestAProvisionalStopDoesNotAnswerAnOpenFluxUtterance() {
+	const utterance = 17
+	const text = "wait, I need to change the appointment"
+	s.build(DuplexOptions{})
+
+	var provisional candidate
+	for _, action := range s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: utterance,
+		InProgress: true, Text: text,
+	}, s.talking()) {
+		if action.Kind == ActAsk {
+			provisional = action.Candidate
+		}
+	}
+	s.Require().NotEmpty(provisional.ID, "the open words were not asked about for overlap")
+
+	stopped := s.converse.Ruled(harness.Decided{
+		CandidateID: provisional.ID, Disposition: harness.Respond, Floor: harness.Stop,
+	}, s.talking())
+	s.Equal([]ActionKind{ActInterrupt}, kinds(stopped))
+
+	select {
+	case ready := <-s.settling.Ready():
+		s.T().Fatalf("an open transcript became answerable before EndOfTurn: got %q", ready.Text)
+	case <-time.After(interruptGrace + 3*testRetry):
+	}
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeFinal, Utterance: utterance, Text: text,
+	}, s.quiet())
+	ready := s.held()
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal(text, answered[0].Text)
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the final answer should consume the one caller turn")
+}
+
 func (s *ConverseSuite) TestASettledTurnWaitsOnAnOverlapAskInFlight() {
 	s.build(DuplexOptions{})
 	s.overhears("okay wait make it six", s.talking())
@@ -1124,6 +1167,55 @@ func (s *ConverseSuite) TestAQueuedTurnWaitsWhileTheCallerIsStillTalking() {
 	action, waiting := s.converse.Waiting(s.quiet())
 	s.Require().True(waiting)
 	s.Equal("and make it eight", action.Candidate.Text)
+}
+
+func (s *ConverseSuite) TestAnOpenFluxUtteranceKeepsAQueuedAnswerOnHoldPastCallerHold() {
+	const queuedUtterance int64 = 1
+	const openUtterance int64 = 2
+	const queuedText = "and make it eight"
+	const openText = "wait one more thing"
+
+	queued := s.queueSettledTurn(queuedText, queuedUtterance, harness.Continue)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: openUtterance,
+		InProgress: true, Text: openText,
+	}, s.quiet())
+	// A late unchanged Final for the held U1 must not clear U2's open boundary.
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeFinal, Utterance: queuedUtterance, Text: queuedText,
+	}, s.quiet())
+
+	time.Sleep(callerHold + 3*testGap)
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().False(waiting,
+		"a provider-confirmed open transcript must keep the queued answer held past callerHold")
+	s.Empty(action.Candidate.ID)
+	s.eventually(func() bool { return s.holds() == 1 },
+		"the open caller did not hold the queued answer")
+
+	_, waiting = s.converse.Waiting(s.quiet())
+	s.False(waiting)
+	s.Equal(1, s.holds(), "rechecking the same open transcript must not report another hold")
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeFinal, Utterance: openUtterance, Text: openText,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal(openUtterance, ready.Utterance)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	ignored := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Ignore, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActIgnore}, kinds(ignored))
+
+	answer, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(ActAnswer, answer.Kind)
+	s.Equal(queued.ID, answer.Candidate.ID)
+	s.Equal(queuedText, answer.Candidate.Text)
+	_, waiting = s.converse.Waiting(s.quiet())
+	s.False(waiting, "the queued answer is released exactly once after the open turn resolves")
 }
 
 func (s *ConverseSuite) overlaps() []OverlapDecided {
