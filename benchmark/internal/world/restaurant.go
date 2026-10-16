@@ -53,6 +53,10 @@ func registerRestaurant(s *Server) {
 		if allergen == "" {
 			return nil, fmt.Errorf("allergen is required")
 		}
+		name := strings.TrimSpace(strArg(args, "name"))
+		if name == "" || strings.EqualFold(name, "unknown") {
+			return nil, fmt.Errorf("guest name is required")
+		}
 		var chosen map[string]any
 		for _, raw := range slots {
 			slot, _ := raw.(map[string]any)
@@ -72,7 +76,7 @@ func registerRestaurant(s *Server) {
 		}
 		chosen["available"] = false
 		res := map[string]any{
-			"name":       strArg(args, "name"),
+			"name":       name,
 			"phone":      strArg(args, "phone"),
 			"time":       timeStr,
 			"party_size": party,
