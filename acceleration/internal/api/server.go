@@ -1271,6 +1271,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Model:       candidate.Config.Model,
 			Description: &candidate.Config.Description,
 			Languages:   candidate.Config.Languages,
+			Recorded:    request.Modality == Stt && (candidate.Config.Recorded || !candidate.Config.Realtime),
 			Realtime:    candidate.Config.Realtime,
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),

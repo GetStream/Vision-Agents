@@ -801,6 +801,22 @@ stt:
       price:
         per_audio_hour: 0.258
 
+    # An explicitly configured OpenAI-compatible endpoint. Live sessions stay disabled
+    # unless this entry opts in with realtime: true.
+    - provider: openai-compatible
+      model: whisper-1
+      description: "Transcription through a configured OpenAI-compatible endpoint."
+      # `und` keeps this endpoint out of language-based shortcuts until its configured
+      # model's language coverage is declared. A concrete target still accepts a caller's
+      # supported language hint.
+      languages: [und]
+      realtime: false
+      recorded: true
+      supports: [words, keyterms, format]
+      data_policy:
+        trains_on_data: unknown
+        retention: unknown
+
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
     # code for "no linguistic content", so no shortcut asking for a language reaches it,

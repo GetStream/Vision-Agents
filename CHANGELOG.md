@@ -622,6 +622,23 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### OpenAI-compatible batch transcription
+
+The recordings router supports OpenAI-compatible endpoints through `OPENAI_STT_BASE_URL`
+and an optional `OPENAI_STT_API_KEY`. It forwards uploaded audio unchanged and supports
+standard transcription settings, word timings and speaker labels when the selected model
+provides them. Recording URLs are not supported. (#972)
+
+### OpenAI-compatible live transcription
+
+The `openai-compatible/whisper-1` target can also serve live sessions when its model entry
+sets `realtime: true`. It streams 16 kHz mono call audio to the configured OpenAI-compatible
+transcription WebSocket, forwards standard transcription deltas while a turn is open, and emits
+the canonical final transcript when the turn ends or the session closes. Audio continues
+while previous turns are transcribed; responses are matched by item ID. Set `recorded: true`
+alongside `realtime: true` for a model that serves both modes. The default model entry
+remains batch-only. (#972)
+
 ### An agent config says which agent.yaml connectors its last sync left out
 
 A sync (`POST /v1/agents/sync`) takes `left_out_connectors`: the agent.yaml connectors the

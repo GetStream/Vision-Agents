@@ -23,6 +23,10 @@ type Recording struct {
 	URL string
 	// Audio is the file itself, for a caller with a clip and nowhere to host it.
 	Audio []byte
+	// Filename and ContentType describe Audio when the caller knows the original file
+	// metadata. Providers use them to forward the bytes without converting the recording.
+	Filename    string
+	ContentType string
 	// Languages are the ISO codes spoken, if the caller knows. Empty asks the provider
 	// to work it out.
 	Languages []string

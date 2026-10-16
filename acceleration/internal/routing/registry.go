@@ -22,6 +22,8 @@ type Spec struct {
 	// It is declared by the model entry rather than inferred from an alias so a direct
 	// model target has the same behavior as a shortcut.
 	Thinking bool
+	// Realtime is the model's configured permission to serve a live session.
+	Realtime bool
 	// ReasoningEffort bounds the amount of reasoning a thinking model performs.
 	ReasoningEffort string
 	// LanguageHints narrow multilingual models.

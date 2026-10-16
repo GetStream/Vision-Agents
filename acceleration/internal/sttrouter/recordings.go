@@ -8,6 +8,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/openaicompat"
 )
 
 // Transcribers is the set of batch transcription providers a build can construct.
@@ -37,6 +38,13 @@ func DefaultTranscriberRegistry() *Transcribers {
 			MipOptOut: trainingRefused(spec),
 			Logger:    spec.Logger,
 		})
+	})
+	registry.Register(openaicompat.ProviderName, func(spec routing.Spec) (stt.Transcriber, error) {
+		var settings openaicompat.TranscriptionSettings
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+		return openaicompat.New(openaicompat.Options{Model: spec.Model, Keyterms: spec.Keyterms, Settings: settings})
 	})
 
 	return registry
@@ -106,6 +114,18 @@ func (r *Recordings) Transcribe(
 
 	startedAt := time.Now()
 	transcription, err := provider.Transcribe(ctx, recording.Source)
+	if err == nil && transcription.AudioDurationMs == 0 {
+		if durationMs, known := stt.ProbeDuration(ctx, recording.Source); known {
+			transcription.AudioDurationMs = durationMs
+		}
+	}
+	if err == nil && transcription.AudioDurationMs == 0 && config.Price.PerAudioHour > 0 {
+		r.Logger().Warn("recording duration is unknown; audio usage will be unbilled",
+			"customer_id", recording.CustomerID,
+			"provider", config.Provider,
+			"model", config.Model,
+		)
+	}
 	stat := routing.Stat{
 		Owner:     request.Owner(),
 		StartedAt: startedAt.UTC(),

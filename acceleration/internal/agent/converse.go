@@ -199,6 +199,7 @@ type converse struct {
 // overlapState is what has been asked about a participant's in-progress utterance.
 type overlapState struct {
 	participant stt.Participant
+	utterance   int64
 	// text is the caller's evolving words as of the last observation.
 	text string
 	// askedText is what the most recent provisional ask was about, and askedWords how
@@ -281,7 +282,21 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 		}))
 	}
 
+	withdraws := c.cadence.awaitingFinalFor(transcript)
 	superseded, saying := c.cadence.Observe(transcript)
+	var overlapSuperseded string
+	if withdraws {
+		c.mu.Lock()
+		participantID := transcript.Participant.ID
+		if seen, ok := c.overlapping[participantID]; ok && seen.utterance == transcript.Utterance {
+			overlapSuperseded = seen.inflight
+			if overlapSuperseded != "" {
+				delete(c.overlaps, overlapSuperseded)
+			}
+			delete(c.overlapping, participantID)
+		}
+		c.mu.Unlock()
+	}
 	if saying != "" {
 		c.mu.Lock()
 		released := c.forgetQueuedGrownLocked(transcript.Participant, transcript.Utterance, saying)
@@ -301,6 +316,9 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 		delete(c.candidates, superseded)
 		c.mu.Unlock()
 		actions = append(actions, c.supersede(transcript.Participant, superseded))
+	}
+	if overlapSuperseded != "" && overlapSuperseded != superseded {
+		actions = append(actions, c.supersede(transcript.Participant, overlapSuperseded))
 	}
 
 	return actions
@@ -334,13 +352,15 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 	c.mu.Lock()
 	seen := c.overlapping[participantID]
 	var superseded string
-	if seen.askedText != "" && !revisesTranscript(seen.askedText, saying) {
+	differentUtterance := transcript.Utterance != 0 && seen.utterance != 0 && transcript.Utterance != seen.utterance
+	if differentUtterance || (seen.askedText != "" && !revisesTranscript(seen.askedText, saying)) {
 		// A new utterance rather than more of the one asked about: the ask in flight is
 		// about words that are gone, and the count starts again.
 		superseded = seen.inflight
 		seen = overlapState{}
 	}
 	seen.participant = transcript.Participant
+	seen.utterance = transcript.Utterance
 	seen.text = saying
 	ask := seen.asks < overlapAsks &&
 		(seen.asks == 0 || count-seen.askedWords >= overlapReaskWords)
@@ -792,11 +812,10 @@ func (c *converse) Tick(state floor) []Action {
 	})}
 }
 
-// Listening reports whether somebody has evolving words younger than callerHold, which is
-// a caller who still holds the floor. A turn the agent owes waits while they do.
+// Listening reports whether somebody has recent evolving words or a numbered delta turn
+// awaiting its final transcript. A turn the agent owes waits while they hold the floor.
 func (c *converse) Listening() bool {
-	_, revised, hearing := c.cadence.Active()
-	return hearing && time.Since(revised) < callerHold
+	return c.cadence.Listening(callerHold)
 }
 
 // Waiting hands back the turn held while the agent finished speaking, now that it has.

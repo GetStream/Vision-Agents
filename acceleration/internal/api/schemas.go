@@ -685,6 +685,7 @@ type Provider struct {
 	Model       string             `json:"model" example:"eleven_flash_v2_5"`
 	Price       *ProviderPrice     `json:"price,omitempty"`
 	Provider    string             `json:"provider" example:"elevenlabs"`
+	Recorded    bool               `json:"recorded" doc:"Whether this STT model can transcribe a whole recording. False for other modalities; legacy non-realtime STT models are eligible by default."`
 	Realtime    bool               `json:"realtime"`
 	Tier        Tier               `json:"tier"`
 	UsageShare  *float64           `json:"usage_share,omitempty" doc:"This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics."`
@@ -692,8 +693,10 @@ type Provider struct {
 
 // RecordingSource Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
 type RecordingSource struct {
-	Audio *[]byte `json:"audio,omitempty" doc:"The file itself, base64. For clips - a long recording belongs behind a URL." format:"byte"`
-	Url   *string `json:"url,omitempty" doc:"A fetchable audio or video file."`
+	Audio       *[]byte `json:"audio,omitempty" doc:"The file itself, base64. For clips - a long recording belongs behind a URL." format:"byte"`
+	ContentType *string `json:"content_type,omitempty" doc:"The original audio file's media type, when known."`
+	Filename    *string `json:"filename,omitempty" doc:"The original audio file's name, when known."`
+	Url         *string `json:"url,omitempty" doc:"A fetchable audio or video file."`
 }
 
 func (*RecordingSource) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
