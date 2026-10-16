@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ import (
 // elevenLabsBaseURL is the production endpoint. The streaming provider's is a WebSocket
 // URL, so this one is its own rather than shared.
 const elevenLabsBaseURL = "https://api.elevenlabs.io"
+
+// elevenLabsVoiceID is the shape of an ElevenLabs voice id: 20 letters and digits.
+// ElevenLabs does not document the format; it is what every id observed live on 2026-10-16
+// has: 21m00Tcm4TlvDq8ikWAM, NOpBlnGInO9m6vDvFkFC, pNInz6obpgDQGcFmaJgB, IKne3meq5aSn9XLyUdCD.
+var elevenLabsVoiceID = regexp.MustCompile(`^[0-9A-Za-z]{20}$`)
 
 // ElevenLabsOptions configures the cloner. APIKey falls back to ELEVENLABS_API_KEY.
 type ElevenLabsOptions struct {
@@ -226,10 +232,17 @@ func (e *ElevenLabs) Exists(ctx context.Context, id string) (bool, error) {
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 	var failure struct {
 		Detail struct {
-			Code string `json:"code"`
+			Code   string `json:"code"`
+			Status string `json:"status"`
 		} `json:"detail"`
 	}
-	if json.Unmarshal(body, &failure) != nil || failure.Detail.Code != "voice_not_found" {
+	decoded := json.Unmarshal(body, &failure) == nil
+	// Live on 2026-10-16, GET /v1/voices/5619d38c-cf51-4d8e-9575-48f61a280413 (a Cartesia
+	// voice) answered 400 with detail.code bad_request and detail.status invalid_uid.
+	if decoded && failure.Detail.Status == "invalid_uid" {
+		return false, stack.Wrap(errNotAVoiceID)
+	}
+	if !decoded || failure.Detail.Code != "voice_not_found" {
 		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup (http %d): %s",
 			response.StatusCode, bytes.TrimSpace(body)))
 	}
@@ -257,6 +270,11 @@ func (e *ElevenLabs) Exists(ctx context.Context, id string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// Shaped reports an id with the shape of an ElevenLabs voice id.
+func (*ElevenLabs) Shaped(id string) bool {
+	return elevenLabsVoiceID.MatchString(id)
 }
 
 func (e *ElevenLabs) get(ctx context.Context, address string) (*http.Response, error) {

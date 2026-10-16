@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -118,7 +119,7 @@ func (p prepared) ResolveVoice(_ context.Context, _, provider, voice string) (st
 
 // newRouterResolving returns a router that knows about a customer's own voices.
 func (s *RoutingSuite) newRouterResolving(
-	voices prepared, factory Factory[*stubProvider],
+	voices VoiceResolver, factory Factory[*stubProvider],
 ) *Router[*stubProvider] {
 	registry := NewRegistry[*stubProvider]()
 	for _, provider := range []string{"quick", "lush", "batchy"} {
@@ -1193,6 +1194,77 @@ func (s *RoutingSuite) TestAVoiceNoProviderWasGivenLeavesNobodyToSayIt() {
 	_, _, err := router.Select(s.ctx,
 		Request{CustomerID: "acme", Target: "en-high-accuracy", Voice: "founder"})
 	s.ErrorContains(err, "every candidate")
+}
+
+// vetting is a resolver where lush looks voices up and has none, and the providers in
+// unvouched may not be handed a voice once they are asked about. It keeps the providers it
+// was asked about.
+type vetting struct {
+	unvouched []string
+	asked     *[]string
+}
+
+func (v vetting) ResolveVoice(_ context.Context, _, provider, voice string) (string, error) {
+	if provider == "lush" {
+		return "", Refused(fmt.Errorf("lush has no voice %q", voice))
+	}
+	return voice, nil
+}
+
+func (v vetting) Unvouched(_ context.Context, _, _ string, providers []string) []string {
+	*v.asked = providers
+	var named []string
+	for _, provider := range v.unvouched {
+		if slices.Contains(providers, provider) {
+			named = append(named, provider)
+		}
+	}
+	return named
+}
+
+func (s *RoutingSuite) TestAProviderNotVouchedForIsNeverHandedTheVoiceWhateverItsRank() {
+	var built, asked []string
+	router := s.newRouterResolving(vetting{unvouched: []string{"quick"}, asked: &asked},
+		func(spec Spec) (*stubProvider, error) {
+			built = append(built, spec.Model)
+			return &stubProvider{model: spec.Model}, nil
+		})
+
+	_, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme", Providers: []string{"quick/en", "lush/multi", "quick/multi"}, Voice: "nova",
+	})
+
+	s.Require().ErrorIs(err, ErrRequest)
+	s.EqualError(err, `lush/multi: lush has no voice "nova"`, "the refusal, not every candidate failing")
+	s.Empty(built)
+	s.Equal([]string{"quick", "lush"}, asked, "each provider is asked about once")
+}
+
+func (s *RoutingSuite) TestAProviderWhoseOverwriteNamesAVoiceIsNotAskedAboutTheRequestsVoice() {
+	var asked []string
+	router := s.newRouterResolving(vetting{unvouched: []string{"quick"}, asked: &asked},
+		func(spec Spec) (*stubProvider, error) { return &stubProvider{model: spec.Model}, nil })
+
+	_, config, err := router.Select(s.ctx, Request{
+		CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}, Voice: "nova",
+		TTS: options.TTS{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"voice_id":"own"}`)}},
+	})
+
+	s.Require().NoError(err, "quick speaks the voice its overwrite names")
+	s.Equal("quick/en", config.Name())
+	s.Equal([]string{"lush"}, asked)
+}
+
+func (s *RoutingSuite) TestARequestWithNoVoiceIsNotVetted() {
+	var asked []string
+	router := s.newRouterResolving(vetting{unvouched: []string{"quick"}, asked: &asked},
+		func(spec Spec) (*stubProvider, error) { return &stubProvider{model: spec.Model}, nil })
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err, "a provider's default voice is its own")
+	s.Equal("quick/en", config.Name())
+	s.Nil(asked, "nothing to ask about")
 }
 
 func (s *RoutingSuite) TestProvidersListsEveryConfiguredModelInOrder() {

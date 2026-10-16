@@ -68,8 +68,17 @@ type Lister interface {
 // Finder is a Lister that can also say whether a voice outside its listing exists. A
 // provider whose library is not a Finder has every voice passed through unchecked.
 type Finder interface {
+	// Exists answers errNotAVoiceID, not a refusal, for an id that cannot be one of its voices.
 	Exists(ctx context.Context, id string) (bool, error)
+	// Shaped reports an id with the shape of this provider's voice ids. Only such an id is
+	// looked up before a request tries its candidates (Catalogue.Unvouched): any other is
+	// another vendor's voice or a name, and asking would add a lookup to every one of them.
+	Shaped(id string) bool
 }
+
+// errNotAVoiceID is a provider's answer to an id that cannot be one of its voices. It
+// refuses nothing and is not a vendor failure: the voice goes through as it always went.
+var errNotAVoiceID = errors.New("voices: not a voice id of this provider")
 
 // Catalogue reads the voices every provider that publishes a library offers. Providers
 // that do not publish one are absent rather than empty: a picker has to be able to say
@@ -236,7 +245,7 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 
 	exists, err := finder.Exists(ctx, id)
 	if err != nil {
-		if callerGaveUp(ctx) {
+		if errors.Is(err, errNotAVoiceID) || callerGaveUp(ctx) {
 			// The caller gave up (canceled, or its own deadline passed); the vendor did not fail.
 			return nil
 		}
@@ -265,6 +274,63 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 	c.missing[key] = refusal
 	c.mu.Unlock()
 	return refusal.err
+}
+
+// Unvouched names, out of providers, the ones a voice may not be handed: once a provider
+// that looks voices up says it has no such voice, every other one whose own listing does
+// not hold that id. Only a voice shaped like that provider's ids is looked up here (vets),
+// so a name or another vendor's id costs no lookup. A listed name does not vouch, since
+// Cartesia's and Inworld's voices are spoken by id. A provider that looks voices up is
+// never named, since Check refuses the voice there itself, naming the closest. When none
+// refuses, because none looks the voice up or the lookup failed, nobody is named and the
+// voice goes where it always went.
+func (c *Catalogue) Unvouched(ctx context.Context, voice string, providers []string) []string {
+	if !slices.ContainsFunc(providers, func(provider string) bool {
+		return c.vets(provider, voice) && c.Check(ctx, provider, voice) != nil
+	}) {
+		return nil
+	}
+	var unvouched []string
+	for _, provider := range providers {
+		if !c.Finds(provider) && !c.lists(ctx, provider, voice) {
+			unvouched = append(unvouched, provider)
+		}
+	}
+	return unvouched
+}
+
+// Finds reports a provider whose library can say a voice does not exist.
+func (c *Catalogue) Finds(provider string) bool {
+	c.mu.Lock()
+	lister := c.listers[provider]
+	c.mu.Unlock()
+	_, finds := lister.(Finder)
+	return finds
+}
+
+// vets reports a provider that looks the voice up before a request tries its candidates:
+// one that can say a voice does not exist, for a voice shaped like its ids.
+func (c *Catalogue) vets(provider, voice string) bool {
+	c.mu.Lock()
+	lister := c.listers[provider]
+	c.mu.Unlock()
+	finder, finds := lister.(Finder)
+	return finds && finder.Shaped(voice)
+}
+
+// lists reports a provider whose listing holds the voice's id, read as Check reads it:
+// cached, and bounded by the lookup timeout. A listing that cannot be read holds nothing.
+func (c *Catalogue) lists(ctx context.Context, provider, voice string) bool {
+	c.mu.Lock()
+	lister, ok := c.listers[provider]
+	c.mu.Unlock()
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, c.lookup, errLookupTimeout)
+	defer cancel()
+	library, _ := c.listOne(ctx, provider, lister)
+	return slices.ContainsFunc(library, func(listed Library) bool { return listed.ID == voice })
 }
 
 // errLookupTimeout is the cause of the open path's own lookup deadline, so a vendor that
