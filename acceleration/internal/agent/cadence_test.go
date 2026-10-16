@@ -52,6 +52,141 @@ func (s *CadenceSuite) TestAStableRevisionBecomesReadyWithoutAFinalEvent() {
 	s.NotEmpty(ready.ID)
 }
 
+func (s *CadenceSuite) TestAnOpenFluxTranscriptDoesNotBecomeReadyBeforeItsFinal() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: "please change my appointment",
+	})
+	assertNoReadyFor(s.T(), s.cadence.Ready(), 3*testGap,
+		"the open transcript became ready before EndOfTurn")
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: "please change my appointment to four",
+	})
+	assertNoReadyFor(s.T(), s.cadence.Ready(), 3*testGap,
+		"a changed open revision became ready before EndOfTurn")
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1,
+		Text: "please change my appointment to four",
+	})
+	ready := s.ready()
+	s.Equal("please change my appointment to four", ready.Text)
+	s.Require().True(s.cadence.Resolve(ready.ID, false))
+	superseded, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1,
+		Text: "please change my appointment to four",
+	})
+	s.Empty(superseded)
+	s.Empty(saying)
+
+	assertNoReadyFor(s.T(), s.cadence.Ready(), 2*cadenceFinalGap,
+		"the same final transcript became a second answered turn")
+}
+
+func (s *CadenceSuite) TestAnOpenFluxRevisionCancelsAnEarlierFallbackTimer() {
+	gap := 60 * time.Millisecond
+	cadence := newCadence(gap, 120*time.Millisecond, time.Second,
+		slog.New(slog.DiscardHandler))
+	defer cadence.Close()
+	alice := stt.Participant{ID: "alice"}
+
+	cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "make the appointment tomorrow",
+	})
+	cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: "make the appointment tomorrow",
+	})
+
+	select {
+	case ready := <-cadence.Ready():
+		s.T().Fatalf("the fallback timer survived an open revision: got %q", ready.Text)
+	case <-time.After(3 * gap):
+	}
+
+	cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1,
+		Text: "make the appointment tomorrow",
+	})
+	select {
+	case ready := <-cadence.Ready():
+		s.Equal("make the appointment tomorrow", ready.Text)
+	case <-time.After(time.Second):
+		s.Fail("the final copy did not release the transcript")
+	}
+}
+
+func (s *CadenceSuite) TestAnOpenFluxUtteranceDoesNotDelayAnotherParticipant() {
+	alice := stt.Participant{ID: "alice"}
+	bob := stt.Participant{ID: "bob"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: "I need to change my appointment",
+	})
+	select {
+	case ready := <-s.cadence.Ready():
+		s.T().Fatalf("the open participant became ready before the other speaker: got %q", ready.Text)
+	case <-time.After(3 * testGap):
+	}
+	s.cadence.Observe(stt.Transcript{
+		Participant: bob, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "what time do you close",
+	})
+
+	ready := s.ready()
+	s.Equal(bob, ready.Participant)
+	s.Equal("what time do you close", ready.Text)
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1,
+		Text: "I need to change my appointment",
+	})
+	ready = s.ready()
+	s.Equal(alice, ready.Participant)
+	s.Equal("I need to change my appointment", ready.Text)
+}
+
+func (s *CadenceSuite) TestEndingAFluxSessionRestoresOnlyItsSpeakerFallback() {
+	cadence := newCadence(20*time.Millisecond, 40*time.Millisecond, time.Second,
+		slog.New(slog.DiscardHandler))
+	defer cadence.Close()
+	alice := stt.Participant{ID: "alice"}
+	bob := stt.Participant{ID: "bob"}
+
+	cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: "change my appointment to four",
+	})
+	cadence.Observe(stt.Transcript{
+		Participant: bob, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: "change my appointment to five",
+	})
+
+	cadence.EndProgress(alice.ID)
+	select {
+	case ready := <-cadence.Ready():
+		s.Equal(alice, ready.Participant)
+		s.Equal("change my appointment to four", ready.Text)
+	case <-time.After(time.Second):
+		s.Fail("ending the current session did not restore cadence fallback for retained words")
+	}
+	assertNoReadyFor(s.T(), cadence.Ready(), 2*cadence.gap,
+		"ending one session released another participant's open utterance")
+
+	cadence.EndProgress(bob.ID)
+	select {
+	case ready := <-cadence.Ready():
+		s.Equal(bob, ready.Participant)
+		s.Equal("change my appointment to five", ready.Text)
+	case <-time.After(time.Second):
+		s.Fail("the second participant did not return to cadence fallback")
+	}
+}
+
 // quiet asserts nothing becomes ready, which is how "the agent does not answer that"
 // looks from here.
 func (s *CadenceSuite) quiet() {
@@ -59,6 +194,15 @@ func (s *CadenceSuite) quiet() {
 	case ready := <-s.cadence.Ready():
 		s.Failf("nothing should have been ready", "got %q", ready.Text)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func assertNoReadyFor(t *testing.T, ready <-chan candidate, duration time.Duration, reason string) {
+	t.Helper()
+	select {
+	case item := <-ready:
+		t.Fatalf("%s: got %q", reason, item.Text)
+	case <-time.After(duration):
 	}
 }
 

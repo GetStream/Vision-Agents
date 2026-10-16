@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -135,6 +136,30 @@ type stubSTT struct {
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
+
+func newAgentTestSTTSession(t *testing.T) *sttrouter.Session {
+	t.Helper()
+
+	provider := newStubSTT()
+	registry := sttrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (stt.STT, error) { return provider, nil })
+	router, err := sttrouter.New(sttrouter.Options{
+		Config: stubConfig(), Registry: registry, Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(router.Close)
+	session, err := router.Start(context.Background(), sttrouter.Request{
+		CustomerID: "test-customer",
+		Target:     "en-low-latency",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = session.Close()
+		for range session.Events() {
+		}
+	})
+	return session
+}
 
 func (s *stubSTT) SetKeyterms(terms []string) error {
 	s.mu.Lock()
@@ -868,6 +893,40 @@ func (s *AgentSuite) joinText() {
 // join builds an agent over the stubs and joins the loopback call.
 func (s *AgentSuite) join(streamingVoice bool) {
 	s.joinWithVoice(streamingVoice, nil)
+}
+
+func (s *AgentSuite) TestRetiringAStaleListenerDoesNotEndReplacementProgress() {
+	const participantID = "caller"
+	cadence := newCadence(20*time.Millisecond, 40*time.Millisecond, time.Second,
+		slog.New(slog.DiscardHandler))
+	defer cadence.Close()
+	cadence.Observe(stt.Transcript{
+		Participant: stt.Participant{ID: participantID}, Mode: stt.ModeReplacement,
+		Utterance: 1, InProgress: true, Text: "change my appointment to four",
+	})
+
+	old := newAgentTestSTTSession(s.T())
+	replacement := newAgentTestSTTSession(s.T())
+	current := &Agent{
+		listeners: map[string]*sttrouter.Session{participantID: replacement},
+		cadence:   cadence,
+		logger:    slog.New(slog.DiscardHandler),
+	}
+	current.dropListener(participantID, old)
+	s.True(cadence.HasOpenUtterance(), "a retired listener must not clear replacement progress")
+	select {
+	case ready := <-cadence.Ready():
+		s.FailNow("a retired listener released replacement words early: %q", ready.Text)
+	case <-time.After(3 * cadence.gap):
+	}
+
+	current.dropListener(participantID, replacement)
+	select {
+	case ready := <-cadence.Ready():
+		s.Equal("change my appointment to four", ready.Text)
+	case <-time.After(time.Second):
+		s.Fail("current listener retirement did not restore cadence fallback")
+	}
 }
 
 // joinWithVoice builds an agent with an optional provider wrapper for event-order tests.
@@ -2342,6 +2401,28 @@ func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
 		s.speak(participant)
 		return s.opened.Load() == 2
 	}, "the dead transcriber was kept, so nothing this participant says is heard again")
+}
+
+func (s *AgentSuite) TestACleanDisconnectReleasesAnOpenFluxTurnToCadenceFallback() {
+	s.join(true)
+	participant := stt.Participant{ID: "session-42", UserID: "caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "nobody started listening")
+
+	const text = "book a table for four"
+	s.ears.emitter.Send(stt.Transcript{
+		Participant: participant, Mode: stt.ModeReplacement, Utterance: 1,
+		InProgress: true, Text: text,
+	})
+	s.eventually(func() bool { return s.agent.cadence.HasOpenUtterance() },
+		"the provider's open transcript was not recorded")
+	s.ears.emitter.Send(stt.Disconnected{Provider: "stub", Model: "stub-stt", Clean: true})
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"a clean provider close left its retained words open forever")
+	s.Equal(text, s.model.requests()[0].Input[0].Content)
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+		"the retained words did not reach an audible reply")
 }
 
 func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {

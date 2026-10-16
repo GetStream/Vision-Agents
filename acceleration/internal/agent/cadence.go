@@ -65,6 +65,10 @@ type cadence struct {
 
 type cadenceSpeaker struct {
 	participant stt.Participant
+	// inProgress is a provider-confirmed still-open utterance with a forthcoming final
+	// boundary. Providers that cannot promise a boundary leave it false and use the usual
+	// cadence fallback.
+	inProgress bool
 	// speaker is the diarised voice the words were last heard in.
 	speaker     string
 	text        string
@@ -143,6 +147,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		return "", ""
 	}
 	current := c.speakerFor(transcript.Participant)
+	inProgress := transcript.InProgress && transcript.Mode != stt.ModeFinal
 	var heldRevisionText string
 	if held := current.held; held != nil {
 		unknownIdentity := transcript.Utterance == 0 || held.candidate.Utterance == 0
@@ -215,8 +220,36 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
+	previousInProgress := current.inProgress
+	current.inProgress = inProgress
 	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
 	if sameWords(current.text, text) {
+		if previousInProgress != inProgress {
+			superseded = current.candidateID
+			current.candidateID = ""
+			current.generation++
+			current.revisedAt = time.Now()
+			if current.timer != nil {
+				current.timer.Stop()
+				current.timer = nil
+			}
+			if !inProgress {
+				delay := c.gap + c.grace
+				if final {
+					delay = c.finalGapLocked()
+				}
+				if incompleteIdentifier(text) {
+					delay = c.retry
+				}
+				c.scheduleLocked(current, delay)
+			}
+			return superseded, ""
+		}
+		if inProgress {
+			// Repeated provider updates for the same open words must not restart the
+			// final-boundary wait or create a candidate from an earlier timer.
+			return "", ""
+		}
 		// The transcriber finalizing words already waited on means they have stopped, so
 		// the wait is cut short. It is never lengthened: a final that arrives late must
 		// not hold back words that already held still.
@@ -277,6 +310,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 			current.committedGeneration = current.generation
 			current.text = ""
 			current.carried = ""
+			current.inProgress = false
 			current.speaker = ""
 			current.language = ""
 			current.confidence = 0
@@ -395,6 +429,48 @@ func (c *cadence) Active() (stt.Participant, time.Time, bool) {
 	return latest.participant, latest.revisedAt, true
 }
 
+// HasOpenUtterance reports whether any participant has active words whose provider has
+// promised a final boundary. Unknown providers do not set this state.
+func (c *cadence) HasOpenUtterance() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, current := range c.speakers {
+		if current.inProgress && current.text != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// EndProgress clears only the explicit boundary guarantee for this participant. A
+// disconnect does not discard their words: they return to the ordinary cadence fallback.
+func (c *cadence) EndProgress(participantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	current := c.speakers[participantID]
+	if c.closed || current == nil || !current.inProgress {
+		return
+	}
+	current.inProgress = false
+	current.generation++
+	current.revisedAt = time.Now()
+	if current.timer != nil {
+		current.timer.Stop()
+		current.timer = nil
+	}
+	current.candidateID = ""
+	if current.text == "" {
+		return
+	}
+	delay := c.gap + c.grace
+	if incompleteIdentifier(current.text) {
+		delay = c.retry
+	}
+	c.scheduleLocked(current, delay)
+}
+
 func (c *cadence) Ready() <-chan candidate { return c.ready }
 
 func (c *cadence) Forget(participant stt.Participant) {
@@ -432,6 +508,10 @@ func (c *cadence) finalGapLocked() time.Duration {
 func (c *cadence) scheduleLocked(current *cadenceSpeaker, delay time.Duration) {
 	if current.timer != nil {
 		current.timer.Stop()
+		current.timer = nil
+	}
+	if current.inProgress || current.text == "" || current.candidateID != "" {
+		return
 	}
 	generation := current.generation
 	participantID := current.participant.ID
@@ -447,7 +527,7 @@ func (c *cadence) emit(participantID string, generation int64) {
 		return
 	}
 	current, ok := c.speakers[participantID]
-	if !ok || current.generation != generation || current.text == "" || current.candidateID != "" {
+	if !ok || current.generation != generation || current.text == "" || current.inProgress || current.candidateID != "" {
 		c.mu.Unlock()
 		return
 	}

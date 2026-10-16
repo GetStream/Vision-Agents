@@ -792,9 +792,13 @@ func (c *converse) Tick(state floor) []Action {
 	})}
 }
 
-// Listening reports whether somebody has evolving words younger than callerHold, which is
-// a caller who still holds the floor. A turn the agent owes waits while they do.
+// Listening reports whether somebody has evolving words younger than callerHold, or a
+// provider-confirmed open utterance with a forthcoming final boundary. A turn the agent owes
+// waits while they do; providers without that boundary guarantee keep the age fallback.
 func (c *converse) Listening() bool {
+	if c.cadence.HasOpenUtterance() {
+		return true
+	}
 	_, revised, hearing := c.cadence.Active()
 	return hearing && time.Since(revised) < callerHold
 }

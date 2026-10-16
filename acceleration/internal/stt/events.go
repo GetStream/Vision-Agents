@@ -15,6 +15,10 @@ type Event interface {
 type Transcript struct {
 	Participant Participant
 	Mode        Mode
+	// InProgress says the provider confirms this utterance is still open with a forthcoming
+	// final boundary. ModeFinal takes precedence; false also covers providers without that
+	// guarantee, who keep the cadence fallback.
+	InProgress bool
 	// Utterance numbers the stretch of speech this text belongs to, counting from one and
 	// moving on when the provider reports that one run of speech ended and another began.
 	// It is what tells a provider going over words again apart from the speaker saying

@@ -279,15 +279,15 @@ func (s *STT) handleTurnInfo(turn *msginterfaces.TurnInfoResponse) {
 
 	switch turn.EventType {
 	case msginterfaces.TurnEventUpdate:
-		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
+		s.sendTranscript(participant, turn, text, stt.ModeReplacement, true, latencyMs)
 	case msginterfaces.TurnEventEagerEndOfTurn:
-		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
+		s.sendTranscript(participant, turn, text, stt.ModeReplacement, true, latencyMs)
 	case msginterfaces.TurnEventEndOfTurn:
-		s.sendTranscript(participant, turn, text, stt.ModeFinal, latencyMs)
+		s.sendTranscript(participant, turn, text, stt.ModeFinal, false, latencyMs)
 		s.endUtterance()
 	case msginterfaces.TurnEventStartOfTurn:
 		s.endUtterance()
-		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
+		s.sendTranscript(participant, turn, text, stt.ModeReplacement, true, latencyMs)
 	case msginterfaces.TurnEventTurnResumed:
 		// A resumed turn is the same run of speech carrying on after Flux thought it had
 		// ended, so it keeps the number it already had.
@@ -302,6 +302,7 @@ func (s *STT) sendTranscript(
 	turn *msginterfaces.TurnInfoResponse,
 	text string,
 	mode stt.Mode,
+	inProgress bool,
 	latencyMs float64,
 ) {
 	if text == "" {
@@ -311,6 +312,7 @@ func (s *STT) sendTranscript(
 	s.emitter.Send(stt.Transcript{
 		Participant:      participant,
 		Mode:             mode,
+		InProgress:       inProgress,
 		Utterance:        s.utteranceID(),
 		Text:             text,
 		Confidence:       turn.EndOfTurnConfidence,

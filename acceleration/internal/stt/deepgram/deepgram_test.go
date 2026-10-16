@@ -146,6 +146,7 @@ func (s *DeepgramSuite) TestStartOfTurnProducesAReplacementTranscript() {
 	s.Require().True(ok)
 	s.Equal("wait", transcript.Text)
 	s.Equal(stt.ModeReplacement, transcript.Mode)
+	s.True(transcript.InProgress)
 	s.Equal(int64(1), transcript.Utterance)
 	s.Equal(speaker, transcript.Participant)
 }
@@ -284,6 +285,7 @@ func (s *DeepgramSuite) TestUpdateProducesAReplacementTranscript() {
 
 	s.Equal("hello wor", transcript.Text, "surrounding whitespace should be trimmed")
 	s.Equal(stt.ModeReplacement, transcript.Mode, "Flux updates replace rather than append")
+	s.True(transcript.InProgress)
 	s.False(transcript.Final())
 	s.Equal(speaker, transcript.Participant)
 	s.Equal("en", transcript.Language)
@@ -310,6 +312,7 @@ func (s *DeepgramSuite) TestEndOfTurnProducesAFinalTranscript() {
 	s.Require().True(ok)
 	s.Equal("hello world", transcript.Text)
 	s.True(transcript.Final())
+	s.False(transcript.InProgress)
 	s.InDelta(2000.0, transcript.AudioDurationMs, 0.001)
 }
 
@@ -328,6 +331,7 @@ func (s *DeepgramSuite) TestEagerEndOfTurnStaysAReplacementTranscript() {
 	s.Require().True(ok)
 	s.False(transcript.Final(), "an eager end of turn can still be revoked")
 	s.Equal(stt.ModeReplacement, transcript.Mode)
+	s.True(transcript.InProgress)
 }
 
 func (s *DeepgramSuite) TestTurnResumedDoesNotEnterTheSharedContract() {
