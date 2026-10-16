@@ -26,7 +26,7 @@ import (
 
 // Kind is the name a manifest's sources[].kind gives this source, and its key in
 // core.Registry.ToolSources.
-const Kind = "mcp"
+const Kind = core.SourceKindMCP
 
 // Separator joins a binding's alias and a tool's name into the name the model is offered,
 // so a connector's tools never collide with built-in or caller tools. The prototype's
@@ -292,11 +292,7 @@ func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, er
 
 // sourceRule is the manifest's mcp source, or nil.
 func sourceRule(m core.ResolvedManifest) *core.SourceRule {
-	index := slices.IndexFunc(m.Sources, func(rule core.SourceRule) bool { return rule.Kind == Kind })
-	if index < 0 {
-		return nil
-	}
-	return &m.Sources[index]
+	return core.MCPSource(m.Sources)
 }
 
 // asked is listed without each tool the manifest says needs a scope its scopes.list never
@@ -305,9 +301,7 @@ func sourceRule(m core.ResolvedManifest) *core.SourceRule {
 // never see such a tool.
 func asked(m core.ResolvedManifest, rule *core.SourceRule, listed []*mcp.Tool) []*mcp.Tool {
 	return slices.DeleteFunc(listed, func(tool *mcp.Tool) bool {
-		return slices.ContainsFunc(needsScopes(rule, tool.Name), func(scope string) bool {
-			return !slices.Contains(m.Scopes.List, scope)
-		})
+		return len(rule.UnaskedScopes(m.Scopes.List, tool.Name)) > 0
 	})
 }
 

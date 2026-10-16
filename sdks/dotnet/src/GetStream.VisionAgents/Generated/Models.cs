@@ -4495,6 +4495,12 @@ namespace GetStream.VisionAgents.Models
         public bool? Backchannel { get; set; } = default!;
 
         /// <summary>
+        /// An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:&lt;session id&gt;. Left out, the agent joins agent:&lt;session id&gt;, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer's own Stream app: app tenancy with an app of its own, or the deployment's own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) is refused with a 403, since a call there could be another customer's. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent's Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call")]
+        public SessionCall? Call { get; set; } = default!;
+
+        /// <summary>
         /// An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("config_id")]
@@ -4615,7 +4621,7 @@ namespace GetStream.VisionAgents.Models
         public string? Search { get; set; } = default!;
 
         /// <summary>
-        /// Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:&lt;session id&gt;, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+        /// Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:&lt;session id&gt;, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("start_voice")]
         public bool? StartVoice { get; set; } = default!;
@@ -8561,7 +8567,7 @@ namespace GetStream.VisionAgents.Models
         public string AgentId { get; set; } = default!;
 
         /// <summary>
-        /// The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+        /// The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("call_id")]
         public string CallId { get; set; } = default!;
@@ -8715,6 +8721,36 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// An existing Stream call for the agent to join, by its type and id.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionCall
+    {
+
+        /// <summary>
+        /// The call id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// The call type, such as default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -10063,6 +10099,27 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("uptime")]
         public double? Uptime { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class StartSessionVoiceRequest
+    {
+
+        /// <summary>
+        /// An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:&lt;session id&gt;, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call")]
+        public SessionCall? Call { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

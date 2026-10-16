@@ -1091,6 +1091,100 @@ func (s *ConfigsSuite) TestAFixedBindingCannotGrantAToolByNameAlone() {
 	s.Contains(failure, `grants "search" with no schema_digest`)
 }
 
+// leftOutSQL is the refusal of a Metabase binding granting execute_sql: revision 2 of
+// providers/metabase.yaml says it needs agent:sql:run, which its scopes.list never asks for.
+const leftOutSQL = `connector binding "metabase" grants "execute_sql", which connector "metabase" leaves out: ` +
+	`it needs agent:sql:run, which the connector never asks for`
+
+func (s *ConfigsSuite) TestASessionBindingGrantingAToolItsConnectorLeavesOutIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "connectors": []map[string]any{sessionMetabase("search", "execute_sql")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, leftOutSQL)
+}
+
+func (s *ConfigsSuite) TestAFixedBindingGrantingAToolItsConnectorLeavesOutIsRefused() {
+	binding := fixedSlack("metabase", s.connectionTo("metabase", ""))
+	binding["connector_id"] = "metabase"
+	binding["tools"] = []map[string]any{{"name": "execute_sql", "schema_digest": toolDigest}}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, leftOutSQL)
+}
+
+// TestAGrantIsJudgedByTheMCPSourceAlone: a source of another kind carrying a rule for the
+// tool does not leave it out, as the mcp source's filter reads the mcp source only.
+func (s *ConfigsSuite) TestAGrantIsJudgedByTheMCPSourceAlone() {
+	manifest := core.Manifest{Sources: []core.SourceRule{
+		{Kind: "rest", Tools: []core.ToolRule{{Name: "execute_sql", NeedsScopes: []string{"agent:sql:run"}}}},
+		{Kind: core.SourceKindMCP},
+	}}
+	binding := AgentConnectorBinding{Name: "metabase", ConnectorId: "metabase", Tools: []ConnectorToolGrant{{Name: "execute_sql"}}}
+
+	complaint, ok := leftOutGrant(binding, manifest)
+
+	s.True(ok, complaint)
+}
+
+// TestAGrantOnAConnectorWithNoMCPSourceIsStored: linq, slack_bot, whatsapp and telnyx have
+// no mcp source, so no filter leaves a tool out and the grant is not refused.
+func (s *ConfigsSuite) TestAGrantOnAConnectorWithNoMCPSourceIsStored() {
+	manifest := core.Manifest{Sources: []core.SourceRule{{Kind: "rest"}}}
+	binding := AgentConnectorBinding{Name: "chat", ConnectorId: "linq", Tools: []ConnectorToolGrant{{Name: "send"}}}
+
+	complaint, ok := leftOutGrant(binding, manifest)
+
+	s.True(ok, complaint)
+}
+
+func (s *ConfigsSuite) TestReplacingOrPatchingInAToolTheConnectorLeavesOutIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "connectors": []map[string]any{sessionMetabase("execute_sql")}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, leftOutSQL)
+
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{sessionMetabase("execute_sql")}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, leftOutSQL)
+
+	s.Equal(created.Connectors, s.read(created.Id).Connectors)
+}
+
+// TestABindingGrantingOnlyToolsItsConnectorOffersIsStored is the control: the same bindings
+// without execute_sql are stored, as on the base b7cea98f.
+func (s *ConfigsSuite) TestABindingGrantingOnlyToolsItsConnectorOffersIsStored() {
+	fixed := fixedSlack("analytics", s.connectionTo("metabase", ""))
+	fixed["connector_id"] = "metabase"
+
+	created := s.createConfig(map[string]any{
+		"name": "support", "connectors": []map[string]any{fixed, sessionMetabase("search")},
+	})
+
+	got := value(s.read(created.Id).Connectors)
+	s.Require().Len(got, 2)
+	s.Equal([]ConnectorToolGrant{{Name: "search", SchemaDigest: toolDigest}}, got[0].Tools)
+	s.Equal([]ConnectorToolGrant{{Name: "search"}}, got[1].Tools)
+}
+
+// TestAPatternBindingToAConnectorThatLeavesToolsOutIsStored: a pattern matches only the tools
+// the connector lists, so it never grants one left out.
+func (s *ConfigsSuite) TestAPatternBindingToAConnectorThatLeavesToolsOutIsStored() {
+	binding := sessionMetabase()
+	binding["tool_patterns"] = []string{"*"}
+
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal([]string{"*"}, value(value(s.read(created.Id).Connectors)[0].ToolPatterns))
+}
+
 // TestAnEmptyToolPatternsListIsRefused: tool_patterns [] is not a grant of every tool.
 // The field requires at least one pattern, on create, replace, patch and sync.
 func (s *ConfigsSuite) TestAnEmptyToolPatternsListIsRefused() {
@@ -1356,15 +1450,33 @@ func sessionSlack(alias string) map[string]any {
 	}
 }
 
+// sessionMetabase binds Metabase through the connection a session's end user picks,
+// granting tools by name.
+func sessionMetabase(tools ...string) map[string]any {
+	binding := sessionSlack("metabase")
+	binding["connector_id"] = "metabase"
+	grants := []map[string]any{}
+	for _, tool := range tools {
+		grants = append(grants, map[string]any{"name": tool})
+	}
+	binding["tools"] = grants
+	return binding
+}
+
 // connection stores a Slack connection of the suite's app, the app's own when owner is
 // empty and that user's otherwise, and returns its id. It is written through the store,
 // since no endpoint makes one yet.
 func (s *ConfigsSuite) connection(owner string) string {
+	return s.connectionTo("slack", owner)
+}
+
+// connectionTo is connection to another built-in connector.
+func (s *ConfigsSuite) connectionTo(connectorID, owner string) string {
 	ctx := context.Background()
-	slack, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "slack")
+	definition, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), connectorID)
 	s.Require().NoError(err)
 	connection := &store.ConnectorConnection{
-		CustomerID: s.customerID(), ConnectorID: slack.ID, DefinitionRevision: slack.Revision,
+		CustomerID: s.customerID(), ConnectorID: definition.ID, DefinitionRevision: definition.Revision,
 		OwnerType: store.OwnerApp, AuthScheme: "oauth2_code",
 	}
 	if owner != "" {

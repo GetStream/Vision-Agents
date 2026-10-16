@@ -12,7 +12,7 @@ final readonly class Session
 {
     public function __construct(
         public string $agentId,
-        // The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in...
+        // The call the agent is on while voice is started: the session's id unless a call was named. Empty while the...
         public string $callId,
         public string $callType,
         public \DateTimeImmutable $createdAt,

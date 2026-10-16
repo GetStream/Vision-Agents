@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
@@ -597,13 +598,16 @@ func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindi
 		return "", true, nil
 	}
 	for _, binding := range *bindings {
-		_, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorId)
+		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorId)
 		if errors.Is(err, store.ErrNoConnectorDefinition) {
 			return fmt.Sprintf("connector binding %q names connector %q, and there is no such connector",
 				binding.Name, binding.ConnectorId), false, nil
 		}
 		if err != nil {
 			return "", false, err
+		}
+		if message, ok := leftOutGrant(binding, definition.Manifest); !ok {
+			return message, false, nil
 		}
 		if binding.Connection.Type != AgentConnectorSelectionTypeFixed {
 			continue
@@ -629,6 +633,24 @@ func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindi
 		}
 	}
 	return "", true, nil
+}
+
+// leftOutGrant reports a tool the binding grants by name that the connector leaves out, as it
+// needs a scope the connector never asks for: no session would be offered it. A pattern
+// matches only what the connector lists, so tool_patterns never reach one.
+func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string, bool) {
+	source := core.MCPSource(manifest.Sources)
+	if source == nil {
+		return "", true
+	}
+	for _, tool := range binding.Tools {
+		if unasked := source.UnaskedScopes(manifest.Scopes.List, tool.Name); len(unasked) > 0 {
+			return fmt.Sprintf("connector binding %q grants %q, which connector %q leaves out: it needs %s, "+
+				"which the connector never asks for", binding.Name, tool.Name, binding.ConnectorId,
+				strings.Join(unasked, ", ")), false
+		}
+	}
+	return "", true
 }
 
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same

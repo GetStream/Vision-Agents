@@ -129,6 +129,8 @@ type Session struct {
 	// written nowhere.
 	build      func(ctx context.Context, spec Spec) (*agent.Agent, error)
 	transcribe func(ctx context.Context, spec Spec) Transcript
+	// supersede ends the sessions this agent left in the call a spec joins (Manager.supersede).
+	supersede func(spec Spec)
 	// typed are the texts typed into the call by a durable command, waiting for the turn
 	// that answers them, and typedTurns those turns: the conversation writes them, so the
 	// call's transcript does not write them again. Guarded by typedMu.
@@ -864,30 +866,34 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 // ErrVoiceUnavailable refuses starting voice on a session that cannot hold a call.
 var ErrVoiceUnavailable = errors.New("session: this session cannot start voice")
 
-// Voicing reports whether voice is started: the agent is on the call agent:<id>.
+// ErrOnAnotherCall refuses starting voice on a call while voice is on a different one.
+var ErrOnAnotherCall = errors.New("session: voice is on another call: stop voice first to move it")
+
+// Voicing reports whether voice is started: the agent is on its call.
 func (s *Session) Voicing() bool {
 	s.labelMu.Lock()
 	defer s.labelMu.Unlock()
 	return !s.spec.Text
 }
 
-// StartVoice puts the agent on the call agent:<id> with the conversation so far, and
-// carries the conversation on there: what is said on the call and what is typed into it
-// are one conversation. It does nothing when voice is already started.
-func (s *Session) StartVoice(ctx context.Context) error {
-	return s.swap(ctx, true)
+// StartVoice puts the agent on call with the conversation so far, and carries the
+// conversation on there: what is said on the call and what is typed into it are one
+// conversation. The zero Call is the one voice was last on, else agent:<id>. It does nothing
+// when voice is already started on that call, and refuses another one (ErrOnAnotherCall).
+func (s *Session) StartVoice(ctx context.Context, call Call) error {
+	return s.swap(ctx, true, call)
 }
 
 // StopVoice takes the agent off the call and carries the conversation on in writing. It
 // does nothing when voice is not started.
 func (s *Session) StopVoice(ctx context.Context) error {
-	return s.swap(ctx, false)
+	return s.swap(ctx, false, Call{})
 }
 
 // swap moves the conversation onto a new agent, on the call or in writing, and closes the
 // one that held it. The new agent is joined before anything changes, so a call that cannot
 // be joined leaves the session as it was.
-func (s *Session) swap(ctx context.Context, voice bool) error {
+func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.State() == Ended {
@@ -897,6 +903,9 @@ func (s *Session) swap(ctx context.Context, voice bool) error {
 	current := s.spec
 	s.labelMu.Unlock()
 	if voice == !current.Text {
+		if voice && call.ID != "" && call != (Call{Type: current.CallType, ID: current.CallID}) {
+			return stack.Wrap(ErrOnAnotherCall)
+		}
 		return nil
 	}
 	if s.build == nil {
@@ -904,6 +913,9 @@ func (s *Session) swap(ctx context.Context, voice bool) error {
 	}
 	next := current.Written()
 	if voice {
+		if call.ID != "" {
+			current = current.Holding(call)
+		}
 		next = current.Voiced()
 	}
 
@@ -911,6 +923,9 @@ func (s *Session) swap(ctx context.Context, voice bool) error {
 	fresh, err := s.build(ctx, next)
 	if err != nil {
 		return stack.Wrap(err)
+	}
+	if voice && s.supersede != nil {
+		s.supersede(next)
 	}
 	// What is being said is finished first, so the history handed over ends with it.
 	finishing, cancel := context.WithTimeout(ctx, finishWithin)
@@ -942,6 +957,7 @@ func (s *Session) swap(ctx context.Context, voice bool) error {
 	s.spec.STSTarget, s.spec.heldSTS = next.STSTarget, next.heldSTS
 	s.spec.SubagentTarget, s.spec.heldSubagent = next.SubagentTarget, next.heldSubagent
 	s.spec.STTTarget, s.spec.TTSTarget = next.STTTarget, next.TTSTarget
+	s.spec.heldCall = next.heldCall
 	s.labelMu.Unlock()
 	s.mu.Lock()
 	s.transcript = transcript

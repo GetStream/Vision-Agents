@@ -43,9 +43,13 @@ type SessionOptions struct {
 	// ModelOverwrites changes the models for this conversation alone.
 	ModelOverwrites *acceleration.ModelOverwrites
 
-	// StartVoice has the agent join the session's own call, agent:<session id>, as soon as
-	// it opens. False holds the conversation in writing, and Session.Voice starts it later.
+	// StartVoice has the agent join the session's call as soon as it opens: Call, else its
+	// own, agent:<session id>. False holds the conversation in writing, and Session.Voice
+	// starts it later.
 	StartVoice bool
+	// Call is an existing Stream call for the agent to join, such as the default call the
+	// people are already on. It needs StartVoice. Nil is agent:<session id>. Server side only.
+	Call *acceleration.SessionCall
 	// History is the conversation so far, oldest first, for a backend that keeps its own
 	// thread: the model is handed it before the first response and the router records none
 	// of it. Up to 100 messages. Server side only.
@@ -283,6 +287,7 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,
 		StartVoice:      pointer(options.StartVoice),
+		Call:            options.Call,
 		Instructions:    pointer(options.Instructions),
 		UserId:          pointer(options.UserID),
 		ReturnUrl:       pointer(options.ReturnURL),
@@ -399,6 +404,7 @@ func (c *Client) Hold(agent string, pipeline *stream.Pipeline) (*Session, error)
 func newSession(client *Client, agent *Agent, pipeline *stream.Pipeline, created *acceleration.Session) *Session {
 	voice := &Voice{client: client, sessionID: created.Id}
 	voice.on.Store(created.CallId != "")
+	voice.call.Store(&acceleration.SessionCall{Type: created.CallType, Id: created.CallId})
 	return &Session{
 		Responses: &Responses{
 			client:    client,
@@ -621,25 +627,45 @@ func (s *Session) Video() (*Video, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Video{Client: connected, Call: connected.Video().Call("agent", s.ID())}, nil
+	call := s.Voice.call.Load()
+	return &Video{Client: connected, Call: connected.Video().Call(call.Type, call.Id)}, nil
 }
 
-// Voice is the agent talking on a session's call, agent:<session id>. Typed and spoken turns
-// are one conversation, with one history and one channel, whether voice is on or not.
+// Voice is the agent talking on a session's call: agent:<session id>, or a call named for it.
+// Typed and spoken turns are one conversation, with one history and one channel, whether
+// voice is on or not.
 type Voice struct {
 	client    *Client
 	sessionID string
 	on        atomic.Bool
+	// call is the call the router last said voice is on.
+	call atomic.Pointer[acceleration.SessionCall]
+}
+
+// VoiceOption changes how voice is started.
+type VoiceOption func(*acceleration.StartSessionVoiceRequest)
+
+// OnCall has the agent join an existing Stream call, such as the default call the people are
+// already on, rather than the one voice was last on or agent:<session id>. Naming another
+// call while voice is on is refused. Server side only.
+func OnCall(callType, callID string) VoiceOption {
+	return func(request *acceleration.StartSessionVoiceRequest) {
+		request.Call = &acceleration.SessionCall{Type: callType, Id: callID}
+	}
 }
 
 // Start has the agent join the session's call and carry the conversation on there. Starting
 // voice that is already on does nothing.
-func (v *Voice) Start(ctx context.Context) (*acceleration.Session, error) {
+func (v *Voice) Start(ctx context.Context, opts ...VoiceOption) (*acceleration.Session, error) {
 	api, err := v.client.api()
 	if err != nil {
 		return nil, err
 	}
-	started, err := api.StartSessionVoiceWithResponse(ctx, v.sessionID)
+	var request acceleration.StartSessionVoiceRequest
+	for _, opt := range opts {
+		opt(&request)
+	}
+	started, err := api.StartSessionVoiceWithResponse(ctx, v.sessionID, request)
 	if err != nil {
 		return nil, fmt.Errorf("client: starting voice on the session %s: %w", v.sessionID, err)
 	}
@@ -647,6 +673,7 @@ func (v *Voice) Start(ctx context.Context) (*acceleration.Session, error) {
 		return nil, failure("starting voice on the session "+v.sessionID, started.HTTPResponse, started.Body)
 	}
 	v.on.Store(true)
+	v.call.Store(&acceleration.SessionCall{Type: started.JSON200.CallType, Id: started.JSON200.CallId})
 	return started.JSON200, nil
 }
 

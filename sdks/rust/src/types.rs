@@ -3754,6 +3754,9 @@ pub struct CreateSessionRequest {
     ///Murmur while a participant is still talking, the way a person does.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub backchannel: ::std::option::Option<bool>,
+    ///An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:<session id>. Left out, the agent joins agent:<session id>, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer's own Stream app: app tenancy with an app of its own, or the deployment's own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) is refused with a 403, since a call there could be another customer's. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent's Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call: ::std::option::Option<SessionCall>,
     ///An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_id: ::std::option::Option<::std::string::String>,
@@ -3816,7 +3819,7 @@ pub struct CreateSessionRequest {
     ///Omit it and the config decides, or search-fast when there is no config.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search: ::std::option::Option<::std::string::String>,
-    ///Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+    ///Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub start_voice: ::std::option::Option<bool>,
     ///A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -7627,7 +7630,7 @@ pub struct Session {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent: ::std::option::Option<::std::string::String>,
     pub agent_id: ::std::string::String,
-    ///The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+    ///The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
     pub call_id: ::std::string::String,
     pub call_type: ::std::string::String,
     ///When the session ended. Absent while it is still running.
@@ -7705,6 +7708,15 @@ pub struct Session {
     ///The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///An existing Stream call for the agent to join, by its type and id.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct SessionCall {
+    ///The call id.
+    pub id: ::std::string::String,
+    ///The call type, such as default.
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 ///The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -9136,6 +9148,13 @@ pub struct SpendBucket {
     pub request_count: i64,
     ///The modality or label value this row is for. "other" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part.
     pub value: ::std::string::String,
+}
+///`StartSessionVoiceRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct StartSessionVoiceRequest {
+    ///An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call: ::std::option::Option<SessionCall>,
 }
 ///`StatsBucket`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

@@ -26,6 +26,7 @@ package io.getstream.visionagents.core.generated
 import io.getstream.visionagents.core.generated.Greeting
 import io.getstream.visionagents.core.generated.HistoryMessage
 import io.getstream.visionagents.core.generated.ModelOverwrites
+import io.getstream.visionagents.core.generated.SessionCall
 import io.getstream.visionagents.core.generated.SessionConnectorBinding
 import io.getstream.visionagents.core.generated.SessionMemory
 import io.getstream.visionagents.core.generated.SessionPhone
@@ -47,6 +48,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param agent The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
  * @param agentId Keys transcripts and statistics. Empty means the call id.
  * @param backchannel Murmur while a participant is still talking, the way a person does.
+ * @param call 
  * @param configId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
  * @param connectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
  * @param contextTruncated Older history was omitted from the model context.
@@ -69,7 +71,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param projectId What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
  * @param returnUrl The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
  * @param search Omit it and the config decides, or search-fast when there is no config.
- * @param startVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+ * @param startVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
  * @param sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
  * @param stt Omit it and the config decides, or en-low-latency when there is no config.
  * @param tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
@@ -97,6 +99,9 @@ internal data class CreateSessionRequest (
     /* Murmur while a participant is still talking, the way a person does. */
     @SerialName(value = "backchannel")
     val backchannel: kotlin.Boolean? = null,
+
+    @SerialName(value = "call")
+    val call: SessionCall? = null,
 
     /* An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call. */
     @SerialName(value = "config_id")
@@ -181,7 +186,7 @@ internal data class CreateSessionRequest (
     @SerialName(value = "search")
     val search: kotlin.String? = null,
 
-    /* Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started. */
+    /* Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started. */
     @SerialName(value = "start_voice")
     val startVoice: kotlin.Boolean? = null,
 
