@@ -282,8 +282,11 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 	superseded, saying := c.cadence.Observe(transcript)
 	if saying != "" {
 		c.mu.Lock()
-		c.forgetQueuedGrownLocked(transcript.Participant, saying)
+		released := c.forgetQueuedGrownLocked(transcript.Participant, transcript.Utterance, saying)
 		c.mu.Unlock()
+		if released != "" {
+			c.cadence.ReleaseHeld(released)
+		}
 		c.emitter.Send(Hearing{
 			Participant: transcript.Participant,
 			Text:        saying,
@@ -369,6 +372,7 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 		Candidate: candidate{
 			ID:          id,
 			Participant: transcript.Participant,
+			Utterance:   transcript.Utterance,
 			Text:        saying,
 			Language:    transcript.Language,
 			Unfinished:  true,
@@ -397,7 +401,9 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 			// Retrying cadence here used to re-Settle every 700ms for as long as the
 			// overlap Create sat behind a Cerebras generate, so a follow-up never left
 			// the loop. Queue it once; Waiting answers it when the floor is quiet.
-			c.cadence.Resolve(ready.ID, false)
+			if !c.cadence.Hold(ready) {
+				return Action{}
+			}
 			c.hold(ready, "", false)
 			return c.decide(Action{
 				Kind:        ActQueue,
@@ -526,7 +532,15 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
-	if !c.cadence.Resolve(ruling.CandidateID, false) {
+	queue := !state.Quiet && !overlapNoise(ready.Text) &&
+		ruling.Disposition != harness.Ignore && ruling.Floor != harness.Stop
+	var resolved bool
+	if queue {
+		resolved = c.cadence.Hold(ready)
+	} else {
+		resolved = c.cadence.Resolve(ruling.CandidateID, false)
+	}
+	if !resolved {
 		c.logger.Debug("not acting on a ruling, the words changed while it was being made",
 			"candidate", ruling.CandidateID)
 		return nil
@@ -586,8 +600,11 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	}
 
 	c.mu.Lock()
-	c.forgetQueuedRevisedByLocked(ready)
+	released := c.forgetQueuedRevisedByLocked(ready)
 	c.mu.Unlock()
+	if released != "" {
+		c.cadence.ReleaseHeld(released)
+	}
 
 	if state.Quiet {
 		return []Action{c.decide(answer)}
@@ -792,6 +809,11 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 	}
 	listening := c.Listening()
 	if !listening {
+		if !c.cadence.CommitHeld(held.candidate.ID) {
+			c.queued = nil
+			c.mu.Unlock()
+			return Action{}, false
+		}
 		c.queued = nil
 	}
 	c.mu.Unlock()
@@ -940,17 +962,22 @@ func (c *converse) patient(ready candidate) bool {
 // once the agent stops is answering them twice, late, to less than they asked. Words that are
 // not a revision of it leave it queued: they may be the only copy of what it said. The caller
 // holds the lock.
-func (c *converse) forgetQueuedRevisedByLocked(ready candidate) {
+func (c *converse) forgetQueuedRevisedByLocked(ready candidate) string {
 	held := c.queued
 	if held == nil || held.candidate.ID == ready.ID || held.candidate.Participant.ID != ready.Participant.ID {
-		return
+		return ""
 	}
-	if !revisesTranscript(held.candidate.Text, ready.Text) {
-		return
+	if held.candidate.Utterance != 0 && ready.Utterance != 0 {
+		if held.candidate.Utterance != ready.Utterance {
+			return ""
+		}
+	} else if !revisesTranscript(held.candidate.Text, ready.Text) {
+		return ""
 	}
 	c.logger.Debug("dropping a queued turn the caller has since said again in full",
 		"candidate", held.candidate.ID, "text", held.candidate.Text, "answered", ready.Text)
 	c.queued = nil
+	return held.candidate.ID
 }
 
 // forgetQueuedGrownLocked drops the queued turn once the caller's words still in progress have
@@ -959,25 +986,39 @@ func (c *converse) forgetQueuedRevisedByLocked(ready candidate) {
 // when the agent stops answers half a sentence, and in Voicebench that half was most of the
 // agent's cut-ins on a caller's long turn. Words that only start the same way are a new turn
 // and leave it queued. The caller holds the lock.
-func (c *converse) forgetQueuedGrownLocked(participant stt.Participant, saying string) {
+func (c *converse) forgetQueuedGrownLocked(participant stt.Participant, utterance int64, saying string) string {
 	held := c.queued
-	if held == nil || held.candidate.Participant.ID != participant.ID || !growsTranscript(held.candidate.Text, saying) {
-		return
+	if held == nil || held.candidate.Participant.ID != participant.ID {
+		return ""
+	}
+	if held.candidate.Utterance != 0 && utterance != 0 {
+		if held.candidate.Utterance != utterance {
+			return ""
+		}
+	} else if !growsTranscript(held.candidate.Text, saying) {
+		return ""
 	}
 	c.logger.Debug("dropping a queued turn the caller is still adding to",
 		"candidate", held.candidate.ID, "text", held.candidate.Text, "saying", saying)
 	c.queued = nil
+	return held.candidate.ID
 }
 
 func (c *converse) hold(ready candidate, clarify string, heard bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	released := ""
 	if c.queued != nil {
 		c.logger.Debug("dropping a turn that never got answered",
 			"candidate", c.queued.candidate.ID, "text", c.queued.candidate.Text)
+		if c.queued.candidate.ID != ready.ID {
+			released = c.queued.candidate.ID
+		}
 	}
 	c.queued = &queuedCandidate{candidate: ready, clarify: clarify, heard: heard}
+	c.mu.Unlock()
+	if released != "" {
+		c.cadence.ReleaseHeld(released)
+	}
 }
 
 // decide records one judgement and hands it back, so a caller can write
