@@ -1,6 +1,7 @@
 package sttrouter
 
 import (
+	"errors"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -16,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/microsoft"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/parakeet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/togethernemotron"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/togetherparakeet"
@@ -254,6 +256,23 @@ func DefaultRegistry() *Registry {
 			Language:  onlyLanguage(spec.LanguageHints),
 			TurnGrace: time.Duration(settings.TurnGraceMs) * time.Millisecond,
 			Logger:    spec.Logger,
+		})
+	})
+
+	registry.Register(openaicompat.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		if !spec.Realtime {
+			return nil, routing.Refused(errors.New("openai-compatible: realtime transcription is disabled for this model"))
+		}
+		var settings struct{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+		if len(spec.LanguageHints) > 1 {
+			return nil, routing.Refused(errors.New("openai-compatible: only one language hint is supported"))
+		}
+		return openaicompat.NewRealtime(openaicompat.Options{
+			Model:    spec.Model,
+			Language: firstLanguage(spec.LanguageHints),
 		})
 	})
 

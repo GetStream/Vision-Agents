@@ -626,8 +626,15 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 The recordings router accepts the explicit `openai-compatible/whisper-1` target, using
 `OPENAI_STT_BASE_URL` and `OPENAI_STT_API_KEY`. It transcribes uploaded mono PCM16 WAV
-at 16 or 24 kHz, up to 60 seconds. Recording URLs, word timings, diarization, and live
-transcription are not supported. (#972)
+at 16 or 24 kHz, up to 60 seconds. Recording URLs, word timings and diarization are not
+supported. (#972)
+
+### OpenAI-compatible live transcription
+
+The `openai-compatible/whisper-1` target can also serve live sessions when its model entry
+sets `realtime: true`. It streams 16 kHz mono call audio to the configured OpenAI-compatible
+transcription WebSocket and emits final transcripts when a turn ends or the session closes.
+The default model entry remains batch-only. (#972)
 
 ### An agent config says which agent.yaml connectors its last sync left out
 

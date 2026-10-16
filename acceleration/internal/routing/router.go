@@ -583,6 +583,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	spec := Spec{
 		Model:           candidate.Config.Model,
 		Thinking:        candidate.Config.Thinking,
+		Realtime:        candidate.Config.Realtime,
 		ReasoningEffort: candidate.Config.ReasoningEffort,
 		LanguageHints:   request.LanguageHints,
 		Voice:           voice,

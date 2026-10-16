@@ -801,12 +801,11 @@ stt:
       price:
         per_audio_hour: 0.258
 
-    # An explicitly configured OpenAI-compatible batch endpoint. The router sends only
-    # WAV bytes and the selected model alias; it does not fetch caller-provided URLs or
-    # claim optional transcript features this adapter does not implement.
+    # An explicitly configured OpenAI-compatible endpoint. Live sessions stay disabled
+    # unless this entry opts in with realtime: true.
     - provider: openai-compatible
       model: whisper-1
-      description: "Batch transcription through a configured OpenAI-compatible endpoint."
+      description: "Transcription through a configured OpenAI-compatible endpoint."
       # `und` keeps this endpoint out of language-based shortcuts until its configured
       # model's language coverage is declared. A concrete target still accepts a caller's
       # supported language hint.

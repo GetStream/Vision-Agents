@@ -138,7 +138,7 @@ func (s *STTRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	}
 }
 
-func (s *STTRouterSuite) TestOpenAICompatibleModelIsExplicitAndBatchOnly() {
+func (s *STTRouterSuite) TestOpenAICompatibleModelIsBatchByDefaultAndRealtimeOnlyWhenEnabled() {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 
@@ -179,9 +179,22 @@ func (s *STTRouterSuite) TestOpenAICompatibleModelIsExplicitAndBatchOnly() {
 	liveRouter, err := New(Options{Config: config[routing.STT], Registry: DefaultRegistry()})
 	s.Require().NoError(err)
 	_, err = liveRouter.Start(s.ctx, Request{CustomerID: "test", Target: name})
-	s.ErrorContains(err, "no factory registered",
-		"the batch adapter is not available through the live provider registry")
+	s.ErrorContains(err, "realtime transcription is disabled for this model")
 	liveRouter.Close()
+
+	registry := DefaultRegistry()
+	_, err = registry.Build(openaicompat.ProviderName, routing.Spec{Model: model.Model})
+	s.ErrorContains(err, "realtime transcription is disabled for this model")
+	builtLive, err := registry.Build(openaicompat.ProviderName, routing.Spec{
+		Model: model.Model, Realtime: true,
+	})
+	s.Require().NoError(err)
+	s.Equal(openaicompat.ProviderName, builtLive.Provider())
+	s.NoError(builtLive.Close())
+	_, err = registry.Build(openaicompat.ProviderName, routing.Spec{
+		Model: model.Model, Realtime: true, Overwrites: json.RawMessage(`{"base_url":"http://untrusted.example"}`),
+	})
+	s.ErrorIs(err, routing.ErrRequest, "unknown provider settings must be refused rather than ignored")
 	batchRouter.Close()
 }
 

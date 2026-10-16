@@ -12,7 +12,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -46,9 +45,10 @@ var (
 
 // Options configures one OpenAI-compatible transcription endpoint.
 type Options struct {
-	BaseURL string
-	APIKey  string
-	Model   string
+	BaseURL  string
+	APIKey   string
+	Model    string
+	Language string
 }
 
 // Transcriber sends whole WAV files to an explicitly configured endpoint.
@@ -231,13 +231,9 @@ func (p *Transcriber) newRequest(ctx context.Context, recording stt.Recording) (
 }
 
 func transcriptionEndpoint(base string) (string, error) {
-	parsed, err := url.Parse(base)
+	parsed, err := parseBaseURL(base)
 	if err != nil {
-		return "", errors.New("base URL is invalid")
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil ||
-		parsed.Opaque != "" || parsed.RawPath != "" || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("base URL must be an absolute http or https URL without credentials, query, or fragment")
+		return "", err
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/audio/transcriptions"
 	parsed.RawPath = ""
