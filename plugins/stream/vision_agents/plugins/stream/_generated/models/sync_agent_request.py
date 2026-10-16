@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
+    from ..models.left_out_connector import LeftOutConnector
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
     from ..models.plugin_with_options import PluginWithOptions
@@ -68,6 +69,11 @@ class SyncAgentRequest:
             knowledge (list[KnowledgeDocument] | Unset):
             knowledge_urls (list[KnowledgeUrlDeclaration] | Unset): The pages the directory's knowledge/urls.yaml declares.
                 They are subscribed to in the same knowledge base as the files, so one lookup covers both.
+            left_out_connectors (list[LeftOutConnector] | Unset): The connectors agent.yaml names that the client left out
+                of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the
+                config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a
+                sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync
+                that sends neither leaves them alone. At most 64, as connectors.
             llm (str | Unset):
             mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
                 login.
@@ -116,6 +122,7 @@ class SyncAgentRequest:
     keyterms: list[str] | Unset = UNSET
     knowledge: list[KnowledgeDocument] | Unset = UNSET
     knowledge_urls: list[KnowledgeUrlDeclaration] | Unset = UNSET
+    left_out_connectors: list[LeftOutConnector] | Unset = UNSET
     llm: str | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
@@ -191,6 +198,13 @@ class SyncAgentRequest:
             for knowledge_urls_item_data in self.knowledge_urls:
                 knowledge_urls_item = knowledge_urls_item_data.to_dict()
                 knowledge_urls.append(knowledge_urls_item)
+
+        left_out_connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.left_out_connectors, Unset):
+            left_out_connectors = []
+            for left_out_connectors_item_data in self.left_out_connectors:
+                left_out_connectors_item = left_out_connectors_item_data.to_dict()
+                left_out_connectors.append(left_out_connectors_item)
 
         llm = self.llm
 
@@ -301,6 +315,8 @@ class SyncAgentRequest:
             field_dict["knowledge"] = knowledge
         if knowledge_urls is not UNSET:
             field_dict["knowledge_urls"] = knowledge_urls
+        if left_out_connectors is not UNSET:
+            field_dict["left_out_connectors"] = left_out_connectors
         if llm is not UNSET:
             field_dict["llm"] = llm
         if mcp_servers is not UNSET:
@@ -349,6 +365,7 @@ class SyncAgentRequest:
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
+        from ..models.left_out_connector import LeftOutConnector
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
@@ -429,6 +446,17 @@ class SyncAgentRequest:
                 )
 
                 knowledge_urls.append(knowledge_urls_item)
+
+        _left_out_connectors = d.pop("left_out_connectors", UNSET)
+        left_out_connectors: list[LeftOutConnector] | Unset = UNSET
+        if _left_out_connectors is not UNSET:
+            left_out_connectors = []
+            for left_out_connectors_item_data in _left_out_connectors:
+                left_out_connectors_item = LeftOutConnector.from_dict(
+                    left_out_connectors_item_data
+                )
+
+                left_out_connectors.append(left_out_connectors_item)
 
         llm = d.pop("llm", UNSET)
 
@@ -562,6 +590,7 @@ class SyncAgentRequest:
             keyterms=keyterms,
             knowledge=knowledge,
             knowledge_urls=knowledge_urls,
+            left_out_connectors=left_out_connectors,
             llm=llm,
             mcp_servers=mcp_servers,
             mode=mode,

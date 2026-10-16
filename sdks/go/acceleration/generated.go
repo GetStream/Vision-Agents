@@ -2499,13 +2499,16 @@ type AgentConfig struct {
 	Guardrail *string   `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness     `json:"harness,omitempty"`
-	Id                 string       `json:"id"`
-	Instructions       *string      `json:"instructions,omitempty"`
-	Keyterms           *[]string    `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
-	Llm                *string      `json:"llm,omitempty"`
-	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
+	Harness            *Harness  `json:"harness,omitempty"`
+	Id                 string    `json:"id"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+
+	// LeftOutConnectors The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none.
+	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
+	Llm               *string             `json:"llm,omitempty"`
+	McpServers        *[]McpServer        `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode AgentMode `json:"mode"`
@@ -5117,6 +5120,18 @@ type KnowledgeUrlRequest struct {
 // KnowledgeUrlState Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 type KnowledgeUrlState string
 
+// LeftOutConnector A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
+type LeftOutConnector struct {
+	// Connection The connection id or label agent.yaml named, which no connection of the app has.
+	Connection string `json:"connection"`
+
+	// ConnectorId The connector agent.yaml named, or the alias when it named none.
+	ConnectorId string `json:"connector_id"`
+
+	// Name The alias agent.yaml gave the connector.
+	Name string `json:"name"`
+}
+
 // LibraryVoice One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it.
 type LibraryVoice struct {
 	Accent      *string `json:"accent,omitempty"`
@@ -6974,7 +6989,10 @@ type SyncAgentRequest struct {
 
 	// KnowledgeUrls The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both.
 	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty"`
-	Llm           *string                    `json:"llm,omitempty"`
+
+	// LeftOutConnectors The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors.
+	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
+	Llm               *string             `json:"llm,omitempty"`
 
 	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login.
 	McpServers *[]McpServer `json:"mcp_servers,omitempty"`

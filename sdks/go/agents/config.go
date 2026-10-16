@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
@@ -134,10 +135,32 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 			"agent", a.options.Name, "connector", connection.name, "connection", connection.token)
 	}
 	if len(missing) > 0 {
+		// Sent so the router stores them and the dashboard can say what the agent is missing.
+		// An entry over the router's caps is left out of the list (the warning above still
+		// names it), and so is one past the router's 64, so a sync never fails over the list.
+		leftOut := make([]acceleration.LeftOutConnector, 0, len(missing))
+		for _, connection := range missing {
+			if len(leftOut) == maxLeftOutEntries {
+				break
+			}
+			if utf8.RuneCountInString(connection.name) > maxLeftOutName ||
+				utf8.RuneCountInString(connection.connectorID) > maxLeftOutConnectorID ||
+				utf8.RuneCountInString(connection.token) > maxLeftOutConnection {
+				continue
+			}
+			leftOut = append(leftOut, acceleration.LeftOutConnector{
+				Name: connection.name, ConnectorId: connection.connectorID, Connection: connection.token,
+			})
+		}
+		if len(leftOut) > 0 {
+			body.LeftOutConnectors = &leftOut
+		}
 		// Another hash for a sync that left a connector out, sent and stamped: the router does
 		// nothing for a hash it already stored, and the sync that finds the connection must not
-		// be taken for this one.
-		body.Hash = fingerprint(hash, "missing connections", fmt.Sprint(missing), nil, nil, nil, nil)
+		// be taken for this one. The marker keeps it from being the hash a sync that left the
+		// same connectors out sent before the list was sent, which the router has stored
+		// without the list.
+		body.Hash = fingerprint(hash, "missing connections", "left_out_connectors "+fmt.Sprint(missing), nil, nil, nil, nil)
 	}
 	if harness != nil {
 		body.Harness = harness
@@ -352,9 +375,23 @@ func connectorBindings(ctx context.Context, client *acceleration.ClientWithRespo
 	return &bindings, missing, nil
 }
 
+// The longest alias, connector id and connection label the router takes in a
+// left_out_connectors entry (LeftOutConnector in acceleration/internal/api/sync.go).
+const (
+	maxLeftOutName        = 63
+	maxLeftOutConnectorID = 64
+	maxLeftOutConnection  = 120
+	maxLeftOutEntries     = 64
+)
+
 // missingConnection is a connection an agent.yaml entry names that the app does not have.
+//
+// The sync's hash prints a list of them, which formats each through Error, so a field that
+// Error leaves out does not change the hash. The hash also carries a "left_out_connectors"
+// marker, so it is not the one a sync sent before the list was sent.
 type missingConnection struct {
 	name, token string
+	connectorID string
 }
 
 func (m missingConnection) Error() string {
@@ -415,7 +452,7 @@ func fixedConnection(ctx context.Context, client *acceleration.ClientWithRespons
 	case 1:
 		return labels[0], nil
 	case 0:
-		return "", missingConnection{name: name, token: token}
+		return "", missingConnection{name: name, token: token, connectorID: connectorID}
 	default:
 		return "", fmt.Errorf("agents: connector %q: %q matches %d app connections", name, token, len(labels))
 	}
