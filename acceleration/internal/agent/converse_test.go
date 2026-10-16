@@ -266,6 +266,142 @@ func (s *ConverseSuite) answerFinal(text string, utterance int64) Action {
 	return actions[0]
 }
 
+func (s *ConverseSuite) leaveUnansweredFinal(text string, utterance int64) {
+	s.T().Helper()
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+		Text:        text,
+	}, s.quiet())
+	ready := s.held()
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActWait}, kinds(actions))
+}
+
+func (s *ConverseSuite) answerObservedFinal(text string, utterance int64) {
+	s.T().Helper()
+	ready := s.held()
+	s.Equal(text, ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Equal(text, actions[0].Text)
+	s.Equal(utterance, actions[0].Candidate.Utterance)
+}
+
+func (s *ConverseSuite) TestAnUnansweredNameSurvivesANewUtteranceThatStartsWithItsPrefix() {
+	const name = "My name is Maya Chen."
+	const dateOfBirth = "My date of birth is March fourth nineteen eighty seven."
+	s.leaveUnansweredFinal(name, 1)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        "My",
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        dateOfBirth,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   2,
+		Text:        dateOfBirth,
+	}, s.quiet())
+
+	s.answerObservedFinal(name+" "+dateOfBirth, 2)
+}
+
+func (s *ConverseSuite) TestAnUnansweredNameSurvivesAnEqualNewUtteranceThatLaterDiverges() {
+	const name = "My name is Maya Chen."
+	const dateOfBirth = "My date of birth is March fourth nineteen eighty seven."
+	s.leaveUnansweredFinal(name, 1)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        name,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        dateOfBirth,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   2,
+		Text:        dateOfBirth,
+	}, s.quiet())
+
+	s.answerObservedFinal(name+" "+dateOfBirth, 2)
+}
+
+func (s *ConverseSuite) TestAnUnansweredNameIsNotDuplicatedByACaseChangedFullRestatement() {
+	const name = "My name is Maya Chen."
+	const corrected = "my name is maya chen. My date of birth is March fourth nineteen eighty seven."
+	s.leaveUnansweredFinal(name, 1)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        corrected,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   2,
+		Text:        corrected,
+	}, s.quiet())
+
+	s.answerObservedFinal(corrected, 2)
+}
+
+func (s *ConverseSuite) TestAQueuedCorrectionDoesNotDuplicateACaseChangedCarriedPrefix() {
+	const name = "My name is Maya Chen."
+	const queuedTail = "Wait. Make it five."
+	const corrected = "my name is maya chen. Wait. Make it six, and one of us is gluten free instead."
+
+	s.leaveUnansweredFinal(name, 1)
+	s.queueSettledTurn(queuedTail, 2, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        corrected,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   2,
+		Text:        corrected,
+	}, s.quiet())
+
+	s.answerObservedFinal(corrected, 2)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the corrected queued candidate is answered once")
+}
+
 func (s *ConverseSuite) assertCorrectedReplacedQueue(corrected string) {
 	s.T().Helper()
 	_, waiting := s.converse.Waiting(s.quiet())
