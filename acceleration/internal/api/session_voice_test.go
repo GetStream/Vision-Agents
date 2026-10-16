@@ -355,8 +355,10 @@ func (s *SessionVoiceSuite) pinCall(call SessionCall, app int64) {
 
 // assertEnds waits for a session to end.
 func (s *SessionVoiceSuite) assertEnds(id string) {
-	s.Require().Eventually(func() bool { return s.serverClient.getSession(id).State == Ended },
-		settleFor, 20*time.Millisecond, "the session left in the call never ended")
+	s.Require().Eventually(func() bool {
+		var read Session
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &read) == http.StatusOK && read.State == Ended
+	}, settleFor, 20*time.Millisecond, "the session left in the call never ended")
 }
 
 // startVoiceOn starts voice on a session on the call named and returns what it says of itself.
