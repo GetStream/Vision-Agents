@@ -28,7 +28,7 @@ from, and it is the only one of the four that still has all of it.
 | `speed` | — | `generation_config.speed`, 0.6–1.5 | `audioConfig.speakingRate`, 0.5–1.5, above 0.8 recommended | `voice_settings.speed`, 0.7–1.2 |
 | `volume` | — | `generation_config.volume`, 0.5–2.0 | — | — |
 | `emotion`, `style` | audio tags in the text | `generation_config.emotion`, closed enum, English only, beta | `[bracket]` prose, or an `instruction` field on HTTP | — |
-| `stability` | `voice_settings.stability`, first message only, **only 0.0 / 0.5 / 1.0** | — | `deliveryMode`: `STABLE`, `BALANCED`, `CREATIVE` | `voice_settings.stability`, continuous |
+| `stability` | `voice_settings.stability`, first message only, 0–1 | — | `deliveryMode`: `STABLE`, `BALANCED`, `CREATIVE` | `voice_settings.stability`, continuous |
 | `similarity` | — | — | — | `similarity_boost` |
 | `format` | `output_format=pcm_<rate>` | `output_format.{container,encoding,sample_rate}`, `raw` only on the socket | `audioConfig.{audioEncoding,sampleRateHertz,bitRate}` | `output_format` |
 | `pronunciations` | `pronunciation_dictionary_locators`, first message only | `pronunciation_dict_id` | — | same as v3 |
@@ -43,11 +43,11 @@ What the table is saying:
 - **Speed ranges do not overlap, and one provider has none.** 0.6–1.5, 0.5–1.5, 0.7–1.2, and
   nothing at all. `speed` is not one number every voice accepts, and a provider asked for a
   speed outside its own range refuses.
-- **`stability` has stopped being a dial.** ElevenLabs v3 accepts only 0.0, 0.5 and 1.0 —
-  creative, natural, robust — and values between them are not supported. Inworld says the same
-  thing in words: `STABLE`, `BALANCED`, `CREATIVE`. Two of the three model it as three named
-  modes and the third does not model it at all, so `Stability *float64` is the wrong shape for
-  every provider that has the feature. `similarity` survives only on the v2 models.
+- **`stability` is a dial at ElevenLabs and three modes at Inworld.** ElevenLabs documents
+  0 to 1, and a live 0.3 spoke on v3 conversational, v4 and v4 Turbo (2026-10-15); a
+  third-party claim that v3 takes only 0.0 / 0.5 / 1.0 is in no ElevenLabs doc. Inworld has
+  `STABLE`, `BALANCED`, `CREATIVE` (its `delivery_mode` overwrite). `similarity` survives
+  only on the v2 models.
 - **"Sound urgent" has three incompatible shapes.** A closed enum of 58 words, English only
   (Cartesia). Free English prose that persists until `[reset]`, like a stage direction
   (Inworld). Tags the model acts as it reads them (ElevenLabs v3). Prose does not reduce to
@@ -89,11 +89,14 @@ did not have to know which vendor answered. So options become `Terms()`, and onl
 `supports:` lists every term asked for are candidates.
 
 Today the batch entry `elevenlabs/eleven_v3` declares `[speed, stability, format]`, which is
-the recorded path. Of the live entries, only `eleven_flash_v2_5` and `eleven_multilingual_v2`
-declare anything: `[speed]`, sent as `voice_settings.speed` when each context opens, and a
-speed outside 0.7–1.2 is refused when the provider is built. The dialogue models (v3
-conversational, v4, v4 Turbo) have no speed, so a request naming one routes past them, and
-`NewDialogue` refuses one rather than drop it. Every other live entry declares nothing, so it
+the recorded path. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
+declare `[speed, stability, similarity]`, sent as `voice_settings` when each context opens (stability 0.5,
+similarity 0.8 when not asked); a speed outside 0.7–1.2 or a stability or similarity outside
+0–1 is refused when the provider is built. The dialogue models (v3 conversational, v4, v4
+Turbo) declare `[stability]` and have no speed, so a request naming one routes past them, and
+`NewDialogue` refuses a speed or a similarity rather than drop it. A refused value is the
+caller's mistake (`routing.ErrRequest`): no stat is recorded, so it cannot mark the model
+unavailable for everyone. Every other live entry declares nothing, so it
 serves requests that ask only for a target, a voice and a language. Cartesia
 (`generation_config.speed`, 0.6–1.5) and Inworld (`audioConfig.speakingRate`, 0.5–1.5) can
 express a speed but do not send one yet; wire it in their package, refuse outside their range,
@@ -126,9 +129,11 @@ the provider's library.
   training and no retention, so `allow_training: false` routes there until an account
   elsewhere is opted out and its entry is edited.
 - `overwrites` is per vendor, decoded into a typed struct with `DisallowUnknownFields`, so a
-  misspelt key fails at build time. Since the live entries express no terms beyond a speed,
-  this is the only other way to steer a live voice: `elevenlabs: {voice_id}`,
-  `inworld: {voice_id, delivery_mode}`.
+  misspelt key or a wrong type fails the request with `routing.ErrOverwrite`, naming the
+  provider and the field. `Select` then tries only that vendor's other models (OpenAI's
+  realtime and Live models read different structs out of one block) and never another
+  vendor, which is handed its own block and would drop the overwrite in silence. What a live voice can be
+  steered by this way: `elevenlabs: {voice_id}`, `inworld: {voice_id, delivery_mode}`.
 
 ## Adding an option
 

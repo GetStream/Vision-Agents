@@ -1193,7 +1193,7 @@ tts:
         ]
       realtime: true
       tier: low-latency
-      supports: [speed]
+      supports: [speed, stability, similarity]
       # Self-serve accounts are opted in: ElevenLabs "don't train on any data from our
       # Enterprise customers", and everyone else shares until the Data use toggle is off.
       # History is kept by default with no published window, and Zero Retention Mode -
@@ -1250,6 +1250,11 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # The text-to-dialogue socket takes stability and no other voice setting
+      # (https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket, opened
+      # 2026-10-15, which documents eleven_v3 and says nothing of v4), so speed and
+      # similarity stay undeclared. The same holds for the other two dialogue models below.
+      supports: [stability]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
@@ -1298,7 +1303,7 @@ tts:
         ]
       realtime: true
       tier: high-quality
-      supports: [speed]
+      supports: [speed, stability, similarity]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
@@ -1350,6 +1355,7 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      supports: [stability]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
@@ -1400,6 +1406,7 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      supports: [stability]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
@@ -1823,7 +1830,7 @@ tts:
         ]
       realtime: false
       tier: high-quality
-      supports: [speed, stability, format]
+      supports: [speed, stability, similarity, format]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified

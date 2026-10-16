@@ -506,3 +506,48 @@ func (s *STSRouterSuite) TestDuplicateCompletionsLeaveTheNextTurnsAudioUnbilled(
 	s.True(session.observe(sts.ResponseComplete{ResponseID: "r2", Generation: 2}))
 	s.Zero(session.heardMs)
 }
+
+func (s *STSRouterSuite) TestABackendModelOverwriteReachesOpenAIsLiveModelPastTheRealtimeOne() {
+	// OpenAI's realtime and Live models read different structs out of the one "openai"
+	// block, so the realtime model refusing backend_model is no reason to refuse the
+	// request. The commit before this PR served gpt-live-1 here, having built
+	// gpt-realtime-2 first (reviewer probe, reviewer-1.md).
+	s.T().Setenv("OPENAI_API_KEY", "test-key")
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	vendor := DefaultRegistry()
+	var built []string
+	registry := NewRegistry()
+	for _, provider := range config[routing.STS].Providers {
+		name := provider.Provider
+		registry.Register(name, func(spec routing.Spec) (sts.STS, error) {
+			built = append(built, name+"/"+spec.Model)
+			// OpenAI's own factory decides what it can read; nothing is dialled.
+			if name == "openai" {
+				if _, err := vendor.Build(name, spec); err != nil {
+					return nil, err
+				}
+			}
+			stub := newStubSTS()
+			stub.capabilities, _ = capabilitiesFor(name, spec.Model)
+			return stub, nil
+		})
+	}
+	router, err := New(Options{Config: config[routing.STS], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "en-high-accuracy",
+		Options: options.STS{
+			Providers:  []string{"openai"},
+			Overwrites: map[string]json.RawMessage{"openai": json.RawMessage(`{"backend_model":"gpt-6-astra"}`)},
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("gpt-live-1", session.Model())
+	s.Equal([]string{"openai/gpt-realtime-2", "openai/gpt-live-1"}, built)
+}

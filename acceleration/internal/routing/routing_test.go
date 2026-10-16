@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // stubProvider stands in for a real provider so routing decisions can be tested without
@@ -942,6 +943,194 @@ func (s *RoutingSuite) TestEachRouterReadsTheOverwritesForItsOwnModality() {
 
 	s.JSONEq(`{"spoke":true}`, string(spoke.Overwrites),
 		"a vendor that both transcribes and speaks must not be handed the other half's settings")
+}
+
+// newRouterReadingOverwrites is a router whose providers read a "mode" overwrite through
+// Settings, as every real factory that takes overwrites does, and record what was built.
+func (s *RoutingSuite) newRouterReadingOverwrites(built *[]string) *Router[*stubProvider] {
+	return s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		*built = append(*built, spec.Model)
+		var settings struct {
+			Mode string `json:"mode"`
+		}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+}
+
+func (s *RoutingSuite) TestAnOverwriteTheCandidateHasNoFieldForIsRefusedRatherThanRoutedAround() {
+	var built []string
+	router := s.newRouterReadingOverwrites(&built)
+
+	_, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"quick/en", "lush/multi"},
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"moode":"fast"}`)}},
+	})
+
+	s.Require().ErrorIs(err, ErrOverwrite)
+	s.ErrorContains(err, "quick/en", "the caller is told whose block it was")
+	s.ErrorContains(err, "moode", "and which field")
+	s.Equal([]string{"en"}, built, "lush is never handed a request whose overwrite was dropped")
+}
+
+func (s *RoutingSuite) TestAnOverwriteOfTheWrongTypeIsRefusedRatherThanRoutedAround() {
+	var built []string
+	router := s.newRouterReadingOverwrites(&built)
+
+	_, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"quick/en", "lush/multi"},
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"mode":5}`)}},
+	})
+
+	s.Require().ErrorIs(err, ErrOverwrite)
+	s.ErrorContains(err, "mode")
+	s.Equal([]string{"en"}, built)
+}
+
+func (s *RoutingSuite) TestABuildFailureThatIsNotAnOverwriteStillFailsOver() {
+	// A provider with no key is the provider's problem, not the caller's, so the next
+	// candidate serves, as it always has.
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" {
+			return nil, errors.New("quick: api key is required")
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err)
+	s.Equal("lush/multi", config.Name())
+}
+
+// capturingStats swaps the router's recorder for one that keeps every stat in its queue,
+// so a test can see what would have reached the shared health counters without writing
+// to them.
+func (s *RoutingSuite) capturingStats(router *Router[*stubProvider]) *Recorder {
+	router.recorder.Close()
+	done := make(chan struct{})
+	close(done)
+	recorder := &Recorder{live: &live.Client{}, queue: make(chan store.Request, 16), done: done}
+	router.recorder = recorder
+	return recorder
+}
+
+func (s *RoutingSuite) TestASettingTheModelRefusesLeavesItsHealthAlone() {
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" {
+			return nil, Refused(errors.New("quick: en takes no similarity"))
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+	stats := s.capturingStats(router)
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err)
+	s.Equal("lush/multi", config.Name(), "a setting one model refuses another may take")
+	s.Empty(stats.queue, "health is every customer's, so one caller's bad value is not counted against the model")
+}
+
+func (s *RoutingSuite) TestAProviderThatFailsToBuildIsStillCountedAgainstItsHealth() {
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" {
+			return nil, errors.New("quick: api key is required")
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+	stats := s.capturingStats(router)
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err)
+	s.Require().Len(stats.queue, 1)
+	recorded := <-stats.queue
+	s.Equal("build_failed", recorded.ErrorCode)
+	s.Equal("en", recorded.Model)
+}
+
+func (s *RoutingSuite) TestARefusalIsWhatTheCallerIsToldWhenNothingServes() {
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" {
+			return nil, Refused(errors.New("quick: stability 1.5 is outside 0 to 1"))
+		}
+		return nil, errors.New("lush: api key is required")
+	})
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().ErrorIs(err, ErrRequest)
+	s.ErrorContains(err, "quick/en: quick: stability 1.5 is outside 0 to 1")
+	s.NotContains(err.Error(), "every candidate", "the caller's mistake is not an outage")
+}
+
+func (s *RoutingSuite) TestAnOverwriteOneModelCannotReadIsTriedOnTheSameVendorsOtherModels() {
+	// OpenAI's realtime and Live models read different structs out of one "openai" block,
+	// which is the shape this copies: quick/en has a threshold, quick/multi a backend.
+	var built []string
+	registry := NewRegistry[*stubProvider]()
+	for _, vendor := range []string{"quick", "lush"} {
+		registry.Register(vendor, func(spec Spec) (*stubProvider, error) {
+			built = append(built, vendor+"/"+spec.Model)
+			var err error
+			if vendor == "quick" && spec.Model == "en" {
+				err = spec.Settings(&struct {
+					Threshold float64 `json:"threshold"`
+				}{})
+			} else {
+				err = spec.Settings(&struct {
+					Backend string `json:"backend"`
+				}{})
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &stubProvider{model: spec.Model}, nil
+		})
+	}
+	router, err := New(Options[*stubProvider]{Modality: STT, Config: s.config(), Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	_, config, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"quick/en", "lush/multi", "quick/multi"},
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"backend":"b2"}`)}},
+	})
+
+	s.Require().NoError(err)
+	s.Equal("quick/multi", config.Name())
+	s.Equal([]string{"quick/en", "quick/multi"}, built,
+		"lush is handed its own block, never quick's, so it is skipped rather than served")
+}
+
+func (s *RoutingSuite) TestEachElevenLabsModelDeclaresTheVoiceSettingsItsSocketSends() {
+	// The text-to-speech socket sends stability and similarity_boost on every context
+	// (tts/elevenlabs/elevenlabs.go openContext); the dialogue socket sends a stability and
+	// takes no speed or similarity (dialogue.go NewDialogue); the batch endpoint sends all
+	// three (recorder.go).
+	want := map[string][]options.Term{
+		"eleven_flash_v2_5":        {options.Speed, options.Stability, options.Similarity},
+		"eleven_multilingual_v2":   {options.Speed, options.Stability, options.Similarity},
+		"eleven_v4_turbo":          {options.Stability},
+		"eleven_v3_conversational": {options.Stability},
+		"eleven_v4":                {options.Stability},
+		"eleven_v3":                {options.Speed, options.Stability, options.Similarity, options.Format},
+	}
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	got := map[string][]options.Term{}
+	for _, provider := range config[TTS].Providers {
+		if provider.Provider == "elevenlabs" {
+			got[provider.Model] = provider.Terms
+		}
+	}
+	s.Equal(want, got)
 }
 
 func (s *RoutingSuite) TestAVoiceNoProviderWasGivenLeavesNobodyToSayIt() {
