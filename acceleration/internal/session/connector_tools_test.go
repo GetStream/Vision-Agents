@@ -279,6 +279,26 @@ func (s *AttachConnectorsSuite) TestAToolWhoseSchemaChangedIsNotOffered() {
 	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
 }
 
+// TestAGrantedToolTheConnectorLeavesOutSaysSo (AI-1394): whoami needs a scope the manifest's
+// scopes.list never asks for, so the connector hides it and a required binding that grants it
+// fails with a reason that names that, not a provider that stopped offering it.
+func (s *AttachConnectorsSuite) TestAGrantedToolTheConnectorLeavesOutSaysSo() {
+	s.connectorID = "custom_crm_scoped"
+	scoped := strings.Replace(s.crmManifest(s.connectorID, 1), "sources:",
+		"scopes:\n  list: [read]\nsources:", 1) + "    tools:\n      - name: whoami\n        needs_scopes: [write]\n"
+	manifest, err := core.ParseManifest([]byte(scoped))
+	s.Require().NoError(err)
+	definition, err := s.store.CreateConnectorDefinition(s.ctx, s.customerID, manifest)
+	s.Require().NoError(err)
+	s.revision = definition.Revision
+	app := s.connection("", "primary")
+
+	_, _, _, err = s.attach(s.spec(s.config(required(s.fixed("crm", app, "whoami"))), "", nil))
+
+	s.ErrorContains(err, "tool_unavailable")
+	s.ErrorContains(err, "needs a scope the connector never asks for")
+}
+
 func (s *AttachConnectorsSuite) TestAFixedAliasCannotBeGivenAConnection() {
 	app, alice := s.connection("", "primary"), s.connection("alice", "secondary")
 	config := s.config(s.fixed("crm", app, "whoami"))

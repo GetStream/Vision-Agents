@@ -603,9 +603,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Voices a customer brought with them live in an object bucket and a few tables. The
 	// resolver only reads the tables, so a deployment with a database but no bucket can
 	// still speak in voices another one prepared.
+	// The resolver checks a library voice against the same catalogue the picker reads.
+	library := buildLibrary(logger)
 	var resolver routing.VoiceResolver
 	if configs != nil {
-		resolver = voices.NewResolver(configs)
+		resolver = voices.NewResolver(configs, library)
 	}
 
 	bucket, err := blob.Open(ctx, settings.VoicesBucketURL)
@@ -1068,7 +1070,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	options := api.Options{
 		Routers:               routers,
 		Voices:                voiceService,
-		VoiceLibrary:          buildLibrary(logger),
+		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
 		Store:                 pgStore,
 		Configs:               configs,

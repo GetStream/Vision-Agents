@@ -425,10 +425,8 @@ func targeted(held options.STT) options.STT {
 // would cost more and transcribe worse, so a caller who only said "transcribe this file"
 // is not sent there.
 func recordedTarget(languages []string) string {
-	for _, language := range languages {
-		if language != "" && !strings.HasPrefix(language, "en") {
-			return "multilingual-recorded"
-		}
+	if routing.Spoken(languages) {
+		return "multilingual-recorded"
 	}
 	return "en-recorded"
 }

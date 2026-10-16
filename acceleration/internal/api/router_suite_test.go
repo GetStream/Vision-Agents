@@ -229,6 +229,9 @@ type RouterSuite struct {
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
 	connectorsOff bool
+	// ttsVoices resolves the voice of every text-to-speech request, live and recorded, for a
+	// suite about voices to set before it starts the harness. Nil passes each one through.
+	ttsVoices routing.VoiceResolver
 	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
 	// the connection proxy to set before it starts the harness. Zero caps nothing.
 	proxyCallsPerMinute int64
@@ -756,13 +759,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	speaking := ttsrouter.NewRegistry()
 	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
 	speaker, err := ttsrouter.New(ttsrouter.Options{
-		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Voices: s.ttsVoices, Gate: gate,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
 	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
-		Config:       routableConfig(),
+		Config:       recordingConfig(),
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
@@ -776,6 +780,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Recorders: recorderRegistry(),
 		Store:     s.store,
 		Live:      s.live,
+		Voices:    s.ttsVoices,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)

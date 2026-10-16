@@ -199,10 +199,12 @@ type SourceRule struct {
 // ToolRule is what a manifest says about one tool of a source.
 type ToolRule struct {
 	Name string `yaml:"name" json:"name"`
-	// NeedsScopes are the scopes a call of the tool needs, each one of scopes.list. A
-	// validate compares the connection's granted scopes with what its tools need (architecture
-	// doc on connectors/planning, «Add» item 11, and the stress test's row 12: «a per-tool
-	// needs_scopes on the ToolSpec so the check is possible»).
+	// NeedsScopes are the scopes a call of the tool needs. A validate compares the
+	// connection's granted scopes with what its tools need (architecture doc on
+	// connectors/planning, «Add» item 11, and the stress test's row 12: «a per-tool
+	// needs_scopes on the ToolSpec so the check is possible»). A tool that needs a scope
+	// scopes.list does not hold is never asked for at consent, so the source leaves it out
+	// (AI-1394).
 	NeedsScopes []string `yaml:"needs_scopes" json:"needs_scopes"`
 }
 
@@ -626,11 +628,6 @@ func (m Manifest) Validate() error {
 			named[tool.Name] = true
 			if len(tool.NeedsScopes) == 0 {
 				fail(field+".needs_scopes", "is required: a tool that needs no scope is left out")
-			}
-			for _, scope := range tool.NeedsScopes {
-				if !slices.Contains(m.Scopes.List, scope) {
-					fail(field+".needs_scopes", "%q is not in scopes.list", scope)
-				}
 			}
 		}
 	}

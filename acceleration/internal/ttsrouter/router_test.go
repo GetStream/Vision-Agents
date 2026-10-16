@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
 // stubTTS stands in for a real provider so a session can be driven without credentials.
@@ -86,6 +88,12 @@ func (s *TTSRouterSuite) newRouter() *Router {
 // key for any of the vendors in it. Every spec built is recorded, which is how what a
 // provider was asked for is checked.
 func (s *TTSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
+	return s.newStubbedRouterResolving(built, nil)
+}
+
+// newStubbedRouterResolving is newStubbedRouter with a voice resolver in front of every
+// candidate, as cmd/router builds one.
+func (s *TTSRouterSuite) newStubbedRouterResolving(built *[]routing.Spec, resolver routing.VoiceResolver) *Router {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 
@@ -97,7 +105,7 @@ func (s *TTSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
 		})
 	}
 
-	router, err := New(Options{Config: config[routing.TTS], Registry: registry})
+	router, err := New(Options{Config: config[routing.TTS], Registry: registry, Voices: resolver})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 	return router
@@ -253,6 +261,101 @@ func (s *TTSRouterSuite) TestAPriorityListIsTriedInTheOrderItWasWritten() {
 
 	s.Equal("inworld", session.Provider(),
 		"a caller who wrote an order wants the second name only once the first is down")
+}
+
+// sarahOnly is an ElevenLabs library that lists Sarah and has no other voice, and counts
+// the lookups it was asked for.
+type sarahOnly struct{ lookups *int }
+
+func (sarahOnly) List(context.Context) ([]voices.Library, error) {
+	return []voices.Library{{ID: "EXAVITQu4vr4xnSDxMaL", Name: "Sarah - Mature, Reassuring, Confident"}}, nil
+}
+
+func (sarahOnly) Preview(context.Context, string) (voices.Speech, error) {
+	return voices.Speech{}, nil
+}
+
+func (l sarahOnly) Exists(context.Context, string) (bool, error) {
+	if l.lookups != nil {
+		*l.lookups++
+	}
+	return false, nil
+}
+
+// checkingVoices resolves voices against ElevenLabs' library alone, so another vendor's
+// voices go through unchecked.
+func checkingVoices(lookups *int) routing.VoiceResolver {
+	catalogue := voices.NewCatalogue()
+	catalogue.Register("elevenlabs", sarahOnly{lookups: lookups})
+	return voices.NewResolver(nil, catalogue)
+}
+
+func (s *TTSRouterSuite) TestAVoiceOneVendorDoesNotHaveIsSpokenByTheNextInThePriorityList() {
+	var built []routing.Spec
+	router := s.newStubbedRouterResolving(&built, checkingVoices(nil))
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "Sara",
+		Options:    options.TTS{Providers: []string{"elevenlabs", "cartesia"}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("cartesia", session.Provider(), "a voice is the caller's, so another vendor may still have it")
+	s.Len(built, 1, "nothing was built for the vendor that said it has no such voice")
+}
+
+func (s *TTSRouterSuite) TestAVoiceNoVendorHasIsLookedUpOnceAndRefusedOnceAcrossItsModels() {
+	var built []routing.Spec
+	lookups := 0
+	router := s.newStubbedRouterResolving(&built, checkingVoices(&lookups))
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "Sara",
+		Options:    options.TTS{Providers: []string{"elevenlabs"}},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.Equal(1, lookups, "every ElevenLabs model asks about the same voice")
+	s.Equal(1, strings.Count(err.Error(), `has no voice "Sara"`), "the caller reads the refusal once: %s", err)
+}
+
+func (s *TTSRouterSuite) TestAVoiceAnOverwriteReplacesIsNotCheckedAndTheOverwriteSpeaks() {
+	var built []routing.Spec
+	lookups := 0
+	router := s.newStubbedRouterResolving(&built, checkingVoices(&lookups))
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "Sara",
+		Options: options.TTS{
+			Providers:  []string{"elevenlabs"},
+			Overwrites: map[string]json.RawMessage{"elevenlabs": json.RawMessage(`{"voice_id":"EXAVITQu4vr4xnSDxMaL"}`)},
+		},
+	})
+	s.Require().NoError(err, "the voice that is spoken is the overwrite's, and it was never asked about")
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal(0, lookups)
+	s.Require().NotEmpty(built)
+	s.JSONEq(`{"voice_id":"EXAVITQu4vr4xnSDxMaL"}`, string(built[0].Overwrites))
+}
+
+func (s *TTSRouterSuite) TestAVoiceNoVendorHasIsRefusedNamingTheClosest() {
+	var built []routing.Spec
+	router := s.newStubbedRouterResolving(&built, checkingVoices(nil))
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "Sara",
+		Options:    options.TTS{Providers: []string{"elevenlabs"}},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's mistake, not every candidate failing")
+	s.Contains(err.Error(), `"Sarah - Mature, Reassuring, Confident" (EXAVITQu4vr4xnSDxMaL)`)
+	s.Empty(built)
 }
 
 func (s *TTSRouterSuite) TestAVendorNamedForALiveCallGetsTheirStreamingModel() {

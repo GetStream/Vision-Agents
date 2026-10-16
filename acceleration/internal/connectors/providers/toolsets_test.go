@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -85,6 +88,39 @@ func (s *ToolsetSuite) TestNoOtherBuiltInAsksForToolsets() {
 		opened++
 	}
 	s.Positive(opened)
+}
+
+// TestMetabaseOffersOnlyTheToolsItsScopesReach (AI-1394): against a server listing the 21
+// tools staging's Metabase listed on 2026-10-16, revision 2 offers the ones that need
+// agent:content:read or agent:query:run, which it asks for, and none that needs a scope it
+// leaves out (metabase.yaml, [tools]).
+func (s *ToolsetSuite) TestMetabaseOffersOnlyTheToolsItsScopesReach() {
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "metabase", Version: "1"}, nil)
+	for _, name := range []string{"alert_write", "bookmark_content", "browse_collection", "browse_data",
+		"collection_write", "dashboard_write", "document_write", "duplicate_content", "execute_query",
+		"execute_sql", "get_content", "get_parameter_values", "glossary", "learn", "measure_write",
+		"metric_write", "question_write", "run_saved_question", "search", "segment_write", "subscription_write"} {
+		server.AddTool(&sdkmcp.Tool{Name: name, InputSchema: map[string]any{"type": "object"}},
+			func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+				return &sdkmcp.CallToolResult{}, nil
+			})
+	}
+	srv := httptest.NewTLSServer(sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server { return server },
+		&sdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	defer srv.Close()
+	resolved, err := s.manifest("metabase").Resolve(oauth2code.Name, map[string]string{"host": "metabase.example.com"}, nil)
+	s.Require().NoError(err)
+	resolved.Endpoints["mcp"] = srv.URL
+
+	specs, err := mcp.New().Discover(s.ctx, core.ResolvedBinding{Binding: core.Binding{Name: "metabase"}, Manifest: resolved, HTTP: srv.Client()})
+
+	s.Require().NoError(err)
+	var names []string
+	for _, spec := range specs {
+		names = append(names, spec.Name)
+	}
+	s.ElementsMatch([]string{"browse_collection", "browse_data", "execute_query", "get_content", "get_parameter_values",
+		"glossary", "learn", "run_saved_question", "search"}, names)
 }
 
 func (s *ToolsetSuite) manifest(id string) core.Manifest {
