@@ -53,6 +53,15 @@ func (s *StoreSuite) TestSeedingNotionLeavesEveryOtherBuiltInsLatestRevisionAsIt
 	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("notion")
 }
 
+// AI-1381: bigquery.yaml and metabase.yaml are new files too.
+func (s *StoreSuite) TestSeedingBigQueryLeavesEveryOtherBuiltInsLatestRevisionAsItWas() {
+	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("bigquery")
+}
+
+func (s *StoreSuite) TestSeedingMetabaseLeavesEveryOtherBuiltInsLatestRevisionAsItWas() {
+	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("metabase")
+}
+
 // seedingANewBuiltInLeavesTheOthersAsTheyWere seeds every shipped built-in but id, as the
 // build before id's file did, then every one, and checks id lands at revision 1 and no other
 // built-in's latest revision moves.
@@ -312,8 +321,8 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 
 	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(listed, 21)
-	for i, id := range []string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"} {
+	s.Require().Len(listed, 23)
+	for i, id := range []string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"} {
 		s.Equal(id, listed[i].ID)
 		s.Equal(BuiltinCustomer, listed[i].CustomerID)
 		s.Equal(shipped[i].Revision, listed[i].Revision, "stored at the revision its file names")
@@ -510,11 +519,11 @@ func (s *StoreSuite) TestACustomDefinitionIsOnlyItsOwnCustomers() {
 
 	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"}, definitionIDs(theirs), "another customer sees the built-ins alone")
+	s.Equal([]string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"}, definitionIDs(theirs), "another customer sees the built-ins alone")
 
 	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
+	s.Equal([]string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
 }
 
 func (s *StoreSuite) TestAnUnknownRevisionIsNoDefinition() {

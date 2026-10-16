@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -266,10 +267,11 @@ func (s *ConsentSuite) TestSalesforceRefusesATokenResponseWithoutAnIdentityURL()
 	s.Equal(1, srv.Hits(fakeprovider.PathToken), "the code was exchanged; the response was refused")
 }
 
-// The four Google servers take one web client from the customer's Cloud project, at the
+// The five Google servers take one web client from the customer's Cloud project, at the
 // issuer each pins, and ask for offline access so a refresh token comes back.
 func (s *ConsentSuite) TestEachGoogleServerConnectsWithTheSharedClientAtThePinnedIssuer() {
 	scopes := map[string]string{
+		"bigquery":        "https://www.googleapis.com/auth/bigquery",
 		"google_calendar": "https://www.googleapis.com/auth/calendar.readonly",
 		"google_drive":    "https://www.googleapis.com/auth/drive.readonly",
 		"google_docs":     "https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/drive.readonly",
@@ -354,6 +356,74 @@ func (s *ConsentSuite) TestNotionRefreshPolicyRotatesWithEightHourAccessAndThirt
 	s.True(*refresh.Rotating)
 	s.Equal(core.Duration(8*time.Hour), refresh.AccessTTL)
 	s.Equal(core.Duration(720*time.Hour), refresh.RefreshTTL)
+}
+
+// Metabase's server is the instance the connection names, so its endpoints are discovered
+// from that host's metadata and a client is registered there (metabase.yaml, [mcp]), asking
+// for the read and query scopes only.
+func (s *ConsentSuite) TestMetabaseRegistersAClientAtTheInstanceAndAsksToReadAndRunQueries() {
+	instance := s.resolve("metabase", map[string]string{"host": "metabase.example.com"})
+	s.Equal("https://metabase.example.com/api/metabase-mcp", instance.Endpoints["mcp"])
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, instance)
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(1, srv.Hits(fakeprovider.PathProtectedResource))
+	s.Equal(1, srv.Hits(fakeprovider.PathRegister), "registered, though a customer client exists: the manifest takes dcr only")
+	query := s.query(out.AuthorizeURL)
+	s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+fakeprovider.PathAuthorize+"?"), "the authorize endpoint from the instance's metadata")
+	s.NotEqual(srv.ClientID, query.Get("client_id"))
+	s.Equal("agent:content:read agent:query:run", query.Get("scope"))
+	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"), "the resource from the protected resource metadata")
+
+	stored, account, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+	s.Equal([]string{"agent:content:read", "agent:query:run"}, account.Scopes)
+	s.Empty(account.AccountID, "no identity")
+}
+
+// The host goes into every Metabase endpoint, so only a host name is taken: no IP address,
+// port, path or userinfo.
+func (s *ConsentSuite) TestMetabaseTakesAHostNameOnly() {
+	raw, err := fs.ReadFile(providers.FS, "metabase.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	for _, host := range []string{"metabase.example.com", "stats.metabase.com", "bi.acme-corp.co.uk"} {
+		_, err := manifest.Resolve(oauth2code.Name, map[string]string{"host": host}, nil)
+		s.NoError(err, host)
+	}
+	for _, host := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "[::1]", "::1", "localhost", "metabase.example.com:3000", "metabase.example.com/x", "user@metabase.example.com", "metabase.example.com.", "-metabase.example.com", ""} {
+		_, err := manifest.Resolve(oauth2code.Name, map[string]string{"host": host}, nil)
+		s.Error(err, host)
+	}
+}
+
+// A host name can still resolve to a private address (metadata.google.internal, an intranet
+// name), which no pattern can see. The router's own client, egress.NewClient, is the guard:
+// the consent's first request, the protected resource metadata, is refused before it dials,
+// as for mcp_servers (AI-1307). The fake listens on loopback, so a request let through would
+// reach it.
+func (s *ConsentSuite) TestMetabaseAtANonPublicAddressIsRefusedBeforeAnyRequest() {
+	srv := fakeprovider.New(s.T())
+	listening, err := url.Parse(srv.URL)
+	s.Require().NoError(err)
+	scheme, err := oauth2code.New(oauth2code.Config{HTTP: egress.NewClient(5*time.Second, nil)})
+	s.Require().NoError(err)
+	for _, host := range []string{"127.0.0.1", "10.0.0.1", "localhost"} {
+		s.Run(host, func() {
+			resolved := s.resolve("metabase", map[string]string{"host": "metabase.example.com"})
+			resolved.Endpoints["mcp"] = "https://" + net.JoinHostPort(host, listening.Port()) + fakeprovider.PathMCP
+
+			_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+			s.Require().Error(err)
+			s.Contains(err.Error(), "non-public address")
+		})
+	}
+	s.Equal(0, srv.Hits(fakeprovider.PathProtectedResource))
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
 }
 
 func (s *ConsentSuite) TestHubSpotConnectsWithTheCustomersClientAndRegistersNone() {

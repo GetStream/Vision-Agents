@@ -622,6 +622,13 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### Built-in BigQuery and Metabase connectors
+
+The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase` (AI-1381).
+
+- `bigquery` is Google's hosted BigQuery MCP server at `https://bigquery.googleapis.com/mcp`. A connection signs in with `oauth2_code` through the same Google web client as the other Google connectors (`GOOGLE`), asking for `https://www.googleapis.com/auth/bigquery`, the only scope Google documents for it.
+- `metabase` is the MCP server a Metabase instance serves at `https://{host}/api/metabase-mcp`. A connection gives `host` (a host name only), and the router registers its own client with that Metabase (`dcr`), asking for `agent:content:read` and `agent:query:run`: search, read and run queries, but no raw SQL and no writes. The Metabase must be reachable on a public https address; one on a private network is refused, as for `mcp_servers`.
+
 ### An agent config says which agent.yaml connectors its last sync left out
 
 A sync (`POST /v1/agents/sync`) takes `left_out_connectors`: the agent.yaml connectors the
