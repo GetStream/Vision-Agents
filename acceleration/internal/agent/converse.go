@@ -119,6 +119,8 @@ type Action struct {
 type floor struct {
 	// Quiet reports whether the agent has stopped talking.
 	Quiet bool
+	// Recovering reports that a lost voice is still being replaced.
+	Recovering bool
 	// Speaking is the reply currently allowed to make audio, empty when there is none.
 	Speaking string
 	// Talking reports whether the agent is writing or saying a reply, which Quiet cannot
@@ -532,8 +534,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
-	queue := !state.Quiet && !overlapNoise(ready.Text) &&
-		ruling.Disposition != harness.Ignore && ruling.Floor != harness.Stop
+	queue := !state.Quiet && !overlapNoise(ready.Text) && ruling.Disposition != harness.Ignore &&
+		(state.Recovering || ruling.Floor != harness.Stop)
 	var resolved bool
 	if queue {
 		resolved = c.cadence.Hold(ready)
@@ -624,6 +626,12 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 
 	switch ruling.Floor {
 	case harness.Stop:
+		answering := answer
+		if queue {
+			answering.Kind = ActQueue
+			answering.Reason = "the voice is being replaced, so the caller's answer waits until it is ready"
+			c.hold(ready, clarify, true)
+		}
 		return []Action{
 			c.decide(Action{
 				Kind:        ActInterrupt,
@@ -632,7 +640,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 				TurnID:      state.Speaking,
 				LatencyMs:   ruling.TookMs,
 			}),
-			c.decide(answer),
+			c.decide(answering),
 		}
 
 	case harness.Shorten:

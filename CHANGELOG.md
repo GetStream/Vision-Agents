@@ -2025,6 +2025,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `/v1/tts/recordings` refuses a `speed`, and a `stability` or `similarity` outside 0 to 1, as the caller's mistake. The recording voice (`eleven_v3`) ignores speed, so one was dropped in silence; a bad stability or similarity was answered by ElevenLabs with a 422 that counted against the model's health (AI-1366).
 - Corrected caller transcripts replace stale queued fragments without losing words from a separate utterance.
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
+- A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
 - Prose tool tags no longer invent incomplete multi-field arguments, and brace-form single-quoted tool calls preserve their decoded values.
 - A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).
