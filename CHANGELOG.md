@@ -2026,6 +2026,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - Decimal values remain intact when streaming voice replies are split into speech requests.
 - Healthcare tool history preserves each appointment response after later reschedules.
 - Corrected caller transcripts replace stale queued fragments without losing words from a separate utterance.
+- ElevenLabs reconnects for a new synthesis after a WebSocket disconnect; socket-loss and interrupted synthesis IDs stay terminal.
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
