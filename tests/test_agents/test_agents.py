@@ -34,6 +34,7 @@ from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.telephony import InboundCall, OutboundCall, PlacedCall
 from vision_agents.core.tts import TTS
 from vision_agents.core.turn_detection import TurnDetector
+from vision_agents.core.utils.audio_filter import FirstSpeakerWinsFilter
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
 
@@ -619,12 +620,15 @@ class TestAgent:
             create_agent=create_agent, join_call=join_call
         ) as launcher:
             agent = await launcher.launch()
-            loaded = stts[-1].model
             async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
                 pass
 
-        assert loaded is not None
-        assert stts[-1].model is loaded
+        # stts[0] belongs to the agent the launcher built to warm up.
+        assert len(stts) == 2
+        assert stts[0].model is not None
+        assert stts[-1].model is stts[0].model
+        assert isinstance(agent.llm, DummyLLM)
+        assert agent.llm.warmed_up
 
     async def test_start_components_runs_concurrently(self):
         """Components must be started in parallel, not sequentially."""
@@ -1543,6 +1547,20 @@ class TestAgent:
         assert llm.joined is not None
         assert edge.join_count == 0
         assert edge.published_tracks == []
+
+    async def test_remote_join_loads_no_speaker_filter_model(self, call: Call):
+        speaker_filter = FirstSpeakerWinsFilter()
+        agent = Agent(
+            llm=DummyRemotePipeline(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            multi_speaker_filter=speaker_filter,
+        )
+
+        async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+            pass
+
+        assert speaker_filter._vad_session is None
 
     async def test_remote_join_also_joins_locally_when_video_processors_are_present(
         self, call: Call

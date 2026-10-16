@@ -635,7 +635,8 @@ class Agent:
         """Load the models the agent's components need before they handle a call.
 
         `join` calls this when nothing did before it. A launcher passes its cache,
-        so the agents it builds share models loaded once.
+        so the agents it builds share models loaded once. A component you warmed
+        yourself loads again on `join` unless you call `agent.warmup()` first.
 
         Args:
             cache: Where loaded models are kept. Left out, each one loads fresh.
@@ -645,9 +646,11 @@ class Agent:
             self.tts,
             self.stt,
             self.turn_detection,
-            self._multi_speaker_filter,
             *self.processors,
         ]
+        # A remote pipeline hears the call itself: no local audio reaches the filter.
+        if not isinstance(self.llm, RemotePipeline):
+            components.append(self._multi_speaker_filter)
         await asyncio.gather(
             *(c.warmup(cache) for c in components if isinstance(c, Warmable))
         )
