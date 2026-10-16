@@ -286,9 +286,15 @@ class TestSTT:
         assert len(router.opened) == 2
         assert router.opened[1].audio == [f.samples.tobytes() for f in bobs]
 
-    async def test_closing_during_a_handshake_leaves_no_socket_open(
+    async def test_closing_during_a_handshake_stops_it_quietly(
         self, router: Router, stt: stream.STT
     ):
+        errors: list[STTErrorEvent] = []
+
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            errors.append(event)
+
         await stt.process_audio(audio(100), ALICE)
         await router.next_heard()
         router.answering.clear()
@@ -299,8 +305,10 @@ class TestSTT:
         await asyncio.sleep(0.2)
         for opened in router.opened:
             await asyncio.wait_for(opened.closed.wait(), SETTLE)
+        await stt.events.wait()
 
         assert router.heard.empty(), "nothing Bob said reached the router"
+        assert errors == [], "a handshake cut short by close is no failure"
 
     async def test_audio_before_start_opens_no_socket(self, router: Router):
         transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
