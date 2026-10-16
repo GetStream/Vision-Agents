@@ -116,6 +116,8 @@ class STT(stt.STT):
 
     async def close(self):
         """Close every socket, including one still opening, and stop reading them."""
+        # closed is set first, so audio arriving while this runs opens no socket it would miss.
+        self.closed = True
         await cancel_and_wait(*self._opening)
         self._opening.clear()
         self._held.clear()
@@ -174,13 +176,15 @@ class STT(stt.STT):
         frame asking again.
         """
         held = self._held[participant.id]
+        context = f"opening a socket for {participant.id}"
         try:
             await self._open(socket)
+            context = f"sending what {participant.id} said while it opened"
             while held:
                 await socket.send_audio(held.pop(0))
         except (RouterError, aiohttp.ClientError, OSError) as e:
             await socket.close()
-            self._emit_error_event(e, context=f"opening a socket for {participant.id}")
+            self._emit_error_event(e, context=context)
         finally:
             self._held.pop(participant.id, None)
 
