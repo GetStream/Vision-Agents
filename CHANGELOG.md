@@ -633,8 +633,9 @@ supported. (#972)
 
 The `openai-compatible/whisper-1` target can also serve live sessions when its model entry
 sets `realtime: true`. It streams 16 kHz mono call audio to the configured OpenAI-compatible
-transcription WebSocket and emits final transcripts when a turn ends or the session closes.
-The default model entry remains batch-only. (#972)
+transcription WebSocket, forwards standard transcription deltas while a turn is open, and emits
+the canonical final transcript when the turn ends or the session closes. The default model
+entry remains batch-only. (#972)
 
 ### An agent config says which agent.yaml connectors its last sync left out
 

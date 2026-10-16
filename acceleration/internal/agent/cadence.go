@@ -77,6 +77,9 @@ type cadenceSpeaker struct {
 	revisedAt   time.Time
 	// utterance is the run of speech the words being gathered came from.
 	utterance int64
+	// awaitingFinal prevents a numbered delta stream from settling during a long pause
+	// between previews. Its matching final is the provider's turn boundary.
+	awaitingFinal bool
 	// held is a queued candidate removed from the active transcript until it is answered
 	// or superseded by a revision of the same numbered utterance.
 	held *heldTranscript
@@ -140,6 +143,9 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		return "", ""
 	}
 	if strings.TrimSpace(transcript.Text) == "" && transcript.Mode != stt.ModeDelta {
+		if transcript.Mode == stt.ModeFinal && transcript.Utterance != 0 {
+			return c.emptyFinalLocked(transcript)
+		}
 		return "", ""
 	}
 	current := c.speakerFor(transcript.Participant)
@@ -174,6 +180,8 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 			current.held = nil
 		}
 	}
+	newUtterance := transcript.Utterance != 0 && current.utterance != 0 &&
+		transcript.Utterance != current.utterance
 	text := transcript.Text
 	mode := transcript.Mode
 	if heldRevisionText != "" {
@@ -182,15 +190,18 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 			mode = stt.ModeReplacement
 		}
 	} else if mode == stt.ModeDelta {
-		text = current.text + transcript.Text
+		if newUtterance {
+			text = transcript.Text
+		} else {
+			text = current.text + transcript.Text
+		}
 	}
 	if strings.TrimSpace(text) == "" {
 		return "", ""
 	}
 
-	newUtterance := transcript.Utterance != 0 && current.utterance != 0 &&
-		transcript.Utterance != current.utterance
 	if newUtterance {
+		current.awaitingFinal = false
 		current.carried = ""
 		if current.text != "" && !revisesTranscript(current.text, text) {
 			// A new utterance that is not a revision of the words in flight, which is how a
@@ -199,8 +210,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 			current.carried = strings.TrimSpace(current.text)
 		}
 	}
-	if current.carried != "" && mode != stt.ModeDelta &&
-		!strings.HasPrefix(words(text), words(current.carried)) {
+	if current.carried != "" && !strings.HasPrefix(words(text), words(current.carried)) {
 		text = current.carried + " " + strings.TrimSpace(text)
 	}
 
@@ -215,13 +225,54 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
+	wasAwaitingFinal := current.awaitingFinal
+	leftNumberedTurn := wasAwaitingFinal && transcript.Utterance == 0
+	if transcript.Utterance == 0 {
+		current.awaitingFinal = false
+	}
 	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
-	if sameWords(current.text, text) {
+	if transcript.Utterance != 0 {
+		switch transcript.Mode {
+		case stt.ModeDelta:
+			if strings.TrimSpace(transcript.Text) != "" {
+				current.awaitingFinal = true
+			}
+		case stt.ModeFinal:
+			current.awaitingFinal = false
+		}
+	}
+	if sameWords(current.text, text) && !newUtterance {
+		if current.awaitingFinal {
+			// A numbered delta, even one that did not change the assembled words, means the
+			// provider has not closed this turn. Invalidate any timer or candidate from an
+			// earlier revision before returning.
+			superseded = current.candidateID
+			current.candidateID = ""
+			current.generation++
+			if current.timer != nil {
+				current.timer.Stop()
+				current.timer = nil
+			}
+			return superseded, ""
+		}
 		// The transcriber finalizing words already waited on means they have stopped, so
 		// the wait is cut short. It is never lengthened: a final that arrives late must
 		// not hold back words that already held still.
-		if final && current.timer != nil && current.candidateID == "" {
-			c.scheduleLocked(current, c.finalGapLocked())
+		if current.candidateID == "" {
+			switch {
+			case transcript.Mode == stt.ModeFinal && (final || wasAwaitingFinal):
+				delay := c.finalGapLocked()
+				if incompleteIdentifier(text) {
+					delay = c.retry
+				}
+				c.scheduleLocked(current, delay)
+			case leftNumberedTurn:
+				delay := c.gap + c.grace
+				if incompleteIdentifier(text) {
+					delay = c.retry
+				}
+				c.scheduleLocked(current, delay)
+			}
 		}
 		return "", ""
 	}
@@ -248,11 +299,54 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
 		delay = c.retry
 	}
-	c.scheduleLocked(current, delay)
+	if current.awaitingFinal {
+		if current.timer != nil {
+			current.timer.Stop()
+			current.timer = nil
+		}
+	} else {
+		c.scheduleLocked(current, delay)
+	}
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
 		"confidence", transcript.Confidence, "gap", delay, "superseded", superseded)
 	return superseded, strings.TrimSpace(text)
+}
+
+// emptyFinalLocked drops a numbered hypothesis the provider finalized without text. A
+// carried prefix belongs to an earlier turn, so keep it available for the next revision.
+// The caller holds c.mu.
+func (c *cadence) emptyFinalLocked(transcript stt.Transcript) (superseded string, saying string) {
+	current, ok := c.speakers[transcript.Participant.ID]
+	if !ok || current.utterance != transcript.Utterance || !current.awaitingFinal {
+		return "", ""
+	}
+
+	superseded = current.candidateID
+	if current.timer != nil {
+		current.timer.Stop()
+		current.timer = nil
+	}
+	current.candidateID = ""
+	current.generation++
+	current.text = current.carried
+	current.awaitingFinal = false
+	if current.text != "" {
+		current.revisedAt = time.Now()
+		c.scheduleLocked(current, c.finalGapLocked())
+	}
+	return superseded, ""
+}
+
+func (c *cadence) awaitingFinalFor(transcript stt.Transcript) bool {
+	if transcript.Mode != stt.ModeFinal || transcript.Utterance == 0 || strings.TrimSpace(transcript.Text) != "" {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.speakers[transcript.Participant.ID]
+	return ok && current.utterance == transcript.Utterance && current.awaitingFinal
 }
 
 // Resolve records what became of a candidate. Waiting retries the same words after a
@@ -395,6 +489,25 @@ func (c *cadence) Active() (stt.Participant, time.Time, bool) {
 	return latest.participant, latest.revisedAt, true
 }
 
+func (c *cadence) Listening(within time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var latest *cadenceSpeaker
+	for _, current := range c.speakers {
+		if current.text == "" {
+			continue
+		}
+		if current.awaitingFinal {
+			return true
+		}
+		if latest == nil || current.revisedAt.After(latest.revisedAt) {
+			latest = current
+		}
+	}
+	return latest != nil && time.Since(latest.revisedAt) < within
+}
+
 func (c *cadence) Ready() <-chan candidate { return c.ready }
 
 func (c *cadence) Forget(participant stt.Participant) {
@@ -447,7 +560,7 @@ func (c *cadence) emit(participantID string, generation int64) {
 		return
 	}
 	current, ok := c.speakers[participantID]
-	if !ok || current.generation != generation || current.text == "" || current.candidateID != "" {
+	if !ok || current.generation != generation || current.text == "" || current.candidateID != "" || current.awaitingFinal {
 		c.mu.Unlock()
 		return
 	}

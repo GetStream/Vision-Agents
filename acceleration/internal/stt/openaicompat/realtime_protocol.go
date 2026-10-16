@@ -8,11 +8,13 @@ import (
 )
 
 type realtimeEvent struct {
-	Type       string `json:"type"`
-	ItemID     string `json:"item_id"`
-	Transcript string `json:"transcript"`
-	Code       string `json:"code"`
-	Error      struct {
+	Type         string `json:"type"`
+	ItemID       string `json:"item_id"`
+	ContentIndex int    `json:"content_index"`
+	Delta        string `json:"delta"`
+	Transcript   string `json:"transcript"`
+	Code         string `json:"code"`
+	Error        struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`

@@ -57,6 +57,7 @@ type realtimeTurn struct {
 	audioBytes  int
 	ended       bool
 	itemID      string
+	hadDelta    bool
 	committedAt time.Time
 }
 
@@ -98,11 +99,12 @@ type Realtime struct {
 	closeOne sync.Once
 	closing  atomic.Bool
 
-	sendMu       sync.Mutex
-	endpointer   endpointer
-	resampler    resampler
-	appendBuffer []byte
-	appendTurnID int64
+	sendMu            sync.Mutex
+	endpointer        endpointer
+	resampler         resampler
+	appendBuffer      []byte
+	appendTurnID      int64
+	appendParticipant stt.Participant
 }
 
 // NewRealtime validates the configured endpoint and credentials for the streaming path.
@@ -262,7 +264,7 @@ func (r *Realtime) ProcessAudio(pcm stt.PcmData, participant stt.Participant) er
 
 func (r *Realtime) acceptFrame(ctx context.Context, frame endpointFrame) error {
 	if frame.include {
-		if err := r.appendSamples(ctx, frame.utterance, frame.samples); err != nil {
+		if err := r.appendSamples(ctx, frame.utterance, frame.participant, frame.samples); err != nil {
 			return err
 		}
 	}
@@ -284,19 +286,28 @@ func (r *Realtime) acceptFrame(ctx context.Context, frame endpointFrame) error {
 	return nil
 }
 
-func (r *Realtime) appendSamples(ctx context.Context, turnID int64, samples []int16) error {
+func (r *Realtime) appendSamples(ctx context.Context, turnID int64, participant stt.Participant, samples []int16) error {
 	if r.appendTurnID != 0 && r.appendTurnID != turnID {
 		if err := r.flushAppend(ctx); err != nil {
 			return err
 		}
 	}
 	r.appendTurnID = turnID
+	r.appendParticipant = participant
 	r.appendBuffer = r.resampler.Append(r.appendBuffer, samples)
 	for len(r.appendBuffer) >= realtimeAppendBytes {
 		chunk := append([]byte(nil), r.appendBuffer[:realtimeAppendBytes]...)
 		copy(r.appendBuffer, r.appendBuffer[realtimeAppendBytes:])
 		r.appendBuffer = r.appendBuffer[:len(r.appendBuffer)-realtimeAppendBytes]
-		if err := r.sendCommand(ctx, realtimeCommand{kind: commandAudio, turnID: turnID, pcm: chunk}); err != nil {
+		if err := r.sendCommand(ctx, realtimeCommand{
+			kind:   commandAudio,
+			turnID: turnID,
+			pcm:    chunk,
+			meta: turnMetadata{
+				participant: participant,
+				utterance:   turnID,
+			},
+		}); err != nil {
 			return err
 		}
 	}
@@ -309,9 +320,16 @@ func (r *Realtime) flushAppend(ctx context.Context) error {
 	}
 	chunk := append([]byte(nil), r.appendBuffer...)
 	turnID := r.appendTurnID
+	participant := r.appendParticipant
 	r.appendBuffer = r.appendBuffer[:0]
 	r.appendTurnID = 0
-	return r.sendCommand(ctx, realtimeCommand{kind: commandAudio, turnID: turnID, pcm: chunk})
+	r.appendParticipant = stt.Participant{}
+	return r.sendCommand(ctx, realtimeCommand{
+		kind:   commandAudio,
+		turnID: turnID,
+		pcm:    chunk,
+		meta:   turnMetadata{participant: participant, utterance: turnID},
+	})
 }
 
 func (r *Realtime) sendCommand(ctx context.Context, command realtimeCommand) error {
@@ -516,8 +534,13 @@ func (s *realtimeSession) command(command realtimeCommand) error {
 	case commandAudio:
 		turn := findRealtimeTurn(s.order, command.turnID)
 		if turn == nil {
-			turn = &realtimeTurn{turnMetadata: turnMetadata{utterance: command.turnID}}
+			turn = &realtimeTurn{turnMetadata: command.meta}
 			s.order = append(s.order, turn)
+		} else {
+			if turn.participant != (stt.Participant{}) && turn.participant != command.meta.participant {
+				return errors.New("openai-compatible: realtime audio participant changed within an utterance")
+			}
+			turn.participant = command.meta.participant
 		}
 		turn.audio = append(turn.audio, command.pcm)
 		s.buffered += len(command.pcm)
@@ -530,6 +553,9 @@ func (s *realtimeSession) command(command realtimeCommand) error {
 			turn = &realtimeTurn{turnMetadata: command.meta}
 			s.order = append(s.order, turn)
 		} else {
+			if turn.participant != (stt.Participant{}) && turn.participant != command.meta.participant {
+				return errors.New("openai-compatible: realtime commit participant did not match audio")
+			}
 			turn.turnMetadata = command.meta
 		}
 		turn.ended = true
@@ -543,18 +569,49 @@ func (s *realtimeSession) event(event realtimeEvent) error {
 	switch event.Type {
 	case "session.updated", "input_audio_buffer.speech_started":
 		return nil
+	case "conversation.item.input_audio_transcription.delta":
+		if event.ContentIndex != 0 || event.ItemID == "" {
+			return errors.New("openai-compatible: realtime transcript delta has an invalid item or content index")
+		}
+		turn := s.inFlight
+		if turn == nil && len(s.order) > 0 {
+			turn = s.order[0]
+		}
+		if turn == nil {
+			return errors.New("openai-compatible: realtime transcript delta has no active audio turn")
+		}
+		if turn.itemID != "" && turn.itemID != event.ItemID {
+			return errors.New("openai-compatible: realtime transcript delta did not match the active audio item")
+		}
+		turn.itemID = event.ItemID
+		if event.Delta == "" {
+			return nil
+		}
+		turn.hadDelta = true
+		s.provider.emitter.Send(stt.Transcript{
+			Participant: turn.participant,
+			Mode:        stt.ModeDelta,
+			Utterance:   turn.utterance,
+			Text:        event.Delta,
+			Provider:    ProviderName,
+			Model:       s.provider.model,
+		})
+		return nil
 	case "input_audio_buffer.committed":
-		if s.inFlight == nil || event.ItemID == "" {
+		if s.inFlight == nil || event.ItemID == "" ||
+			(s.inFlight.itemID != "" && s.inFlight.itemID != event.ItemID) {
 			return errors.New("openai-compatible: realtime commit acknowledgement had no active item")
 		}
 		s.inFlight.itemID = event.ItemID
 		return nil
 	case "conversation.item.input_audio_transcription.completed":
 		turn := s.inFlight
-		if turn == nil || (turn.itemID != "" && event.ItemID != turn.itemID) {
+		if turn == nil || event.ItemID == "" || event.ContentIndex != 0 ||
+			(turn.itemID != "" && event.ItemID != turn.itemID) {
 			return errors.New("openai-compatible: realtime transcript did not match the active audio item")
 		}
-		if text := strings.TrimSpace(event.Transcript); text != "" {
+		turn.itemID = event.ItemID
+		if text := strings.TrimSpace(event.Transcript); text != "" || turn.hadDelta {
 			s.provider.emitter.Send(stt.Transcript{
 				Participant:      turn.participant,
 				Mode:             stt.ModeFinal,

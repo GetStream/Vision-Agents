@@ -52,12 +52,17 @@ type realtimeSessionUpdate struct {
 type realtimeFake struct {
 	server *httptest.Server
 
-	mu          sync.Mutex
-	busy        bool
-	holdFirst   bool
-	release     chan struct{}
-	firstCommit chan struct{}
-	captures    chan realtimeCapture
+	mu                sync.Mutex
+	busy              bool
+	holdFirst         bool
+	delta             string
+	postCommitDelta   string
+	deltaContentIndex int
+	mismatchCommitID  bool
+	emptyFinal        bool
+	release           chan struct{}
+	firstCommit       chan struct{}
+	captures          chan realtimeCapture
 }
 
 type RealtimeSocketSuite struct {
@@ -81,6 +86,11 @@ func (f *realtimeFake) reset() {
 	f.mu.Lock()
 	f.busy = false
 	f.holdFirst = false
+	f.delta = ""
+	f.postCommitDelta = ""
+	f.deltaContentIndex = 0
+	f.mismatchCommitID = false
+	f.emptyFinal = false
 	f.release = make(chan struct{})
 	f.firstCommit = make(chan struct{})
 	f.captures = make(chan realtimeCapture, 1)
@@ -90,6 +100,9 @@ func (f *realtimeFake) reset() {
 func (f *realtimeFake) serve(w http.ResponseWriter, request *http.Request) {
 	f.mu.Lock()
 	busy, holdFirst, release := f.busy, f.holdFirst, f.release
+	delta, postCommitDelta := f.delta, f.postCommitDelta
+	deltaContentIndex, mismatchCommitID := f.deltaContentIndex, f.mismatchCommitID
+	emptyFinal := f.emptyFinal
 	captures, firstCommit := f.captures, f.firstCommit
 	f.mu.Unlock()
 
@@ -126,6 +139,7 @@ func (f *realtimeFake) serve(w http.ResponseWriter, request *http.Request) {
 	}
 
 	var pendingAudio []byte
+	deltaSent := false
 	for {
 		_, raw, err = conn.ReadMessage()
 		if err != nil {
@@ -152,15 +166,39 @@ func (f *realtimeFake) serve(w http.ResponseWriter, request *http.Request) {
 			}
 			capture.audio = append(capture.audio, chunk...)
 			pendingAudio = append(pendingAudio, chunk...)
+			if delta != "" && !deltaSent {
+				deltaSent = true
+				err = conn.WriteJSON(map[string]any{
+					"type":          "conversation.item.input_audio_transcription.delta",
+					"item_id":       fmt.Sprintf("item-%d", capture.commits+1),
+					"content_index": deltaContentIndex,
+					"delta":         delta,
+				})
+				if err != nil {
+					capture.serverErr = err
+					return
+				}
+			}
 		case "input_audio_buffer.commit":
 			capture.commits++
 			capture.turns = append(capture.turns, pendingAudio)
 			pendingAudio = nil
 			itemID := fmt.Sprintf("item-%d", capture.commits)
+			if mismatchCommitID {
+				itemID += "-different"
+			}
 			if busy {
 				err = conn.WriteJSON(map[string]any{"type": "error", "error": map[string]string{"code": "server_busy"}})
 			} else {
 				err = conn.WriteJSON(map[string]string{"type": "input_audio_buffer.committed", "item_id": itemID})
+				if err == nil && postCommitDelta != "" {
+					err = conn.WriteJSON(map[string]any{
+						"type":          "conversation.item.input_audio_transcription.delta",
+						"item_id":       itemID,
+						"content_index": 0,
+						"delta":         postCommitDelta,
+					})
+				}
 				if capture.commits == 1 {
 					close(firstCommit)
 					if holdFirst {
@@ -168,12 +206,17 @@ func (f *realtimeFake) serve(w http.ResponseWriter, request *http.Request) {
 					}
 				}
 				if err == nil {
+					transcript := fmt.Sprintf("turn-%d", capture.commits)
+					if emptyFinal {
+						transcript = ""
+					}
 					err = conn.WriteJSON(map[string]string{
 						"type":    "conversation.item.input_audio_transcription.completed",
-						"item_id": itemID, "transcript": fmt.Sprintf("turn-%d", capture.commits),
+						"item_id": itemID, "transcript": transcript,
 					})
 				}
 			}
+			deltaSent = false
 			if err != nil {
 				capture.serverErr = err
 				return
@@ -246,6 +289,48 @@ func (s *RealtimeSocketSuite) final(provider *Realtime) stt.Transcript {
 	}
 }
 
+func (s *RealtimeSocketSuite) transcript(provider *Realtime, mode stt.Mode) stt.Transcript {
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, open := <-provider.Events():
+			if !open {
+				s.FailNow("the session closed before the expected transcript revision")
+				return stt.Transcript{}
+			}
+			if failure, ok := event.(stt.Error); ok {
+				s.FailNow("the session reported an error before the expected transcript revision: " + failure.Error())
+				return stt.Transcript{}
+			}
+			if transcript, ok := event.(stt.Transcript); ok && transcript.Mode == mode {
+				return transcript
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for the expected transcript revision")
+			return stt.Transcript{}
+		}
+	}
+}
+
+func (s *RealtimeSocketSuite) failure(provider *Realtime) stt.Error {
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, open := <-provider.Events():
+			if !open {
+				s.FailNow("the session closed before reporting an error")
+				return stt.Error{}
+			}
+			if failure, ok := event.(stt.Error); ok {
+				return failure
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for a session error")
+			return stt.Error{}
+		}
+	}
+}
+
 func (s *RealtimeSocketSuite) TestTheOpenSessionCommitsAllAudioAndAttributesItsTranscript() {
 	provider := s.connect()
 	participant := stt.Participant{ID: "speaker-a", UserID: "user-a", Name: "A"}
@@ -284,6 +369,110 @@ func (s *RealtimeSocketSuite) TestTheOpenSessionCommitsAllAudioAndAttributesItsT
 	s.Equal(int16(100), int16(binary.LittleEndian.Uint16(capture.audio[:2])), "the quiet pre-roll should preserve a soft onset")
 }
 
+func (s *RealtimeSocketSuite) TestDeltasKeepTheirSpacesAndFinalTextReconcilesTheTurn() {
+	s.fake.mu.Lock()
+	s.fake.delta = " hello "
+	s.fake.postCommitDelta = "world"
+	s.fake.mu.Unlock()
+
+	provider := s.connect()
+	participant := stt.Participant{ID: "speaker-a", UserID: "user-a", Name: "A"}
+	speech := make([]int16, stt.SampleRate*1200/1000)
+	for i := range speech {
+		speech[i] = 2000
+	}
+	s.process(provider, speech, participant)
+
+	partial := s.transcript(provider, stt.ModeDelta)
+	s.Equal(" hello ", partial.Text)
+	s.Equal(participant, partial.Participant)
+	s.Equal(int64(1), partial.Utterance)
+
+	s.process(provider, make([]int16, stt.SampleRate*600/1000), participant)
+	postCommit := s.transcript(provider, stt.ModeDelta)
+	s.Equal("world", postCommit.Text)
+	s.Equal(participant, postCommit.Participant)
+	s.Equal(partial.Utterance, postCommit.Utterance)
+
+	final := s.final(provider)
+	s.Equal(stt.ModeFinal, final.Mode)
+	s.Equal("turn-1", final.Text)
+	s.Equal(participant, final.Participant)
+	s.Equal(partial.Utterance, final.Utterance)
+	s.NoError(provider.Close())
+	capture := s.capture()
+	s.NoError(capture.serverErr)
+	s.Equal(1, capture.commits)
+}
+
+func (s *RealtimeSocketSuite) TestAnEmptyFinalClearsAPreviouslyPublishedDelta() {
+	s.fake.mu.Lock()
+	s.fake.delta = "speculative words"
+	s.fake.emptyFinal = true
+	s.fake.mu.Unlock()
+
+	provider := s.connect()
+	participant := stt.Participant{ID: "speaker-a"}
+	speech := make([]int16, stt.SampleRate*1200/1000)
+	for i := range speech {
+		speech[i] = 2000
+	}
+	s.process(provider, speech, participant)
+	partial := s.transcript(provider, stt.ModeDelta)
+	s.Equal("speculative words", partial.Text)
+
+	s.process(provider, make([]int16, stt.SampleRate*600/1000), participant)
+	final := s.final(provider)
+	s.Empty(final.Text)
+	s.Equal(stt.ModeFinal, final.Mode)
+	s.Equal(partial.Utterance, final.Utterance)
+	s.NoError(provider.Close())
+	_ = s.capture()
+}
+
+func (s *RealtimeSocketSuite) TestACommitMustKeepTheProvisionalDeltaItemID() {
+	s.fake.mu.Lock()
+	s.fake.delta = "hello"
+	s.fake.mismatchCommitID = true
+	s.fake.mu.Unlock()
+
+	provider := s.connect()
+	participant := stt.Participant{ID: "speaker-a"}
+	speech := make([]int16, stt.SampleRate*1200/1000)
+	for i := range speech {
+		speech[i] = 2000
+	}
+	s.process(provider, speech, participant)
+	_ = s.transcript(provider, stt.ModeDelta)
+	s.process(provider, make([]int16, stt.SampleRate*600/1000), participant)
+
+	failure := s.failure(provider)
+	s.True(failure.Fatal)
+	s.Contains(failure.Error(), "commit acknowledgement")
+	_ = provider.Close()
+	_ = s.capture()
+}
+
+func (s *RealtimeSocketSuite) TestAReatimeDeltaRejectsAnUnsupportedContentIndex() {
+	s.fake.mu.Lock()
+	s.fake.delta = "hello"
+	s.fake.deltaContentIndex = 1
+	s.fake.mu.Unlock()
+
+	provider := s.connect()
+	participant := stt.Participant{ID: "speaker-a"}
+	speech := make([]int16, stt.SampleRate*1200/1000)
+	for i := range speech {
+		speech[i] = 2000
+	}
+	s.process(provider, speech, participant)
+	failure := s.failure(provider)
+	s.True(failure.Fatal)
+	s.Contains(failure.Error(), "content index")
+	_ = provider.Close()
+	_ = s.capture()
+}
+
 func (s *RealtimeSocketSuite) TestCloseCommitsTheUnfinishedTail() {
 	provider := s.connect()
 	participant := stt.Participant{ID: "speaker-a"}
@@ -306,6 +495,7 @@ func (s *RealtimeSocketSuite) TestCloseCommitsTheUnfinishedTail() {
 func (s *RealtimeSocketSuite) TestASecondTurnWaitsForTheFirstAndKeepsItsParticipant() {
 	s.fake.mu.Lock()
 	s.fake.holdFirst = true
+	s.fake.delta = "partial"
 	s.fake.mu.Unlock()
 	provider := s.connect()
 	firstParticipant := stt.Participant{ID: "speaker-a"}
@@ -335,15 +525,24 @@ func (s *RealtimeSocketSuite) TestASecondTurnWaitsForTheFirstAndKeepsItsParticip
 	}
 
 	var transcripts []stt.Transcript
+	var partials []stt.Transcript
 	for event := range provider.Events() {
-		if transcript, ok := event.(stt.Transcript); ok && transcript.Final() {
-			transcripts = append(transcripts, transcript)
+		if transcript, ok := event.(stt.Transcript); ok {
+			if transcript.Final() {
+				transcripts = append(transcripts, transcript)
+			} else if transcript.Mode == stt.ModeDelta {
+				partials = append(partials, transcript)
+			}
 		}
 	}
 	s.Require().Len(transcripts, 2)
+	s.Require().Len(partials, 2)
 	s.Equal([]string{"turn-1", "turn-2"}, []string{transcripts[0].Text, transcripts[1].Text})
 	s.Equal([]stt.Participant{firstParticipant, secondParticipant}, []stt.Participant{
 		transcripts[0].Participant, transcripts[1].Participant,
+	})
+	s.Equal([]stt.Participant{firstParticipant, secondParticipant}, []stt.Participant{
+		partials[0].Participant, partials[1].Participant,
 	})
 	s.Equal([]int64{1, 2}, []int64{transcripts[0].Utterance, transcripts[1].Utterance})
 	capture := s.capture()

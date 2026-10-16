@@ -472,8 +472,9 @@ stt:
 ```
 
 Live sessions use the endpoint's OpenAI-compatible transcription WebSocket. Audio is sent as
-mono PCM16 at 24 kHz, turns end after 600 ms of silence or when the session closes, and only
-final transcripts are emitted. The model remains batch-only unless `realtime: true` is set;
+mono PCM16 at 24 kHz, and turns end after 600 ms of silence or when the session closes.
+The adapter forwards partial transcript deltas when the server provides them, followed by
+the complete final transcript. Final-only servers also work. The model remains batch-only unless `realtime: true` is set;
 the `und` language sentinel still keeps it out of language-based shortcuts.
 
 Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
