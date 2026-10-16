@@ -167,6 +167,17 @@ func (s *RecordingsSuite) TestARecordingPinnedToABatchModelIsServedByThatModel()
 	s.Equal("stub-batch", value(transcript.Model))
 }
 
+func (s *RecordingsSuite) TestARecordingInAnotherLanguageWithNoTargetGoesToTheMultilingualRecordedShortcut() {
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings", map[string]any{
+		"inline": true, "source": map[string]any{"audio": "YXVkaW8="},
+		"options": map[string]any{"languages": []string{"es"}},
+	}, &transcript))
+
+	s.Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
+	s.Equal("stub-batch-es", value(transcript.Model))
+}
+
 func (s *RecordingsSuite) TestNobodyIsCalledBackAboutSomethingAnsweredInline() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
 		map[string]any{"inline": true, "text": "hello", "callback": "https://example.test/done"})
