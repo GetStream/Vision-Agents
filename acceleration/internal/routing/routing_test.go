@@ -203,6 +203,31 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresTheSameShortcutsForEveryModality
 	}
 }
 
+func (s *RoutingSuite) TestARecordingToALiveShortcutGoesToTheRecordedOneForItsLanguages() {
+	config := s.config()
+	config.Aliases["en-recorded"] = Alias{Languages: []string{"en"}, RequireRecorded: true}
+	config.Aliases["multilingual-recorded"] = Alias{Multilingual: true, RequireRecorded: true}
+
+	english, err := config.Recorded("en-low-latency")
+	s.Require().NoError(err)
+	s.Equal("en-recorded", english)
+	multilingual, err := config.Recorded("multilingual-low-latency")
+	s.Require().NoError(err)
+	s.Equal("multilingual-recorded", multilingual)
+}
+
+func (s *RoutingSuite) TestARecordingToAShortcutThatIsNotLiveOnlyStaysWhereItWasSent() {
+	// en-high-accuracy takes either half here, so the batch model is already among its own.
+	target, err := s.config().Recorded("en-high-accuracy")
+	s.Require().NoError(err)
+	s.Equal("en-high-accuracy", target)
+}
+
+func (s *RoutingSuite) TestARecordingToALiveShortcutInAConfigWithNoRecordedOneAsksForABatchModel() {
+	_, err := s.config().Recorded("en-low-latency")
+	s.ErrorContains(err, "name a batch model")
+}
+
 func (s *RoutingSuite) TestOfferedShortcutsAreTheTitledOnesInTheOrderWritten() {
 	config, err := parseConfig([]byte(`
 llm:

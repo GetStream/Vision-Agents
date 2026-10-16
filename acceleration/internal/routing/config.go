@@ -432,6 +432,33 @@ func (c ModalityConfig) Names(target string) bool {
 	return c.Declares(target)
 }
 
+// Recorded is the target a whole recording sent to target goes to. A live-only shortcut
+// holds streaming models, which a vendor's batch endpoint refuses, so a recording sent to
+// one goes to the recorded shortcut for the same languages. Any other target is its own
+// answer.
+func (c ModalityConfig) Recorded(target string) (string, error) {
+	live, ok := c.Aliases[target]
+	if !ok || !live.RequireRealtime {
+		return target, nil
+	}
+	var recorded []string
+	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {
+		alias := c.Aliases[name]
+		if !alias.RequireRecorded {
+			continue
+		}
+		if alias.Multilingual == live.Multilingual && slices.Equal(alias.Languages, live.Languages) {
+			return name, nil
+		}
+		recorded = append(recorded, name)
+	}
+	if len(recorded) == 0 {
+		return "", stack.Wrap(fmt.Errorf("routing: %s is a shortcut for live calls; name a batch model for a recording", target))
+	}
+	return "", stack.Wrap(fmt.Errorf("routing: %s is a shortcut for live calls; send a recording to %s, or name a batch model",
+		target, strings.Join(recorded, " or ")))
+}
+
 // Meets reports whether any model here could serve a request asking for that data policy.
 // A policy nothing meets is worth refusing when it is written down, since every request
 // made under it afterwards would be refused anyway.
