@@ -31,6 +31,10 @@ func (s *MetaSuite) TestRejectsMissingCredentialsAndUnverifiedModels() {
 	s.False(provider.Capabilities().StreamsReasoning)
 	_, err = New(Options{Model: "muse-spark-1.3-contributor"})
 	s.ErrorContains(err, "unsupported model")
+	wonder, err := New(Options{Model: WonderModel})
+	s.Require().NoError(err)
+	defer wonder.Close()
+	s.Equal(WonderModel, wonder.Model())
 	_, err = New(Options{ReasoningEffort: "none"})
 	s.ErrorContains(err, "reasoning effort")
 }
@@ -51,37 +55,39 @@ func (s *MetaSuite) TestUnsupportedToolChoicesAndEffortsFailBeforeNetworkAccess(
 }
 
 func (s *MetaSuite) TestExplicitAndDefaultEffortUseTheMetaWireProtocol() {
-	for _, effort := range []string{"", "minimal", "high", "max"} {
-		s.Run(effort, func() {
-			wanted := effort
-			if wanted == "" {
-				wanted = "low"
-			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var request struct {
-					Model           string `json:"model"`
-					ReasoningEffort string `json:"reasoning_effort"`
-					Stream          bool   `json:"stream"`
+	for _, model := range []string{DefaultModel, WonderModel} {
+		for _, effort := range []string{"", "minimal", "high", "max"} {
+			s.Run(model+"/"+effort, func() {
+				wanted := effort
+				if wanted == "" {
+					wanted = "low"
 				}
-				if json.NewDecoder(r.Body).Decode(&request) != nil || request.Model != DefaultModel || request.ReasoningEffort != wanted || !request.Stream || r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer test" {
-					http.Error(w, "invalid Meta request", http.StatusBadRequest)
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprint(w, "data: {\"id\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello Athena\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			defer server.Close()
-			provider, err := New(Options{APIKey: "test", BaseURL: server.URL + "/v1"})
-			s.Require().NoError(err)
-			defer provider.Close()
-			stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
-				Input:     []llm.Message{{Role: llm.User, Content: "hello"}},
-				Reasoning: llm.ReasoningParams{Effort: effort},
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var request struct {
+						Model           string `json:"model"`
+						ReasoningEffort string `json:"reasoning_effort"`
+						Stream          bool   `json:"stream"`
+					}
+					if json.NewDecoder(r.Body).Decode(&request) != nil || request.Model != model || request.ReasoningEffort != wanted || !request.Stream || r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer test" {
+						http.Error(w, "invalid Meta request", http.StatusBadRequest)
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: {\"id\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello Athena\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				}))
+				defer server.Close()
+				provider, err := New(Options{APIKey: "test", Model: model, BaseURL: server.URL + "/v1"})
+				s.Require().NoError(err)
+				defer provider.Close()
+				stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+					Input:     []llm.Message{{Role: llm.User, Content: "hello"}},
+					Reasoning: llm.ReasoningParams{Effort: effort},
+				})
+				s.Require().NoError(err)
+				response, err := llm.Collect(stream)
+				s.Require().NoError(err)
+				s.Equal("Hello Athena", response.OutputText)
 			})
-			s.Require().NoError(err)
-			response, err := llm.Collect(stream)
-			s.Require().NoError(err)
-			s.Equal("Hello Athena", response.OutputText)
-		})
+		}
 	}
 }

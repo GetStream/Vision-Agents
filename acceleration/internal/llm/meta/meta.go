@@ -1,4 +1,4 @@
-// Package meta serves Muse Spark through Meta's hosted Model API.
+// Package meta serves Muse Spark and Muse Wonder through Meta's hosted Model API.
 package meta
 
 import (
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -15,6 +16,7 @@ import (
 
 const ProviderName = "meta"
 const DefaultModel = "muse-spark-1.3"
+const WonderModel = "muse-wonder-1.0"
 const apiKeyEnvVar = "META_API_KEY"
 const defaultBaseURL = "https://api.meta.ai/v1"
 
@@ -41,7 +43,7 @@ func New(options Options) (*LLM, error) {
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
-	if options.Model != DefaultModel {
+	if !slices.Contains([]string{DefaultModel, WonderModel}, options.Model) {
 		return nil, stack.Wrap(fmt.Errorf("meta: unsupported model %q", options.Model))
 	}
 	if options.BaseURL == "" {
@@ -51,7 +53,8 @@ func New(options Options) (*LLM, error) {
 		options.ReasoningEffort = "low"
 	}
 	capabilities := llm.Capabilities{
-		// max is Standard-tier 1.3 only; the contributor models answer it with a 400.
+		// max is Standard-tier only; the contributor models answer it with a 400. On Wonder it
+		// does not select Wonder Full, which the Model API does not serve.
 		ReasoningEfforts: []string{"minimal", "low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    options.ReasoningEffort,
 		InputModalities:  []string{llm.ModalityImage},
