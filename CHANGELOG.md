@@ -2281,6 +2281,7 @@ Asked for no voice, Gemini picks one on every request, and the router sends it o
 The component metadata added in #618 was merged *under* the existing `agent_user.custom`, so a pre-set `custom` won and the provider/model fields never reached the edge. Component metadata now takes precedence, and keys that don't describe a configured component are unset on the stored user, so a previous run's `tts`/`avatar`/... values are cleared instead of lingering. `StreamEdge` maps a `None` custom field to the partial-update `unset` list rather than writing a literal null.
 
 - Hosted demo links carry the agent's call type and transcript channel type, so a browser joins the same call and chat channel.
+- Closing an acceleration harness flow prevents later decisions from reaching its closed model sessions, and cancelling a turn safely handles a stream returned at the same time.
 - ElevenLabs reconnects for a new synthesis after a WebSocket disconnect; socket-loss and interrupted synthesis IDs stay terminal.
 
 # v0.6.9
