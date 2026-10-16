@@ -103,10 +103,11 @@ func (s *ToolsetSuite) hasMCPSource(id string) bool {
 // a client that sends a token from the fake's client credentials grant.
 func (s *ToolsetSuite) binding(srv *fakeprovider.Server, id string) core.ResolvedBinding {
 	manifest := s.manifest(id)
-	var inputs map[string]string
-	if id == "shopify" {
-		inputs = map[string]string{"shop": "mystore.myshopify.com"}
-	}
+	// The built-ins whose endpoints take an input, each with a value its pattern accepts.
+	inputs := map[string]map[string]string{
+		"shopify":  {"shop": "mystore.myshopify.com"},
+		"metabase": {"host": "metabase.example.com"},
+	}[id]
 	resolved, err := manifest.Resolve(manifest.Schemes[0], inputs, nil)
 	s.Require().NoError(err, id)
 	rule := resolved.Sources[slices.IndexFunc(resolved.Sources, func(rule core.SourceRule) bool { return rule.Kind == mcp.Kind })]
