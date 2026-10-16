@@ -50,7 +50,7 @@ func (s *STSRouterIntegrationSuite) TestATypedTurnIsAnsweredThroughTheRouter() {
 
 	session, err := s.router.Start(ctx, Request{
 		CustomerID: "integration",
-		Target:     "openai/gpt-realtime-2",
+		Target:     "openai/gpt-realtime-2.1",
 		Options: options.STS{
 			Instructions:     "Answer in one short sentence.",
 			Text:             &on,

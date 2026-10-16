@@ -549,5 +549,5 @@ func (s *STSRouterSuite) TestABackendModelOverwriteReachesOpenAIsLiveModelPastTh
 	s.T().Cleanup(func() { _ = session.Close() })
 
 	s.Equal("gpt-live-1", session.Model())
-	s.Equal([]string{"openai/gpt-realtime-2", "openai/gpt-live-1"}, built)
+	s.Equal([]string{"openai/gpt-realtime-2.1", "openai/gpt-realtime-2", "openai/gpt-live-1"}, built)
 }
