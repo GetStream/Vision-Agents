@@ -134,6 +134,14 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 			"agent", a.options.Name, "connector", connection.name, "connection", connection.token)
 	}
 	if len(missing) > 0 {
+		// Sent so the router stores them and the dashboard can say what the agent is missing.
+		leftOut := make([]acceleration.LeftOutConnector, 0, len(missing))
+		for _, connection := range missing {
+			leftOut = append(leftOut, acceleration.LeftOutConnector{
+				Name: connection.name, ConnectorId: connection.connectorID, Connection: connection.token,
+			})
+		}
+		body.LeftOutConnectors = &leftOut
 		// Another hash for a sync that left a connector out, sent and stamped: the router does
 		// nothing for a hash it already stored, and the sync that finds the connection must not
 		// be taken for this one.
@@ -353,8 +361,12 @@ func connectorBindings(ctx context.Context, client *acceleration.ClientWithRespo
 }
 
 // missingConnection is a connection an agent.yaml entry names that the app does not have.
+//
+// The sync's hash prints a list of them, which formats each through Error, so a field that
+// Error leaves out does not change the hash.
 type missingConnection struct {
 	name, token string
+	connectorID string
 }
 
 func (m missingConnection) Error() string {
@@ -415,7 +427,7 @@ func fixedConnection(ctx context.Context, client *acceleration.ClientWithRespons
 	case 1:
 		return labels[0], nil
 	case 0:
-		return "", missingConnection{name: name, token: token}
+		return "", missingConnection{name: name, token: token, connectorID: connectorID}
 	default:
 		return "", fmt.Errorf("agents: connector %q: %q matches %d app connections", name, token, len(labels))
 	}

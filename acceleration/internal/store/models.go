@@ -359,6 +359,10 @@ type AgentConfig struct {
 	Plugins []PluginEntry `bun:"plugins,type:jsonb"`
 	// Connectors are the connectors this agent may call tools of, each under an alias.
 	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
+	// LeftOutConnectors are the connectors agent.yaml named that the last sync left out of
+	// Connectors, because the app has no connection by the id or label they name. Only a
+	// sync writes them, as the SDK sent them; nothing reads them but the API.
+	LeftOutConnectors []LeftOutConnector `bun:"left_out_connectors,type:jsonb"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a conversation of its own when it arrives.
 	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
@@ -468,6 +472,16 @@ type BindingEvent struct {
 	Arguments map[string]any `json:"arguments,omitempty"`
 	// Instructions say what the agent does with the event when it arrives.
 	Instructions string `json:"instructions,omitempty"`
+}
+
+// LeftOutConnector is one connector a sync left out, as it is stored in
+// agent_configs.left_out_connectors.
+type LeftOutConnector struct {
+	// Name is the alias agent.yaml gave it.
+	Name        string `json:"name"`
+	ConnectorID string `json:"connector_id"`
+	// Connection is the id or label agent.yaml named, which no app connection has.
+	Connection string `json:"connection"`
 }
 
 // ConnectionBinding selects the connection a binding's tools are called through: "fixed",

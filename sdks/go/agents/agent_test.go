@@ -1099,6 +1099,29 @@ func TestSyncLeavesOutAConnectorWhoseConnectionIsMissing(t *testing.T) {
 	}
 }
 
+// The router is told what was left out, so it can show it. The rest of the body, the hash
+// above all, is what 7f4c3e16 sent for the same directory, before the list was sent.
+func TestSyncSendsTheConnectorsItLeftOut(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: company\n  - name: code\n    connector: github\n    connection: team\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	const want = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"87c8a2808cd085a316aa2942c6b827a8",` +
+		`"left_out_connectors":[{"connection":"company","connector_id":"issues","name":"issues"},{"connection":"team","connector_id":"github","name":"code"}],"name":"concierge"}`
+	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != want {
+		t.Errorf("body = %s", router.syncRaw)
+	}
+}
+
 // Two entries left out: each is warned about, and the hash covers both, so finding one of the
 // connections later still changes it.
 func TestSyncOfTwoMissingConnectionsWarnsOfBothAndAddsOneOnceItExists(t *testing.T) {

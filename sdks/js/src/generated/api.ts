@@ -3843,6 +3843,8 @@ export type components = {
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
+            /** @description The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none. */
+            readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode: components["schemas"]["AgentMode"];
@@ -6161,6 +6163,15 @@ export type components = {
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
+        /** @description A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names. */
+        readonly LeftOutConnector: {
+            /** @description The connection id or label agent.yaml named, which no connection of the app has. */
+            readonly connection: string;
+            /** @description The connector agent.yaml named, or the alias when it named none. */
+            readonly connector_id: string;
+            /** @description The alias agent.yaml gave the connector. */
+            readonly name: string;
+        };
         /** @description One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it. */
         readonly LibraryVoice: {
             readonly accent?: string;
@@ -7774,6 +7785,8 @@ export type components = {
             readonly knowledge?: readonly components["schemas"]["KnowledgeDocument"][];
             /** @description The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both. */
             readonly knowledge_urls?: readonly components["schemas"]["KnowledgeUrlDeclaration"][];
+            /** @description The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. Read only alongside connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that leaves connectors out leaves them alone. At most 64, as connectors. */
+            readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
             /** @description MCP servers outside the plugin catalog, opened by their URL with no login. */
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];

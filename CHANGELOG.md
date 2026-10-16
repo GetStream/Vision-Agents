@@ -622,6 +622,18 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### An agent config says which agent.yaml connectors its last sync left out
+
+A sync (`POST /v1/agents/sync`) takes `left_out_connectors`: the agent.yaml connectors the
+client left out of `connectors` because the app has no connection by the id or label they
+name, each as `{name, connector_id, connection}`. The router stores them as sent and serves
+them, read-only, as `left_out_connectors` on the agent config (GET, list and the sync's
+answer), so the dashboard can say what the agent is missing. They are read only alongside
+`connectors`: a sync that sends `connectors` replaces them, and one that leaves `connectors`
+out leaves them alone. A save or a patch of the config keeps them. The Go SDK's `Agent.Sync`
+sends them, beside the warning it already logs. A config with none left out answers as it
+did (AI-1371).
+
 ### ElevenLabs style exaggeration through the `elevenlabs` overwrite
 
 A voice's options take ElevenLabs' style exaggeration as `{"elevenlabs": {"voice_settings": {"style": 0.4}}}` in `overwrites`, on `/v1/tts/stream` and on `/v1/tts/recordings`. It is a number from 0 to 1, and not the shared `style`, which is a word to sound like. Flash v2.5 and Multilingual v2 send it when each context opens. The v3 and v4 models have no style, so they refuse it with the overwrite error, and the router then tries only ElevenLabs' other models: `en-low-latency` is spoken by Flash, and `tts-quality` and the recording voice (`eleven_v3`) refuse the request. A value outside 0 to 1 is refused too. A request with no style sends what it did before (AI-1367).

@@ -18,35 +18,36 @@ import (
 
 // SyncAgentRequest is an agent directory as it is on disk.
 type SyncAgentRequest struct {
-	Name          string                     `json:"name" doc:"What the config is called, which is also the directory's name."`
-	Hash          string                     `json:"hash" doc:"A fingerprint of the directory. A second sync with the same hash does nothing."`
-	CheckChanges  *bool                      `json:"check_changes,omitempty" doc:"Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants."`
-	BaseChange    *string                    `json:"base_change,omitempty" doc:"The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again."`
-	Instructions  *string                    `json:"instructions,omitempty"`
-	Guardrail     *string                    `json:"guardrail,omitempty" doc:"The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered."`
-	Skills        *[]SkillRequest            `json:"skills,omitempty"`
-	Knowledge     *[]KnowledgeDocument       `json:"knowledge,omitempty"`
-	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty" doc:"The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both."`
-	Simulations   *[]SimulationDeclaration   `json:"simulations,omitempty" doc:"The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone."`
-	Mode          *AgentMode                 `json:"mode,omitempty"`
-	Stt           *string                    `json:"stt,omitempty"`
-	Tts           *string                    `json:"tts,omitempty"`
-	Sts           *string                    `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
-	Voice         *string                    `json:"voice,omitempty"`
-	Llm           *string                    `json:"llm,omitempty"`
-	Video         *SessionVideo              `json:"video,omitempty"`
-	Subagent      *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
-	Search        *string                    `json:"search,omitempty"`
-	Greeting      *Greeting                  `json:"greeting,omitempty"`
-	Plugins       *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it."`
-	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
-	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
-	Channels      *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
-	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
-	Keyterms      *[]string                  `json:"keyterms,omitempty"`
-	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
-	Harness       *Harness                   `json:"harness,omitempty"`
-	Dispatch      *AgentDispatch             `json:"dispatch,omitempty"`
+	Name              string                     `json:"name" doc:"What the config is called, which is also the directory's name."`
+	Hash              string                     `json:"hash" doc:"A fingerprint of the directory. A second sync with the same hash does nothing."`
+	CheckChanges      *bool                      `json:"check_changes,omitempty" doc:"Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants."`
+	BaseChange        *string                    `json:"base_change,omitempty" doc:"The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again."`
+	Instructions      *string                    `json:"instructions,omitempty"`
+	Guardrail         *string                    `json:"guardrail,omitempty" doc:"The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered."`
+	Skills            *[]SkillRequest            `json:"skills,omitempty"`
+	Knowledge         *[]KnowledgeDocument       `json:"knowledge,omitempty"`
+	KnowledgeUrls     *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty" doc:"The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both."`
+	Simulations       *[]SimulationDeclaration   `json:"simulations,omitempty" doc:"The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone."`
+	Mode              *AgentMode                 `json:"mode,omitempty"`
+	Stt               *string                    `json:"stt,omitempty"`
+	Tts               *string                    `json:"tts,omitempty"`
+	Sts               *string                    `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
+	Voice             *string                    `json:"voice,omitempty"`
+	Llm               *string                    `json:"llm,omitempty"`
+	Video             *SessionVideo              `json:"video,omitempty"`
+	Subagent          *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
+	Search            *string                    `json:"search,omitempty"`
+	Greeting          *Greeting                  `json:"greeting,omitempty"`
+	Plugins           *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it."`
+	PluginEvents      *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
+	McpServers        *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
+	Channels          *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
+	Connectors        *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
+	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. Read only alongside connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that leaves connectors out leaves them alone. At most 64, as connectors."`
+	Keyterms          *[]string                  `json:"keyterms,omitempty"`
+	Sandbox           *Sandbox                   `json:"sandbox,omitempty"`
+	Harness           *Harness                   `json:"harness,omitempty"`
+	Dispatch          *AgentDispatch             `json:"dispatch,omitempty"`
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
@@ -59,6 +60,39 @@ func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *
 		"left out leaves whatever is stored, so a model chosen in the dashboard survives a sync " +
 		"that says nothing about it."
 	return schema
+}
+
+// LeftOutConnector is a connector agent.yaml names that a client left out of a sync,
+// because the app has no connection by the id or label it names.
+//
+// The caps are the ones the same values have elsewhere: 63 is the longest alias
+// AgentConnectorBinding's name pattern allows, 64 the longest custom connector id
+// (custom_ and 57 more, internal/api/connectors.go) and 120 the longest connection label
+// (CreateConnectionRequest). A built-in connector id is shorter than a custom one.
+type LeftOutConnector struct {
+	Name        string `json:"name" minLength:"1" maxLength:"63" doc:"The alias agent.yaml gave the connector."`
+	ConnectorId string `json:"connector_id" minLength:"1" maxLength:"64" doc:"The connector agent.yaml named, or the alias when it named none."`
+	Connection  string `json:"connection" minLength:"1" maxLength:"120" doc:"The connection id or label agent.yaml named, which no connection of the app has."`
+}
+
+func (*LeftOutConnector) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A connector agent.yaml names that a sync left out, because the app " +
+		"has no connection by the id or label it names."
+	return schema
+}
+
+// leftOutOf turns the left-out connectors a sync sent into what a config stores.
+func leftOutOf(sent *[]LeftOutConnector) []store.LeftOutConnector {
+	if sent == nil || len(*sent) == 0 {
+		return nil
+	}
+	stored := make([]store.LeftOutConnector, 0, len(*sent))
+	for _, connector := range *sent {
+		stored = append(stored, store.LeftOutConnector{
+			Name: connector.Name, ConnectorID: connector.ConnectorId, Connection: connector.Connection,
+		})
+	}
+	return stored
 }
 
 // KnowledgeUrlDeclaration is a page an agent directory declares.
@@ -482,6 +516,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Connectors != nil {
 		config.Connectors = storedBindings(*body.Connectors)
+		config.LeftOutConnectors = leftOutOf(body.LeftOutConnectors)
 	}
 	if body.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(body.PluginEvents)
