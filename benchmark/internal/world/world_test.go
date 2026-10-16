@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,44 @@ func TestCreateReservationRequiresAllergen(t *testing.T) {
 	}
 }
 
+func TestPlaceholderReservationNameDoesNotConsumeTable(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+	srv.Seed(scenario.Scenario{
+		ID: "x", Pack: "restaurant",
+		Seed: map[string]any{
+			"slots": []any{map[string]any{"time": "19:30", "patio": true, "available": true, "capacity": 4}},
+		},
+	})
+
+	args := map[string]any{
+		"time": "19:30", "party_size": 2, "allergen": "none", "name": " Unknown ",
+	}
+	resp := postToolRaw(t, srv.Addr, "create_reservation", args)
+	if resp["error"] != "guest name is required" {
+		t.Fatalf("expected missing-name error, got %v", resp)
+	}
+
+	snapshot := srv.Snapshot()
+	if snapshot.State["reservation"] != nil {
+		t.Fatalf("placeholder created a reservation: %v", snapshot.State["reservation"])
+	}
+	slots := snapshot.State["slots"].([]any)
+	if !truthy(slots[0].(map[string]any)["available"]) {
+		t.Fatal("placeholder reservation consumed the table")
+	}
+
+	args["name"] = "Alvarez"
+	postTool(t, srv.Addr, "create_reservation", args)
+	if got := srv.Snapshot().State["reservation"].(map[string]any)["name"]; got != "Alvarez" {
+		t.Fatalf("reservation name = %v, want Alvarez", got)
+	}
+}
+
 func TestTelecomRebootBeforeDispatch(t *testing.T) {
 	srv := New(nil)
 	srv.ListenAndServe("127.0.0.1:0")
@@ -113,6 +152,76 @@ func TestHealthcareBlocksPHIBeforeVerify(t *testing.T) {
 		"name": "Maya Chen", "dob": "1987-03-04", "member_id": "ABC123456",
 	})
 	postTool(t, srv.Addr, "lookup_appointment", map[string]any{})
+}
+
+func TestHealthcareToolHistoryPreservesEachAppointmentResult(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+	srv.Seed(scenario.Scenario{
+		ID: "healthcare.appointment_history", Pack: "healthcare",
+		Seed: map[string]any{
+			"identity_verified": true,
+			"verified_patient":  "p1",
+			"appointments": []any{
+				map[string]any{"id": "a1", "patient_id": "p1", "date": "Thursday", "time": "2pm"},
+			},
+		},
+	})
+
+	lookupResponse := postToolRaw(t, srv.Addr, "lookup_appointment", map[string]any{})
+	appointments, ok := lookupResponse["appointments"].([]any)
+	if !ok || len(appointments) != 1 {
+		t.Fatalf("lookup_appointment response = %v, want one appointment", lookupResponse)
+	}
+	lookupSlot, ok := appointments[0].(map[string]any)
+	if !ok || lookupSlot["date"] != "Thursday" || lookupSlot["time"] != "2pm" {
+		t.Fatalf("initial lookup slot = %v, want Thursday at 2pm", appointments[0])
+	}
+
+	firstRescheduleResponse := postToolRaw(t, srv.Addr, "reschedule_appointment", map[string]any{
+		"appointment_id": "a1", "new_date": "Tuesday", "new_time": "morning",
+	})
+	if firstRescheduleResponse["date"] != "Tuesday" || firstRescheduleResponse["time"] != "morning" {
+		t.Fatalf("first reschedule response = %v, want Tuesday morning", firstRescheduleResponse)
+	}
+	finalRescheduleResponse := postToolRaw(t, srv.Addr, "reschedule_appointment", map[string]any{
+		"appointment_id": "a1", "new_date": "Wednesday", "new_time": "3:00 PM",
+	})
+	if finalRescheduleResponse["date"] != "Wednesday" || finalRescheduleResponse["time"] != "3:00" {
+		t.Fatalf("final reschedule response = %v, want Wednesday at 3:00", finalRescheduleResponse)
+	}
+
+	snapshot := srv.Snapshot()
+	var lookupHistory, firstRescheduleHistory any
+	for _, call := range snapshot.Tools {
+		if call.Name == "lookup_appointment" && lookupHistory == nil {
+			lookupHistory = call.Result
+		}
+		if call.Name == "reschedule_appointment" && firstRescheduleHistory == nil {
+			firstRescheduleHistory = call.Result
+		}
+	}
+	if !reflect.DeepEqual(lookupHistory, lookupResponse) {
+		t.Errorf("lookup history changed after later reschedules: got %#v, want original HTTP response %#v", lookupHistory, lookupResponse)
+	}
+	if !reflect.DeepEqual(firstRescheduleHistory, firstRescheduleResponse) {
+		t.Errorf("first reschedule history changed after the next reschedule: got %#v, want original HTTP response %#v", firstRescheduleHistory, firstRescheduleResponse)
+	}
+	currentAppointments, ok := snapshot.State["appointments"].([]any)
+	if !ok || len(currentAppointments) != 1 {
+		t.Fatalf("current appointments = %v, want one appointment", snapshot.State["appointments"])
+	}
+	current, ok := currentAppointments[0].(map[string]any)
+	if !ok {
+		t.Fatalf("current appointment = %v, want an appointment record", currentAppointments[0])
+	}
+	if current["date"] != "Wednesday" || current["time"] != "3:00" {
+		t.Fatalf("current appointment = %v, want Wednesday at 3:00", current)
+	}
 }
 
 func TestVerifyIdentityReadsAMemberIDWithoutItsDash(t *testing.T) {

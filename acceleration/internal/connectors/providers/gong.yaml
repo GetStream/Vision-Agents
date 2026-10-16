@@ -35,6 +35,12 @@ client:
   # registration_endpoint. [proto]:91 (customer_dcr) is the same pair. No auth_method: [as]
   # lists client_secret_basic and client_secret_post and oauth2_code picks basic, which is
   # what [proto]:94 pinned.
+  # Either way a Gong tech admin first adds the router in Gong ([setup], opened October 16,
+  # 2026): Admin center > Settings > MCP (under Ecosystem) > MCP servers > New MCP server
+  # integration, with the router's redirect URI and registration type Automatic for dcr (it
+  # cannot be changed later). Until then Gong refuses the consent with unauthorized_client,
+  # «This MCP client is not authorized for your company» (staging, 2026-10-16T15:11:14Z,
+  # AI-1379). A comment only: the manifest means the same, so no new revision.
   registration: [customer, dcr]
 scopes:
   # All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope Selection Strategy» asks; [as]

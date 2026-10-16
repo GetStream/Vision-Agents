@@ -5,6 +5,7 @@ package phone
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -93,6 +94,138 @@ func (s *AppsSuite) ownApp() {
 	s.apps.give(s.customer, 4242, s.own)
 }
 
+// onAnAllowlist is a number held on a vendor that cannot send a trunk password, and the
+// addresses that vendor calls from.
+type onAnAllowlist struct {
+	e164       string
+	signalling []string
+}
+
+// vendorOnAnAllowlist registers vonage, which authenticates by address, and gives the
+// suite's customer a number on it.
+func (s *AppsSuite) vendorOnAnAllowlist() onAnAllowlist {
+	declared, ok := s.config().Lookup("vonage")
+	s.Require().True(ok)
+	s.Require().NotEmpty(declared.Signalling, "the test needs a vendor that declares its addresses")
+	return onAnAllowlist{e164: s.numberOn("vonage"), signalling: declared.Signalling}
+}
+
+// numberOn registers a stub for the vendor next to the suite's own and gives the suite's
+// customer a number on it.
+func (s *AppsSuite) numberOn(vendor string) string {
+	other := &stub{vendor: vendor}
+	registry := NewRegistry(s.config())
+	registry.Register(s.vendor.vendor, func() (Provider, error) { return s.vendor, nil })
+	registry.Register(other.vendor, func() (Provider, error) { return other, nil })
+	for _, name := range append(s.credentials(s.vendor.vendor), s.credentials(other.vendor)...) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
+	s.Require().NoError(err)
+	s.service = service
+
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: other.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+	return e164
+}
+
+// planStub is a vendor that fetches its call plan when the call is answered, and renders
+// the bridge it is given into the plan so a test can read it back.
+type planStub struct {
+	stub
+	rendered Bridge
+}
+
+func (p *planStub) Answer(bridge Bridge, _ string) (Plan, error) {
+	p.rendered = bridge
+	return Plan{ContentType: "text/plain", Body: []byte(bridge.Password)}, nil
+}
+
+func (s *AppsSuite) TestACallsTrunkHasAPasswordTheVendorIsGiven() {
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.NotEmpty(password, "a trunk with no allowlist and no password lets anybody in")
+	s.Empty(allowed)
+	s.Equal(password, s.vendor.dialed.Bridge.Password, "the vendor answers the challenge with it")
+}
+
+func (s *AppsSuite) TestEveryCallsTrunkHasAPasswordOfItsOwn() {
+	call := func() string {
+		_, err := s.service.Call(s.ctx, CallRequest{
+			Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+		})
+		s.Require().NoError(err)
+		return s.vendor.dialed.Bridge.Password
+	}
+
+	s.NotEqual(call(), call())
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersTrunkHasAPasswordTheVendorIsGiven() {
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	password, allowed := s.deployment.TrunkAuth(attached.TrunkID)
+	s.NotEmpty(password)
+	s.Empty(allowed)
+	s.Equal(password, s.vendor.inbound.Bridge.Password)
+}
+
+func (s *AppsSuite) TestACallOnAVendorThatCannotSendAPasswordHasItsAddressesAndNoPassword() {
+	vonage := s.vendorOnAnAllowlist()
+
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: vonage.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.Equal(vonage.signalling, allowed)
+	s.Empty(password, "Stream would challenge a vendor that has no way to answer")
+}
+
+func (s *AppsSuite) TestACallPlanFetchedOnAnswerCarriesTheTrunksPassword() {
+	plivo := &planStub{stub: stub{vendor: "plivo"}}
+	registry := NewRegistry(s.config())
+	registry.Register(plivo.vendor, func() (Provider, error) { return plivo, nil })
+	for _, name := range s.credentials(plivo.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{
+		Registry: registry, Store: s.store, Apps: s.apps, PublicURL: "https://router.example.test",
+	})
+	s.Require().NoError(err)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: plivo.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+
+	_, err = service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+	token := plivo.dialed.AnswerURL[strings.LastIndex(plivo.dialed.AnswerURL, "/")+1:]
+
+	_, err = service.Answer(s.ctx, token)
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, _ := s.deployment.TrunkAuth(trunks[0])
+	s.NotEmpty(password)
+	s.Equal(password, plivo.rendered.Password)
+}
+
 func (s *AppsSuite) number() store.PhoneNumber {
 	held, err := s.store.Number(s.ctx, s.customer, s.e164)
 	s.Require().NoError(err)
@@ -139,6 +272,97 @@ func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	s.Empty(s.deployment.Trunks())
 	s.Empty(s.deployment.Rules())
 	s.Equal([]string{second.TrunkID}, s.own.Trunks())
+}
+
+func (s *AppsSuite) TestAttachingAnAttachedNumberAgainChangesNothing() {
+	// The SDKs attach on every WaitForCall, so the same request arrives on every run.
+	s.ownApp()
+	s.own.OneTrunkPerNumber()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.inbound = Inbound{}
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal(first.RouteID, again.RouteID)
+	s.Equal(first.Bridge.URI, again.Bridge.URI)
+	s.Equal([]string{first.TrunkID}, s.own.Trunks())
+	s.Equal([]string{first.RouteID}, s.own.Rules())
+	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
+}
+
+func (s *AppsSuite) TestAttachingAnAttachedNumberAgainInTheDeploymentsAppChangesNothing() {
+	// The deployment's app is stored as no app at all, and read back as zero.
+	s.deployment.OneTrunkPerNumber()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.inbound = Inbound{}
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal(first.RouteID, again.RouteID)
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{first.RouteID}, s.deployment.Rules())
+	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
+}
+
+// Numbers attached before every caller had a call of their own route into one fixed call,
+// which attaching again used to replace.
+func (s *AppsSuite) TestAttachingANumberThatStillNamesAFixedCallChangesNothing() {
+	s.ownApp()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	held := s.number()
+	s.Require().NoError(s.store.AttachNumber(s.ctx, s.customer, s.e164, store.NumberAttachment{
+		TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID, StreamAppPK: held.StreamAppPK,
+		CallType: held.StreamCallType, CallID: "phone-" + s.e164, BridgeURI: held.BridgeURI,
+	}))
+	s.vendor.inbound = Inbound{}
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal([]string{first.TrunkID}, s.own.Trunks())
+	s.Equal([]string{first.RouteID}, s.own.Rules())
+	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
+	s.Equal("phone-"+s.e164, s.number().StreamCallID, "the row is left as it was")
+}
+
+func (s *AppsSuite) TestAttachingATelnyxNumberWhosePasswordWasNotKeptChangesNothing() {
+	telnyx := &stub{vendor: "telnyx"}
+	registry := NewRegistry(s.config())
+	registry.Register(telnyx.vendor, func() (Provider, error) { return telnyx, nil })
+	for _, name := range s.credentials(telnyx.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps, Sealer: sealer})
+	s.Require().NoError(err)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: telnyx.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+	first, err := service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: e164})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.AttachNumber(s.ctx, s.customer, e164, store.NumberAttachment{
+		TrunkID: first.TrunkID, RouteID: first.RouteID, CallType: defaultCallType,
+		BridgeURI: first.Bridge.URI, BridgeUsername: first.Bridge.Username,
+	}))
+	telnyx.inbound = Inbound{}
+
+	again, err := service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{first.RouteID}, s.deployment.Rules())
+	s.Empty(telnyx.inbound.E164, "telnyx is not told anything new")
 }
 
 func (s *AppsSuite) TestReleasingAfterRegistrationDeletesTheLinesLeftInTheDeploymentApp() {
@@ -396,18 +620,21 @@ func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {
 	s.Require().NoError(err)
 	s.Equal("sip:"+s.e164+"@sip.example.test", bridge.URI, "the address names the number")
 	s.Equal(attached.TrunkID, bridge.Username)
-	s.Equal("secret", bridge.Password, "the password Stream returned at attach")
-	s.NotContains(string(s.number().BridgePasswordSealed), "secret", "the password is stored sealed")
+	password, _ := s.deployment.TrunkAuth(attached.TrunkID)
+	s.Require().NotEmpty(password)
+	s.Equal(password, bridge.Password, "the password the trunk was made with")
+	s.NotContains(string(s.number().BridgePasswordSealed), password, "the password is stored sealed")
 }
 
 func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials() {
-	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 	s.Require().NoError(err)
 
 	_, err = s.service.InboundBridge(s.ctx, "twilio", s.e164)
 
 	s.ErrorIs(err, ErrNoSealer)
-	s.Empty(s.number().BridgeURI)
+	s.Empty(s.number().BridgePasswordSealed)
+	s.Equal(attached.Bridge.URI, s.number().BridgeURI, "the address is not secret, so it is kept")
 }
 
 // Telnyx asks per call where to send a caller, and the answer is the stored trunk, so a
@@ -434,13 +661,44 @@ func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
 	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
 }
 
-func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
-	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
-	s.Require().NoError(err)
-	second, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+func (s *AppsSuite) TestATransfersTrunkHasAPasswordTheVendorIsGiven() {
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550002222", CallID: "call-1",
+	})
 	s.Require().NoError(err)
 
-	s.NotEqual(first.TrunkID, second.TrunkID)
-	s.Equal([]string{second.TrunkID}, s.deployment.Trunks(), "the first trunk is removed")
-	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.inbound.Bridge.URI)
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.NotEmpty(password)
+	s.Empty(allowed)
+	s.Equal(password, s.vendor.dialed.Bridge.Password)
+}
+
+func (s *AppsSuite) TestATransferOnAVendorThatCannotSendAPasswordHasItsAddressesAndNoPassword() {
+	vonage := s.vendorOnAnAllowlist()
+
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: vonage.e164, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.Equal(vonage.signalling, allowed, "without them the vendor's leg is challenged and cannot answer")
+	s.Empty(password)
+}
+
+func (s *AppsSuite) TestATransferOnAVendorWithNoAddressesAndNoPasswordIsRefusedBeforeAnythingIsMade() {
+	declared, ok := s.config().Lookup("sinch")
+	s.Require().True(ok)
+	s.Require().Empty(declared.Signalling)
+	sinch := s.numberOn("sinch")
+
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: sinch, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().ErrorContains(err, "signalling addresses")
+	s.Empty(s.deployment.Trunks())
 }

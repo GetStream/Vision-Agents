@@ -27,7 +27,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -78,6 +80,10 @@ func (s *AuthorizationsSuite) SetupSuite() {
 	})
 	s.Require().NoError(err)
 	s.scheme = scheme
+	// The deployment serves PUT provider-app, which a missing client's answer names only then. No
+	// request reaches Slack: a consent that cannot start never creates an app.
+	s.slackApps, err = slackapps.New(slackapps.Config{HTTP: s.provider.Client()})
+	s.Require().NoError(err)
 	s.connectors = core.Registry{
 		Schemes: map[string]core.Scheme{oauth2code.Name: scheme},
 		Hooks: map[string]core.Hook{refusingHook: func(context.Context, *core.HookContext) error {
@@ -245,6 +251,7 @@ func (s *AuthorizationsSuite) TestADeniedConsentLeavesTheConnectionPending() {
 	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(id).Status)
 	s.Equal(1, s.get(id).Revision)
 	s.Equal(exchanges, s.provider.Hits(fakeprovider.PathToken), "nothing was exchanged")
+	s.Nil(s.get(id).LastValidation, "as on base ab4884e0 (probe-base.txt): a denial leaves no reason")
 }
 
 // TestADeniedConsentIsLoggedWithTheProvidersDescription: one line names the connection, the
@@ -313,6 +320,107 @@ func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedOtherwiseIsLoggedWit
 	s.LessOrEqual(len(strings.TrimSuffix(description, "\"\n")), core.DescriptionBytes)
 	s.False(strings.Contains(s.logged.String(), state), "the state is not logged")
 	s.False(strings.Contains(s.logged.String(), code), "the code is not logged")
+}
+
+// TestAProviderErrorCodeThatEchoesTheCallbackIsKeptCutInTheReason (R1.2): the provider's
+// error code is cut as its description is, so a code that echoes the state, or one past 256
+// bytes, does not reach the connection's last validation whole.
+func (s *AuthorizationsSuite) TestAProviderErrorCodeThatEchoesTheCallbackIsKeptCutInTheReason() {
+	id := s.connection("")
+	alice := s.browser()
+	callback := s.consent(alice.handOff(s.start(id)))
+	query := callback.Query()
+	state := query.Get("state")
+	query.Set("error", "bad_"+state+"_"+strings.Repeat("x", 400))
+	query.Set("error_description", "no")
+	callback.RawQuery = query.Encode()
+	s.Require().Equal(http.StatusFound, alice.get(callback.String()).StatusCode)
+
+	reason := s.get(id).LastValidation.Error
+
+	s.NotContains(reason, state)
+	s.True(strings.HasPrefix(reason, "The provider refused the consent with bad_[redacted]_xxx"), reason)
+	s.Less(len(reason), len("The provider refused the consent with : no.")+core.DescriptionBytes+8)
+}
+
+// TestARefusedReconnectOfAConnectionThatNeedsReauthorizationStoresTheReason (R1.3): only a
+// connected connection keeps its last validation; one that needs reauthorization gets the
+// refusal as its last validation and keeps its status.
+func (s *AuthorizationsSuite) TestARefusedReconnectOfAConnectionThatNeedsReauthorizationStoresTheReason() {
+	id := s.connection("")
+	s.connect(id)
+	_, err := s.store.DB().ExecContext(s.T().Context(),
+		"UPDATE connector_connections SET status = ? WHERE id = ?", store.ConnectionNeedsReauthorization, id)
+	s.Require().NoError(err)
+
+	s.refuse(id, "invalid_scope", func(url.Values) string { return "scope refused" })
+
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), got.Status)
+	s.Require().NotNil(got.LastValidation)
+	s.Equal("connector_consent_refused", got.LastValidation.Code)
+}
+
+// TestAConsentTheProviderRefusedLeavesItsReasonAsTheLastValidation: an error other than
+// access_denied still lands on the dashboard saying failed and leaves the connection pending, as
+// on base ab4884e0, and now leaves the provider's code and description as the connection's last
+// validation, which the dashboard shows on it: without the callback's state and code, its URL
+// kept to the host (AI-1379).
+func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedLeavesItsReasonAsTheLastValidation() {
+	id := s.connection("")
+	state, code := "", "code-"+s.utils.uuid()
+
+	response := s.refuse(id, "invalid_scope", func(sent url.Values) string {
+		state = sent.Get("state")
+		sent.Set("code", code)
+		return "scope refused for " + state + " and " + code + " at https://idp.example/scopes?code=" + code
+	})
+
+	s.Equal(s.landing(id, consentFailed), response.Header.Get("Location"))
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionPending), got.Status)
+	s.Require().NotNil(got.LastValidation)
+	s.Equal(ConnectionValidationStatus(validationFailed), got.LastValidation.Status)
+	s.Equal("connector_consent_refused", got.LastValidation.Code)
+	s.Equal("The provider refused the consent with invalid_scope: scope refused for [redacted] and [redacted] at https://idp.example.",
+		got.LastValidation.Error)
+	s.WithinDuration(time.Now(), got.LastValidation.CheckedAt, time.Minute)
+}
+
+// TestAConsentRefusedAsAnUnauthorizedClientNamesTheAdminStep: Gong's answer on staging
+// (2026-10-16T15:11:14Z) before its admin added the router as an MCP integration. The reason
+// says an admin at the provider may need to allow this client, with the router's redirect URI.
+func (s *AuthorizationsSuite) TestAConsentRefusedAsAnUnauthorizedClientNamesTheAdminStep() {
+	id := s.connection("")
+
+	s.refuse(id, "unauthorized_client", func(url.Values) string {
+		return "This MCP client is not authorized for your company. Please ask your Gong technical admin to authorize it."
+	})
+
+	got := s.get(id).LastValidation
+	s.Require().NotNil(got)
+	s.Equal("The provider refused the consent with unauthorized_client: This MCP client is not authorized for your company. "+
+		"Please ask your Gong technical admin to authorize it. The provider does not let this client sign in for your organization: "+
+		"an admin at the provider may need to allow it, with the redirect URI https://router.example/v1/agents/connectors/oauth/callback.", got.Error)
+}
+
+// TestARefusedReconnectKeepsTheConnectedGrantsLastValidation: a connected connection keeps its
+// status and what its last validate found when a reconnect is refused, as on base ab4884e0
+// (probe-base.txt): its grant still works, so a refusal is not what its last check found.
+func (s *AuthorizationsSuite) TestARefusedReconnectKeepsTheConnectedGrantsLastValidation() {
+	id := s.connection("")
+	s.connect(id)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil))
+	before := s.get(id)
+	s.Require().NotNil(before.LastValidation)
+
+	response := s.refuse(id, "unauthorized_client", func(url.Values) string { return "not for your company" })
+
+	s.Equal(s.landing(id, consentFailed), response.Header.Get("Location"))
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), got.Status)
+	s.Equal(before.Revision, got.Revision)
+	s.Equal(before.LastValidation, got.LastValidation)
 }
 
 // TestAConsentWhoseConnectionCannotBeReadIsLogged: a connection row the store cannot read
@@ -783,6 +891,173 @@ func (s *AuthorizationsSuite) TestAConsentForAConnectorTakingTheAppsOwnClientUse
 	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(created.ID).Status)
 }
 
+// TestAConsentWithoutAClientNamesEveryWayToGiveSlackBotOne (AI-1357, WWSD platform feedback
+// #4): slack_bot lists the operator's app, the app's own and the one the router creates
+// (providers/slack_bot.yaml), and the suite has no operator's app for it, so its consent cannot
+// start. The answer names both PUTs the app can make, what each takes, and a code of its own
+// whose doc_url explains it.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesEveryWayToGiveSlackBotOne() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+
+	status, failure := s.consentFailure("slack_bot")
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: no OAuth client available for this connector "+
+		"(client.registration [operator customer managed]); "+
+		"put the app's own OAuth client with PUT /v1/agents/connectors/slack_bot/oauth-client, giving its client_id and "+
+		"client_secret, and the app's provider_app_id and signing_secret, which its events are verified with; "+
+		"the client must list the redirect URI "+consentPublicURL+ConnectorCallbackPath+"; "+
+		"or have the router create the app with PUT /v1/agents/connectors/slack_bot/provider-app, giving the app's name "+
+		"and the refresh token of an app configuration token a workspace admin generates in Slack's app settings", failure.Message)
+	s.Equal(codeNoOAuthClient, failure.Code)
+	s.Equal(ErrorType(ErrorTypeInvalidRequest), failure.Type)
+	s.Equal(errorDocs+codeNoOAuthClient, failure.DocURL)
+}
+
+// TestAConsentWithoutAClientNamesOnlyTheWaysItsConnectorLists (AI-1357): a connector that
+// takes the app's own client alone, with no channel, is not offered an app the router creates,
+// and is asked for no signing secret.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesOnlyTheWaysItsConnectorLists() {
+	connector := s.connectorRegistering("customer", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: no OAuth client available for this connector "+
+		"(client.registration [customer]); put the app's own OAuth client with PUT /v1/agents/connectors/"+connector+
+		"/oauth-client, giving its client_id and client_secret; the client must list the redirect URI "+
+		consentPublicURL+ConnectorCallbackPath, failure.Message)
+	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWhoseRegistrationIsRefusedNamesTheAppsOwnClient (AI-1363, WWSD feedback #31):
+// Gong takes the app's own client or a registration (providers/gong.yaml), and refused the
+// registration. The answer quotes the provider's reason and names the client the app can put
+// instead, with the redirect URI it must list.
+func (s *AuthorizationsSuite) TestAConsentWhoseRegistrationIsRefusedNamesTheAppsOwnClient() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.RefusedRegistration)
+	connector := s.connectorRegistering("customer, dcr", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: register: HTTP 400: invalid_client_metadata: "+
+		"scope is required; put the app's own OAuth client with PUT /v1/agents/connectors/"+connector+
+		"/oauth-client, giving its client_id and client_secret; the client must list the redirect URI "+
+		consentPublicURL+ConnectorCallbackPath, failure.Message)
+	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWhoseRegistrationIsRefusedSaysWhyWhereNoClientCanBeGiven (AI-1363): a connector
+// that only registers has no client to ask the app for, so the answer is the provider's reason.
+func (s *AuthorizationsSuite) TestAConsentWhoseRegistrationIsRefusedSaysWhyWhereNoClientCanBeGiven() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.RefusedRegistration)
+	connector := s.connectorRegistering("dcr", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: register: HTTP 400: invalid_client_metadata: "+
+		"scope is required", failure.Message)
+	s.Equal(string(ErrorTypeInvalidRequest), failure.Code)
+}
+
+// TestAConsentWithoutAClientNamesNoAppTheRouterCannotCreate (AI-1357): a connector may list
+// managed without authorizing at Slack, and PUT provider-app refuses it (managedConnector), so
+// the answer names the oauth-client PUT alone.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesNoAppTheRouterCannotCreate() {
+	connector := s.connectorRegistering("customer, managed", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "PUT /v1/agents/connectors/"+connector+"/oauth-client")
+	s.NotContains(failure.Message, "provider-app")
+	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWithoutAClientNamesNoProviderAppWhereTheDeploymentCannotServeIt (AI-1357): PUT
+// provider-app answers not_configured without a Slack apps client or an https
+// ROUTER_PUBLIC_URL (setConnectorProviderApp), so neither is told to use it.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesNoProviderAppWhereTheDeploymentCannotServeIt() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+	apps, public := s.router.slackApps, s.router.publicURL
+	s.T().Cleanup(func() { s.router.slackApps, s.router.publicURL = apps, public })
+
+	s.router.slackApps = nil
+	_, failure := s.consentFailure("slack_bot")
+	s.NotContains(failure.Message, "provider-app", "no Slack apps client")
+	s.Contains(failure.Message, "oauth-client")
+
+	s.router.slackApps, s.router.publicURL = apps, "http://router.example"
+	_, failure = s.consentFailure("slack_bot")
+	s.NotContains(failure.Message, "provider-app", "a public URL that is not https")
+	s.Contains(failure.Message, "oauth-client")
+}
+
+// TestAChatConsentWithoutAClientNamesProviderAppOnlyOnHTTPS (AI-1357): ConnectorConsents, the
+// consent a session's tool call begins, decides the same as the API's own: PUT provider-app
+// answers not_configured without an https ROUTER_PUBLIC_URL (setConnectorProviderApp), so an
+// http one is not told to use it.
+func (s *AuthorizationsSuite) TestAChatConsentWithoutAClientNamesProviderAppOnlyOnHTTPS() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+	request := session.ConsentRequest{CustomerID: s.customerID(), ConnectorID: "slack_bot", UserID: "chat-user"}
+
+	_, err := ConnectorConsents(s.store, s.connectors, s.sealer, "https://router.example")(context.Background(), request)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "provider-app", "an https public URL")
+
+	_, err = ConnectorConsents(s.store, s.connectors, s.sealer, "http://router.example")(context.Background(), request)
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "provider-app", "a public URL that is not https")
+	s.Contains(err.Error(), "oauth-client")
+}
+
+// TestAConsentWithoutAClientForAPublicClientAsksForNoSecret (AI-1357): PUT oauth-client
+// refuses a client_secret for auth_method none, so the answer asks for the client_id alone.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientForAPublicClientAsksForNoSecret() {
+	connector := s.connectorWith("customer", "none", "")
+
+	_, failure := s.consentFailure(connector)
+
+	s.Contains(failure.Message, "giving its client_id; the client must list")
+	s.NotContains(failure.Message, "client_secret")
+}
+
+// TestAConsentThatFailsForAnotherReasonKeepsTheGenericMessage (AI-1357): only a missing client
+// is answered with the ways to give one; a provider the router cannot reach is not.
+func (s *AuthorizationsSuite) TestAConsentThatFailsForAnotherReasonKeepsTheGenericMessage() {
+	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	// 10.0.0.1 is a private address, which the scheme's public-endpoint check refuses
+	// (loopbackOrPublic); the client is there, so what fails is not a missing one.
+	yaml := strings.Replace(s.fakeManifest(id, 1, "customer", ""), s.provider.URL+fakeprovider.PathAuthorize, "https://10.0.0.1/authorize", 1)
+	manifest, err := core.ParseManifest([]byte(yaml))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	s.putClient(id, s.provider.ClientSecret)
+
+	status, failure := s.consentFailure(id)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.True(strings.HasPrefix(failure.Message, "the provider's consent could not be started: "), failure.Message)
+	s.NotContains(failure.Message, "oauth-client")
+	s.Equal("invalid_request", failure.Code)
+}
+
+// TestAConsentWithoutAClientTheAppCannotGiveAnswersAsBefore (AI-1357), the control: a
+// connector that registers its client per consent (cimd) has no client for the app to put, so
+// its answer is the one base d3df090e gave (probed with this connector and the suite's own
+// discovery-less fake provider).
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientTheAppCannotGiveAnswersAsBefore() {
+	status, failure := s.consentFailure(s.connectorRegistering("cimd", ""))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: no OAuth client available for this connector "+
+		"(client.registration [cimd])", failure.Message)
+	s.Equal("invalid_request", failure.Code)
+}
+
 // TestAConsentRecordsTheClientItsGrantWasIssuedTo (AI-990 F16): a connection's reads name the
 // OAuth client its consent used, by registration and client_id, from the consent on; before
 // it there is none.
@@ -832,6 +1107,17 @@ func (s *AuthorizationsSuite) TestARotatedSecretIsWhatTheNextRefreshOfEveryConne
 	for _, id := range connections {
 		s.NoError(s.refresh(id))
 	}
+}
+
+// consentFailure is the status and the failure an app-owned connection to connector answers
+// its first consent with.
+func (s *AuthorizationsSuite) consentFailure(connector string) (int, ErrorDetail) {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+created.ID+"/authorizations", nil)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	return status, answered.Error
 }
 
 // putClient is the app's backend putting the fake's preregistered client as its own for
@@ -888,8 +1174,13 @@ func (s *AuthorizationsSuite) connector(extra string) string {
 
 // connectorRegistering is connector with client.registration [registration].
 func (s *AuthorizationsSuite) connectorRegistering(registration, extra string) string {
+	return s.connectorWith(registration, "client_secret_post", extra)
+}
+
+// connectorWith is connectorRegistering with client.auth_method authMethod.
+func (s *AuthorizationsSuite) connectorWith(registration, authMethod, extra string) string {
 	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(s.fakeManifest(id, 1, registration, extra)))
+	manifest, err := core.ParseManifest([]byte(s.fakeManifestWith(id, 1, registration, authMethod, extra)))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
@@ -898,6 +1189,10 @@ func (s *AuthorizationsSuite) connectorRegistering(registration, extra string) s
 
 // fakeManifest is the YAML of connector's manifest at revision.
 func (s *AuthorizationsSuite) fakeManifest(id string, revision int, registration, extra string) string {
+	return s.fakeManifestWith(id, revision, registration, "client_secret_post", extra)
+}
+
+func (s *AuthorizationsSuite) fakeManifestWith(id string, revision int, registration, authMethod, extra string) string {
 	return `
 id: ` + id + `
 revision: ` + strconv.Itoa(revision) + `
@@ -909,7 +1204,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   registration: [` + registration + `]
-  auth_method: client_secret_post
+  auth_method: ` + authMethod + `
   env: FAKE
 scopes:
   list: [channels:history, chat:write]
@@ -982,6 +1277,22 @@ func (s *AuthorizationsSuite) start(id string) Authorization {
 	var started Authorization
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/authorizations", nil, &started))
 	return started
+}
+
+// refuse is a consent the provider sends back with error code, and the error_description
+// describe returns for the callback's query, which it may also change.
+func (s *AuthorizationsSuite) refuse(id, code string, describe func(url.Values) string) *http.Response {
+	alice := s.browser()
+	authorize := alice.handOff(s.start(id))
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.ConsentDenied)
+	callback := s.consent(authorize)
+	query := callback.Query()
+	query.Set("error", code)
+	query.Set("error_description", describe(query))
+	callback.RawQuery = query.Encode()
+	response := alice.get(callback.String())
+	s.Require().Equal(http.StatusFound, response.StatusCode)
+	return response
 }
 
 // connect is a whole consent that ends connected.

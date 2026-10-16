@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_tools import AgentTools
     from ..models.greeting import Greeting
+    from ..models.left_out_connector import LeftOutConnector
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
     from ..models.plugin_with_options import PluginWithOptions
@@ -59,6 +60,9 @@ class AgentConfig:
         instructions (str | Unset):
         keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
+        left_out_connectors (list[LeftOutConnector] | Unset): The connectors agent.yaml names that the last sync left
+            out, because the app has no connection by the id or label they name: an agent that runs without them until the
+            connection exists and it syncs again. Only a sync writes them. Absent when there are none.
         llm (str | Unset):
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
@@ -100,6 +104,7 @@ class AgentConfig:
     instructions: str | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
+    left_out_connectors: list[LeftOutConnector] | Unset = UNSET
     llm: str | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
@@ -167,6 +172,13 @@ class AgentConfig:
             keyterms = self.keyterms
 
         knowledge_namespace = self.knowledge_namespace
+
+        left_out_connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.left_out_connectors, Unset):
+            left_out_connectors = []
+            for left_out_connectors_item_data in self.left_out_connectors:
+                left_out_connectors_item = left_out_connectors_item_data.to_dict()
+                left_out_connectors.append(left_out_connectors_item)
 
         llm = self.llm
 
@@ -268,6 +280,8 @@ class AgentConfig:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
             field_dict["knowledge_namespace"] = knowledge_namespace
+        if left_out_connectors is not UNSET:
+            field_dict["left_out_connectors"] = left_out_connectors
         if llm is not UNSET:
             field_dict["llm"] = llm
         if mcp_servers is not UNSET:
@@ -315,6 +329,7 @@ class AgentConfig:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting
+        from ..models.left_out_connector import LeftOutConnector
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
@@ -378,6 +393,17 @@ class AgentConfig:
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
+
+        _left_out_connectors = d.pop("left_out_connectors", UNSET)
+        left_out_connectors: list[LeftOutConnector] | Unset = UNSET
+        if _left_out_connectors is not UNSET:
+            left_out_connectors = []
+            for left_out_connectors_item_data in _left_out_connectors:
+                left_out_connectors_item = LeftOutConnector.from_dict(
+                    left_out_connectors_item_data
+                )
+
+                left_out_connectors.append(left_out_connectors_item)
 
         llm = d.pop("llm", UNSET)
 
@@ -491,6 +517,7 @@ class AgentConfig:
             instructions=instructions,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
+            left_out_connectors=left_out_connectors,
             llm=llm,
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,

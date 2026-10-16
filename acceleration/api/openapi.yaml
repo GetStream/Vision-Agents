@@ -154,6 +154,12 @@ components:
           type: array
         knowledge_namespace:
           type: string
+        left_out_connectors:
+          description: 'The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none.'
+          items:
+            $ref: '#/components/schemas/LeftOutConnector'
+          readOnly: true
+          type: array
         llm:
           type: string
         mcp_servers:
@@ -1911,7 +1917,7 @@ components:
           type: string
         last_validation:
           $ref: '#/components/schemas/ConnectionLastValidation'
-          description: What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+          description: What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
           readOnly: true
         metadata:
           additionalProperties:
@@ -2065,11 +2071,11 @@ components:
       description: What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
       properties:
         checked_at:
-          description: When the validate ran.
+          description: When the validate ran, or the provider refused the consent.
           format: date-time
           type: string
         code:
-          description: The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+          description: The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
           type: string
         error:
           description: 'Why the status is not connected, for a person to read: the validate''s error with every value the credential is sent as cut out, and cut at 1 KiB. A provider''s own error text in it can still hold anything else the provider wrote.'
@@ -2309,7 +2315,7 @@ components:
           type: array
       type: object
     ConnectionValidationStatus:
-      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection''s current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.'
+      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection''s current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.'
       enum:
         - connected
         - pending
@@ -3034,6 +3040,9 @@ components:
           default: false
           description: 'Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.'
           type: boolean
+        instructions:
+          description: 'What the agent is told to be for this session alone, in place of its config''s instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config''s instructions stand. There is no limit but the request body''s, as a config''s instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config''s instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.'
+          type: string
         keyterms:
           description: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
           items:
@@ -3586,7 +3595,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4200,6 +4209,29 @@ components:
         - indexed
         - failed
       type: string
+    LeftOutConnector:
+      description: A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
+      properties:
+        connection:
+          description: The connection id or label agent.yaml named, which no connection of the app has.
+          maxLength: 120
+          minLength: 1
+          type: string
+        connector_id:
+          description: The connector agent.yaml named, or the alias when it named none.
+          maxLength: 64
+          minLength: 1
+          type: string
+        name:
+          description: The alias agent.yaml gave the connector.
+          maxLength: 63
+          minLength: 1
+          type: string
+      required:
+        - name
+        - connector_id
+        - connection
+      type: object
     LibraryVoice:
       description: One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it.
       properties:
@@ -4437,7 +4469,7 @@ components:
     ModelOverwrites:
       description: |-
         What to change about the models for one session, over whatever its agent config decided.
-        It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+        It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
       properties:
         llm:
           description: A provider/model or a capability shortcut, in place of the config's.
@@ -6979,6 +7011,12 @@ components:
           description: The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both.
           items:
             $ref: '#/components/schemas/KnowledgeUrlDeclaration'
+          type: array
+        left_out_connectors:
+          description: 'The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors.'
+          items:
+            $ref: '#/components/schemas/LeftOutConnector'
+          maxItems: 64
           type: array
         llm:
           type: string
@@ -14934,7 +14972,7 @@ paths:
       summary: Give a number back, which stops its monthly charge
   /v1/phone/numbers/{e164}/attach:
     post:
-      description: Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+      description: Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
       operationId: attachPhoneNumber
       parameters:
         - in: path

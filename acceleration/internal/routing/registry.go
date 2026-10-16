@@ -50,6 +50,25 @@ type Spec struct {
 	Logger   *slog.Logger
 }
 
+// ErrRequest marks a build error as the caller's mistake, a setting the model cannot take,
+// rather than the provider's fault. The router records no stat for it: health is shared by
+// every customer, and one caller's bad value must not mark a model unavailable for all.
+var ErrRequest = errors.New("routing: the request was refused")
+
+// ErrOverwrite says a provider could not read the overwrites it was given: a field it does
+// not have, or a value of the wrong type. It is a request error, and the router answers
+// with it rather than falling over to a vendor that would never read the block at all.
+var ErrOverwrite = errors.New("routing: overwrites refused")
+
+// refused marks err as a request error without changing what it says.
+type refused struct{ err error }
+
+func (r refused) Error() string   { return r.err.Error() }
+func (r refused) Unwrap() []error { return []error{r.err, ErrRequest} }
+
+// Refused marks a factory's error as the caller's mistake, see ErrRequest.
+func Refused(err error) error { return refused{err: err} }
+
 // Settings decodes this provider's overwrites into a struct of its own.
 //
 // Unknown fields are rejected, which is the whole point: an escape hatch that silently
@@ -63,7 +82,7 @@ func (s Spec) Settings(into any) error {
 	decoder := json.NewDecoder(bytes.NewReader(s.Overwrites))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("routing: overwrites for %s: %w", s.Model, err))
+		return Refused(stack.Wrap(fmt.Errorf("%w for %s: %w", ErrOverwrite, s.Model, err)))
 	}
 	return nil
 }

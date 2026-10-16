@@ -241,6 +241,7 @@ from .knowledge_url import KnowledgeUrl
 from .knowledge_url_declaration import KnowledgeUrlDeclaration
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
+from .left_out_connector import LeftOutConnector
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .link_channel_request import LinkChannelRequest
@@ -684,6 +685,7 @@ __all__ = (
     "KnowledgeUrlDeclaration",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
+    "LeftOutConnector",
     "LibraryVoice",
     "LibraryVoices",
     "LinkChannelRequest",

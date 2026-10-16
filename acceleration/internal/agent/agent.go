@@ -268,6 +268,9 @@ type Agent struct {
 	pumps sync.WaitGroup
 
 	tts *ttsrouter.Session
+	// recoveringVoice holds off new replies while a lost voice is replaced. It is
+	// protected by mu and remains set until the old session is closed.
+	recoveringVoice *ttsrouter.Session
 	// lostVoices are the voices this call has lost, as "provider/model", so the one that
 	// replaces a lost voice is a different one.
 	lostVoices []string
@@ -1302,8 +1305,9 @@ func (a *Agent) consumePresence(p *pipeline) {
 func (a *Agent) floor() floor {
 	a.mu.Lock()
 	state := floor{
-		Quiet:           !a.interrupting && a.utterances == 0 && !a.generating && a.pendingTools == 0,
-		Talking:         a.interrupting || a.utterances > 0 || a.generating,
+		Quiet:           !a.interrupting && a.recoveringVoice == nil && a.utterances == 0 && !a.generating && a.pendingTools == 0,
+		Talking:         a.interrupting || a.recoveringVoice != nil || a.utterances > 0 || a.generating,
+		Recovering:      a.recoveringVoice != nil,
 		Owed:            a.toolReply,
 		Composing:       a.composing,
 		Speaking:        a.speakingTurn,
@@ -1557,7 +1561,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	}
 	// follow can take the result between queueToolReply letting go of the lock and this
 	// taking it, and a second turn on it is the caller answered twice.
-	if !a.toolReply || a.generating || a.interrupting {
+	if !a.toolReply || a.generating || a.interrupting || a.recoveringVoice != nil {
 		a.mu.Unlock()
 		return nil
 	}
@@ -2302,7 +2306,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "voice", typed.Voice)
 
 		case tts.SynthesisComplete:
-			a.settle()
+			a.settleVoice(voice)
 			a.logger.Debug("finished speaking",
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
@@ -2339,16 +2343,18 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 
 		case tts.Error:
-			// A failure naming an utterance still settles it, since the router turns that
-			// utterance's completion into the failed row.
-			if typed.SynthesisID == "" {
-				a.settle()
+			if typed.Fatal {
+				if !lost {
+					lost = true
+					a.loseVoice(p, voice)
+				}
+			} else if typed.SynthesisID == "" {
+				// A failure naming an utterance still settles it, since the router turns
+				// that utterance's completion into the failed row. A nameless failure
+				// settles only while this session still owns the voice.
+				a.settleVoice(voice)
 			}
 			a.fail(typed.Err, "tts")
-			if typed.Fatal && !lost {
-				lost = true
-				a.loseVoice(p, voice)
-			}
 		}
 	}
 }
@@ -2483,7 +2489,7 @@ func (a *Agent) follow() error {
 	}
 
 	a.mu.Lock()
-	if a.harness == nil || a.generating || a.utterances > 0 || a.interrupting {
+	if a.harness == nil || a.generating || a.utterances > 0 || a.interrupting || a.recoveringVoice != nil {
 		a.mu.Unlock()
 		return nil
 	}
@@ -2563,7 +2569,7 @@ func (a *Agent) Busy() bool {
 	a.mu.Lock()
 	// A transfer finishes the call from inside itself, so counting it would have it wait on
 	// its own end.
-	working := a.interrupting || a.generating || a.utterances > 0 ||
+	working := a.interrupting || a.recoveringVoice != nil || a.generating || a.utterances > 0 ||
 		slices.ContainsFunc(slices.Collect(maps.Values(a.toolsRunning)), func(name string) bool { return !telephonyTool(name) })
 	current := a.harness
 	a.mu.Unlock()
@@ -2693,6 +2699,9 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	a.saying = ""
 	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
+	// Clear audio already queued at the edge before provider or model interruption can block.
+	// Keep the final drop below as well to catch audio published by an in-flight send.
+	a.dropSpeech()
 
 	a.finishGenerate(turnID)
 	if current != nil {
@@ -2808,6 +2817,16 @@ func (a *Agent) settle() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.utterances > 0 {
+		a.utterances--
+	}
+}
+
+// settleVoice counts a synthesis only while the session that emitted it still owns the
+// voice. Events already buffered by a retired session must not settle its replacement.
+func (a *Agent) settleVoice(voice *ttsrouter.Session) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.tts == voice && a.utterances > 0 {
 		a.utterances--
 	}
 }

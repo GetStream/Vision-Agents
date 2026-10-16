@@ -2499,13 +2499,16 @@ type AgentConfig struct {
 	Guardrail *string   `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness     `json:"harness,omitempty"`
-	Id                 string       `json:"id"`
-	Instructions       *string      `json:"instructions,omitempty"`
-	Keyterms           *[]string    `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
-	Llm                *string      `json:"llm,omitempty"`
-	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
+	Harness            *Harness  `json:"harness,omitempty"`
+	Id                 string    `json:"id"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+
+	// LeftOutConnectors The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none.
+	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
+	Llm               *string             `json:"llm,omitempty"`
+	McpServers        *[]McpServer        `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode AgentMode `json:"mode"`
@@ -3729,16 +3732,16 @@ type ConnectionInvocationPage struct {
 
 // ConnectionLastValidation What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
 type ConnectionLastValidation struct {
-	// CheckedAt When the validate ran.
+	// CheckedAt When the validate ran, or the provider refused the consent.
 	CheckedAt time.Time `json:"checked_at"`
 
-	// Code The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+	// Code The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
 	Code *string `json:"code,omitempty"`
 
 	// Error Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
 	Error *string `json:"error,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
 	Status ConnectionValidationStatus `json:"status"`
 }
 
@@ -3867,7 +3870,7 @@ type ConnectionValidation struct {
 	// MissingScopes With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.
 	MissingScopes *[]string `json:"missing_scopes,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
 	Status ConnectionValidationStatus `json:"status"`
 
 	// ToolsDigest The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
@@ -3880,7 +3883,7 @@ type ConnectionValidationRequest struct {
 	Tools *[]string `json:"tools,omitempty"`
 }
 
-// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
+// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
 type ConnectionValidationStatus string
 
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
@@ -4328,6 +4331,9 @@ type CreateSessionRequest struct {
 	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
 	Incognito *bool `json:"incognito,omitempty"`
 
+	// Instructions What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
+	Instructions *string `json:"instructions,omitempty"`
+
 	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
 
@@ -4345,7 +4351,7 @@ type CreateSessionRequest struct {
 	MinConfidence *float64 `json:"min_confidence,omitempty"`
 
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
-	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
 
 	// Navigating The agent placed this call, so let recordings finish and answer their menus.
@@ -4690,7 +4696,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -4725,7 +4731,7 @@ type ForkSessionRequest struct {
 	Messages *bool `json:"messages,omitempty"`
 
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
-	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
 	ProjectId       *string          `json:"project_id,omitempty"`
 
@@ -5117,6 +5123,18 @@ type KnowledgeUrlRequest struct {
 // KnowledgeUrlState Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 type KnowledgeUrlState string
 
+// LeftOutConnector A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
+type LeftOutConnector struct {
+	// Connection The connection id or label agent.yaml named, which no connection of the app has.
+	Connection string `json:"connection"`
+
+	// ConnectorId The connector agent.yaml named, or the alias when it named none.
+	ConnectorId string `json:"connector_id"`
+
+	// Name The alias agent.yaml gave the connector.
+	Name string `json:"name"`
+}
+
 // LibraryVoice One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it.
 type LibraryVoice struct {
 	Accent      *string `json:"accent,omitempty"`
@@ -5270,7 +5288,7 @@ type ModelCallTiming struct {
 }
 
 // ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
-// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 type ModelOverwrites struct {
 	// Llm A provider/model or a capability shortcut, in place of the config's.
 	Llm *string `json:"llm,omitempty"`
@@ -6129,7 +6147,7 @@ type Session struct {
 	Mode *SessionMode `json:"mode,omitempty"`
 
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
-	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
 	ProjectId       *string          `json:"project_id,omitempty"`
 
@@ -6974,7 +6992,10 @@ type SyncAgentRequest struct {
 
 	// KnowledgeUrls The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both.
 	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty"`
-	Llm           *string                    `json:"llm,omitempty"`
+
+	// LeftOutConnectors The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors.
+	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
+	Llm               *string             `json:"llm,omitempty"`
 
 	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login.
 	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
@@ -10922,7 +10943,7 @@ type ClientInterface interface {
 
 	// AttachPhoneNumberWithBody Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -10931,7 +10952,7 @@ type ClientInterface interface {
 
 	// AttachPhoneNumber Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15889,7 +15910,7 @@ func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors
 
 // AttachPhoneNumberWithBody Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes any type of body and a specified content type.
 //
@@ -15908,7 +15929,7 @@ func (c *Client) AttachPhoneNumberWithBody(ctx context.Context, e164 string, con
 
 // AttachPhoneNumber Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -29521,7 +29542,7 @@ type ClientWithResponsesInterface interface {
 
 	// AttachPhoneNumberWithBodyWithResponse Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29530,7 +29551,7 @@ type ClientWithResponsesInterface interface {
 
 	// AttachPhoneNumberWithResponse Point a number at a Stream call
 	//
-	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+	// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -49889,7 +49910,7 @@ func (c *ClientWithResponses) ReleasePhoneNumberWithResponse(ctx context.Context
 
 // AttachPhoneNumberWithBodyWithResponse Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -49904,7 +49925,7 @@ func (c *ClientWithResponses) AttachPhoneNumberWithBodyWithResponse(ctx context.
 
 // AttachPhoneNumberWithResponse Point a number at a Stream call
 //
-// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent.
+// Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is what turns a bought number into one that reaches an agent. Attaching a number that is already attached in this app changes nothing and answers what it has.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

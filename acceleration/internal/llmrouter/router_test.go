@@ -265,6 +265,7 @@ func (s *LLMRouterSuite) TestSessionForwardsEveryProviderEvent() {
 
 func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
 	session, provider := s.newSession()
+	provider.createDelay = 25 * time.Millisecond
 	var timings []llm.CallTiming
 	stream, err := session.Create(s.ctx, llm.ResponseParams{
 		ID: "flow-1", Purpose: "flow", TurnID: "turn-1", Input: prompt(),
@@ -282,6 +283,24 @@ func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
 	s.Equal("stub-model", timings[0].Model)
 	s.True(timings[0].Success)
 	s.Positive(timings[0].DurationMs)
+	s.GreaterOrEqual(timings[0].TTFTMs, 25.0,
+		"time waiting for response headers must be included in the model call")
+	s.GreaterOrEqual(timings[0].DurationMs, timings[0].TTFTMs)
+}
+
+func (s *LLMRouterSuite) TestHeaderWaitIsNotAFirstTokenForAnEmptyReply() {
+	session, provider := s.newSession()
+	provider.createDelay = 25 * time.Millisecond
+	var timing llm.CallTiming
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		ID: "empty", Input: prompt(),
+		OnTiming: func(value llm.CallTiming) { timing = value },
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(stream.Close())
+	_ = drain(stream)
+	s.Zero(timing.TTFTMs, "no token arrived, so the header wait is not a first-token time")
+	s.GreaterOrEqual(timing.DurationMs, 25.0)
 }
 
 func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {

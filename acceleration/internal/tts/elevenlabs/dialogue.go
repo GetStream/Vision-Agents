@@ -122,9 +122,13 @@ func NewDialogue(options Options) (*Dialogue, error) {
 		return nil, stack.Wrap(fmt.Errorf(
 			"elevenlabs: %s is not a dialogue model, open it with New", options.Model))
 	}
-	// The dialogue socket takes stability and nothing else, so a speed would be dropped.
+	// The dialogue socket takes stability and nothing else, so a speed or a similarity
+	// would be dropped. A style is refused by normalize, which knows these models have none.
 	if options.Speed != 0 {
-		return nil, stack.Wrap(fmt.Errorf("elevenlabs: %s takes no speed", options.Model))
+		return nil, stack.Wrap(fmt.Errorf("%w: %s takes no speed", ErrRefused, options.Model))
+	}
+	if options.Similarity != nil {
+		return nil, stack.Wrap(fmt.Errorf("%w: %s takes no similarity", ErrRefused, options.Model))
 	}
 
 	return &Dialogue{
@@ -342,7 +346,7 @@ func (d *Dialogue) dial(ctx context.Context) error {
 	// line can be sent.
 	opening := dialogueClientMessage{
 		Voices:        []string{d.options.VoiceID},
-		VoiceSettings: &dialogueVoiceSettings{Stability: dialogueStability},
+		VoiceSettings: &dialogueVoiceSettings{Stability: valueOr(d.options.Stability, dialogueStability)},
 	}
 	if err := d.send(opening); err != nil {
 		d.mu.Lock()

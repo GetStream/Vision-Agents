@@ -369,12 +369,11 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	err := s.db.NewSelect().Model(&cards).
 		ColumnExpr("ep.*").
 		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address").
-		// LEAST ignores NULLs, so Until is nil only when all three are.
-		ColumnExpr(`LEAST(ep.ended_at, asn.closed_at, (SELECT min(nx.started_at) FROM episodes AS nx
+		// LEAST ignores NULLs, so Until is nil only when both are.
+		ColumnExpr(`LEAST(ep.ended_at, (SELECT min(nx.started_at) FROM episodes AS nx
 			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel
 			AND nx.started_at > ep.started_at)) AS until`).
 		Join("JOIN contact_map AS cm ON cm.id = ep.contact_id").
-		Join("LEFT JOIN agent_sessions AS asn ON asn.id = ep.session_id AND asn.customer_id = ep.customer_id").
 		Where("ep.customer_id = ?", query.CustomerID).
 		Where("cm.customer_id = ?", query.CustomerID).
 		Where("cm.agent_config_id = ?", query.AgentConfigID).
@@ -387,5 +386,51 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: episode cards: %w", err))
 	}
+	if err := s.closeCardsWithSessions(ctx, query.CustomerID, cards); err != nil {
+		return nil, err
+	}
 	return cards, nil
+}
+
+// closeCardsWithSessions ends each card no later than its call's session closed. Sessions are
+// kept in the shards and episodes in the shared database, so they are read apart.
+func (s *Store) closeCardsWithSessions(ctx context.Context, customerID string, cards []EpisodeCard) error {
+	var ids []string
+	for _, card := range cards {
+		if card.SessionID != "" {
+			ids = append(ids, card.SessionID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
+		var closed []AgentSession
+		err := db.NewSelect().Model(&closed).Column("id", "closed_at").
+			Where("customer_id = ?", customerID).
+			Where("id IN (?)", bun.In(ids)).
+			Where("closed_at IS NOT NULL").
+			Scan(ctx)
+		return closed, err
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: episode cards: sessions: %w", err))
+	}
+	// A session carried on in another shard has a row in each, and the latest close is when
+	// it ended.
+	closedAt := map[string]time.Time{}
+	for _, list := range lists {
+		for _, session := range list {
+			if at := *session.ClosedAt; at.After(closedAt[session.ID]) {
+				closedAt[session.ID] = at
+			}
+		}
+	}
+	for i := range cards {
+		at, ok := closedAt[cards[i].SessionID]
+		if ok && (cards[i].Until == nil || at.Before(*cards[i].Until)) {
+			cards[i].Until = &at
+		}
+	}
+	return nil
 }

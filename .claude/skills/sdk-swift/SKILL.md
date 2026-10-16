@@ -182,8 +182,10 @@ a decoded error body; a socket close code. Never classify by parsing `localizedD
 `code` are strings, so a value the router adds later still reads, and a body that is not the
 envelope keeps its trimmed text as `message` with the rest empty. `FailureMiddleware` throws every
 non-2xx, documented or not, before the generated client decodes it, so a switch over an
-operation's output handles its success and nothing else. A refused socket upgrade is an `http`
-too, with only the status and request id: URLSession never hands over its body.
+operation's output handles its success and nothing else. That is why `generate.py` hands the
+generator the spec with only each operation's 2xx responses: an error case would be unreachable.
+A refused socket upgrade is an `http` too, with only the status and request id: URLSession never
+hands over its body.
 
 ## Public API
 

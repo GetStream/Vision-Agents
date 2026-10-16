@@ -47,7 +47,7 @@ func (s *ForwardedDispatchSuite) SetupSuite() {
 	logger := slog.New(slog.DiscardHandler)
 	third := httptest.NewUnstartedServer(nil)
 	s.T().Cleanup(third.Close)
-	s.elsewhere = s.deploymentWorkers(dispatch.NewPool(), s.nodeDirectory(third, logger), s.relayBus(logger))
+	s.elsewhere = s.deploymentWorkers(dispatch.NewPool(), s.nodeDirectory(third, s.shard, logger), s.workBus(logger))
 }
 
 func (s *ForwardedDispatchSuite) TestARunningSessionsTextReachesAWorkerOnAnotherNode() {

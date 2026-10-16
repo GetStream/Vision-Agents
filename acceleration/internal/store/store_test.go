@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -32,31 +33,77 @@ func TestStoreSuite(t *testing.T) {
 	suite.Run(t, new(StoreSuite))
 }
 
+// ShardedStoreSuite runs every store test again with the shared tables in one database, this
+// shard's in another, and a second shard beside it, as a hosted deployment keeps them.
+type ShardedStoreSuite struct {
+	StoreSuite
+	// other is a router of the second shard: the same shared database, the other shard's own.
+	other *Store
+}
+
+func TestShardedStoreSuite(t *testing.T) {
+	suite.Run(t, new(ShardedStoreSuite))
+}
+
 func (s *StoreSuite) SetupSuite() {
+	s.ctx = context.Background()
+	s.dsn = s.emptyDatabase("store")
+	store, err := Open(s.dsn)
+	s.Require().NoError(err)
+	s.store = store
+	s.Require().NoError(store.Ping(s.ctx))
+	s.Require().NoError(store.Migrate(s.ctx))
+	s.base = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+}
+
+func (s *ShardedStoreSuite) SetupSuite() {
+	s.ctx = context.Background()
+	s.dsn = s.emptyDatabase("store_global")
+	shard, peer := s.emptyDatabase("store_shard"), s.emptyDatabase("store_peer")
+
+	other, err := Open(peer)
+	s.Require().NoError(err)
+	s.Require().NoError(other.Migrate(s.ctx))
+	s.Require().NoError(other.Close())
+
+	shards := map[string]string{"here": shard, "there": peer}
+	store, err := OpenShards(Options{DSN: s.dsn, ShardDSN: shard, Shards: shards})
+	s.Require().NoError(err)
+	s.store = store
+	s.Require().NoError(store.Ping(s.ctx))
+	s.Require().NoError(store.Migrate(s.ctx))
+	s.other, err = OpenShards(Options{DSN: s.dsn, ShardDSN: peer, Shards: shards})
+	s.Require().NoError(err)
+	s.base = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+}
+
+func (s *ShardedStoreSuite) TearDownSuite() {
+	if s.other != nil {
+		s.Require().NoError(s.other.Close())
+	}
+	s.StoreSuite.TearDownSuite()
+}
+
+// emptyDatabase is a database of this suite's own with an empty schema, so the embedded
+// migrations are what create the tables. It is the suite's own because it drops the schema and
+// empties tables between tests, which is not something to do to a database another package is
+// reading.
+func (s *StoreSuite) emptyDatabase(name string) string {
 	dsn := os.Getenv(DSNEnvVar)
 	if dsn == "" {
 		s.T().Skipf("%s not set", DSNEnvVar)
 	}
-
-	// A database of this suite's own: it drops the schema and empties tables between
-	// tests, which is not something to do to a database another package is reading.
-	s.dsn = testenv.Database(dsn, "store")
-	store, err := Open(s.dsn)
+	own := testenv.Database(dsn, name)
+	db, err := Open(own)
 	s.Require().NoError(err)
-	s.store = store
-	s.ctx = context.Background()
-	s.Require().NoError(store.Ping(s.ctx))
+	defer db.Close()
 
 	var database string
-	s.Require().NoError(store.DB().QueryRowContext(s.ctx, "SELECT current_database()").Scan(&database))
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT current_database()").Scan(&database))
 	s.Require().True(strings.HasSuffix(database, "_test"), "refusing to drop the schema of %s, which is not a test database", database)
-
-	// Start from an empty schema so the embedded migrations are what create the tables.
-	_, err = store.DB().ExecContext(s.ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+	_, err = db.DB().ExecContext(s.ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public")
 	s.Require().NoError(err)
-	s.Require().NoError(store.Migrate(s.ctx))
-
-	s.base = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	return own
 }
 
 func (s *StoreSuite) TearDownSuite() {
@@ -66,20 +113,22 @@ func (s *StoreSuite) TearDownSuite() {
 }
 
 func (s *StoreSuite) SetupTest() {
-	_, err := s.store.DB().ExecContext(
-		s.ctx,
-		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
-			" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
-			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
-			" policies, app_organizations, call_resources, organizations, agent_configs,"+
-			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
-			" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
-			" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+
-			" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
-			" connection_event_subscriptions, connection_event_deliveries,"+
-			" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases CASCADE",
-	)
-	s.Require().NoError(err)
+	for _, db := range append([]bun.IDB{s.store.db}, s.store.shards()...) {
+		_, err := db.ExecContext(
+			s.ctx,
+			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
+				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
+				" voices, agent_sessions, agent_responses, agent_response_items, users,"+
+				" policies, app_organizations, call_resources, organizations, agent_configs,"+
+				" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
+				" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
+				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+
+				" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
+				" connection_event_subscriptions, connection_event_deliveries,"+
+				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases CASCADE",
+		)
+		s.Require().NoError(err)
+	}
 }
 
 // record stores a speech-to-text request, defaulting the fields a test does not care about.
@@ -268,7 +317,7 @@ func (s *StoreSuite) TestRollupIgnoresRequestsOutsideTheWindow() {
 	s.Require().NoError(err)
 
 	var buckets []Bucket
-	err = s.store.DB().NewSelect().Table("stats_hourly").Where("customer_id = ?", "acme").Scan(s.ctx, &buckets)
+	err = s.store.shard.NewSelect().Table("stats_hourly").Where("customer_id = ?", "acme").Scan(s.ctx, &buckets)
 	s.Require().NoError(err)
 	s.Require().Len(buckets, 1)
 	s.EqualValues(1000, buckets[0].AudioMsTotal)

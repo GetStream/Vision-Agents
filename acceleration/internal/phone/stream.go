@@ -2,6 +2,7 @@ package phone
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,21 +69,22 @@ type Trunk struct {
 	Name string
 	// Numbers are the numbers the vendor will present on calls to this trunk.
 	Numbers []string
-	// Password authenticates the vendor. Empty lets Stream generate one, which is then
-	// returned in the bridge.
+	// Password authenticates the vendor. Empty on a trunk without AllowedIPs gets a random
+	// one, returned in the bridge: Stream makes none of its own, and a trunk with neither
+	// lets every caller in unchallenged.
 	Password string
-	// AllowedIPs are the vendor's signalling addresses, as IPs or CIDR blocks.
+	// AllowedIPs are the vendor's signalling addresses, as IPs or CIDR blocks, for a vendor
+	// that cannot send a password.
 	//
-	// Setting them replaces the password rather than adding to it: Stream accepts a call
-	// from a listed address without challenging it, and refuses one from anywhere else
-	// outright. Leaving them empty does not mean "password only" — it accepts every
-	// address unchallenged, so an empty allowlist is an open trunk.
+	// Stream refuses a call from any other address outright, and still challenges a listed
+	// one if the trunk has a password, so a trunk with addresses gets no password. Leaving
+	// them empty accepts every address.
 	AllowedIPs []string
 }
 
 // CreateTrunk creates an inbound trunk and returns the bridge the vendor should send
-// calls to. The password is only readable here, which is why the bridge is returned
-// rather than fetched later.
+// calls to. The bridge is returned so the caller has the trunk's address and credentials
+// without another request.
 func (s *Stream) CreateTrunk(ctx context.Context, trunk Trunk) (string, Bridge, error) {
 	if trunk.Name == "" {
 		return "", Bridge{}, stack.Wrap(errors.New("phone: a trunk needs a name"))
@@ -96,8 +98,12 @@ func (s *Stream) CreateTrunk(ctx context.Context, trunk Trunk) (string, Bridge, 
 		Numbers:    trunk.Numbers,
 		AllowedIps: trunk.AllowedIPs,
 	}
-	if trunk.Password != "" {
-		request.Password = &trunk.Password
+	password := trunk.Password
+	if password == "" && len(trunk.AllowedIPs) == 0 {
+		password = rand.Text()
+	}
+	if password != "" {
+		request.Password = &password
 	}
 
 	response, err := s.client.Video().CreateSIPTrunk(ctx, request)

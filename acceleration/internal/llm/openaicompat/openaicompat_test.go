@@ -560,6 +560,70 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 	}
 }
 
+func (s *OpenAICompatSuite) TestABraceFormToolCallPreservesSingleQuotedIdentityArguments() {
+	// Brace-form identity values in single quotes should decode as exact strings, without
+	// quote marks, before they reach the verification tool.
+	s.frames = []string{
+		textFrame("call:verify_identity{name:'Maya Chen',"),
+		textFrame("dob:'1987-03-04',member_id:'ABC123456'}"),
+		usageFrame(20, 0, 30, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+	params := hello()
+	params.Tools = []llm.Tool{{Name: "verify_identity"}}
+
+	response, _ := s.ask(provider, params)
+
+	s.Empty(response.OutputText)
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("verify_identity", response.ToolCalls[0].Name)
+	s.JSONEq(`{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456"}`, response.ToolCalls[0].Arguments)
+	var identity struct {
+		Name     string `json:"name"`
+		DOB      string `json:"dob"`
+		MemberID string `json:"member_id"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(response.ToolCalls[0].Arguments), &identity))
+	s.Equal("Maya Chen", identity.Name)
+	s.Equal("1987-03-04", identity.DOB)
+	s.Equal("ABC123456", identity.MemberID)
+}
+
+func (s *OpenAICompatSuite) TestABraceFormToolCallKeepsSingleQuotedValuesTogetherWhileStreaming() {
+	s.frames = []string{
+		textFrame("call:verify_identity{'name':'Maya Chen','dob':'1987-03-04',"),
+		textFrame("'member_id':'ABC123456','nickname':'O\\"),
+		textFrame("'Brien','note':'comma, brace } and {','bare':O'Brien}"),
+		usageFrame(20, 0, 30, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+	params := hello()
+	params.Tools = []llm.Tool{{Name: "verify_identity"}}
+
+	response, _ := s.ask(provider, params)
+
+	s.Empty(response.OutputText)
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("verify_identity", response.ToolCalls[0].Name)
+	s.JSONEq(`{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456","nickname":"O'Brien","note":"comma, brace } and {","bare":"O'Brien"}`, response.ToolCalls[0].Arguments)
+}
+
+func (s *OpenAICompatSuite) TestNativeJSONToolArgumentsKeepApostrophesInsideDoubleQuotedValues() {
+	s.frames = []string{
+		toolFrame(0, "call-1", "verify_identity", `{"name":"O'Brien","alias":"'Maya Chen'"}`),
+		usageFrame(20, 0, 30, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+	params := hello()
+	params.Tools = []llm.Tool{{Name: "verify_identity"}}
+
+	response, _ := s.ask(provider, params)
+
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("verify_identity", response.ToolCalls[0].Name)
+	s.JSONEq(`{"name":"O'Brien","alias":"'Maya Chen'"}`, response.ToolCalls[0].Arguments)
+}
+
 func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAToolCallIsSpokenWhole() {
 	s.frames = []string{
 		textFrame("Please call: me back, or call:"),

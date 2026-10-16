@@ -424,6 +424,7 @@ var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: s
 
 // Attach creates the Stream trunk and routing rule for a number and tells the vendor to
 // send calls there. This is what turns a bought number into one that reaches an agent.
+// Attaching a number already attached in this app changes nothing and answers what it has.
 func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, error) {
 	if s.store == nil {
 		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs a database to know who holds it"))
@@ -452,6 +453,13 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if declared.AsksForTrunk && s.sealer == nil {
 		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
 			held.Vendor, ErrNoSealer))
+	}
+
+	// The same request is sent on every run of a program waiting for calls, so a number
+	// already attached in this app is answered with what it has.
+	if held.StreamTrunkID != "" && held.StreamAppPK == pin {
+		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
+			Bridge: Bridge{URI: held.BridgeURI}}, nil
 	}
 
 	allowedIPs, err := trunkAllowlist(declared)
@@ -502,14 +510,15 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	record := store.NumberAttachment{
 		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
 	}
-	// Stream returns the password only now, and a vendor that asks per call where to send a
-	// caller needs it then. Without a key it is not kept, rather than kept in the clear.
+	// The address is not secret and a repeat attach answers it. Stream returns the password
+	// only now, and a vendor that asks per call where to send a caller needs it then. Without
+	// a key it is not kept, rather than kept in the clear.
+	record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
 	if s.sealer != nil {
 		sealed, err := s.sealer.SealWithAAD(bridge.Password, bridgeAAD(attachment.CustomerID, attachment.E164))
 		if err != nil {
 			return Attached{}, stack.Wrap(err)
 		}
-		record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
 		record.BridgePasswordSealed, record.BridgePasswordKEKVersion = sealed, s.sealer.CurrentVersion()
 	}
 
@@ -991,9 +1000,15 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(err)
 	}
 
+	allowedIPs, err := s.allowlistFor(held.Vendor)
+	if err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
+
 	trunkID, bridge, err := stream.CreateTrunk(ctx, Trunk{
-		Name:    "transfer-" + request.CallID,
-		Numbers: []string{request.From},
+		Name:       "transfer-" + request.CallID,
+		Numbers:    []string{request.From},
+		AllowedIPs: allowedIPs,
 	})
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)

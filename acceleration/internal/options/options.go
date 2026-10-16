@@ -56,6 +56,7 @@ const (
 	Volume          Term = "volume"
 	Emotion         Term = "emotion"
 	Stability       Term = "stability"
+	Similarity      Term = "similarity"
 	Pronunciations  Term = "pronunciations"
 	ChunkSchedule   Term = "chunk_schedule"
 	Domains         Term = "domains"
@@ -510,7 +511,10 @@ func (o TTS) Terms() []Term {
 	asked = appendIf(asked, Speed, o.Speed != nil)
 	asked = appendIf(asked, Volume, o.Volume != nil)
 	asked = appendIf(asked, Emotion, o.Emotion != "" || o.Style != "")
-	asked = appendIf(asked, Stability, o.Stability != nil || o.Similarity != nil)
+	// Two terms rather than one: the dialogue models take a stability and no similarity,
+	// and one term for both would route a similarity to a model that refuses it.
+	asked = appendIf(asked, Stability, o.Stability != nil)
+	asked = appendIf(asked, Similarity, o.Similarity != nil)
 	asked = appendIf(asked, Format, o.Format != "")
 	asked = appendIf(asked, Pronunciations, len(o.Pronunciations) > 0)
 	asked = appendIf(asked, ChunkSchedule, len(o.ChunkSchedule) > 0)

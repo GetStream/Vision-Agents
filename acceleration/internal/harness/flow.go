@@ -81,6 +81,8 @@ type flow struct {
 	// request open until headers or a 429 retry, and waiting for that used to leave the
 	// follow-up never asked.
 	inFlight string
+	// closed prevents new decisions from starting once Close begins waiting for active runs.
+	closed bool
 	// retired are controllers a swap replaced, closed with the flow so a decision they
 	// were still making can settle.
 	retired []*llmrouter.Session
@@ -171,6 +173,13 @@ func (f *flow) Decide(turn FlowTurn) error {
 	asked := &candidate{turn: turn, askedAt: time.Now(), ctx: ctx, cancel: cancel}
 
 	f.mu.Lock()
+	if f.closed {
+		// The conversation is over, and Close is waiting for the decisions that were
+		// started before it.
+		f.mu.Unlock()
+		cancel()
+		return nil
+	}
 	f.pending[turn.ID] = asked
 	f.dropWaitingLocked()
 	if f.inFlight != "" {
@@ -179,9 +188,9 @@ func (f *flow) Decide(turn FlowTurn) error {
 		return nil
 	}
 	f.inFlight = turn.ID
+	f.running.Add(1)
 	f.mu.Unlock()
 
-	f.running.Add(1)
 	go f.run(asked)
 	return nil
 }
@@ -258,8 +267,8 @@ func (f *flow) advance(turnID string) {
 		return
 	}
 	f.inFlight = next.turn.ID
-	f.mu.Unlock()
 	f.running.Add(1)
+	f.mu.Unlock()
 	go f.run(next)
 }
 
@@ -333,8 +342,12 @@ func (f *flow) Cancel(candidateID string) error {
 		return nil
 	}
 	asked, pending := f.pending[candidateID]
+	var stream *llm.Stream
 	if pending {
 		delete(f.pending, candidateID)
+		// run sets the stream under this lock. If it sets the stream after this, run closes
+		// it once it sees the turn is no longer pending.
+		stream = asked.stream
 	}
 	f.mu.Unlock()
 
@@ -346,14 +359,15 @@ func (f *flow) Cancel(candidateID string) error {
 	// must not wait for that. advance starts it now, and the leftover call from run does
 	// nothing because the turn in flight has moved on.
 	f.advance(candidateID)
-	if asked.stream == nil {
+	if stream == nil {
 		return nil
 	}
-	return asked.stream.Close()
+	return stream.Close()
 }
 
 func (f *flow) Close() error {
 	f.mu.Lock()
+	f.closed = true
 	f.dropWaitingLocked()
 	for _, asked := range f.pending {
 		asked.cancel()

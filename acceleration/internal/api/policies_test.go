@@ -126,7 +126,7 @@ func (s *PoliciesSuite) TestUsageIsRecordedUnderThePolicysTagsOverTheRequests() 
 	want := map[string]string{"application": "athena", "feature": sent["feature"]}
 	s.Require().Eventually(func() bool {
 		var rows []store.Request
-		err := s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(context.Background())
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(context.Background())
 		return err == nil && len(rows) == 1 && maps.Equal(rows[0].Tags, want)
 	}, 5*time.Second, 50*time.Millisecond)
 }

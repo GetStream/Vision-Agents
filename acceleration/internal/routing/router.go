@@ -379,7 +379,8 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 // Select builds and starts the best provider that will have it, falling back to the next
 // candidate when one fails to start. Failures are recorded so the next request routes
-// around them. The caller owns the returned provider and must Close it.
+// around them. A request error (ErrRequest) is not recorded, and when nothing serves it is
+// what the caller is told. The caller owns the returned provider and must Close it.
 func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderConfig, error) {
 	var zero P
 
@@ -422,8 +423,17 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	}
 	untried(candidates, request.Failed)
 
-	var failures []error
+	var failures, refusals []error
+	// overwritten is the vendor whose candidate refused its overwrite block. An overwrite
+	// is one vendor's: the same vendor's other models may read it (OpenAI's realtime and
+	// Live models read different structs out of one block), but another vendor is handed
+	// its own block, so serving there would drop the overwrite in silence. From then on
+	// only that vendor's candidates are tried, and if none reads it the request is refused.
+	overwritten := ""
 	for _, candidate := range candidates {
+		if overwritten != "" && candidate.Config.Provider != overwritten {
+			continue
+		}
 		if !r.registry.Has(candidate.Config.Provider) {
 			failures = append(failures, fmt.Errorf("%s: no factory registered", candidate.Config.Name()))
 			continue
@@ -433,12 +443,24 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		if err == nil {
 			return provider, candidate.Config, nil
 		}
+		if errors.Is(err, ErrRequest) {
+			refusals = append(refusals, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+			if errors.Is(err, ErrOverwrite) {
+				overwritten = candidate.Config.Provider
+			}
+			continue
+		}
 
 		r.logger.Warn("provider failed to start, trying the next candidate",
 			"modality", r.modality, "target", request.Target, "provider", candidate.Config.Name(), "error", err)
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 	}
 
+	// What the caller asked for is what they can fix, so a refusal is the answer even when
+	// another candidate also failed on its own account.
+	if len(refusals) > 0 {
+		return zero, ProviderConfig{}, stack.Wrap(errors.Join(refusals...))
+	}
 	return zero, ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
 		request.Target, errors.Join(failures...)))
 }
@@ -576,6 +598,11 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	}
 
 	provider, err := r.registry.Build(candidate.Config.Provider, spec)
+	// A setting the model cannot take says nothing about the model, and its health is
+	// every customer's.
+	if errors.Is(err, ErrRequest) {
+		return zero, err
+	}
 	if err != nil {
 		r.recorder.Record(candidate.Config, Stat{
 			Owner:        request.Owner(),

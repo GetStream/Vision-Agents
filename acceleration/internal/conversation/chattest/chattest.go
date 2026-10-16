@@ -35,6 +35,9 @@ type store struct {
 	now      func() time.Time
 	app      App
 	appReads int
+	// oneTrunkPerNumber refuses a trunk naming a number another trunk already has; see
+	// OneTrunkPerNumber.
+	oneTrunkPerNumber bool
 	// keyed are apps answered for one api key, standing in for several apps at one URL.
 	keyed map[string]App
 	// hooks are the event hooks each api key's app holds, as an app update last set them,
@@ -287,6 +290,32 @@ func (s *Server) Trunks() []string {
 	return slices.Sorted(maps.Keys(s.db.trunks))
 }
 
+// TrunkAuth is what the trunk with the id was created with to let a caller in: its
+// password and the addresses it takes calls from.
+func (s *Server) TrunkAuth(id string) (string, []string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	body := s.db.trunks[id]
+	password, _ := body["password"].(string)
+	var allowed []string
+	if listed, ok := body["allowed_ips"].([]any); ok {
+		for _, address := range listed {
+			if text, ok := address.(string); ok {
+				allowed = append(allowed, text)
+			}
+		}
+	}
+	return password, allowed
+}
+
+// OneTrunkPerNumber has the app refuse a trunk that names a number one of its trunks already
+// has, as Stream does. It is off unless asked for, since not every test models the rule.
+func (s *Server) OneTrunkPerNumber() {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.oneTrunkPerNumber = true
+}
+
 // Rules are the ids of the SIP routing rules the app holds now.
 func (s *Server) Rules() []string {
 	s.db.mu.Lock()
@@ -400,6 +429,20 @@ func (s *Server) Delivered(id string) []map[string]any {
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": message, "StatusCode": http.StatusBadRequest})
+}
+
+// numberOnATrunk is a number the trunk being made names that a trunk the app holds has too.
+func (db *store) numberOnATrunk(trunk map[string]any) string {
+	wanted, _ := trunk["numbers"].([]any)
+	for _, held := range db.trunks {
+		has, _ := held["numbers"].([]any)
+		for _, number := range wanted {
+			if slices.Contains(has, number) {
+				return fmt.Sprint(number)
+			}
+		}
+	}
+	return ""
 }
 
 // appFor is the app a request's api key is answered as.
@@ -570,11 +613,20 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		result["call"] = call
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
+		if db.oneTrunkPerNumber {
+			if taken := db.numberOnATrunk(body); taken != "" {
+				refuse(w, "numbers already used by another SIP trunk: "+taken)
+				return
+			}
+		}
 		// Stream's ids are unique across every app, which is what lets a test tell one app's
 		// trunk from another's.
 		id := "trunk-" + unique()
 		db.trunks[id] = body
-		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": "secret"}
+		// Stream stores the password it was sent and makes none of its own, so a trunk
+		// created without one has none.
+		password, _ := body["password"].(string)
+		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": password}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_routing_rules") && r.Method == http.MethodPost:
 		id := "rule-" + unique()
 		db.rules[id] = body

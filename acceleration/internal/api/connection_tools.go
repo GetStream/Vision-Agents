@@ -80,6 +80,11 @@ const codeToolSchemaChanged = "connector_tool_schema_changed"
 // marked broken (AI-1002): saving its credentials again moves it, the same remedy, so one code.
 const codeCredentialRejected = "connector_credential_rejected"
 
+// codeConsentRefused is the code of a connection's last validation that is not a validate's:
+// the provider refused a consent for a connection that was not connected, with an RFC 6749
+// section 4.1.2.1 error other than access_denied (Server.recordRefusal). New (AI-1379).
+const codeConsentRefused = "connector_consent_refused"
+
 func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionValidationStatus",
 		"connected: the credential works and the tools were listed. pending: no credentials yet. "+
@@ -90,7 +95,7 @@ func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 			"connection's current grant, so sessions leave it out until it is approved again; "+
 			"changed_tools names them, and POST .../tools/approve approves them, as does a reconnect "+
 			"of an OAuth connection, which begins a new grant. failed: the provider "+
-			"could not be reached or listed nothing usable; error says why.",
+			"could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.",
 		validationConnected, validationPending, validationNeedsReauthorization, validationNeedsScopes,
 		validationNeedsReapproval, validationFailed)
 }

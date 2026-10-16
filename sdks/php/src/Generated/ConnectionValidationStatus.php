@@ -15,8 +15,8 @@ namespace GetStream\VisionAgents\Generated;
  * provider changed the schema of a tool sessions pinned for the connection's current grant, so
  * sessions leave it out until it is approved again; changed_tools names them, and POST
  * .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a
- * new grant. failed: the provider could not be reached or listed nothing usable; error says
- * why.
+ * new grant. failed: the provider could not be reached or listed nothing usable, or the
+ * provider refused a consent (code connector_consent_refused); error says why.
  */
 enum ConnectionValidationStatus: string
 {
