@@ -30,6 +30,9 @@ type chunker struct {
 	// last is the rune before the one being read, so a comma between digits is not taken
 	// for the end of a clause.
 	last rune
+	// decimalPoint defers a period after a digit until the next rune shows whether it is
+	// part of a number or the end of an integer sentence.
+	decimalPoint bool
 }
 
 // Add takes a delta and returns whatever complete sentences it finished, in order. Usually
@@ -38,6 +41,13 @@ func (c *chunker) Add(text string) []string {
 	var chunks []string
 
 	for _, r := range text {
+		if c.decimalPoint {
+			c.decimalPoint = false
+			if !unicode.IsDigit(r) && c.pendingRunes() >= minChunkRunes {
+				chunks = append(chunks, c.take())
+			}
+		}
+
 		c.pending.WriteRune(r)
 		after := c.last
 		c.last = r
@@ -47,6 +57,10 @@ func (c *chunker) Add(text string) []string {
 			continue
 		}
 		if !isSentenceEnd(r) {
+			continue
+		}
+		if r == '.' && unicode.IsDigit(after) {
+			c.decimalPoint = true
 			continue
 		}
 		if c.pendingRunes() < minChunkRunes {
@@ -72,6 +86,7 @@ func (c *chunker) Reset() {
 	c.pending.Reset()
 	c.started = false
 	c.last = 0
+	c.decimalPoint = false
 }
 
 // take returns the pending text and clears it.

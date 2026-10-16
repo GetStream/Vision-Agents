@@ -1731,6 +1731,24 @@ func (s *AgentSuite) TestAReplyIsSpokenSentenceBySentence() {
 	s.Len(ids, 1, "one turn is one utterance for a streaming voice")
 }
 
+func (s *AgentSuite) TestAStreamingVoiceReceivesADecimalAsOneTextRequest() {
+	s.join(true)
+	s.model.reply = []string{"That comes to 12.", "63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is the total")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	requests := s.voice.spoken()
+	s.Require().Len(requests, 2)
+	s.Equal("That comes to 12.63.", requests[0].Text)
+	s.False(requests[0].Final, "the sentence is a text delta in the streaming utterance")
+	s.Empty(requests[1].Text)
+	s.True(requests[1].Final, "the streaming utterance closes after the sentence")
+}
+
 func (s *AgentSuite) TestANonStreamingVoiceGetsOneRequestPerSentence() {
 	s.join(false)
 	participant := stt.Participant{ID: "alice"}
@@ -1746,6 +1764,22 @@ func (s *AgentSuite) TestANonStreamingVoiceGetsOneRequestPerSentence() {
 	}
 	s.NotEqual(s.voice.spoken()[0].ID, s.voice.spoken()[1].ID,
 		"each sentence is its own synthesis, so each settles on its own")
+}
+
+func (s *AgentSuite) TestANonStreamingVoiceReceivesADecimalAsOneTextRequest() {
+	s.join(false)
+	s.model.reply = []string{"That comes to 12.", "63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is the total")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	requests := s.voice.spoken()
+	s.Require().Len(requests, 1)
+	s.Equal("That comes to 12.63.", requests[0].Text)
+	s.True(requests[0].Final, "the sentence is one complete non-streaming request")
 }
 
 func (s *AgentSuite) TestTheConversationIsRemembered() {
