@@ -93,7 +93,7 @@ var (
 	XAI = Vendor{
 		Provider:         "xai",
 		URL:              "wss://api.x.ai/v1/realtime",
-		Model:            "grok-voice-think-fast-2.0",
+		Model:            "grok-voice-3.0",
 		APIKeyEnvVar:     "XAI_API_KEY",
 		InputSampleRate:  24_000,
 		OutputSampleRate: 24_000,

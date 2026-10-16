@@ -36,7 +36,8 @@ func (s *Suite) TestTheModelHearsTheCallerAndAnswersInItsOwnVoice() {
 	defer s.Hangup(provider)
 
 	s.Speak(provider)
-	reply := s.Settled(provider)
+	// A pause mid-clip can start a reply that the rest of the clip cuts off before it speaks.
+	reply := s.Spoken(provider)
 
 	s.Require().NotEmpty(reply.Chunks, "the model should have spoken")
 	for _, chunk := range reply.Chunks {

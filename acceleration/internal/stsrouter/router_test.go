@@ -315,7 +315,7 @@ func (s *STSRouterSuite) TestFramesRouteOnlyToAModelThatSees() {
 
 	_, err := router.Start(s.ctx, Request{
 		CustomerID: "acme",
-		Target:     "xai/grok-voice-think-fast-2.0",
+		Target:     "xai/grok-voice-3.0",
 		Options:    options.STS{Images: &sees},
 	})
 	s.ErrorContains(err, "no provider accepts image input")

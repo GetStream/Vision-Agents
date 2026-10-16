@@ -620,6 +620,10 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 
 The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
 
+### xAI speech to speech is `xai/grok-voice-3.0`
+
+The routed xAI voice model is Grok Voice 3.0, top of the Artificial Analysis speech-to-speech index. `xai/grok-voice-think-fast-2.0` is no longer a target, so a config that pins it must name `xai/grok-voice-3.0`. It is billed at xAI's $0.08 a minute of caller audio ($4.80 an hour), up from the $3.00 an hour the old entry claimed.
+
 ## New Features
 
 ### A backend can give one session instructions of its own
