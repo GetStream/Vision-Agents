@@ -17,8 +17,10 @@ type FlowSuite struct {
 	suite.Suite
 	ctx context.Context
 
-	model *stubLLM
-	flow  *flow
+	model   *stubLLM
+	flow    *flow
+	emitter *Emitter
+	drained chan struct{}
 
 	mu      sync.Mutex
 	decided []Decided
@@ -33,11 +35,11 @@ func (s *FlowSuite) SetupTest() {
 	s.model = newStubLLM()
 	s.decided = nil
 
-	emitter := NewEmitter(16)
-	drained := make(chan struct{})
+	s.emitter = NewEmitter(16)
+	s.drained = make(chan struct{})
 	go func() {
-		defer close(drained)
-		for event := range emitter.Events() {
+		defer close(s.drained)
+		for event := range s.emitter.Events() {
 			decided, ok := event.(Decided)
 			if !ok {
 				continue
@@ -48,11 +50,11 @@ func (s *FlowSuite) SetupTest() {
 		}
 	}()
 
-	s.flow = newFlow(stubSession(&s.Suite, s.ctx, s.model), emitter, slog.New(slog.DiscardHandler))
+	s.flow = newFlow(stubSession(&s.Suite, s.ctx, s.model), s.emitter, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() {
 		_ = s.flow.Close()
-		emitter.Close()
-		<-drained
+		s.emitter.Close()
+		<-s.drained
 	})
 }
 
@@ -111,25 +113,25 @@ func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
 	s.Contains(question, `is speaking right now and has so far said "party of four at 7:30"`)
 }
 
-func (s *FlowSuite) TestAReplyNobodyHasHeardIsNotQuotedAsWhatTheAgentHasSaid() {
-	for name, turn := range map[string]FlowTurn{
-		"settled":     {Text: "for two at seven"},
-		"in progress": {Text: "for two at", Unfinished: true},
-	} {
-		s.Run(name, func() {
-			s.SetupTest()
-			turn.ID, turn.Participant, turn.Speaking, turn.Unheard = "candidate-1", "Alex", true, true
-			// The reply is passed to show that it is the flag that keeps it out of the question.
-			turn.Reply = "a table for two at seven, under what name?"
+func (s *FlowSuite) TestASettledUnheardReplyIsNotQuotedAsWhatTheAgentHasSaid() {
+	s.assertUnheardReplyIsNotQuoted(FlowTurn{Text: "for two at seven"})
+}
 
-			s.Require().NoError(s.flow.Decide(turn))
+func (s *FlowSuite) TestAnInProgressUnheardReplyIsNotQuotedAsWhatTheAgentHasSaid() {
+	s.assertUnheardReplyIsNotQuoted(FlowTurn{Text: "for two at", Unfinished: true})
+}
 
-			question := s.waitAsked(1)[0].Input[0].Content
-			s.Contains(question, "The agent is speaking right now, though none of its reply has reached the caller yet.")
-			s.NotContains(question, "under what name")
-			s.NotContains(question, "speaking right now and has so far said")
-		})
-	}
+func (s *FlowSuite) assertUnheardReplyIsNotQuoted(turn FlowTurn) {
+	turn.ID, turn.Participant, turn.Speaking, turn.Unheard = "candidate-1", "Alex", true, true
+	// The reply is passed to show that it is the flag that keeps it out of the question.
+	turn.Reply = "a table for two at seven, under what name?"
+
+	s.Require().NoError(s.flow.Decide(turn))
+
+	question := s.waitAsked(1)[0].Input[0].Content
+	s.Contains(question, "The agent is speaking right now, though none of its reply has reached the caller yet.")
+	s.NotContains(question, "under what name")
+	s.NotContains(question, "speaking right now and has so far said")
 }
 
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
@@ -287,11 +289,32 @@ func (s *FlowSuite) TestCancelOfAHungCreateLetsTheNextDecideStart() {
 	s.Equal("new", asked[1].ID, "a hung create that was cancelled must not keep the mailbox busy")
 }
 
+func (s *FlowSuite) TestCancelCanOverlapTheReturningStream() {
+	// Release each blocked Create concurrently with Cancel and repeat to exercise the stream
+	// handoff under the race detector.
+	for round := range 100 {
+		id := fmt.Sprintf("round-%d", round)
+		hold := make(chan struct{})
+		s.model.mu.Lock()
+		s.model.holdCreate = hold
+		s.model.mu.Unlock()
+		s.Require().NoError(s.flow.Decide(FlowTurn{ID: id, Participant: "Alex", Text: "okay"}))
+		s.waitAsked(round + 1)
+
+		cancelled := make(chan error, 1)
+		go func() { cancelled <- s.flow.Cancel(id) }()
+		close(hold)
+		s.Require().NoError(<-cancelled)
+	}
+}
+
 func (s *FlowSuite) TestNothingIsAskedOnceTheFlowIsClosed() {
 	s.Require().NoError(s.flow.Close())
 
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "late", Participant: "Alex", Text: "okay"}))
 	s.flow.running.Wait()
+	s.emitter.Close()
+	<-s.drained
 
 	s.Empty(s.model.requests(), "a decision started after Close would outlive the sessions it was given")
 	s.Empty(s.decisions())

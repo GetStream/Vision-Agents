@@ -84,8 +84,7 @@ type flow struct {
 	// request open until headers or a 429 retry, and waiting for that used to leave the
 	// follow-up never asked.
 	inFlight string
-	// closed is set by Close, after which no decision is started: every one Close waits for
-	// was counted in running while this was still false.
+	// closed prevents new decisions from starting once Close begins waiting for active runs.
 	closed bool
 	// retired are controllers a swap replaced, closed with the flow so a decision they
 	// were still making can settle.
@@ -352,8 +351,8 @@ func (f *flow) Cancel(candidateID string) error {
 	var stream *llm.Stream
 	if pending {
 		delete(f.pending, candidateID)
-		// run sets the stream under this lock. One it sets after this is closed by run, which
-		// finds the turn no longer pending.
+		// run sets the stream under this lock. If it sets the stream after this, run closes
+		// it once it sees the turn is no longer pending.
 		stream = asked.stream
 	}
 	f.mu.Unlock()
