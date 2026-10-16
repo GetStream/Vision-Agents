@@ -54,10 +54,14 @@ func (s *ConverseSuite) build(options DuplexOptions) {
 
 // start is build, for the tests that also care how long an unfinished thought is waited on.
 func (s *ConverseSuite) start(options DuplexOptions, patience time.Duration) {
+	s.startWithSettle(options, patience, time.Hour)
+}
+
+func (s *ConverseSuite) startWithSettle(options DuplexOptions, patience, settle time.Duration) {
 	s.teardown()
 
 	logger := slog.New(slog.DiscardHandler)
-	s.settling = newCadence(testGap, testRetry, time.Hour, logger)
+	s.settling = newCadence(testGap, testRetry, settle, logger)
 	s.emitter = NewEmitter(eventBuffer)
 	s.converse = newConverse(s.settling, newDuplex(options), s.emitter, nil, patience, logger)
 
@@ -112,6 +116,19 @@ func (s *ConverseSuite) held() candidate {
 		s.FailNow("the words never held still")
 		return candidate{}
 	}
+}
+
+func (s *ConverseSuite) ignoreNextSettled() {
+	s.T().Helper()
+	ready := s.held()
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Ignore,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActIgnore}, kinds(actions))
 }
 
 // talking is an agent mid-reply, which is what makes the floor half of a ruling matter.
@@ -172,6 +189,107 @@ func (s *ConverseSuite) overhears(text string, state floor) candidate {
 	asks := s.overheard(text, state)
 	s.Require().Len(asks, 1, "no provisional ask was made about the overlap")
 	return asks[0]
+}
+
+// queueOnOverlap starts a numbered transcript while the agent is speaking, then lets its
+// settled candidate meet the still-in-flight overlap ask. This is the path where the words
+// are queued before a provisional ruling comes back.
+func (s *ConverseSuite) queueOnOverlap(transcript stt.Transcript) (candidate, candidate) {
+	var provisional candidate
+	for _, action := range s.converse.Observe(transcript, s.talking()) {
+		if action.Kind == ActAsk {
+			provisional = action.Candidate
+		}
+	}
+	s.Require().NotEmpty(provisional.ID, "the overlapping words were not asked about")
+
+	ready := s.held()
+	action := s.converse.Settled(ready, s.talking())
+	s.Require().Equal(ActQueue, action.Kind, "settled words wait behind their overlap ask")
+	return ready, provisional
+}
+
+func (s *ConverseSuite) stopOverlapAsk(provisional candidate) {
+	s.T().Helper()
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: provisional.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, s.talking())
+	s.Equal([]ActionKind{ActInterrupt}, kinds(actions))
+}
+
+func (s *ConverseSuite) queueSettledTurn(text string, utterance int64, floorDecision harness.Floor) candidate {
+	s.T().Helper()
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        text,
+	}, s.quiet())
+	ready := s.held()
+	asked := s.converse.Settled(ready, s.talking())
+	s.Require().Equal(ActAsk, asked.Kind)
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       floorDecision,
+	}, s.talking())
+	if floorDecision == harness.Shorten {
+		s.Equal([]ActionKind{ActQueue, ActShorten}, kinds(actions))
+	} else {
+		s.Equal([]ActionKind{ActQueue}, kinds(actions))
+	}
+	return ready
+}
+
+func (s *ConverseSuite) answerFinal(text string, utterance int64) Action {
+	s.T().Helper()
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+		Text:        text,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal(text, ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Equal(text, actions[0].Text)
+	return actions[0]
+}
+
+func (s *ConverseSuite) assertCorrectedReplacedQueue(corrected string) {
+	s.T().Helper()
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "answering the correction must consume its older queued hypothesis")
+	s.eventually(func() bool {
+		heard := s.heard()
+		return len(heard) == 1 && heard[0].Text == corrected
+	}, "the corrected utterance was not reported exactly once")
+	for _, heard := range s.heard() {
+		s.NotEqual("Way", heard.Text, "the obsolete hypothesis must never be replayed")
+	}
+
+	// A repeated final is the provider settling the accepted utterance, not a second turn.
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   7,
+		Text:        corrected,
+	}, s.quiet())
+	select {
+	case duplicate := <-s.settling.Ready():
+		s.Failf("a duplicate final became another turn", "got %q", duplicate.Text)
+	case <-time.After(interruptGrace + testGap + 3*testRetry):
+	}
 }
 
 func (s *ConverseSuite) holds() int {
@@ -403,6 +521,518 @@ func (s *ConverseSuite) TestAQueuedTurnIsDroppedOnceTheSameWordsAreAnsweredInFul
 	s.False(waiting, "the queued words were answered as part of the longer turn")
 }
 
+func (s *ConverseSuite) TestAReplacementThenFinalCorrectionReplacesAQueuedOverlap() {
+	const utterance = 7
+	const corrected = "Wait. Make it six, and one of us is gluten free instead."
+
+	s.build(DuplexOptions{})
+	_, provisional := s.queueOnOverlap(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        "Way",
+	})
+	s.stopOverlapAsk(provisional)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        corrected,
+	}, s.quiet())
+
+	answered := s.answerFinal(corrected, utterance)
+	s.Equal(corrected, answered.Text)
+	s.assertCorrectedReplacedQueue(corrected)
+}
+
+func (s *ConverseSuite) TestTwoReplacementsThenFinalCorrectionReplacesAQueuedOverlap() {
+	const utterance = 7
+	const corrected = "Wait. Make it six, and one of us is gluten free instead."
+
+	s.build(DuplexOptions{})
+	_, provisional := s.queueOnOverlap(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        "Way",
+	})
+	s.stopOverlapAsk(provisional)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        "Wait.",
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        corrected,
+	}, s.quiet())
+
+	answered := s.answerFinal(corrected, utterance)
+	s.Equal(corrected, answered.Text)
+	s.assertCorrectedReplacedQueue(corrected)
+}
+
+func (s *ConverseSuite) TestAFinalCorrectionOfAQueuedUtteranceIsNotSwallowedAsTheAnsweredCopy() {
+	const utterance = 7
+	const corrected = "Wait. Make it six, and one of us is gluten free instead."
+
+	_, provisional := s.queueOnOverlap(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        "Way",
+	})
+	s.stopOverlapAsk(provisional)
+
+	// Some providers correct a hypothesis only when they finalize it. This is a new reading
+	// of the same numbered utterance, not the provider replaying the already queued words.
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+		Text:        corrected,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal(corrected, ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal(corrected, answered[0].Text)
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the corrected final replaced the queued hypothesis")
+}
+
+func (s *ConverseSuite) TestARevisedContinueQueueIsNotReplayed() {
+	s.assertRevisedQueueIsNotReplayed(harness.Continue)
+}
+
+func (s *ConverseSuite) TestARevisedShortenQueueIsNotReplayed() {
+	s.assertRevisedQueueIsNotReplayed(harness.Shorten)
+}
+
+func (s *ConverseSuite) assertRevisedQueueIsNotReplayed(decision harness.Floor) {
+	s.T().Helper()
+	const utterance = 7
+	const corrected = "Wait. Make it six, and one of us is gluten free instead."
+	s.queueSettledTurn("Way", utterance, decision)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        corrected,
+	}, s.quiet())
+
+	s.answerFinal(corrected, utterance)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the accepted correction replaces a queued Continue or Shorten turn")
+}
+
+func (s *ConverseSuite) TestAQueuedTurnSurvivesASeparateNumberedUtteranceWithTheSamePrefix() {
+	const queuedText = "Way"
+	s.queueSettledTurn(queuedText, 7, harness.Continue)
+
+	const nextText = "Way make it six"
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   8,
+		Text:        nextText,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal(nextText, ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting, "a new utterance is not a correction of the queued one")
+	s.Equal(queuedText, action.Candidate.Text)
+}
+
+func (s *ConverseSuite) TestAQueuedTurnKeepsItsParticipantWhenUtteranceNumbersMatch() {
+	const queuedText = "Way"
+	s.queueSettledTurn(queuedText, 7, harness.Continue)
+
+	other := stt.Participant{ID: "other", UserID: "other", Name: "Jordan"}
+	const nextText = "Way make it six"
+	s.converse.Observe(stt.Transcript{
+		Participant: other,
+		Mode:        stt.ModeFinal,
+		Utterance:   7,
+		Text:        nextText,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal(other, ready.Participant)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting, "another participant's utterance is not a correction")
+	s.Equal(caller, action.Candidate.Participant)
+	s.Equal(queuedText, action.Candidate.Text)
+}
+
+func (s *ConverseSuite) TestCorrectingAnOlderQueuedUtterancePreservesTheActiveNumberedTurn() {
+	const corrected = "Wait. Make it six, and one of us is gluten free instead."
+	s.queueSettledTurn("Way", 7, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   8,
+		Text:        "No high chair.",
+	}, s.quiet())
+	active := s.held()
+	s.Equal("No high chair.", active.Text)
+	s.Require().Equal(ActAsk, s.converse.Settled(active, s.quiet()).Kind)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   7,
+		Text:        corrected,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal("No high chair. "+corrected, ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the revised older utterance replaces its queued copy")
+}
+
+func (s *ConverseSuite) TestACorrectingAQueuedUtteranceKeepsItsCarriedPrefix() {
+	const carried = "Last name Alvarez."
+	const firstCorrection = "Last name Alvarez. Way"
+	const corrected = "Last name Alvarez. Wait. Make it six, and one of us is gluten free instead."
+	const tail = "Wait. Make it six, and one of us is gluten free instead."
+	const utterance = 7
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   6,
+		Text:        carried,
+	}, s.quiet())
+	first := s.held() // Drain, but do not settle or answer, the still-unanswered first utterance.
+	s.Equal(carried, first.Text)
+
+	var provisional candidate
+	for _, action := range s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        "Way",
+	}, s.talking()) {
+		if action.Kind == ActAsk {
+			provisional = action.Candidate
+		}
+	}
+	s.Require().NotEmpty(provisional.ID)
+	ready := s.held()
+	s.Equal(firstCorrection, ready.Text, "the new utterance carries forward words the caller was still owed")
+	queued := s.converse.Settled(ready, s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	s.stopOverlapAsk(provisional)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        tail,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+		Text:        tail,
+	}, s.quiet())
+	correctedReady := s.held()
+	s.Equal(corrected, correctedReady.Text,
+		"correcting the tail keeps the carried prefix once and replaces only the old tail")
+	asked := s.converse.Settled(correctedReady, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: correctedReady.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal(corrected, answered[0].Text)
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the full corrected turn replaced the queued partial transcript")
+}
+
+func (s *ConverseSuite) TestAZeroUtteranceIDUsesLexicalGrowthToReplaceItsQueuedCopy() {
+	const queuedText = "book a table"
+	const corrected = "book a table for four"
+	s.queueSettledTurn(queuedText, 0, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Text:        corrected,
+	}, s.quiet())
+	answered := s.answerFinal(corrected, 0)
+	s.Equal(corrected, answered.Text)
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "without an utterance number, a lexical growth still replaces its queued prefix")
+}
+
+func (s *ConverseSuite) TestAnsweringAnOlderQueueDoesNotMakeANewerAnsweredUtteranceNewAgain() {
+	const laterText = "what time do you close"
+	s.queueSettledTurn("book a table", 7, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   8,
+		Text:        laterText,
+	}, s.quiet())
+	later := s.held()
+	asked := s.converse.Settled(later, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: later.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+
+	queued, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal("book a table", queued.Candidate.Text)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   8,
+		Text:        laterText,
+	}, s.quiet())
+	select {
+	case duplicate := <-s.settling.Ready():
+		s.Failf("answering an older queued turn replaced the newer deduplication record", "got %q", duplicate.Text)
+	case <-time.After(interruptGrace + testGap + 3*testRetry):
+	}
+}
+
+func (s *ConverseSuite) TestAnUnchangedNumberedQueueWaitsOnceWithoutStartingAnotherCadence() {
+	const utterance = 7
+	const text = "book a table"
+	s.queueSettledTurn(text, utterance, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+		Text:        text,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+		Text:        text,
+	}, s.quiet())
+	select {
+	case duplicate := <-s.settling.Ready():
+		s.Failf("an unchanged held transcript started another cadence", "got %q", duplicate.Text)
+	case <-time.After(interruptGrace + testGap + 3*testRetry):
+	}
+
+	queued, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(ActAnswer, queued.Kind)
+	s.Equal(text, queued.Candidate.Text)
+	_, waiting = s.converse.Waiting(s.quiet())
+	s.False(waiting, "the queued utterance is handed back exactly once")
+
+	const laterText = "what time do you close"
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   8,
+		Text:        laterText,
+	}, s.quiet())
+	later := s.held()
+	asked := s.converse.Settled(later, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	s.converse.Ruled(harness.Decided{
+		CandidateID: later.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool {
+		heard := s.heard()
+		return len(heard) >= 2 && heard[len(heard)-1].Text == laterText
+	}, "the later transcript was not heard after the queued turn")
+	var originalReports int
+	for _, heard := range s.heard() {
+		if heard.Text == text {
+			originalReports++
+		}
+	}
+	s.Equal(1, originalReports, "the queued turn was reported once before and after Waiting")
+}
+
+func (s *ConverseSuite) TestAnUnchangedZeroIDQueueWaitsOnceWithoutStartingAnotherCadence() {
+	const text = "book a table"
+	s.queueSettledTurn(text, 0, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Text:        text,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Text:        text,
+	}, s.quiet())
+	select {
+	case duplicate := <-s.settling.Ready():
+		s.Failf("an unchanged zero-ID held transcript started another cadence", "got %q", duplicate.Text)
+	case <-time.After(interruptGrace + testGap + 3*testRetry):
+	}
+
+	queued, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(text, queued.Candidate.Text)
+	_, waiting = s.converse.Waiting(s.quiet())
+	s.False(waiting, "the zero-ID queue is handed back exactly once")
+}
+
+func (s *ConverseSuite) TestARepeatedZeroIDQueueCanStartANewTurnAfterTheSettleWindow() {
+	const text = "book a table"
+	const settle = 100 * time.Millisecond
+	s.startWithSettle(DuplexOptions{}, testPatience, settle)
+	s.queueSettledTurn(text, 0, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Text:        text,
+	}, s.quiet())
+	select {
+	case duplicate := <-s.settling.Ready():
+		s.Failf("an immediate zero-ID restatement started another cadence", "got %q", duplicate.Text)
+	case <-time.After(settle / 2):
+	}
+
+	time.Sleep(settle + testGap)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Text:        text,
+	}, s.quiet())
+	ready := s.held()
+	s.Equal(text, ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "a repeated zero-ID turn replaces the old queued copy")
+}
+
+func (s *ConverseSuite) TestBlankNumberedRevisionsKeepTheQueuedCandidate() {
+	const utterance = 7
+	const text = "book a table"
+	s.queueSettledTurn(text, utterance, harness.Continue)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeReplacement,
+		Utterance:   utterance,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeDelta,
+		Utterance:   utterance,
+		Text:        " ",
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+	}, s.quiet())
+
+	queued, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(text, queued.Candidate.Text)
+	_, waiting = s.converse.Waiting(s.quiet())
+	s.False(waiting, "blank revisions do not release or duplicate the queued candidate")
+}
+
+func (s *ConverseSuite) TestAnAnsweredNumberedQueueDeduplicatesItsFinalButNotTheNextUtterance() {
+	s.queueSettledTurn("1 2 3", 7, harness.Continue)
+	queued, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal("1 2 3", queued.Candidate.Text)
+
+	// Gemini settles an answered number in words after streaming it as digits.
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   7,
+		Text:        "one two three",
+	}, s.quiet())
+	select {
+	case duplicate := <-s.settling.Ready():
+		s.Failf("a final respelling of the answered utterance became another turn", "got %q", duplicate.Text)
+	case <-time.After(interruptGrace + testGap + 3*testRetry):
+	}
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   8,
+		Text:        "one two three",
+	}, s.quiet())
+	ready := s.held()
+	s.Equal("one two three", ready.Text)
+	asked := s.converse.Settled(ready, s.quiet())
+	s.Require().Equal(ActAsk, asked.Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+}
+
 func (s *ConverseSuite) TestAQueuedTurnSurvivesDifferentWordsBeingAnswered() {
 	// A transcriber that sends only what is new would make the later turn the only copy of
 	// its own words, not of the queued ones, so those are still owed.
@@ -433,7 +1063,7 @@ func (s *ConverseSuite) TestAQueuedTurnTheCallerKeepsAddingToIsNotAnsweredOnItsO
 	s.converse.Observe(stt.Transcript{
 		Participant: caller, Mode: stt.ModeReplacement, Text: "the name for the booking is Alvarez",
 	}, s.quiet())
-	s.settling.Forget(caller)
+	s.ignoreNextSettled()
 
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the half sentence is answered with the rest, once that settles")
@@ -446,7 +1076,7 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesANewTurnThatStartsTheSameWay() {
 	s.Require().Equal(ActQueue, queued.Kind)
 
 	s.converse.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "yes"}, s.quiet())
-	s.settling.Forget(caller)
+	s.ignoreNextSettled()
 
 	action, waiting := s.converse.Waiting(s.quiet())
 	s.Require().True(waiting, "words that only start like the queued turn do not replace it")
@@ -489,8 +1119,8 @@ func (s *ConverseSuite) TestAQueuedTurnWaitsWhileTheCallerIsStillTalking() {
 	s.eventually(func() bool { return s.holds() == 1 }, "the hold was never reported")
 	s.Equal(1, s.holds(), "a wait spanning several retries is one hold, not one per retry")
 
-	// Once the caller's words age out, the turn is handed back.
-	s.settling.Forget(caller)
+	// Once the new words are resolved, the turn is handed back.
+	s.ignoreNextSettled()
 	action, waiting := s.converse.Waiting(s.quiet())
 	s.Require().True(waiting)
 	s.Equal("and make it eight", action.Candidate.Text)

@@ -370,6 +370,40 @@ func (s *CadenceSuite) TestEarlyRepliesStopAtTheCapForOneRunOfWords() {
 	s.Len(*timers, armed+2, "the count did not start again once the turn was answered")
 }
 
+func (s *CadenceSuite) TestAnsweringAQueuedTurnRestartsTheEarlyReplyBudget() {
+	timers := s.previewing(defaultPreviewDebounce)
+	alice := stt.Participant{ID: "alice"}
+	words := "book"
+	for i := range maxEarlyPreviews {
+		words += " again"
+		s.observe(alice, words)
+		(*timers)[2*i+1].fire()
+		s.Equal(words, s.announced().Text)
+	}
+
+	// The last revision does not get another preview at the cap, but it is still a
+	// candidate that can be queued behind an answer already in progress.
+	words += " again"
+	s.observe(alice, words)
+	readyTimer := len(*timers) - 1
+	s.Equal(defaultCadenceGap, (*timers)[readyTimer].delay)
+	(*timers)[readyTimer].fire()
+	ready := s.ready()
+	s.Require().True(s.cadence.Hold(ready))
+	s.Require().True(s.cadence.CommitHeld(ready.ID))
+
+	// Answering through the held queue starts a new run of words, just as Resolve does.
+	armed := len(*timers)
+	s.observe(alice, "and another thing")
+	for _, timer := range (*timers)[armed:] {
+		if timer.delay == defaultPreviewDebounce {
+			timer.fire()
+		}
+	}
+	s.Equal("and another thing", s.announced().Text,
+		"answering a queued turn should restart early replies for the next run of words")
+}
+
 func (s *CadenceSuite) TestNoDebounceIsArmedWhenNoReplyCanBeStartedOrTheLineIsOwedGrace() {
 	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
