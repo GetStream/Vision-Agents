@@ -1131,6 +1131,17 @@ func (s *ConfigsSuite) TestAGrantIsJudgedByTheMCPSourceAlone() {
 	s.True(ok, complaint)
 }
 
+// TestAGrantOnAConnectorWithNoMCPSourceIsStored: linq, slack_bot, whatsapp and telnyx have
+// no mcp source, so no filter leaves a tool out and the grant is not refused.
+func (s *ConfigsSuite) TestAGrantOnAConnectorWithNoMCPSourceIsStored() {
+	manifest := core.Manifest{Sources: []core.SourceRule{{Kind: "rest"}}}
+	binding := AgentConnectorBinding{Name: "chat", ConnectorId: "linq", Tools: []ConnectorToolGrant{{Name: "send"}}}
+
+	complaint, ok := leftOutGrant(binding, manifest)
+
+	s.True(ok, complaint)
+}
+
 func (s *ConfigsSuite) TestReplacingOrPatchingInAToolTheConnectorLeavesOutIsRefused() {
 	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
 
