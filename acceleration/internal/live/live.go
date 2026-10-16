@@ -60,6 +60,8 @@ type Options struct {
 	Address  string
 	Username string
 	Password string
+	// Shard is this shard's own Redis. Empty is the one above.
+	Shard Shard
 	// Window is how long health observations stay relevant.
 	Window time.Duration
 	// MaxErrorRate is the error rate at or above which a provider is treated as
@@ -67,9 +69,20 @@ type Options struct {
 	MaxErrorRate float64
 }
 
+// Shard is where a shard's own Redis is.
+type Shard struct {
+	Address  string
+	Username string
+	Password string
+}
+
 // Client stores live counters and provider health.
 type Client struct {
+	// redis is the Redis every shard shares, and shard this shard's: the same client when
+	// the deployment has one. Provider health and a customer's live counters are the
+	// shard's, since latency is regional.
 	redis   rueidis.Client
+	shard   rueidis.Client
 	options Options
 }
 
@@ -85,28 +98,53 @@ func New(options Options) (*Client, error) {
 		options.MaxErrorRate = 0.5
 	}
 
+	client, err := connect(options.Address, options.Username, options.Password)
+	if err != nil {
+		return nil, err
+	}
+	shard := client
+	if options.Shard.Address != "" && options.Shard.Address != options.Address {
+		if shard, err = connect(options.Shard.Address, options.Shard.Username, options.Shard.Password); err != nil {
+			client.Close()
+			return nil, fmt.Errorf("live: shard: %w", err)
+		}
+	}
+	return &Client{redis: client, shard: shard, options: options}, nil
+}
+
+func connect(address, username, password string) (rueidis.Client, error) {
 	client, err := rueidisotel.NewClient(rueidis.ClientOption{
-		InitAddress:  []string{options.Address},
-		Username:     options.Username,
-		Password:     options.Password,
+		InitAddress:  []string{address},
+		Username:     username,
+		Password:     password,
 		DisableCache: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("live: connect to redis: %w", err)
 	}
-
-	return &Client{redis: client, options: options}, nil
+	return client, nil
 }
 
-// Redis exposes the underlying client for commands this package does not wrap.
+// Redis exposes the shared client for commands this package does not wrap.
 func (c *Client) Redis() rueidis.Client { return c.redis }
 
-// Close releases the connection.
-func (c *Client) Close() { c.redis.Close() }
+// ShardRedis exposes this shard's client, for what only this shard's nodes need to hear.
+func (c *Client) ShardRedis() rueidis.Client { return c.shard }
 
-// Ping verifies the connection is usable.
+// Close releases the connections.
+func (c *Client) Close() {
+	if c.shard != c.redis {
+		c.shard.Close()
+	}
+	c.redis.Close()
+}
+
+// Ping verifies both connections are usable.
 func (c *Client) Ping(ctx context.Context) error {
-	return stack.Wrap(c.redis.Do(ctx, c.redis.B().Ping().Build()).Error())
+	if err := c.redis.Do(ctx, c.redis.B().Ping().Build()).Error(); err != nil {
+		return stack.Wrap(err)
+	}
+	return stack.Wrap(c.shard.Do(ctx, c.shard.B().Ping().Build()).Error())
 }
 
 // Usage is one request's contribution to the live counters.
@@ -159,35 +197,35 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 	var commands []rueidis.Completed
 	if !usage.Cancelled {
 		commands = append(commands,
-			c.redis.B().Hincrby().Key(healthKey).Field("requests").Increment(1).Build(),
-			c.redis.B().Hincrbyfloat().Key(healthKey).Field("latency_ms_total").Increment(usage.LatencyMs).Build(),
-			c.redis.B().Expire().Key(healthKey).Seconds(ttl).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("requests").Increment(1).Build(),
+			c.shard.B().Hincrby().Key(healthKey).Field("requests").Increment(1).Build(),
+			c.shard.B().Hincrbyfloat().Key(healthKey).Field("latency_ms_total").Increment(usage.LatencyMs).Build(),
+			c.shard.B().Expire().Key(healthKey).Seconds(ttl).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("requests").Increment(1).Build(),
 		)
 	}
 	// A cancelled request that generated nothing adds nothing, so it writes nothing.
 	if !usage.Cancelled || usage.spent() {
 		commands = append(commands,
-			c.redis.B().Hincrby().Key(customerKey).Field("audio_ms").Increment(usage.AudioMs).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("characters").Increment(usage.Characters).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("input_tokens").Increment(usage.InputTokens).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("cached_input_tokens").Increment(usage.CachedInputTokens).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("output_tokens").Increment(usage.OutputTokens).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("cost_micros").Increment(usage.CostMicros).Build(),
-			c.redis.B().Expire().Key(customerKey).Seconds(ttl).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("audio_ms").Increment(usage.AudioMs).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("characters").Increment(usage.Characters).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("input_tokens").Increment(usage.InputTokens).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("cached_input_tokens").Increment(usage.CachedInputTokens).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("output_tokens").Increment(usage.OutputTokens).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("cost_micros").Increment(usage.CostMicros).Build(),
+			c.shard.B().Expire().Key(customerKey).Seconds(ttl).Build(),
 		)
 	}
 	if !usage.Success && !usage.Cancelled {
 		commands = append(commands,
-			c.redis.B().Hincrby().Key(healthKey).Field("errors").Increment(1).Build(),
-			c.redis.B().Hincrby().Key(customerKey).Field("errors").Increment(1).Build(),
+			c.shard.B().Hincrby().Key(healthKey).Field("errors").Increment(1).Build(),
+			c.shard.B().Hincrby().Key(customerKey).Field("errors").Increment(1).Build(),
 		)
 	}
 	if len(commands) == 0 {
 		return nil
 	}
 
-	for _, response := range c.redis.DoMulti(ctx, commands...) {
+	for _, response := range c.shard.DoMulti(ctx, commands...) {
 		if err := response.Error(); err != nil {
 			return fmt.Errorf("live: record request: %w", err)
 		}
@@ -198,7 +236,7 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 // Health returns the recent behaviour of one provider and model within a modality. An
 // unseen provider comes back available with no history rather than as an error.
 func (c *Client) Health(ctx context.Context, modality, provider, model string) (Health, error) {
-	entries, err := c.redis.Do(ctx, c.redis.B().Hgetall().Key(healthKey(modality, provider, model)).Build()).AsStrMap()
+	entries, err := c.shard.Do(ctx, c.shard.B().Hgetall().Key(healthKey(modality, provider, model)).Build()).AsStrMap()
 	if err != nil {
 		return Health{}, stack.Wrap(fmt.Errorf("live: read health: %w", err))
 	}
@@ -216,7 +254,7 @@ func (c *Client) Health(ctx context.Context, modality, provider, model string) (
 
 // Usage returns what one customer has spent on a modality in the current window.
 func (c *Client) Usage(ctx context.Context, modality, customerID string) (CustomerUsage, error) {
-	entries, err := c.redis.Do(ctx, c.redis.B().Hgetall().Key(customerKey(modality, customerID)).Build()).AsStrMap()
+	entries, err := c.shard.Do(ctx, c.shard.B().Hgetall().Key(customerKey(modality, customerID)).Build()).AsStrMap()
 	if err != nil {
 		return CustomerUsage{}, fmt.Errorf("live: read customer usage: %w", err)
 	}

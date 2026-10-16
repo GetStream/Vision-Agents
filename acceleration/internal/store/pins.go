@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"sync/atomic"
+
+	"github.com/uptrace/bun"
 )
 
 // ForeignStreamApp is the pin an imported row is given when the app it names is not one
@@ -155,15 +157,19 @@ const backfillBatch = 5000
 // BackfillStreamPins pins every unpinned session, call, number and call leg to the
 // deployment's own app, which is what an unpinned row meant all along. It is for app mode,
 // where every row names its app, once that app's id is known. It reports how many rows of
-// each table it pinned.
+// each table it pinned. A shard's sessions, calls and call legs are its own to backfill.
 func (s *Store) BackfillStreamPins(ctx context.Context, deployment int64) (map[string]int64, error) {
 	if deployment <= 0 {
 		return nil, errors.New("store: pins are backfilled with the deployment's own app id")
 	}
 	pinned := map[string]int64{}
 	for _, table := range []string{"agent_sessions", "calls", "phone_numbers", "call_resources"} {
+		db := s.shard
+		if table == "phone_numbers" {
+			db = s.db
+		}
 		for {
-			result, err := s.db.ExecContext(ctx, fmt.Sprintf(
+			result, err := db.ExecContext(ctx, fmt.Sprintf(
 				"UPDATE %[1]s SET %[2]s = ? WHERE ctid IN (SELECT ctid FROM %[1]s WHERE %[2]s IS NULL LIMIT ?)",
 				table, pinColumn), deployment, backfillBatch)
 			if err != nil {
@@ -197,22 +203,35 @@ func (s *Store) LegacyStreamPins(ctx context.Context, deployment int64) ([]Legac
 		if table == "phone_numbers" {
 			released = " AND released_at IS NULL"
 		}
-		rows, err := s.db.QueryContext(ctx, fmt.Sprintf(
-			"SELECT customer_id, count(*) FROM %s WHERE (%s IS NULL OR %s = ?) AND customer_id <> ?%s GROUP BY customer_id",
-			table, pinColumn, pinColumn, released), deployment, own)
+		count := func(ctx context.Context, db bun.IDB) ([]LegacyCount, error) {
+			var rows []LegacyCount
+			err := db.NewRaw(fmt.Sprintf(
+				"SELECT ? AS kind, customer_id, count(*) AS rows FROM %s WHERE (%s IS NULL OR %s = ?) AND customer_id <> ?%s GROUP BY customer_id",
+				table, pinColumn, pinColumn, released), kind, deployment, own).Scan(ctx, &rows)
+			return rows, err
+		}
+		var lists [][]LegacyCount
+		var err error
+		if table == "phone_numbers" {
+			var rows []LegacyCount
+			rows, err = count(ctx, s.db)
+			lists = [][]LegacyCount{rows}
+		} else {
+			lists, err = everyShard(ctx, s, count)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("store: count legacy %s rows: %w", table, err)
 		}
-		for rows.Next() {
-			one := LegacyCount{Kind: kind}
-			if err := rows.Scan(&one.CustomerID, &one.Rows); err != nil {
-				rows.Close()
-				return nil, err
+		byCustomer := map[string]int{}
+		for _, rows := range lists {
+			for _, one := range rows {
+				if i, ok := byCustomer[one.CustomerID]; ok {
+					counted[i].Rows += one.Rows
+					continue
+				}
+				byCustomer[one.CustomerID] = len(counted)
+				counted = append(counted, one)
 			}
-			counted = append(counted, one)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
 		}
 	}
 	return counted, nil

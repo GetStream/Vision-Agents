@@ -40,6 +40,9 @@ type DirectoryOptions struct {
 	Redis rueidis.Client
 	// Address is required: it is the host and port this node's peers reach it at.
 	Address string
+	// Shard is the shard this node is in, empty for a deployment of one. A node in another
+	// shard is not on this one's relay, so a socket for a session it runs is carried there.
+	Shard string
 	// Prefix names the keys, so two deployments sharing one Redis do not forward each
 	// other's requests.
 	Prefix string
@@ -54,10 +57,12 @@ type DirectoryOptions struct {
 type Directory struct {
 	redis    rueidis.Client
 	address  string
+	shard    string
 	sessions string
 	agents   string
 	workers  string
 	hosted   string
+	shards   string
 	logger   *slog.Logger
 	cancel   context.CancelFunc
 
@@ -101,16 +106,19 @@ func NewDirectory(options DirectoryOptions) (*Directory, error) {
 	directory := &Directory{
 		redis:    options.Redis,
 		address:  options.Address,
+		shard:    options.Shard,
 		sessions: prefix + ":session:",
 		agents:   prefix + ":agent:",
 		workers:  prefix + ":workers:",
 		hosted:   prefix + ":hosted:",
+		shards:   prefix + ":shard:",
 		logger:   logger,
 		cancel:   cancel,
 		held:     map[string]string{},
 		waiting:  map[string]int{},
 		offered:  map[offerKey][]byte{},
 	}
+	directory.sayShard(ctx)
 	go directory.renew(ctx)
 
 	return directory, nil
@@ -118,6 +126,28 @@ func NewDirectory(options DirectoryOptions) (*Directory, error) {
 
 // Address is where this node's peers reach it.
 func (d *Directory) Address() string { return d.address }
+
+// InAnotherShard reports whether the node at an address is in a shard other than this one's.
+// A node that has not said is taken to be in this one, which is every node of a deployment of
+// one shard.
+func (d *Directory) InAnotherShard(ctx context.Context, address string) (bool, error) {
+	if d.shard == "" {
+		return false, nil
+	}
+	shard, err := d.lookup(ctx, d.shards+address)
+	return shard != "" && shard != d.shard, err
+}
+
+// sayShard says which shard this node is in, for holdFor.
+func (d *Directory) sayShard(ctx context.Context) {
+	if d.shard == "" {
+		return
+	}
+	command := d.redis.B().Set().Key(d.shards + d.address).Value(d.shard).Ex(holdFor).Build()
+	if err := d.redis.Do(ctx, command).Error(); err != nil {
+		d.logger.Warn("could not say which shard this node is in", "shard", d.shard, "error", err)
+	}
+}
 
 // Hold says this node is running a session, and goes on saying so until Release.
 //
@@ -346,6 +376,7 @@ func (d *Directory) renew(ctx context.Context) {
 		case <-ticker.C:
 		}
 
+		d.sayShard(ctx)
 		d.mu.Lock()
 		held := maps.Clone(d.held)
 		waiting := maps.Clone(d.waiting)

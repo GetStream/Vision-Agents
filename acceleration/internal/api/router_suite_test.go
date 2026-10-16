@@ -168,6 +168,10 @@ type RouterSuite struct {
 	// kept apart by, so this is the only thing stopping one suite's nodes from reading
 	// another's sessions.
 	relayPrefix string
+	// shard and otherShard are the shards of the suite's node and of otherNode, for a suite
+	// about shards to set before it starts the harness. Nodes in two shards have a relay
+	// each. Empty is one deployment of one shard.
+	shard, otherShard string
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
 	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
@@ -352,7 +356,13 @@ func (s *RouterSuite) SetupSuite() {
 		logger = slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
-	pgStore, err := store.Open(testDatabase(s.T(), dsn))
+	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
+	// place and the calls, sessions and requests in another.
+	options := store.Options{DSN: testDatabase(s.T(), dsn)}
+	if shardDSN := os.Getenv("ROUTER_POSTGRES_SHARD_DSN"); shardDSN != "" {
+		options.ShardDSN = testDatabase(s.T(), shardDSN)
+	}
+	pgStore, err := store.OpenShards(options)
 	s.Require().NoError(err)
 	pgStore.DB().SetMaxOpenConns(suiteConnections)
 	migrated.Do(func() { migrated.err = pgStore.Migrate(ctx) })
@@ -360,7 +370,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
 
-	liveClient, err := live.New(live.Options{Address: redisAddr})
+	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	s.Require().NoError(err)
 	s.live = liveClient
 	s.T().Cleanup(liveClient.Close)
@@ -401,7 +411,7 @@ func (s *RouterSuite) SetupSuite() {
 	// Built before it is served on, because a node says where it is before it has
 	// anything to say it is running.
 	listener := httptest.NewUnstartedServer(nil)
-	directory := s.nodeDirectory(listener, logger)
+	directory := s.nodeDirectory(listener, s.shard, logger)
 	// Before the sessions, whose dispatcher shares the transports with the validate
 	// endpoint, as cmd/router builds them.
 	credentials, err := pgsealed.New(pgStore, s.sealer)
@@ -480,7 +490,7 @@ func (s *RouterSuite) SetupSuite() {
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
 		Streams:   streams,
-		Relay:     s.relayBus(logger),
+		Relay:     s.relayBus(s.shard, logger),
 		Directory: directory,
 		Sessions:  sessions,
 		Store:     pgStore,
@@ -970,7 +980,7 @@ func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Ser
 func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Server) {
 	logger := slog.New(slog.DiscardHandler)
 	other := httptest.NewUnstartedServer(nil)
-	directory := s.nodeDirectory(other, logger)
+	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           s.streams.LLM,
 		STT:           s.streams.STT,
@@ -990,10 +1000,10 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
-	bus := s.relayBus(logger)
+	bus := s.relayBus(s.otherShard, logger)
 	var everyWorker *node.Workers
 	if workers != nil {
-		everyWorker = s.deploymentWorkers(workers, directory, bus)
+		everyWorker = s.deploymentWorkers(workers, directory, s.workBus(logger))
 	}
 	server, err := NewServer(Options{
 		Routers:           s.modalities,
@@ -1034,11 +1044,12 @@ func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.
 // The address is the listener's, which is known before anything is served on it, and the
 // prefix is the suite's, because every suite in the run shares one Redis and a node of
 // another suite is a node that is not there.
-func (s *RouterSuite) nodeDirectory(listener *httptest.Server, logger *slog.Logger) *node.Directory {
+func (s *RouterSuite) nodeDirectory(listener *httptest.Server, shard string, logger *slog.Logger) *node.Directory {
 	directory, err := node.NewDirectory(node.DirectoryOptions{
 		Redis:   s.live.Redis(),
 		Address: listener.Listener.Addr().String(),
 		Prefix:  s.relayPrefix,
+		Shard:   shard,
 		Logger:  logger,
 	})
 	s.Require().NoError(err)
@@ -1046,8 +1057,17 @@ func (s *RouterSuite) nodeDirectory(listener *httptest.Server, logger *slog.Logg
 	return directory
 }
 
-// relayBus is one node's end of the suite's relay.
-func (s *RouterSuite) relayBus(logger *slog.Logger) *relay.Bus {
+// relayBus is one node's end of its shard's relay.
+func (s *RouterSuite) relayBus(shard string, logger *slog.Logger) *relay.Bus {
+	bus, err := relay.New(relay.Options{
+		Redis: s.live.ShardRedis(), Prefix: s.relayPrefix + shard, Logger: logger,
+	})
+	s.Require().NoError(err)
+	return bus
+}
+
+// workBus is one node's end of the bus its workers take work on, which every shard shares.
+func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 	bus, err := relay.New(relay.Options{
 		Redis: s.live.Redis(), Prefix: s.relayPrefix, Logger: logger,
 	})

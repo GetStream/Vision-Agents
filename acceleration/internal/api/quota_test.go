@@ -324,7 +324,7 @@ func (s *QuotaSuite) awaitTheDaySpent() {
 func (s *QuotaSuite) awaitReplies(sessionID string, replies int) {
 	s.Require().Eventually(func() bool {
 		var rows []store.Request
-		err := s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
 		return err == nil && len(rows) >= replies
 	}, settleFor, 50*time.Millisecond, "the replies of %s were never recorded", sessionID)
 }

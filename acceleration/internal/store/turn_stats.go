@@ -1,12 +1,16 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -73,7 +77,7 @@ VALUES ` + strings.Join(rows, ", ") + `
 ON CONFLICT (customer_id, agent_id, bucket, leg, bin) DO UPDATE SET
     count = turn_latency_hourly.count + 1`
 	}
-	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+	if _, err := s.shard.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: record turn stats: %w", err)
 	}
 	return nil
@@ -95,46 +99,88 @@ func (s *Store) CustomerTurnStats(
 	}
 	bucket := fmt.Sprintf("date_trunc('%s', bucket)", granularity.truncateUnit())
 
-	counts := s.db.NewSelect().
-		Table("turn_stats_hourly").
-		ColumnExpr("customer_id, agent_id").
-		ColumnExpr(bucket+" AS bucket").
-		ColumnExpr("SUM(turn_count) AS turn_count").
-		ColumnExpr("SUM(interrupted_count) AS interrupted_count").
-		ColumnExpr("SUM(audio_out_ms_total) AS audio_out_ms_total").
-		Where("customer_id = ?", customerID).
-		Where("bucket >= ?", from).
-		Where("bucket < ?", to).
-		GroupExpr("customer_id, agent_id, " + bucket).
-		OrderExpr(bucket + " ASC, agent_id ASC")
-	bins := s.db.NewSelect().
-		Table("turn_latency_hourly").
-		ColumnExpr("agent_id, leg, bin").
-		ColumnExpr(bucket+" AS bucket").
-		ColumnExpr("SUM(count) AS count").
-		Where("customer_id = ?", customerID).
-		Where("bucket >= ?", from).
-		Where("bucket < ?", to).
-		GroupExpr("agent_id, leg, bin, " + bucket).
-		OrderExpr("bin ASC")
-	if agentID != "" {
-		counts = counts.Where("agent_id = ?", agentID)
-		bins = bins.Where("agent_id = ?", agentID)
-	}
-
-	var buckets []TurnBucket
-	if err := counts.Scan(ctx, &buckets); err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: customer turn stats: %w", err))
-	}
-	var counted []struct {
+	type binRow struct {
 		AgentID string    `bun:"agent_id"`
 		Leg     string    `bun:"leg"`
 		Bin     int       `bun:"bin"`
 		Bucket  time.Time `bun:"bucket"`
 		Count   int64     `bun:"count"`
 	}
-	if err := bins.Scan(ctx, &counted); err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: customer turn latency: %w", err))
+	type shardRows struct {
+		buckets []TurnBucket
+		bins    []binRow
+	}
+	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (shardRows, error) {
+		counts := db.NewSelect().
+			Table("turn_stats_hourly").
+			ColumnExpr("customer_id, agent_id").
+			ColumnExpr(bucket+" AS bucket").
+			ColumnExpr("SUM(turn_count) AS turn_count").
+			ColumnExpr("SUM(interrupted_count) AS interrupted_count").
+			ColumnExpr("SUM(audio_out_ms_total) AS audio_out_ms_total").
+			Where("customer_id = ?", customerID).
+			Where("bucket >= ?", from).
+			Where("bucket < ?", to).
+			GroupExpr("customer_id, agent_id, " + bucket).
+			OrderExpr(bucket + " ASC, agent_id ASC")
+		bins := db.NewSelect().
+			Table("turn_latency_hourly").
+			ColumnExpr("agent_id, leg, bin").
+			ColumnExpr(bucket+" AS bucket").
+			ColumnExpr("SUM(count) AS count").
+			Where("customer_id = ?", customerID).
+			Where("bucket >= ?", from).
+			Where("bucket < ?", to).
+			GroupExpr("agent_id, leg, bin, " + bucket).
+			OrderExpr("bin ASC")
+		if agentID != "" {
+			counts = counts.Where("agent_id = ?", agentID)
+			bins = bins.Where("agent_id = ?", agentID)
+		}
+		var read shardRows
+		if err := counts.Scan(ctx, &read.buckets); err != nil {
+			return read, fmt.Errorf("store: customer turn stats: %w", err)
+		}
+		if err := bins.Scan(ctx, &read.bins); err != nil {
+			return read, fmt.Errorf("store: customer turn latency: %w", err)
+		}
+		return read, nil
+	})
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+
+	// Each shard's buckets are summed into one per agent and bucket, and its bins kept in
+	// ascending order, where a bin two shards both counted is two entries side by side.
+	buckets := answers[0].buckets
+	counted := answers[0].bins
+	if len(answers) > 1 {
+		type bucketKey struct {
+			agentID string
+			bucket  int64
+		}
+		sums := map[bucketKey]*TurnBucket{}
+		buckets, counted = nil, nil
+		for _, answer := range answers {
+			for _, b := range answer.buckets {
+				key := bucketKey{b.AgentID, b.Bucket.Unix()}
+				if sum := sums[key]; sum != nil {
+					sum.TurnCount += b.TurnCount
+					sum.InterruptedCount += b.InterruptedCount
+					sum.AudioOutMsTotal += b.AudioOutMsTotal
+					continue
+				}
+				sums[key] = &b
+			}
+			counted = append(counted, answer.bins...)
+		}
+		for _, sum := range sums {
+			buckets = append(buckets, *sum)
+		}
+		slices.SortFunc(buckets, func(a, b TurnBucket) int {
+			return cmp.Or(a.Bucket.Compare(b.Bucket), strings.Compare(a.AgentID, b.AgentID))
+		})
+		slices.SortStableFunc(counted, func(a, b binRow) int { return cmp.Compare(a.Bin, b.Bin) })
 	}
 
 	type histogramKey struct {

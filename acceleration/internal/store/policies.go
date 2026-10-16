@@ -199,12 +199,7 @@ func (s *Store) OrganizationOf(ctx context.Context, appID string) (string, error
 
 // SpendSince returns what one customer has spent since a moment, across every modality.
 func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Time) (int64, error) {
-	var spent int64
-	err := s.db.NewSelect().Model((*Request)(nil)).
-		ColumnExpr("COALESCE(SUM(cost_micros), 0)").
-		Where("customer_id = ?", customerID).
-		Where("started_at >= ?", since).
-		Scan(ctx, &spent)
+	spent, err := spendOf(ctx, s, []string{customerID}, since)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: spend since: %w", err))
 	}
@@ -214,15 +209,37 @@ func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Ti
 // OrganizationSpendSince returns what every app seen under an organization has spent since
 // a moment.
 func (s *Store) OrganizationSpendSince(ctx context.Context, organizationID string, since time.Time) (int64, error) {
-	var spent int64
-	err := s.db.NewSelect().Model((*Request)(nil)).
-		ColumnExpr("COALESCE(SUM(cost_micros), 0)").
-		Where("customer_id IN (?)", s.db.NewSelect().Model((*AppOrganization)(nil)).
-			Column("app_id").Where("organization_id = ?", organizationID)).
-		Where("started_at >= ?", since).
-		Scan(ctx, &spent)
+	var apps []string
+	err := s.db.NewSelect().Model((*AppOrganization)(nil)).
+		Column("app_id").Where("organization_id = ?", organizationID).
+		Scan(ctx, &apps)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
+	}
+	if len(apps) == 0 {
+		return 0, nil
+	}
+	spent, err := spendOf(ctx, s, apps, since)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
 	}
 	return spent, nil
+}
+
+// spendOf is what some customers have spent since a moment, in every shard.
+func spendOf(ctx context.Context, s *Store, customerIDs []string, since time.Time) (int64, error) {
+	answers, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (int64, error) {
+		var spent int64
+		err := db.NewSelect().Model((*Request)(nil)).
+			ColumnExpr("COALESCE(SUM(cost_micros), 0)").
+			Where("customer_id IN (?)", bun.In(customerIDs)).
+			Where("started_at >= ?", since).
+			Scan(ctx, &spent)
+		return spent, err
+	})
+	var spent int64
+	for _, answer := range answers {
+		spent += answer
+	}
+	return spent, err
 }
