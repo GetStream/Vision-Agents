@@ -88,9 +88,10 @@ def sync_detailed(
 
      The redirect URI a provider sends the browser back to. The state must name an open consent, the
     browser must hold the cookie the handoff set, and the consent is used once. The router then
-    exchanges the code and sends the browser to the dashboard with connection_id and status: connected,
-    denied, failed, or account_mismatch when a reconnect came back with another provider account and the
-    old grant was kept. Unauthenticated because the browser arrives from the provider.
+    exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with
+    connection_id and status added to its query: connected, denied, failed, or account_mismatch when a
+    reconnect came back with another provider account and the old grant was kept. Unauthenticated
+    because the browser arrives from the provider.
 
     Args:
         state (str | Unset):
@@ -132,9 +133,10 @@ def sync(
 
      The redirect URI a provider sends the browser back to. The state must name an open consent, the
     browser must hold the cookie the handoff set, and the consent is used once. The router then
-    exchanges the code and sends the browser to the dashboard with connection_id and status: connected,
-    denied, failed, or account_mismatch when a reconnect came back with another provider account and the
-    old grant was kept. Unauthenticated because the browser arrives from the provider.
+    exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with
+    connection_id and status added to its query: connected, denied, failed, or account_mismatch when a
+    reconnect came back with another provider account and the old grant was kept. Unauthenticated
+    because the browser arrives from the provider.
 
     Args:
         state (str | Unset):
@@ -171,9 +173,10 @@ async def asyncio_detailed(
 
      The redirect URI a provider sends the browser back to. The state must name an open consent, the
     browser must hold the cookie the handoff set, and the consent is used once. The router then
-    exchanges the code and sends the browser to the dashboard with connection_id and status: connected,
-    denied, failed, or account_mismatch when a reconnect came back with another provider account and the
-    old grant was kept. Unauthenticated because the browser arrives from the provider.
+    exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with
+    connection_id and status added to its query: connected, denied, failed, or account_mismatch when a
+    reconnect came back with another provider account and the old grant was kept. Unauthenticated
+    because the browser arrives from the provider.
 
     Args:
         state (str | Unset):
@@ -213,9 +216,10 @@ async def asyncio(
 
      The redirect URI a provider sends the browser back to. The state must name an open consent, the
     browser must hold the cookie the handoff set, and the consent is used once. The router then
-    exchanges the code and sends the browser to the dashboard with connection_id and status: connected,
-    denied, failed, or account_mismatch when a reconnect came back with another provider account and the
-    old grant was kept. Unauthenticated because the browser arrives from the provider.
+    exchanges the code and sends the browser to the consent's return_url, or else to the dashboard, with
+    connection_id and status added to its query: connected, denied, failed, or account_mismatch when a
+    reconnect came back with another provider account and the old grant was kept. Unauthenticated
+    because the browser arrives from the provider.
 
     Args:
         state (str | Unset):
