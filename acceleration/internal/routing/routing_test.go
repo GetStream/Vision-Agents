@@ -225,7 +225,7 @@ func (s *RoutingSuite) TestARecordingToAShortcutThatIsNotLiveOnlyStaysWhereItWas
 
 func (s *RoutingSuite) TestARecordingToALiveShortcutInAConfigWithNoRecordedOneAsksForABatchModel() {
 	_, err := s.config().Recorded("en-low-latency")
-	s.ErrorContains(err, "name a batch model")
+	s.EqualError(err, "routing: en-low-latency is a shortcut for live calls; name a batch model for a recording")
 }
 
 func (s *RoutingSuite) TestOfferedShortcutsAreTheTitledOnesInTheOrderWritten() {

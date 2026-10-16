@@ -14,7 +14,10 @@ to the models marked `realtime: true`. A recording is a job at `/v1/stt/recordin
 to the ones marked `realtime: false` — the batch endpoints, which are both cheaper per hour and
 more accurate than the same vendor's streaming model, because they have the whole file in front
 of them. `en-recorded` and `multilingual-recorded` are the aliases for that half, and they
-`require_recorded`, so a recording is never streamed at a live model by accident.
+`require_recorded`, so a recording is never streamed at a live model by accident. A recording
+sent to a live-only shortcut goes to the recorded one for the same languages (`en-low-latency`
+to `en-recorded`), and one with no such counterpart (`stt-fast`) is refused before any vendor
+is asked (`ModalityConfig.Recorded`).
 
 ## The top five, and what each calls the same thing
 
