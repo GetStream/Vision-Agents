@@ -2024,6 +2024,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `/v1/tts/recordings` reads the `elevenlabs` overwrite. A `voice_id` there names the voice the recording is spoken in, and an overwrite the recorder cannot read fails the request with the overwrite error, as on the live path; both were dropped and the recording spoken anyway. A recording that names a voice of the customer's own is spoken in the id ElevenLabs knows it by, where the name was sent as asked (AI-1366).
 - `/v1/tts/recordings` refuses a `speed`, and a `stability` or `similarity` outside 0 to 1, as the caller's mistake. The recording voice (`eleven_v3`) ignores speed, so one was dropped in silence; a bad stability or similarity was answered by ElevenLabs with a 422 that counted against the model's health (AI-1366).
 - Decimal values remain intact when streaming voice replies are split into speech requests.
+- Healthcare tool history preserves each appointment response after later reschedules.
+- Corrected caller transcripts replace stale queued fragments without losing words from a separate utterance.
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.

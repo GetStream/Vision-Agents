@@ -29,6 +29,8 @@ const (
 type candidate struct {
 	ID          string
 	Participant stt.Participant
+	// Utterance is the transcriber's identity for this run of speech, when it has one.
+	Utterance int64
 	// Speaker is the voice the transcriber heard, for the ones that tell voices apart. It
 	// is how a second person at the caller's microphone is told from the caller.
 	Speaker      string
@@ -75,6 +77,9 @@ type cadenceSpeaker struct {
 	revisedAt   time.Time
 	// utterance is the run of speech the words being gathered came from.
 	utterance int64
+	// held is a queued candidate removed from the active transcript until it is answered
+	// or superseded by a revision of the same numbered utterance.
+	held *heldTranscript
 	// carried is what was still unanswered when the transcriber started this utterance.
 	// Every revision of the utterance replaces only its own words, so it is put back in
 	// front of each one rather than only the first.
@@ -84,8 +89,18 @@ type cadenceSpeaker struct {
 	committed string
 	// committedUtterance is which run of speech those words were, and committedAt is when
 	// they were answered, for transcribers that cannot say which run they are on.
-	committedUtterance int64
-	committedAt        time.Time
+	committedUtterance  int64
+	committedAt         time.Time
+	committedGeneration int64
+}
+
+// heldTranscript keeps the exact candidate and carried prefix owned by a queue. Its
+// generation lets a newer answered utterance keep its deduplication record.
+type heldTranscript struct {
+	candidate  candidate
+	carried    string
+	generation int64
+	heldAt     time.Time
 }
 
 func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence {
@@ -124,9 +139,49 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	if c.closed {
 		return "", ""
 	}
+	if strings.TrimSpace(transcript.Text) == "" && transcript.Mode != stt.ModeDelta {
+		return "", ""
+	}
 	current := c.speakerFor(transcript.Participant)
+	var heldRevisionText string
+	if held := current.held; held != nil {
+		unknownIdentity := transcript.Utterance == 0 || held.candidate.Utterance == 0
+		if unknownIdentity && sameWords(held.candidate.Text, transcript.Text) &&
+			time.Since(held.heldAt) < c.settle {
+			return "", ""
+		}
+		if transcript.Utterance != 0 && held.candidate.Utterance == transcript.Utterance {
+			text := transcript.Text
+			if transcript.Mode == stt.ModeDelta {
+				text = held.candidate.Text + transcript.Text
+			} else if held.carried != "" && !strings.HasPrefix(words(text), words(held.carried)) {
+				text = held.carried + " " + strings.TrimSpace(text)
+			}
+			if sameWords(held.candidate.Text, text) {
+				return "", ""
+			}
+			if current.text != "" && current.utterance != held.candidate.Utterance {
+				heldRevisionText = text
+			} else {
+				current.text = held.candidate.Text
+				current.carried = held.carried
+				current.speaker = held.candidate.Speaker
+				current.language = held.candidate.Language
+				current.confidence = held.candidate.Confidence
+				current.latencyMs = held.candidate.STTLatencyMs
+				current.utterance = held.candidate.Utterance
+			}
+			current.held = nil
+		}
+	}
 	text := transcript.Text
-	if transcript.Mode == stt.ModeDelta {
+	mode := transcript.Mode
+	if heldRevisionText != "" {
+		text = heldRevisionText
+		if mode == stt.ModeDelta {
+			mode = stt.ModeReplacement
+		}
+	} else if mode == stt.ModeDelta {
 		text = current.text + transcript.Text
 	}
 	if strings.TrimSpace(text) == "" {
@@ -144,7 +199,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 			current.carried = strings.TrimSpace(current.text)
 		}
 	}
-	if current.carried != "" && transcript.Mode != stt.ModeDelta &&
+	if current.carried != "" && mode != stt.ModeDelta &&
 		!strings.HasPrefix(words(text), words(current.carried)) {
 		text = current.carried + " " + strings.TrimSpace(text)
 	}
@@ -219,6 +274,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 			current.committed = current.text
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
+			current.committedGeneration = current.generation
 			current.text = ""
 			current.carried = ""
 			current.speaker = ""
@@ -230,6 +286,78 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 				current.timer = nil
 			}
 		}
+		return true
+	}
+	return false
+}
+
+// Hold removes a settled candidate from active listening while a reply finishes. The
+// candidate stays owned by its queue so a numbered revision can replace it and Waiting
+// can commit exactly this turn when it is answered.
+func (c *cadence) Hold(ready candidate) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, current := range c.speakers {
+		if current.candidateID != ready.ID {
+			continue
+		}
+		if current.timer != nil {
+			current.timer.Stop()
+			current.timer = nil
+		}
+		current.held = &heldTranscript{
+			candidate:  ready,
+			carried:    current.carried,
+			generation: current.generation,
+			heldAt:     time.Now(),
+		}
+		current.candidateID = ""
+		current.text = ""
+		current.carried = ""
+		current.speaker = ""
+		current.language = ""
+		current.confidence = 0
+		current.latencyMs = 0
+		current.generation++
+		return true
+	}
+	return false
+}
+
+// CommitHeld records a queued candidate only if that exact candidate still owns the
+// held slot. A later answer cannot be replaced by an older queue draining afterward.
+func (c *cadence) CommitHeld(candidateID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, current := range c.speakers {
+		if current.held == nil || current.held.candidate.ID != candidateID {
+			continue
+		}
+		held := current.held
+		current.held = nil
+		if held.generation >= current.committedGeneration {
+			current.committed = held.candidate.Text
+			current.committedUtterance = held.candidate.Utterance
+			current.committedAt = time.Now()
+			current.committedGeneration = held.generation
+		}
+		return true
+	}
+	return false
+}
+
+// ReleaseHeld drops only the queued candidate that still owns the held slot.
+func (c *cadence) ReleaseHeld(candidateID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, current := range c.speakers {
+		if current.held == nil || current.held.candidate.ID != candidateID {
+			continue
+		}
+		current.held = nil
 		return true
 	}
 	return false
@@ -330,6 +458,7 @@ func (c *cadence) emit(participantID string, generation int64) {
 	ready := candidate{
 		ID:           current.candidateID,
 		Participant:  current.participant,
+		Utterance:    current.utterance,
 		Speaker:      current.speaker,
 		Text:         strings.TrimSpace(current.text),
 		Language:     current.language,
