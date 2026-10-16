@@ -2699,6 +2699,9 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	a.saying = ""
 	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
+	// Clear audio already queued at the edge before provider or model interruption can block.
+	// Keep the final drop below as well to catch audio published by an in-flight send.
+	a.dropSpeech()
 
 	a.finishGenerate(turnID)
 	if current != nil {

@@ -2861,6 +2861,66 @@ func (s *AgentSuite) TestBargeInThrowsAwaySpeechNotHeardYet() {
 		"the rest of the abandoned reply is still on its way to the caller")
 }
 
+func (s *AgentSuite) TestBargeInDropsQueuedSpeechBeforeTheVoiceInterruptReturns() {
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = nil
+	s.model.then = []string{"I heard you. I will stop."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) == 1 && s.model.script(requests[0].ID) != nil
+	}, "the first reply never started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "The old reply is still in flight.")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the old reply never reached the edge")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s.voice.mu.Lock()
+	s.voice.interruptStarted = started
+	s.voice.interruptRelease = release
+	s.voice.mu.Unlock()
+	var releaseOnce sync.Once
+	openVoice := func() { releaseOnce.Do(func() { close(release) }) }
+	defer openVoice()
+
+	s.says(participant, "actually, stop")
+	select {
+	case <-started:
+	case <-time.After(settleFor):
+		s.FailNow("the voice interruption never reached its blocking gate")
+	}
+
+	s.False(s.edge.SpeechPending(), "queued speech must be dropped before a blocking voice interruption returns")
+	s.Empty(s.edge.heard(), "audio queued before the interruption must be removed")
+	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+		100*time.Millisecond, 5*time.Millisecond, "the replacement reply must wait for the voice interruption")
+
+	s.synthesises(turnID)
+	s.Require().Never(func() bool { return len(s.edge.heard()) > 0 },
+		100*time.Millisecond, 5*time.Millisecond, "late audio from the abandoned reply must stay unheard")
+
+	openVoice()
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the interrupted reply was not reported")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller's reply did not resume after interruption")
+	secondTurnID := s.model.requests()[1].ID
+	s.eventually(func() bool {
+		var text strings.Builder
+		for _, request := range s.voice.spoken() {
+			if request.ID == secondTurnID {
+				text.WriteString(request.Text)
+			}
+		}
+		return strings.Contains(text.String(), "I heard you.") && strings.Contains(text.String(), "I will stop.")
+	}, "the queued caller reply was not spoken")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the queued caller reply produced no audio")
+	s.Equal(1, countOf[Interrupted](s.reported()), "the old reply is interrupted once")
+	s.Equal(2, countOf[Responding](s.reported()), "the replacement reply starts once after interruption")
+}
+
 func (s *AgentSuite) TestShorteningLeavesSpeechAlreadyOnItsWayOut() {
 	// Shortening is the softer answer to an overlap: the model stops adding to the reply,
 	// but what has already been said is still worth hearing, so nothing that has been

@@ -2029,6 +2029,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - Healthcare tool history preserves each appointment response after later reschedules.
 - Corrected caller transcripts replace stale queued fragments without losing words from a separate utterance.
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
+- A caller's queued speech is dropped as soon as a reply is abandoned, before a blocking voice-provider interruption can leave it talking over them.
 - A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
 - Deepgram Flux preserves words received with the start-of-turn event instead of waiting for a later transcript update.
 - Model timing includes the wait for response headers in first-token latency and total duration.
