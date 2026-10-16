@@ -345,9 +345,13 @@ type Agent struct {
 	saying string
 	// abandoned is every turn an interruption gave up on. Audio belonging to one of them
 	// is dropped rather than published, which is what makes barge-in immediate even while
-	// a provider is still sending. It holds one entry per interruption and lives only as
+	// a provider is still sending. It holds one entry per abandoned turn and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// ttsTurns are turns whose speech has been submitted to the voice since the last
+	// interruption. A tool reply can replace speakingTurn while an earlier reply is still
+	// synthesising, so interruption must abandon every submitted turn.
+	ttsTurns map[string]struct{}
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
@@ -534,6 +538,7 @@ func New(options Options) (*Agent, error) {
 		listeners:        map[string]*sttrouter.Session{},
 		voices:           map[string]string{},
 		abandoned:        map[string]struct{}{},
+		ttsTurns:         map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
 		speculations:     map[string]*speculation{},
@@ -2609,13 +2614,13 @@ func (a *Agent) speakSentence(turnID, text string) error {
 	if !voice.Streaming() {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
-		a.begin()
+		a.begin(turnID)
 		return voice.Synthesize(tts.Request{ID: id, Text: text, Final: true})
 	}
 
 	if a.openTurn != turnID {
 		a.openTurn = turnID
-		a.begin()
+		a.begin(turnID)
 	}
 	return voice.Synthesize(tts.Request{ID: turnID, Text: text})
 }
@@ -2627,7 +2632,7 @@ func (a *Agent) speakWhole(turnID, text string) error {
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	a.turns.ttsStarted(turnID, time.Now())
-	a.begin()
+	a.begin(turnID)
 	return voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true})
 }
 
@@ -2693,6 +2698,10 @@ func (a *Agent) interrupt(participant stt.Participant) {
 		return
 	}
 	a.abandoned[turnID] = struct{}{}
+	for submitted := range a.ttsTurns {
+		a.abandoned[submitted] = struct{}{}
+	}
+	clear(a.ttsTurns)
 	a.interrupting = true
 	a.speakingTurn = ""
 	a.generating = false
@@ -2806,10 +2815,13 @@ func (a *Agent) voice() *ttsrouter.Session {
 }
 
 // begin counts an utterance as in flight, so Finish waits for it.
-func (a *Agent) begin() {
+func (a *Agent) begin(turnID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.utterances++
+	if _, abandoned := a.abandoned[turnID]; !abandoned {
+		a.ttsTurns[turnID] = struct{}{}
+	}
 }
 
 // settle counts an utterance as finished.
