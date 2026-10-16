@@ -50,8 +50,11 @@ func (s *AuthorizationsSuite) TestAConsentStartedWithAReturnURLIsLaunchedFromIts
 	page := alice.get(started.LaunchURL)
 	finished := alice.finish(s.consent(alice.handOff(started)))
 
-	s.Equal(strings.Replace(baseLaunchPage, `"https://dashboard.example"`, `"https://app.example"`, 1), s.launchPage(page),
-		"the base page, with the return_url's origin in place of the dashboard's")
+	expected := strings.Replace(baseLaunchPage, `"https://dashboard.example"`, `"https://app.example"`, 1)
+	expected = strings.Replace(expected, "Start again from the dashboard.", "Start again from the page that opened this.", 1)
+	expected = strings.Replace(expected, "Start from the dashboard, so", "Start from the page that opened this, so", 1)
+	s.Equal(expected, s.launchPage(page),
+		"the base page, with the return_url's origin in place of the dashboard's and no word of a dashboard")
 	s.Equal("https://app.example/connectors/done?"+url.Values{
 		"connection_id": {id}, "status": {consentConnected}, "tab": {"tools"}, "from": {"chat"},
 	}.Encode(), finished.Header.Get("Location"))
@@ -73,6 +76,17 @@ func (s *AuthorizationsSuite) TestAConsentStartedWithoutAReturnURLIsLaunchedAndE
 		s.Equal("https://dashboard.example/connections?connection_id="+id+"&status=connected", finished.Header.Get("Location"))
 		s.Equal(`<a href="https://dashboard.example/connections?connection_id=`+id+`&amp;status=connected">Found</a>.`+"\n\n", s.body(finished))
 	}
+}
+
+func (s *AuthorizationsSuite) TestTheLaunchPageOfAConsentWithAReturnURLDoesNotSendThePersonToTheDashboard() {
+	started := s.startReturningTo(s.connection(""), appReturnURL)
+
+	page := s.launchPage(s.browser().get(started.LaunchURL))
+
+	s.Contains(page, "This consent has expired. Start again from the page that opened this.")
+	s.Contains(page, "Start from the page that opened this, so this browser can be checked.")
+	s.NotContains(page, "dashboard.")
+	s.NotContains(page, "from the dashboard")
 }
 
 func (s *AuthorizationsSuite) TestTheLaunchPageOfAnUnknownAttemptIsTheDashboardsPage() {
@@ -130,6 +144,38 @@ func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedAlsoGoesBackToTheRet
 	s.Require().NotNil(s.get(id).LastValidation, "the refusal still leaves its reason")
 }
 
+func (s *AuthorizationsSuite) TestAConsentForAnotherAccountAlsoGoesBackToTheReturnURL() {
+	id := s.connection("")
+	s.connect(id)
+	s.provider.SwitchAccount()
+	alice := s.browser()
+
+	finished := alice.finish(s.consent(alice.handOff(s.startReturningTo(id, appReturnURL))))
+
+	s.Equal(s.returnedTo(appReturnURL, id, consentAccountMismatch), finished.Header.Get("Location"))
+}
+
+func (s *AuthorizationsSuite) TestTheRoutersConnectionIDAndStatusReplaceTheOnesInTheReturnURL() {
+	id := s.connection("")
+	returnURL := "https://app.example/done?status=mine&connection_id=other&tab=tools"
+	alice := s.browser()
+
+	finished := alice.finish(s.consent(alice.handOff(s.startReturningTo(id, returnURL))))
+
+	s.Equal("https://app.example/done?"+url.Values{
+		"connection_id": {id}, "status": {consentConnected}, "tab": {"tools"},
+	}.Encode(), finished.Header.Get("Location"), "one of each, the router's")
+}
+
+func (s *AuthorizationsSuite) TestTheReturnURLsQueryComesBackReEncodedWithItsKeysSorted() {
+	id := s.connection("")
+	alice := s.browser()
+
+	finished := alice.finish(s.consent(alice.handOff(s.startReturningTo(id, "https://app.example/done?b&a=1&a=2"))))
+
+	s.Equal("https://app.example/done?a=1&a=2&b=&connection_id="+id+"&status="+consentConnected, finished.Header.Get("Location"))
+}
+
 func (s *AuthorizationsSuite) TestAReturnURLOnALoopbackHostIsTakenOverPlainHTTP() {
 	// RFC 8252 section 8.3's loopback hosts, each with the origin the launch page names.
 	for returnURL, origin := range map[string]string{
@@ -151,6 +197,20 @@ func (s *AuthorizationsSuite) TestAReturnURLThatIsNotAbsoluteIsRefused() {
 	s.assertReturnURLRefused("not an absolute URL with a host", "app.example/done")
 	s.assertReturnURLRefused("not an absolute URL with a host", "javascript:alert(1)")
 	s.assertReturnURLRefused("not an absolute URL with a host", "https:///done")
+	// Scheme-relative: no scheme, so not absolute, whatever the host.
+	s.assertReturnURLRefused("not an absolute URL with a host", "//app.example/x")
+}
+
+func (s *AuthorizationsSuite) TestAReturnURLWhoseHostIsNotASCIIIsRefused() {
+	// A browser's origin holds the punycode host, which the launch page would never be sent.
+	s.assertReturnURLRefused("non-ASCII", "https://bücher.example/done")
+	s.startReturningTo(s.connection(""), "https://xn--bcher-kva.example/done")
+}
+
+func (s *AuthorizationsSuite) TestAReturnURLWithAnIPv4MappedHostIsRefused() {
+	// A browser's origin writes it [::ffff:7f00:1], which the launch page would never be sent.
+	s.assertReturnURLRefused("IPv4-mapped", "http://[::ffff:127.0.0.1]:3000/done")
+	s.assertReturnURLRefused("IPv4-mapped", "https://[::ffff:10.0.0.1]/done")
 }
 
 func (s *AuthorizationsSuite) TestAReturnURLOverPlainHTTPToAHostThatIsNotLoopbackIsRefused() {

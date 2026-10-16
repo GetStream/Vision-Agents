@@ -11,11 +11,13 @@ import (
 	"html/template"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -144,7 +146,7 @@ const maxReturnURLBytes = 2048
 
 // AuthorizationRequest is what a backend may tell a consent it starts.
 type AuthorizationRequest struct {
-	ReturnURL string `json:"return_url,omitempty" doc:"The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs."`
+	ReturnURL string `json:"return_url,omitempty" doc:"The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs."`
 }
 
 type authorizationResponse struct {
@@ -516,7 +518,7 @@ window.addEventListener('message', async (event) => {
   handoffStarted = true;
   try {
     const response = await fetch(window.location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handoff_token: event.data.handoff_token }) });
-    if (!response.ok) throw new Error('This consent has expired. Start again from the dashboard.');
+    if (!response.ok) throw new Error('{{if .ReturnsToApp}}This consent has expired. Start again from the page that opened this.{{else}}This consent has expired. Start again from the dashboard.{{end}}');
     const authorization = await response.json();
     window.opener = null;
     window.location.replace(authorization.authorization_url);
@@ -525,7 +527,7 @@ window.addEventListener('message', async (event) => {
   }
 });
 if (window.opener) window.opener.postMessage({ type: 'va.connector.oauth.ready' }, dashboardOrigin);
-else status.textContent = 'Start from the dashboard, so this browser can be checked.';
+else status.textContent = '{{if .ReturnsToApp}}Start from the page that opened this, so this browser can be checked.{{else}}Start from the dashboard, so this browser can be checked.{{end}}';
 </script></body></html>`))
 
 // launchPolicy is the launch page's Content-Security-Policy (CSP Level 3): nothing loads but
@@ -542,7 +544,7 @@ const launchPolicy = "default-src 'none'; script-src 'nonce-%s'; connect-src 'se
 // about an id but the origin a live one returns to, which only the backend and the browser
 // that holds the 128-bit id (store.NewID) know.
 func (s *Server) serveConnectorLaunch(w http.ResponseWriter, r *http.Request) {
-	opener, err := s.launchOpener(r.Context(), r.PathValue("id"))
+	opener, returnsToApp, err := s.launchOpener(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeFailure(w, r, err)
 		return
@@ -559,28 +561,34 @@ func (s *Server) serveConnectorLaunch(w http.ResponseWriter, r *http.Request) {
 	// For a browser without frame-ancestors (CSP Level 3 section 6.4.2.2).
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := launchPage.Execute(w, struct{ Nonce, OpenerOrigin string }{nonce, opener}); err != nil {
+	if err := launchPage.Execute(w, struct {
+		Nonce, OpenerOrigin string
+		ReturnsToApp        bool
+	}{nonce, opener, returnsToApp}); err != nil {
 		s.logger.Error("could not render the connector launch page", "error", err)
 	}
 }
 
-// launchOpener is the origin the launch page of attempt id takes the handoff from.
-func (s *Server) launchOpener(ctx context.Context, id string) (string, error) {
+// launchOpener is the origin the launch page of attempt id takes the handoff from, and whether
+// it is the app's (the attempt sealed a return_url) rather than the dashboard's, which the
+// page's wording follows: it does not send the person to a dashboard they never used.
+func (s *Server) launchOpener(ctx context.Context, id string) (origin string, returnsToApp bool, err error) {
 	if s.store != nil && s.connectorSecrets != nil {
 		_, sealed, err := s.openAttemptByID(ctx, id)
 		if err != nil && !errors.Is(err, store.ErrNoAuthorizationAttempt) {
-			return "", err
+			return "", false, err
 		}
 		if sealed.ReturnURL != "" {
 			// checkReturnURL took it, so it has an http(s) origin.
-			return originOf(sealed.ReturnURL)
+			origin, err := originOf(sealed.ReturnURL)
+			return origin, true, err
 		}
 	}
 	dashboard, err := originOf(s.dashboardURL)
 	if err != nil {
-		return "", fmt.Errorf("consents cannot be launched: DASHBOARD_BASE_URL is not an http(s) URL: %w", err)
+		return "", false, fmt.Errorf("consents cannot be launched: DASHBOARD_BASE_URL is not an http(s) URL: %w", err)
 	}
-	return dashboard, nil
+	return dashboard, false, nil
 }
 
 // handOffConnectorLaunch trades the handoff token for the authorize URL and binds the
@@ -1086,8 +1094,21 @@ func checkReturnURL(raw string) error {
 		return fmt.Errorf("longer than %d bytes", maxReturnURLBytes)
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.Hostname() == "" {
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
 		return errors.New("not an absolute URL with a host")
+	}
+	// A browser's Origin holds the host in punycode (URL Standard, host parsing), so the origin
+	// the launch page would name for a Unicode host never matches event.origin.
+	host := parsed.Hostname()
+	for _, r := range host {
+		if r > unicode.MaxASCII {
+			return errors.New("a host with non-ASCII characters is refused; write it in punycode (xn--)")
+		}
+	}
+	// A browser writes an IPv4-mapped address in its hexadecimal form ([::ffff:7f00:1]), not as
+	// written here, so the origin the launch page names would never match.
+	if ip := net.ParseIP(host); ip != nil && strings.Contains(host, ":") && ip.To4() != nil {
+		return errors.New("an IPv4-mapped IPv6 address is refused; write the IPv4 address")
 	}
 	if parsed.User != nil {
 		return errors.New("a URL carrying a user name or password is refused")

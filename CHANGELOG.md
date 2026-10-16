@@ -649,6 +649,14 @@ connected, was denied or failed. Open `launch_url` in a popup from a page of tha
 the launch page takes the handoff from that origin only. It must be https, or http on
 `localhost`, `127.0.0.0/8` or `[::1]` for local development, with no user name or password and
 no fragment, at most 2048 bytes; anything else is a 400 `invalid_request` naming the rule.
+A host must be ASCII (write an internationalized one in punycode, `xn--`) and not an IPv4-mapped
+IPv6 address, since a browser's origin would not match the origin the launch page names. The
+query comes back re-encoded with its keys sorted (`?a=1&a=2&b` becomes
+`?a=1&a=2&b=&connection_id=…&status=…`), and a `connection_id` or `status` already in it is
+replaced by the router's. A consent that has a `return_url` no longer sends the person back to
+"the dashboard" in the launch page's own messages. The operation used to ignore a body; it now
+reads one, so a body that is not a JSON object (`null`, `{`, a `text/plain` one) is a 400 or 415
+where it was a 201; no known caller sends one.
 Without it, nothing changes: the dashboard opens the launch page and the consent goes back to
 the dashboard, as does a consent the chat starts. The generated clients are regenerated: Go's
 `CreateAuthorization` and Rust's `create_authorization` now take the request body.
