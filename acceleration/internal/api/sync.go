@@ -392,7 +392,7 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
 		return complaint, false
 	}
-	if body.LeftOutConnectors != nil && body.Connectors == nil {
+	if body.LeftOutConnectors != nil && len(*body.LeftOutConnectors) > 0 && body.Connectors == nil {
 		return "left_out_connectors goes with connectors: send connectors too, an empty list if none is bound", false
 	}
 	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {

@@ -65,6 +65,19 @@ func (s *SyncSuite) TestASyncLeavingOutConnectorsWithoutConnectorsIsRefused() {
 	s.Empty(s.configsNamed("support"))
 }
 
+// An empty list is nothing to refuse: without connectors it is ignored and the stored list stays.
+func (s *SyncSuite) TestASyncSendingAnEmptyListWithoutConnectorsLeavesTheOnesLeftOut() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{},
+		"left_out_connectors": []map[string]any{leftOut("issues", "company")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "Be brief.",
+		"left_out_connectors": []map[string]any{}})
+
+	want := []LeftOutConnector{{Name: "issues", ConnectorId: "linear", Connection: "company"}}
+	s.Equal(want, value(second.Config.LeftOutConnectors))
+	s.Equal(want, value(s.configsNamed("support")[0].LeftOutConnectors))
+}
+
 // A sync that says nothing about the bindings leaves them and the list left out as they are.
 func (s *SyncSuite) TestASyncSendingNeitherLeavesTheOnesLeftOut() {
 	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{},

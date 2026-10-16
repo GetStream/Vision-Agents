@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1149,6 +1151,82 @@ func TestSyncLeavesAnOverLongLeftOutEntryOutOfTheList(t *testing.T) {
 	sent := router.syncs[0].LeftOutConnectors
 	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "code" {
 		t.Errorf("left_out_connectors went as %+v", sent)
+	}
+}
+
+// The caps are the router's: an entry exactly at them is sent. The label is multibyte, over
+// the cap in bytes and at it in runes, which is what the router counts.
+func TestSyncSendsALeftOutEntryExactlyAtTheCaps(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	alias, connector, label := strings.Repeat("a", 63), strings.Repeat("b", 64), strings.Repeat("é", 120)
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: "+alias+"\n    connector: "+connector+"\n    connection: "+label+"\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	want := []acceleration.LeftOutConnector{{Name: alias, ConnectorId: connector, Connection: label}}
+	if got := router.syncs[0].LeftOutConnectors; got == nil || !reflect.DeepEqual(*got, want) {
+		t.Errorf("left_out_connectors went as %+v", got)
+	}
+}
+
+// The same holds for a multibyte alias and connector id, whose bytes are over the caps and
+// whose runes are at them.
+func TestSyncCountsRunesNotBytesInTheNameAndConnectorOfALeftOutEntry(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	alias, connector := strings.Repeat("é", 63), strings.Repeat("é", 64)
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: "+alias+"\n    connector: "+connector+"\n    connection: team\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if got := router.syncs[0].LeftOutConnectors; got == nil || len(*got) != 1 {
+		t.Errorf("left_out_connectors went as %+v", got)
+	}
+}
+
+// The router takes at most 64 entries. More are left out of the list, so the sync is not
+// refused where it synced before, and each is still warned about.
+func TestSyncSendsAtMost64LeftOutEntries(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	yaml := "name: concierge\nconnectors:\n"
+	for i := range 65 {
+		yaml += fmt.Sprintf("  - name: c%d\n    connector: github\n    connection: team\n", i)
+	}
+	write(t, root, "agent.yaml", yaml)
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].LeftOutConnectors
+	if sent == nil || len(*sent) != 64 || (*sent)[63].Name != "c63" {
+		t.Errorf("left_out_connectors went as %+v", sent)
+	}
+	if !strings.Contains(logged.String(), "connector=c64 ") {
+		t.Errorf("no warning for the 65th in %q", logged.String())
 	}
 }
 

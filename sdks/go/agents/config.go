@@ -137,9 +137,12 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	if len(missing) > 0 {
 		// Sent so the router stores them and the dashboard can say what the agent is missing.
 		// An entry over the router's caps is left out of the list (the warning above still
-		// names it), so a sync never fails over the list.
+		// names it), and so is one past the router's 64, so a sync never fails over the list.
 		leftOut := make([]acceleration.LeftOutConnector, 0, len(missing))
 		for _, connection := range missing {
+			if len(leftOut) == maxLeftOutEntries {
+				break
+			}
 			if utf8.RuneCountInString(connection.name) > maxLeftOutName ||
 				utf8.RuneCountInString(connection.connectorID) > maxLeftOutConnectorID ||
 				utf8.RuneCountInString(connection.token) > maxLeftOutConnection {
@@ -378,6 +381,7 @@ const (
 	maxLeftOutName        = 63
 	maxLeftOutConnectorID = 64
 	maxLeftOutConnection  = 120
+	maxLeftOutEntries     = 64
 )
 
 // missingConnection is a connection an agent.yaml entry names that the app does not have.
