@@ -46,9 +46,10 @@ inputs:
   # starts with a letter, so no IP address is taken, and no port, path or userinfo. That
   # cannot refuse a name that resolves to a private address, such as
   # metadata.google.internal; egress refuses those when it dials. A Metabase served under a
-  # path, or on a port other than 443, cannot be entered.
+  # path, or on a port other than 443, cannot be entered. Lower case only: the instance's
+  # metadata names its resource in lower case and discovery compares it exactly.
   - name: host
-    pattern: ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]*[a-zA-Z0-9])?$
+    pattern: ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$
 endpoints:
   # [mcp]: «https://{your-metabase.example.com}/api/metabase-mcp»; [prm]'s resource.
   # Authorize, token, registration and revoke are not written: oauth2_code discovers them per

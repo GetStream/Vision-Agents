@@ -277,10 +277,20 @@ func (s *ConsentSuite) TestEachGoogleServerConnectsWithTheSharedClientAtThePinne
 		"google_docs":     "https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/drive.readonly",
 		"gmail":           "https://www.googleapis.com/auth/gmail.readonly",
 	}
+	servers := map[string]string{
+		"bigquery":        "https://bigquery.googleapis.com/mcp",
+		"google_calendar": "https://calendarmcp.googleapis.com/mcp/v1",
+		"google_drive":    "https://drivemcp.googleapis.com/mcp/v1",
+		"google_docs":     "https://docsmcp.googleapis.com/mcp/v1",
+		"gmail":           "https://gmailmcp.googleapis.com/mcp/v1",
+	}
 	for id, scope := range scopes {
 		s.Run(id, func() {
+			manifest := s.resolve(id, nil)
+			s.Equal(servers[id], manifest.Endpoints["mcp"])
+			s.Equal(manifest.Endpoints["mcp"], manifest.Endpoints["resource"], "the resource is the MCP URL")
 			srv := fakeprovider.New(s.T())
-			resolved := s.atFake(srv, s.resolve(id, nil))
+			resolved := s.atFake(srv, manifest)
 			wire := &tokenWire{next: srv.Client().Transport}
 			scheme := s.schemeOver(&http.Client{Transport: wire}, s.preregistered(srv, core.ClientCustomer))
 
@@ -363,7 +373,7 @@ func (s *ConsentSuite) TestNotionRefreshPolicyRotatesWithEightHourAccessAndThirt
 // for the read and query scopes only.
 func (s *ConsentSuite) TestMetabaseRegistersAClientAtTheInstanceAndAsksToReadAndRunQueries() {
 	instance := s.resolve("metabase", map[string]string{"host": "metabase.example.com"})
-	s.Equal("https://metabase.example.com/api/metabase-mcp", instance.Endpoints["mcp"])
+	s.Equal(map[string]string{"mcp": "https://metabase.example.com/api/metabase-mcp"}, instance.Endpoints, "no pinned issuer or resource: both come from the instance")
 	srv := fakeprovider.New(s.T())
 	resolved := s.atFake(srv, instance)
 	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
@@ -395,7 +405,7 @@ func (s *ConsentSuite) TestMetabaseTakesAHostNameOnly() {
 		_, err := manifest.Resolve(oauth2code.Name, map[string]string{"host": host}, nil)
 		s.NoError(err, host)
 	}
-	for _, host := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "[::1]", "::1", "localhost", "metabase.example.com:3000", "metabase.example.com/x", "user@metabase.example.com", "metabase.example.com.", "-metabase.example.com", ""} {
+	for _, host := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "[::1]", "::1", "localhost", "metabase.example.com:3000", "metabase.example.com/x", "user@metabase.example.com", "metabase.example.com.", "Metabase.Example.com", "-metabase.example.com", ""} {
 		_, err := manifest.Resolve(oauth2code.Name, map[string]string{"host": host}, nil)
 		s.Error(err, host)
 	}
@@ -404,8 +414,8 @@ func (s *ConsentSuite) TestMetabaseTakesAHostNameOnly() {
 // A host name can still resolve to a private address (metadata.google.internal, an intranet
 // name), which no pattern can see. The router's own client, egress.NewClient, is the guard:
 // the consent's first request, the protected resource metadata, is refused before it dials,
-// as for mcp_servers (AI-1307). The fake listens on loopback, so a request let through would
-// reach it.
+// as for mcp_servers (AI-1307). Only the "non-public address" error proves the guard: with it
+// off, the dial still fails (the fake's certificate is unknown), so no hit count tells them apart.
 func (s *ConsentSuite) TestMetabaseAtANonPublicAddressIsRefusedBeforeAnyRequest() {
 	srv := fakeprovider.New(s.T())
 	listening, err := url.Parse(srv.URL)
@@ -422,8 +432,6 @@ func (s *ConsentSuite) TestMetabaseAtANonPublicAddressIsRefusedBeforeAnyRequest(
 			s.Contains(err.Error(), "non-public address")
 		})
 	}
-	s.Equal(0, srv.Hits(fakeprovider.PathProtectedResource))
-	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
 }
 
 func (s *ConsentSuite) TestHubSpotConnectsWithTheCustomersClientAndRegistersNone() {
