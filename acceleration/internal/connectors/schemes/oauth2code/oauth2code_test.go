@@ -193,6 +193,65 @@ func (s *OAuth2CodeSuite) TestWithoutCIMDSupportTheSchemeFallsBackToRegistration
 	s.NotEqual("https://router.example/oauth/client-metadata.json", s.query(out.AuthorizeURL).Get("client_id"))
 }
 
+// TestARegistrationAsksForTheScopesTheAuthorizeRequestAsksFor (AI-1363): Gong refuses a
+// registration without scope. RFC 7591 section 2 separates them with spaces, whatever the
+// manifest joins the authorize request's with.
+func (s *OAuth2CodeSuite) TestARegistrationAsksForTheScopesTheAuthorizeRequestAsksFor() {
+	srv, sent := s.registrar(http.StatusCreated, `{"client_id":"registered-client","token_endpoint_auth_method":"none"}`)
+	resolved := s.registering(srv)
+	resolved.Scopes.List, resolved.Scopes.Separator = []string{"mcp:read", "mcp:write"}, ","
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.Equal("mcp:read mcp:write", (<-sent)["scope"])
+	s.Equal("mcp:read,mcp:write", s.query(out.AuthorizeURL).Get("scope"))
+}
+
+func (s *OAuth2CodeSuite) TestARegistrationForAManifestWithoutScopesSendsNone() {
+	srv, sent := s.registrar(http.StatusCreated, `{"client_id":"registered-client","token_endpoint_auth_method":"none"}`)
+	resolved := s.registering(srv)
+	resolved.Scopes.List = nil
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.NotContains(<-sent, "scope")
+}
+
+// TestARefusedRegistrationSaysTheProvidersError (AI-1363, WWSD feedback #31): the error
+// response of RFC 7591 section 3.2.2 is what tells the app what the provider wants.
+func (s *OAuth2CodeSuite) TestARefusedRegistrationSaysTheProvidersError() {
+	srv, _ := s.registrar(http.StatusBadRequest, `{"error":"invalid_client_metadata","error_description":"scope is required"}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().ErrorIs(err, oauth2code.ErrRegistration)
+	s.Equal("oauth2code: register: HTTP 400: invalid_client_metadata: scope is required", err.Error())
+}
+
+// TestARefusedRegistrationQuotesAtMost256BytesOfItsDescription: core.DescriptionBytes, so a
+// provider's page of text cannot fill the answer.
+func (s *OAuth2CodeSuite) TestARefusedRegistrationQuotesAtMost256BytesOfItsDescription() {
+	srv, _ := s.registrar(http.StatusBadRequest, `{"error":"invalid_client_metadata","error_description":"`+strings.Repeat("x", 1000)+`"}`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().Error(err)
+	s.Equal("oauth2code: register: HTTP 400: invalid_client_metadata: "+strings.Repeat("x", 256), err.Error())
+}
+
+// TestARefusedRegistrationWithoutAnErrorBodySaysItsStatus is the answer before AI-1363 (probed
+// on d34abd15): a body that is not RFC 7591's error response is not quoted.
+func (s *OAuth2CodeSuite) TestARefusedRegistrationWithoutAnErrorBodySaysItsStatus() {
+	srv, _ := s.registrar(http.StatusBadRequest, `<html>registration is closed</html>`)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.registering(srv), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().ErrorIs(err, oauth2code.ErrRegistration)
+	s.Equal("oauth2code: register: HTTP 400", err.Error())
+}
+
 func (s *OAuth2CodeSuite) TestARegisteredClientSecretBasicClientAuthenticatesWithBasic() {
 	s.connectsAsRegistered(core.AuthClientSecretBasic)
 }
@@ -639,6 +698,35 @@ func asMetadata(issuer, authorize string) map[string]any {
 		"token_endpoint":                   issuer + "/token",
 		"code_challenge_methods_supported": []string{"S256"},
 	}
+}
+
+// registrar is a metadata server with a registration endpoint that answers status and body,
+// and the client metadata each registration sent.
+func (s *OAuth2CodeSuite) registrar(status int, body string) (*httptest.Server, <-chan map[string]any) {
+	sent := make(chan map[string]any, 1)
+	srv := s.metadataServer(func(base string) map[string]any {
+		metadata := asMetadata(base, base+"/authorize")
+		metadata["registration_endpoint"] = base + "/register"
+		return map[string]any{
+			"/.well-known/oauth-authorization-server": metadata,
+			"/register": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var metadata map[string]any
+				s.NoError(json.NewDecoder(r.Body).Decode(&metadata))
+				sent <- metadata
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, body)
+			}),
+		}
+	})
+	return srv, sent
+}
+
+// registering is the Linear manifest pointed at srv, registering its client there.
+func (s *OAuth2CodeSuite) registering(srv *httptest.Server) core.ResolvedManifest {
+	resolved := s.discovering(map[string]string{"issuer": srv.URL})
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientDCR}
+	return resolved
 }
 
 // discovering is the Linear manifest pointed at endpoints, with the operator's client.

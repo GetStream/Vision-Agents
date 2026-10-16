@@ -58,6 +58,10 @@ func (s *Server) authorizationServer(w http.ResponseWriter, _ *http.Request) {
 
 // register is RFC 7591 dynamic client registration.
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if s.isOn(RefusedRegistration) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_client_metadata", "error_description": "scope is required"})
+		return
+	}
 	var request struct {
 		RedirectURIs []string `json:"redirect_uris"`
 		Method       string   `json:"token_endpoint_auth_method"`

@@ -69,6 +69,9 @@ var (
 	ErrIssuerMissing = errors.New("oauth2code: callback has no iss, and the authorization server sends one")
 	// ErrNoClient means no client the manifest's client.registration allows is available.
 	ErrNoClient = errors.New("oauth2code: no OAuth client available for this connector")
+	// ErrRegistration is a dynamic client registration (RFC 7591) that gave no client: the
+	// endpoint was unreachable, refused it, or answered without a client this scheme can use.
+	ErrRegistration = errors.New("oauth2code: register")
 )
 
 // AuthorizationError is the error a provider sent back to the callback (RFC 6749 section
