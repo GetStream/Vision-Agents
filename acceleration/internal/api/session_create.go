@@ -25,6 +25,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if failure, refused := refuseServerSideFields(ctx, *request.Body); refused {
 		return nil, failure
 	}
+	if failure := s.refuseCall(ctx, customerID, *request.Body); failure != nil {
+		return nil, failure
+	}
 
 	// A config is read before the session is created rather than inside it, so a caller
 	// naming one that is not theirs is told so instead of getting a session that quietly
@@ -70,6 +73,52 @@ var errDeviceHistory = forbidden("history is sent server-side: an assistant mess
 var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is " +
 	"told decides who it is, which a device may not")
 
+// errDeviceCall refuses a call named by an end user's device.
+var errDeviceCall = forbidden("call is sent server-side: which call the agent joins puts it " +
+	"among the people on that call, which a device may not decide")
+
+// errCallWithoutVoice refuses a call named for a session held in writing.
+var errCallWithoutVoice = invalidRequest("call needs start_voice: a session held in writing is on no call")
+
+// errCallWithPhone refuses a call named for a phone session, which is on its own call.
+var errCallWithPhone = invalidRequest("call cannot be given with phone: a phone session is on its own call, agent:<session id>")
+
+// errCallInAnotherApp refuses a call another Stream app holds than the one the session acts
+// in: the agent would join a call of the same name in its own app, where nobody is.
+var errCallInAnotherApp = invalidRequest("the call is in another Stream app than the one this session acts in")
+
+// refuseCall is the failure a new session naming a call is refused with, or nil. The session
+// acts in the app the call is pinned to (callPinApp, as the manager resolves it), so the call
+// is refused only when another session runs it in a different app.
+func (s *Server) refuseCall(ctx context.Context, customerID string, request CreateSessionRequest) error {
+	if request.Call == nil {
+		return nil
+	}
+	if request.Phone != nil {
+		return errCallWithPhone
+	}
+	if !value(request.StartVoice) {
+		return errCallWithoutVoice
+	}
+	acting, err := s.callPinApp(ctx, customerID, request.Call.Type, request.Call.Id)
+	if err != nil {
+		return err
+	}
+	return s.refuseCallOutside(ctx, customerID, *request.Call, acting)
+}
+
+// refuseCallOutside refuses a call that callApp places in another Stream app than acting.
+func (s *Server) refuseCallOutside(ctx context.Context, customerID string, call SessionCall, acting int64) error {
+	app, err := s.callApp(ctx, customerID, call.Type, call.Id)
+	if err != nil {
+		return err
+	}
+	if app != acting {
+		return errCallInAnotherApp
+	}
+	return nil
+}
+
 // refuseServerSideFields reports the failure a new session is refused with when an end user's
 // device sent a field only the backend may send. createSession and the session socket both
 // call it, so a field one of them refuses from a device the other refuses too, with the same
@@ -84,6 +133,9 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	}
 	if request.Instructions != nil && !ServerSideFrom(ctx) {
 		return errDeviceInstructions, true
+	}
+	if request.Call != nil && !ServerSideFrom(ctx) {
+		return errDeviceCall, true
 	}
 	return APIError{}, false
 }

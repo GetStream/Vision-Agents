@@ -134,11 +134,12 @@ final class Operations {
   }
 
   /// Start voice on a session.
-  Future<Session> startSessionVoice({required String id}) async {
+  Future<Session> startSessionVoice({required String id, StartSessionVoiceRequest? body}) async {
     final json = await _wire.send(
       'POST',
       '/v1/agents/sessions/${Uri.encodeComponent(id)}/voice',
       operation: 'startSessionVoice',
+      body: body?.toJson(),
     );
     return Session.fromJson(json);
   }
@@ -444,6 +445,7 @@ final class CreateSessionRequest {
     this.agent,
     this.agentId,
     this.backchannel,
+    this.call,
     this.configId,
     this.connectorBindings,
     this.contextTruncated,
@@ -493,6 +495,10 @@ final class CreateSessionRequest {
       backchannel: switch (json['backchannel']) {
         null => null,
         final Object value => _bool(value, 'CreateSessionRequest.backchannel'),
+      },
+      call: switch (json['call']) {
+        null => null,
+        final Object value => SessionCall.fromJson(value),
       },
       configId: switch (json['config_id']) {
         null => null,
@@ -646,6 +652,7 @@ final class CreateSessionRequest {
   final String? agent;
   final String? agentId;
   final bool? backchannel;
+  final SessionCall? call;
   final String? configId;
   final List<SessionConnectorBinding>? connectorBindings;
   final bool? contextTruncated;
@@ -684,6 +691,7 @@ final class CreateSessionRequest {
     'agent': ?agent,
     'agent_id': ?agentId,
     'backchannel': ?backchannel,
+    if (call case final value?) 'call': value.toJson(),
     'config_id': ?configId,
     if (connectorBindings case final value?)
       'connector_bindings': [for (final item in value) item.toJson()],
@@ -1483,6 +1491,24 @@ final class Session {
   };
 }
 
+/// An existing Stream call for the agent to join, by its type and id.
+final class SessionCall {
+  const SessionCall({required this.id, required this.type});
+
+  factory SessionCall.fromJson(Object? value) {
+    final json = _object(value, 'SessionCall');
+    return SessionCall(
+      id: _string(json['id'], 'SessionCall.id'),
+      type: _string(json['type'], 'SessionCall.type'),
+    );
+  }
+
+  final String id;
+  final String type;
+
+  Map<String, Object?> toJson() => {'id': id, 'type': type};
+}
+
 /// The connection a session uses for one of its agent config's connector bindings chosen per session.
 final class SessionConnectorBinding {
   const SessionConnectorBinding({required this.connectionId, required this.name});
@@ -1853,6 +1879,24 @@ final class SessionVideo {
   final String? source;
 
   Map<String, Object?> toJson() => {'max_frames': ?maxFrames, 'source': ?source};
+}
+
+final class StartSessionVoiceRequest {
+  const StartSessionVoiceRequest({this.call});
+
+  factory StartSessionVoiceRequest.fromJson(Object? value) {
+    final json = _object(value, 'StartSessionVoiceRequest');
+    return StartSessionVoiceRequest(
+      call: switch (json['call']) {
+        null => null,
+        final Object value => SessionCall.fromJson(value),
+      },
+    );
+  }
+
+  final SessionCall? call;
+
+  Map<String, Object?> toJson() => {if (call case final value?) 'call': value.toJson()};
 }
 
 final class TextMatch {

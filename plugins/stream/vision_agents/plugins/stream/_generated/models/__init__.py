@@ -327,6 +327,7 @@ from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
+from .session_call import SessionCall
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
@@ -380,6 +381,7 @@ from .speech import Speech
 from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
+from .start_session_voice_request import StartSessionVoiceRequest
 from .stats_bucket import StatsBucket
 from .stored_connector_o_auth_client import StoredConnectorOAuthClient
 from .stream_settings import StreamSettings
@@ -772,6 +774,7 @@ __all__ = (
     "SearchRequestTags",
     "SearchResult",
     "Session",
+    "SessionCall",
     "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",
@@ -825,6 +828,7 @@ __all__ = (
     "SpeechRequest",
     "SpeechRequestTags",
     "SpendBucket",
+    "StartSessionVoiceRequest",
     "StatsBucket",
     "StoredConnectorOAuthClient",
     "StreamSettings",

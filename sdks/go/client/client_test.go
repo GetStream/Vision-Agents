@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -92,7 +93,7 @@ func newRouter(t *testing.T) *router {
 		}
 		backend.mu.Lock()
 		if backend.bodies[r.Method+" "+r.URL.Path]["start_voice"] == true {
-			created.CallId = created.Id
+			created.CallType, created.CallId = backend.callIn(r, created.Id)
 		}
 		backend.mu.Unlock()
 		answer(w, http.StatusCreated, created)
@@ -100,9 +101,12 @@ func newRouter(t *testing.T) *router {
 
 	mux.HandleFunc("POST /v1/agents/sessions/{id}/voice", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
+		backend.mu.Lock()
+		callType, callID := backend.callIn(r, r.PathValue("id"))
+		backend.mu.Unlock()
 		answer(w, http.StatusOK, acceleration.Session{
 			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
-			CallId: r.PathValue("id"), CreatedAt: time.Now(),
+			CallType: callType, CallId: callID, CreatedAt: time.Now(),
 		})
 	})
 
@@ -341,6 +345,18 @@ func (r *router) body(t *testing.T, method, path string) map[string]any {
 	return body
 }
 
+// callIn is the call a request named, else agent:<session id>, as the router answers it.
+// The caller holds r.mu.
+func (r *router) callIn(request *http.Request, session string) (string, string) {
+	named, _ := r.bodies[request.Method+" "+request.URL.Path]["call"].(map[string]any)
+	if named == nil {
+		return "agent", session
+	}
+	callType, _ := named["type"].(string)
+	callID, _ := named["id"].(string)
+	return callType, callID
+}
+
 // requests counts how many times a path was asked for, whatever the query.
 func (r *router) requests(method, path string) int {
 	r.mu.Lock()
@@ -426,6 +442,58 @@ func TestStartingVoiceAsksTheRouterToJoinTheSessionsCall(t *testing.T) {
 	}
 	if started.CallId != "session-1" || !session.Voice.Started() {
 		t.Errorf("voice started on %q", started.CallId)
+	}
+}
+
+func TestASessionOpenedOnANamedCallAsksTheRouterToJoinIt(t *testing.T) {
+	backend := newRouter(t)
+
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{
+		StartVoice: true, Call: &acceleration.SessionCall{Type: "default", Id: "practice-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(t.Context()) })
+
+	sent := backend.body(t, "POST", "/v1/agents/sessions")["call"]
+	if want := map[string]any{"type": "default", "id": "practice-1"}; !reflect.DeepEqual(sent, want) {
+		t.Errorf("the router was asked to join %v", sent)
+	}
+	if session.Created().CallId != "practice-1" {
+		t.Errorf("the session is on %q", session.Created().CallId)
+	}
+}
+
+func TestStartingVoiceOnANamedCallAsksTheRouterToJoinIt(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	started, err := session.Voice.Start(t.Context(), OnCall("default", "practice-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sent := backend.body(t, "POST", "/v1/agents/sessions/session-1/voice")["call"]
+	if want := map[string]any{"type": "default", "id": "practice-1"}; !reflect.DeepEqual(sent, want) {
+		t.Errorf("the router was asked to join %v", sent)
+	}
+	if started.CallType != "default" || started.CallId != "practice-1" {
+		t.Errorf("voice started on %s:%s", started.CallType, started.CallId)
+	}
+}
+
+// The control: starting voice with no call names none, and the router picks the call.
+func TestStartingVoiceWithNoCallNamesNone(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Voice.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if sent, named := backend.body(t, "POST", "/v1/agents/sessions/session-1/voice")["call"]; named {
+		t.Errorf("a call was named: %v", sent)
 	}
 }
 

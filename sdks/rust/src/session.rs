@@ -207,7 +207,7 @@ impl Session {
     /// Has the agent join the session's call and carry the conversation on there. Starting
     /// voice that is already on does nothing.
     pub async fn start_voice(&self) -> Result<types::Session> {
-        let started = self.client.start_session_voice(self.id()).await?;
+        let started = self.client.start_session_voice(self.id(), None).await?;
         self.voice.store(true, Ordering::Relaxed);
         Ok(started)
     }
