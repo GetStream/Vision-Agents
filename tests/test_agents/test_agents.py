@@ -8,12 +8,13 @@ import numpy as np
 import pytest
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.core import Agent, User
+from vision_agents.core import Agent, AgentLauncher, User
 from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.agents.events import UserTranscriptEvent
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
+from vision_agents.core.edge.events import AudioReceivedEvent
 from vision_agents.core.edge.types import Participant, TrackType
 from vision_agents.core.events import EventManager
 from vision_agents.core.harness import DefaultHarness
@@ -337,6 +338,56 @@ class FailingSTT(BaseSTT):
         pass
 
 
+class ListeningSTT(BaseSTT):
+    """STT that sets `heard_everyone` once audio from each speaker reached it."""
+
+    turn_detection: bool = False
+
+    def __init__(self, speakers: set[str]) -> None:
+        super().__init__()
+        self._waiting = set(speakers)
+        self.heard_everyone = asyncio.Event()
+
+    async def process_audio(self, pcm_data, participant):
+        self._waiting.discard(participant.user_id)
+        if not self._waiting:
+            self.heard_everyone.set()
+
+
+class ModelSTT(BaseSTT, Warmable[object]):
+    """STT that loads a fresh model object each time it is warmed without a cache."""
+
+    turn_detection: bool = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model: Optional[object] = None
+
+    async def on_warmup(self) -> object:
+        return object()
+
+    def on_warmed_up(self, resource: object) -> None:
+        self.model = resource
+
+    async def process_audio(self, pcm_data, participant):
+        pass
+
+
+class UnloadableSTT(BaseSTT, Warmable[object]):
+    """STT whose model fails to load."""
+
+    turn_detection: bool = False
+
+    async def on_warmup(self) -> object:
+        raise SomeException("model failed to load")
+
+    def on_warmed_up(self, resource: object) -> None:
+        pass
+
+    async def process_audio(self, pcm_data, participant):
+        pass
+
+
 class WriteRecordingTrack:
     def __init__(self):
         self.writes: list[PcmData] = []
@@ -496,6 +547,84 @@ class TestAgent:
         with pytest.raises(SomeException):
             async with agent.join(call):
                 ...
+
+    async def test_join_warms_a_hand_built_agent_so_every_speaker_is_heard(
+        self, call: Call, silence_1s_16khz: PcmData
+    ):
+        # Two speakers send audio through the default multi-speaker filter, which
+        # needs its VAD model loaded. Nobody warmed the agent before the join.
+        stt = ListeningSTT(speakers={"alice", "bob"})
+        edge = DummyEdge()
+        edge.events.register(AudioReceivedEvent)
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=stt,
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        chunk = PcmData(
+            samples=silence_1s_16khz.samples[:320],
+            sample_rate=silence_1s_16khz.sample_rate,
+            format=silence_1s_16khz.format,
+        )
+
+        async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+            for user_id in ("alice", "bob"):
+                edge.events.send(
+                    AudioReceivedEvent(
+                        pcm_data=chunk,
+                        participant=Participant(
+                            original=None, user_id=user_id, id=user_id
+                        ),
+                    )
+                )
+            await asyncio.wait_for(stt.heard_everyone.wait(), timeout=5)
+
+    async def test_join_fails_before_entering_the_call_when_warmup_fails(
+        self, call: Call
+    ):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=UnloadableSTT(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        with pytest.raises(SomeException):
+            async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+                ...
+
+        assert edge.join_count == 0
+
+    async def test_join_keeps_the_models_a_launcher_loaded(self, call: Call):
+        stts: list[ModelSTT] = []
+
+        def create_agent(**kwargs) -> Agent:
+            stts.append(ModelSTT())
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                stt=stts[-1],
+                edge=DummyEdge(),
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs):
+            pass
+
+        async with AgentLauncher(
+            create_agent=create_agent, join_call=join_call
+        ) as launcher:
+            agent = await launcher.launch()
+            loaded = stts[-1].model
+            async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+                pass
+
+        assert loaded is not None
+        assert stts[-1].model is loaded
 
     async def test_start_components_runs_concurrently(self):
         """Components must be started in parallel, not sequentially."""

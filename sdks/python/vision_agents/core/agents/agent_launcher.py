@@ -12,7 +12,7 @@ from typing import (
 )
 
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
-from vision_agents.core.warmup import Warmable, WarmupCache
+from vision_agents.core.warmup import WarmupCache
 
 from .exceptions import (
     MaxConcurrentSessionsExceeded,
@@ -230,7 +230,7 @@ class AgentLauncher:
             agent: "Agent" = await await_or_run(self._create_agent)
             try:
                 logger.info("Warming up agent components...")
-                await self._warmup_agent(agent)
+                await agent.warmup(self._warmup_cache)
                 self._warmed_up = True
                 logger.info("Agent warmup completed")
             finally:
@@ -266,7 +266,7 @@ class AgentLauncher:
             The Agent instance
         """
         agent: "Agent" = await await_or_run(self._create_agent, **kwargs)
-        await self._warmup_agent(agent)
+        await agent.warmup(self._warmup_cache)
         return agent
 
     async def start_session(
@@ -421,49 +421,6 @@ class AgentLauncher:
             await self._registry.remove(call_id, session_id)
         except Exception:
             logger.exception("Failed to remove session %s from registry", session_id)
-
-    async def _warmup_agent(self, agent: "Agent") -> None:
-        """
-        Go over the Agent's dependencies and trigger `.warmup()` on them.
-
-        It is safe to call `._warmup_agent()` multiple times.
-
-        Args:
-            agent: Agent to be warmed up
-
-        Returns:
-
-        """
-        # Warmup tasks to run in parallel
-        warmup_tasks = []
-
-        # Warmup LLM (including Realtime)
-        if agent.llm and isinstance(agent.llm, Warmable):
-            warmup_tasks.append(agent.llm.warmup(self._warmup_cache))
-
-        # Warmup TTS
-        if agent.tts and isinstance(agent.tts, Warmable):
-            warmup_tasks.append(agent.tts.warmup(self._warmup_cache))
-
-        # Warmup STT
-        if agent.stt and isinstance(agent.stt, Warmable):
-            warmup_tasks.append(agent.stt.warmup(self._warmup_cache))
-
-        # Warmup turn detection
-        if agent.turn_detection and isinstance(agent.turn_detection, Warmable):
-            warmup_tasks.append(agent.turn_detection.warmup(self._warmup_cache))
-
-        # Warmup audio filter
-        if isinstance(agent._multi_speaker_filter, Warmable):
-            warmup_tasks.append(agent._multi_speaker_filter.warmup(self._warmup_cache))
-
-        # Warmup processors
-        for processor in agent.processors:
-            if isinstance(processor, Warmable):
-                warmup_tasks.append(processor.warmup(self._warmup_cache))
-
-        if warmup_tasks:
-            await asyncio.gather(*warmup_tasks)
 
     async def _maintenance_loop(self) -> None:
         while self._running:
