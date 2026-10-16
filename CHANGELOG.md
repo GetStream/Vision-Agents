@@ -2029,6 +2029,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
 - Deepgram Flux preserves words received with the start-of-turn event instead of waiting for a later transcript update.
+- Model timing includes the wait for response headers in first-token latency and total duration.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
 - Prose tool tags no longer invent incomplete multi-field arguments, and brace-form single-quoted tool calls preserve their decoded values.
 - A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).
