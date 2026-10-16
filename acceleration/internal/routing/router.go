@@ -225,9 +225,9 @@ type Request struct {
 	// the caller's order is the order candidates are tried in. Health only demotes what
 	// is unavailable rather than reordering the list.
 	Providers []string
-	// Realtime restricts a priority list to one half of a vendor's models: a socket must
-	// not be served by a batch model, and a recording should not be streamed at a live
-	// one. Nil does not filter, which is what a concrete target has always done.
+	// Realtime chooses the path a priority list must support. A live request requires a
+	// realtime model; a recording requires a recorded model. Nil does not filter, which is
+	// what a concrete target has always done.
 	Realtime *bool
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
@@ -526,7 +526,7 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 			continue
 		}
 		for _, candidate := range found {
-			if request.Realtime != nil && candidate.Config.Realtime != *request.Realtime {
+			if request.Realtime != nil && !candidate.Config.supportsMode(*request.Realtime) {
 				continue
 			}
 			// First position wins, so naming a vendor and then a shortcut they are in

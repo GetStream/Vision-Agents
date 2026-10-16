@@ -66,6 +66,8 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 	source := stt.Recording{
 		URL:         value(request.Body.Source.Url),
 		Audio:       value(request.Body.Source.Audio),
+		Filename:    value(request.Body.Source.Filename),
+		ContentType: value(request.Body.Source.ContentType),
 		Languages:   held.Languages,
 		Diarize:     truthy(held.Diarize) || held.MaxSpeakers != nil,
 		MaxSpeakers: count(held.MaxSpeakers),

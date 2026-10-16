@@ -2,11 +2,9 @@ package openaicompat
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,71 +17,27 @@ import (
 )
 
 const (
-	realtimeQueueSize        = 64
-	realtimeWriteTimeout     = 10 * time.Second
-	realtimeHandshakeTimeout = 10 * time.Second
-	realtimeInferenceTimeout = 2 * time.Minute
-	realtimeAppendBytes      = 9_600 // 200 ms at 24 kHz PCM16.
-	realtimeMinTurnBytes     = 4_800 // The endpoint requires at least 100 ms per commit.
-	realtimeMaxBufferedBytes = 24_000 * 2 * 60
+	realtimeQueueSize           = 64
+	realtimeWriteTimeout        = 10 * time.Second
+	realtimeHandshakeTimeout    = 10 * time.Second
+	realtimeAppendBytes         = 9_600 // 200 ms at 24 kHz PCM16.
+	realtimeMinTurnBytes        = 4_800 // The endpoint requires at least 100 ms per commit.
+	realtimeMaxOutstandingTurns = 128
 )
 
-var realtimeCloseTimeout = 10 * time.Second
-
-type commandKind uint8
-
-const (
-	commandAudio commandKind = iota
-	commandCommit
-	commandClose
+var (
+	realtimeCloseTimeout = 10 * time.Second
 )
-
-type realtimeCommand struct {
-	kind   commandKind
-	turnID int64
-	pcm    []byte
-	meta   turnMetadata
-}
-
-type turnMetadata struct {
-	participant stt.Participant
-	utterance   int64
-	samples     int
-}
-
-type realtimeTurn struct {
-	turnMetadata
-	audio       [][]byte
-	audioBytes  int
-	ended       bool
-	itemID      string
-	hadDelta    bool
-	committedAt time.Time
-}
-
-type readResult struct {
-	event realtimeEvent
-	err   error
-}
-
-type realtimeSession struct {
-	provider *Realtime
-	conn     *websocket.Conn
-	order    []*realtimeTurn
-	inFlight *realtimeTurn
-	buffered int
-	closing  bool
-	timer    *time.Timer
-	timeout  <-chan time.Time
-}
 
 // Realtime streams PCM to an OpenAI-compatible transcription WebSocket. The default
 // router config keeps this path disabled until the model entry sets realtime: true.
 type Realtime struct {
-	endpoint string
-	apiKey   string
-	model    string
-	language string
+	endpoint  string
+	apiKey    string
+	model     string
+	language  string
+	languages []string
+	settings  TranscriptionSettings
 
 	emitter  *stt.Emitter
 	commands chan realtimeCommand
@@ -109,19 +63,11 @@ type Realtime struct {
 
 // NewRealtime validates the configured endpoint and credentials for the streaming path.
 func NewRealtime(options Options) (*Realtime, error) {
-	if options.BaseURL == "" {
-		options.BaseURL = os.Getenv(baseURLEnv)
-	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnv)
-	}
-	options.BaseURL = strings.TrimSpace(options.BaseURL)
-	options.APIKey = strings.TrimSpace(options.APIKey)
+	baseURL, apiKey := endpointCredentials(options)
+	options.BaseURL = strings.TrimSpace(baseURL)
+	options.APIKey = strings.TrimSpace(apiKey)
 	if options.BaseURL == "" {
 		return nil, stack.Wrap(errors.New("openai-compatible: base URL is required (set OPENAI_STT_BASE_URL)"))
-	}
-	if options.APIKey == "" {
-		return nil, stack.Wrap(errors.New("openai-compatible: API key is required (set OPENAI_STT_API_KEY)"))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -129,24 +75,43 @@ func NewRealtime(options Options) (*Realtime, error) {
 	if len(options.Model) > 128 || strings.ContainsAny(options.Model, "\r\n") || strings.TrimSpace(options.Model) == "" {
 		return nil, stack.Wrap(errors.New("openai-compatible: model must be a non-empty identifier of at most 128 bytes"))
 	}
-	if options.Language != "" && !validLanguage(options.Language) {
-		return nil, stack.Wrap(errors.New("openai-compatible: language must be a two-letter lowercase ISO 639-1 code"))
+	if options.Settings.Language != "" && len(options.Settings.Languages) > 0 {
+		return nil, stack.Wrap(errors.New("openai-compatible: language and languages settings cannot both be set"))
 	}
-	endpoint, err := realtimeEndpoint(options.BaseURL, options.Model)
+	if hasBatchOnlyRealtimeSettings(options.Settings) {
+		return nil, stack.Wrap(errors.New("openai-compatible: batch-only transcription settings are not supported for realtime"))
+	}
+	endpoint, err := realtimeEndpoint(options.BaseURL)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("openai-compatible: configure realtime endpoint: %w", err))
 	}
 
 	return &Realtime{
-		endpoint:     endpoint,
-		apiKey:       options.APIKey,
-		model:        options.Model,
-		language:     options.Language,
+		endpoint:  endpoint,
+		apiKey:    options.APIKey,
+		model:     options.Model,
+		language:  options.Language,
+		languages: append([]string(nil), options.Languages...),
+		settings: TranscriptionSettings{
+			Prompt:    options.Settings.Prompt,
+			Language:  options.Settings.Language,
+			Languages: append([]string(nil), options.Settings.Languages...),
+			Keywords:  append([]string(nil), options.Settings.Keywords...),
+			Delay:     options.Settings.Delay,
+			Include:   append([]string(nil), options.Settings.Include...),
+		},
 		emitter:      stt.NewEmitter(64),
 		commands:     make(chan realtimeCommand, realtimeQueueSize),
 		done:         make(chan struct{}),
 		appendBuffer: make([]byte, 0, realtimeAppendBytes*2),
 	}, nil
+}
+
+func hasBatchOnlyRealtimeSettings(settings TranscriptionSettings) bool {
+	return settings.Temperature != nil || settings.ResponseFormat != "" ||
+		len(settings.TimestampGranularities) > 0 || len(settings.ChunkingStrategy) > 0 ||
+		len(settings.KnownSpeakerNames) > 0 || len(settings.KnownSpeakerReferences) > 0 ||
+		settings.Stream != nil
 }
 
 // Start opens the socket and waits until the transcription session is configured.
@@ -166,7 +131,10 @@ func (r *Realtime) Start(ctx context.Context) error {
 	r.mu.Unlock()
 
 	dialer := websocket.Dialer{HandshakeTimeout: realtimeHandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Bearer " + r.apiKey}}
+	header := make(http.Header)
+	if r.apiKey != "" {
+		header.Set("Authorization", "Bearer "+r.apiKey)
+	}
 	conn, response, err := dialer.DialContext(lifeCtx, r.endpoint, header)
 	if err != nil {
 		r.cancel()
@@ -215,7 +183,7 @@ func (r *Realtime) handshake(conn *websocket.Conn) error {
 		}
 		switch event.Type {
 		case "session.created":
-			if err := writeRealtimeJSON(conn, sessionUpdate(r.model, r.language)); err != nil {
+			if err := writeRealtimeJSON(conn, sessionUpdate(r.model, r.language, r.languages, r.settings)); err != nil {
 				return fmt.Errorf("openai-compatible: realtime session update: %w", err)
 			}
 		case "session.updated":
@@ -433,266 +401,4 @@ func writeRealtimeJSON(conn *websocket.Conn, value any) error {
 		return err
 	}
 	return conn.WriteJSON(value)
-}
-
-func writeAudioAppend(conn *websocket.Conn, pcm []byte) error {
-	return writeRealtimeJSON(conn, map[string]string{
-		"type":  "input_audio_buffer.append",
-		"audio": base64.StdEncoding.EncodeToString(pcm),
-	})
-}
-
-func (r *Realtime) readLoop(ctx context.Context, conn *websocket.Conn, results chan<- readResult) {
-	for {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			select {
-			case results <- readResult{err: err}:
-			case <-ctx.Done():
-			}
-			return
-		}
-		event, err := decodeRealtimeEvent(data)
-		if err != nil {
-			select {
-			case results <- readResult{err: err}:
-			case <-ctx.Done():
-			}
-			return
-		}
-		select {
-		case results <- readResult{event: event}:
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (s *realtimeSession) stopTimer() {
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
-	}
-	s.timeout = nil
-}
-
-func (s *realtimeSession) startTimer() {
-	s.stopTimer()
-	s.timer = time.NewTimer(realtimeInferenceTimeout)
-	s.timeout = s.timer.C
-}
-
-func (s *realtimeSession) fail(contextName string, err error) {
-	r := s.provider
-	r.emitter.Send(stt.Error{Provider: ProviderName, Model: r.model, Err: err, Context: contextName, Fatal: true})
-	r.emitter.Send(stt.Disconnected{Provider: ProviderName, Model: r.model, Reason: "upstream connection ended", Clean: false, At: time.Now()})
-}
-
-// drain sends queued audio in order, then commits at most one completed turn. The
-// upstream session accepts only one in-flight transcription at a time.
-func (s *realtimeSession) drain() (bool, error) {
-	if s.inFlight != nil {
-		return false, nil
-	}
-	if len(s.order) > 0 {
-		turn := s.order[0]
-		for _, chunk := range turn.audio {
-			if err := writeAudioAppend(s.conn, chunk); err != nil {
-				return false, fmt.Errorf("openai-compatible: realtime audio append: %w", err)
-			}
-			turn.audioBytes += len(chunk)
-			s.buffered -= len(chunk)
-		}
-		turn.audio = nil
-		if !turn.ended {
-			return false, nil
-		}
-		if turn.audioBytes < realtimeMinTurnBytes {
-			padding := make([]byte, realtimeMinTurnBytes-turn.audioBytes)
-			if err := writeAudioAppend(s.conn, padding); err != nil {
-				return false, fmt.Errorf("openai-compatible: realtime audio padding: %w", err)
-			}
-		}
-		if err := writeRealtimeJSON(s.conn, map[string]string{"type": "input_audio_buffer.commit"}); err != nil {
-			return false, fmt.Errorf("openai-compatible: realtime audio commit: %w", err)
-		}
-		turn.committedAt = time.Now()
-		s.inFlight = turn
-		s.order = s.order[1:]
-		s.startTimer()
-		return false, nil
-	}
-	if s.closing {
-		_ = s.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(realtimeWriteTimeout))
-		return true, nil
-	}
-	return false, nil
-}
-
-func (s *realtimeSession) command(command realtimeCommand) error {
-	switch command.kind {
-	case commandAudio:
-		turn := findRealtimeTurn(s.order, command.turnID)
-		if turn == nil {
-			turn = &realtimeTurn{turnMetadata: command.meta}
-			s.order = append(s.order, turn)
-		} else {
-			if turn.participant != (stt.Participant{}) && turn.participant != command.meta.participant {
-				return errors.New("openai-compatible: realtime audio participant changed within an utterance")
-			}
-			turn.participant = command.meta.participant
-		}
-		turn.audio = append(turn.audio, command.pcm)
-		s.buffered += len(command.pcm)
-		if s.buffered > realtimeMaxBufferedBytes {
-			return errors.New("openai-compatible: realtime audio backlog exceeded 60 seconds")
-		}
-	case commandCommit:
-		turn := findRealtimeTurn(s.order, command.meta.utterance)
-		if turn == nil {
-			turn = &realtimeTurn{turnMetadata: command.meta}
-			s.order = append(s.order, turn)
-		} else {
-			if turn.participant != (stt.Participant{}) && turn.participant != command.meta.participant {
-				return errors.New("openai-compatible: realtime commit participant did not match audio")
-			}
-			turn.turnMetadata = command.meta
-		}
-		turn.ended = true
-	case commandClose:
-		s.closing = true
-	}
-	return nil
-}
-
-func (s *realtimeSession) event(event realtimeEvent) error {
-	switch event.Type {
-	case "session.updated", "input_audio_buffer.speech_started":
-		return nil
-	case "conversation.item.input_audio_transcription.delta":
-		if event.ContentIndex != 0 || event.ItemID == "" {
-			return errors.New("openai-compatible: realtime transcript delta has an invalid item or content index")
-		}
-		turn := s.inFlight
-		if turn == nil && len(s.order) > 0 {
-			turn = s.order[0]
-		}
-		if turn == nil {
-			return errors.New("openai-compatible: realtime transcript delta has no active audio turn")
-		}
-		if turn.itemID != "" && turn.itemID != event.ItemID {
-			return errors.New("openai-compatible: realtime transcript delta did not match the active audio item")
-		}
-		turn.itemID = event.ItemID
-		if event.Delta == "" {
-			return nil
-		}
-		turn.hadDelta = true
-		s.provider.emitter.Send(stt.Transcript{
-			Participant: turn.participant,
-			Mode:        stt.ModeDelta,
-			Utterance:   turn.utterance,
-			Text:        event.Delta,
-			Provider:    ProviderName,
-			Model:       s.provider.model,
-		})
-		return nil
-	case "input_audio_buffer.committed":
-		if s.inFlight == nil || event.ItemID == "" ||
-			(s.inFlight.itemID != "" && s.inFlight.itemID != event.ItemID) {
-			return errors.New("openai-compatible: realtime commit acknowledgement had no active item")
-		}
-		s.inFlight.itemID = event.ItemID
-		return nil
-	case "conversation.item.input_audio_transcription.completed":
-		turn := s.inFlight
-		if turn == nil || event.ItemID == "" || event.ContentIndex != 0 ||
-			(turn.itemID != "" && event.ItemID != turn.itemID) {
-			return errors.New("openai-compatible: realtime transcript did not match the active audio item")
-		}
-		turn.itemID = event.ItemID
-		if text := strings.TrimSpace(event.Transcript); text != "" || turn.hadDelta {
-			s.provider.emitter.Send(stt.Transcript{
-				Participant:      turn.participant,
-				Mode:             stt.ModeFinal,
-				Utterance:        turn.utterance,
-				Text:             text,
-				Provider:         ProviderName,
-				Model:            s.provider.model,
-				ProcessingTimeMs: float64(time.Since(turn.committedAt).Microseconds()) / 1000,
-				AudioDurationMs:  float64(turn.samples) * 1000 / stt.SampleRate,
-			})
-		}
-		s.inFlight = nil
-		s.stopTimer()
-		return nil
-	case "error", "conversation.item.input_audio_transcription.failed":
-		if eventErrorCode(event) == "server_busy" {
-			return errors.New("openai-compatible: realtime server is busy")
-		}
-		return errors.New("openai-compatible: realtime server reported a transcription error")
-	default:
-		return nil
-	}
-}
-
-func (r *Realtime) run(ctx context.Context, conn *websocket.Conn, stopClose func() bool) {
-	defer close(r.done)
-	defer stopClose()
-	defer func() {
-		_ = conn.Close()
-		if r.cancel != nil {
-			r.cancel()
-		}
-		r.emitter.Close()
-	}()
-
-	results := make(chan readResult, 16)
-	go r.readLoop(ctx, conn, results)
-	session := realtimeSession{provider: r, conn: conn}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-session.timeout:
-			session.fail("transcribe", errors.New("openai-compatible: realtime inference timed out"))
-			return
-		case result := <-results:
-			if result.err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				session.fail("read", errors.New("openai-compatible: realtime connection ended unexpectedly"))
-				return
-			}
-			if err := session.event(result.event); err != nil {
-				session.fail("transcribe", err)
-				return
-			}
-		case command := <-r.commands:
-			if err := session.command(command); err != nil {
-				session.fail("buffer audio", err)
-				return
-			}
-		}
-		closed, err := session.drain()
-		if err != nil {
-			session.fail("transcribe", err)
-			return
-		}
-		if closed {
-			r.emitter.Send(stt.Disconnected{Provider: ProviderName, Model: r.model, Clean: true, At: time.Now()})
-			return
-		}
-	}
-}
-
-func findRealtimeTurn(turns []*realtimeTurn, utterance int64) *realtimeTurn {
-	for _, turn := range turns {
-		if turn.utterance == utterance {
-			return turn
-		}
-	}
-	return nil
 }

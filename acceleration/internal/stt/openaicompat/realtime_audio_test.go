@@ -50,6 +50,27 @@ func (s *RealtimeAudioSuite) TestSilenceDoesNotCreateATurn() {
 	s.Zero(commits)
 }
 
+func (s *RealtimeAudioSuite) TestSpeechLongerThanASixtySecondBackendLimitStaysOneTurn() {
+	var endpoint endpointer
+	var commits int
+	speech := make([]int16, stt.SampleRate*61)
+	for i := range speech {
+		speech[i] = 2000
+	}
+	endpoint.Push(speech, stt.Participant{ID: "speaker"}, func(frame endpointFrame) {
+		if frame.commit {
+			commits++
+		}
+	})
+	s.Zero(commits, "local endpointing must not split a long utterance at a provider limit")
+	endpoint.Close(func(frame endpointFrame) {
+		if frame.commit {
+			commits++
+		}
+	})
+	s.Equal(1, commits)
+}
+
 func (s *RealtimeAudioSuite) TestPreRollNeverCarriesAudioAcrossParticipants() {
 	var endpoint endpointer
 	var frames []endpointFrame

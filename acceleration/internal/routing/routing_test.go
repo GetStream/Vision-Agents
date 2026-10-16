@@ -634,6 +634,53 @@ func (s *RoutingSuite) TestRealtimeAliasExcludesOfflineModels() {
 		"an offline model cannot serve live audio and a quality model is the wrong tier")
 }
 
+func (s *RoutingSuite) TestPriorityListCanRouteADualModeModelForLiveAndRecordedRequests() {
+	config := s.config()
+	config.Providers[0].Recorded = true
+	router := s.newRouterWithConfig(config, func(spec Spec) (*stubProvider, error) {
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	live := true
+	candidates, err := router.Candidates(s.ctx, Request{
+		Providers: []string{"quick/en"},
+		Realtime:  &live,
+	})
+	s.Require().NoError(err)
+	s.Equal([]string{"quick/en"}, names(candidates))
+
+	recorded := false
+	candidates, err = router.Candidates(s.ctx, Request{
+		Providers: []string{"quick/en"},
+		Realtime:  &recorded,
+	})
+	s.Require().NoError(err)
+	s.Equal([]string{"quick/en"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestRecordedAliasIncludesDualModeAndLegacyRecordedModels() {
+	config := s.config()
+	config.Providers[0].Recorded = true
+	config.Aliases["recorded"] = Alias{RequireRecorded: true}
+
+	candidates, err := s.newRouterWithConfig(config, func(spec Spec) (*stubProvider, error) {
+		return &stubProvider{model: spec.Model}, nil
+	}).Resolve(s.ctx, "recorded", nil)
+	s.Require().NoError(err)
+	s.ElementsMatch([]string{"quick/en", "batchy/offline-en"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestDefaultOpenAICompatibleWhisperDeclaresRecordedCapabilities() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	provider, found := config[STT].Provider("openai-compatible/whisper-1")
+	s.Require().True(found)
+	s.False(provider.Realtime)
+	s.True(provider.Recorded)
+	s.ElementsMatch([]options.Term{options.Words, options.Keyterms, options.Format}, provider.Terms)
+}
+
 func (s *RoutingSuite) TestAnAliasWithoutATierAcceptsEveryModel() {
 	candidates, err := s.newRouter().Resolve(s.ctx, "en-high-accuracy", nil)
 	s.Require().NoError(err)

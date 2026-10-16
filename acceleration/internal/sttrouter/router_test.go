@@ -148,7 +148,7 @@ func (s *STTRouterSuite) TestOpenAICompatibleModelIsBatchByDefaultAndRealtimeOnl
 	s.False(model.Realtime)
 	s.Equal([]string{"und"}, model.Languages,
 		"language-based shortcuts should not claim this endpoint's model coverage")
-	s.Empty(model.Terms)
+	s.ElementsMatch([]options.Term{options.Words, options.Keyterms, options.Format}, model.Terms)
 
 	s.T().Setenv("OPENAI_STT_BASE_URL", "http://127.0.0.1:8083/v1")
 	s.T().Setenv("OPENAI_STT_API_KEY", "test-key")

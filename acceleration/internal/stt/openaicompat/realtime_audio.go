@@ -11,7 +11,6 @@ const (
 	realtimeFrameSamples  = stt.SampleRate / 50 // 20 ms keeps endpointing independent of caller chunk sizes.
 	realtimeSilenceFrames = 30
 	realtimeSpeechRMS     = 500
-	realtimeMaxTurn       = stt.SampleRate * 60
 	realtimePreRollFrames = 10
 )
 
@@ -127,7 +126,7 @@ func (e *endpointer) process(samples []int16, participant stt.Participant, emit 
 		include:     true,
 		turnSamples: e.turnSamples,
 	}
-	if e.silenceFrames >= realtimeSilenceFrames || e.turnSamples >= realtimeMaxTurn {
+	if e.silenceFrames >= realtimeSilenceFrames {
 		frame.commit = true
 		e.inTurn = false
 		e.turnSamples = 0

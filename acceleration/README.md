@@ -144,7 +144,7 @@ the other commands that read them there.
 | `FISH_VOICE_ID`         | Optional Fish reference id to clone a voice from           |
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |
 | `OPENAI_STT_BASE_URL`   | Required base URL for the configured OpenAI-compatible transcription endpoint; the adapter appends `/audio/transcriptions` for batch or `/realtime` for live sessions |
-| `OPENAI_STT_API_KEY`    | Bearer token for that endpoint; required when `openai-compatible/whisper-1` is selected |
+| `OPENAI_STT_API_KEY`    | Bearer token for that endpoint; optional for keyless endpoints |
 | `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
@@ -454,12 +454,19 @@ still writes `diarize: true`, and the accurate group then narrows to Muse, which
 its four that declares it and the one the pin already starts with. Both groups are the live
 path only; a recording belongs at `en-recorded`, where the batch models are.
 
-`openai-compatible/whisper-1` is also available as an explicit batch target when
-`OPENAI_STT_BASE_URL` and `OPENAI_STT_API_KEY` are configured. It accepts uploaded mono PCM16
-WAV files at 16 or 24 kHz, up to 60 seconds, and one optional two-letter lowercase language
-hint. It returns JSON transcript text only. URL sources, other recording options, timestamps
-and speaker labels are unsupported, and the target is not included in language-based batch
-shortcuts.
+The `openai-compatible` provider uses the standard OpenAI transcription API. Set
+`OPENAI_STT_BASE_URL` to the API base URL (including `/v1`) and `OPENAI_STT_API_KEY` when
+the endpoint requires a bearer token. Register the endpoint's model ID in the capability
+file; `whisper-1` is the default entry. Uploaded audio is forwarded unchanged with its
+filename and content type. The endpoint decides which formats, languages and model
+features it supports. URL sources are not supported by this adapter.
+
+Recorded requests map word timestamps, diarization and keyterms to standard API fields.
+Provider overwrites can supply transcription settings such as `prompt`, `language`,
+`temperature`, `response_format` and `timestamp_granularities`. JSON, verbose JSON,
+diarized JSON, text, SRT, VTT and streamed responses are normalized into the router's
+transcript. Select a model that supports the requested options; the adapter preserves
+endpoint error details when it rejects an option.
 
 The same target can serve live audio when its STT provider entry opts in with `realtime: true`:
 
@@ -469,13 +476,16 @@ stt:
     - provider: openai-compatible
       model: whisper-1
       realtime: true
+      recorded: true
 ```
 
 Live sessions use the endpoint's OpenAI-compatible transcription WebSocket. Audio is sent as
 mono PCM16 at 24 kHz, and turns end after 600 ms of silence or when the session closes.
 The adapter forwards partial transcript deltas when the server provides them, followed by
-the complete final transcript. Final-only servers also work. The model remains batch-only unless `realtime: true` is set;
-the `und` language sentinel still keeps it out of language-based shortcuts.
+the complete final transcript. It continues sending audio while earlier turns are being
+transcribed and matches responses by item ID. Final-only servers also work. Set
+`recorded: true` to retain batch eligibility when enabling realtime. The default entry
+remains batch-only; its `und` language sentinel keeps it out of language-based shortcuts.
 
 Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`

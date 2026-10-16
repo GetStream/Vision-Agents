@@ -263,16 +263,16 @@ func DefaultRegistry() *Registry {
 		if !spec.Realtime {
 			return nil, routing.Refused(errors.New("openai-compatible: realtime transcription is disabled for this model"))
 		}
-		var settings struct{}
+		var settings openaicompat.TranscriptionSettings
 		if err := spec.Settings(&settings); err != nil {
 			return nil, err
 		}
-		if len(spec.LanguageHints) > 1 {
-			return nil, routing.Refused(errors.New("openai-compatible: only one language hint is supported"))
-		}
+		settings.Prompt = openaicompat.VocabularyPrompt(settings.Prompt, spec.Keyterms)
 		return openaicompat.NewRealtime(openaicompat.Options{
-			Model:    spec.Model,
-			Language: firstLanguage(spec.LanguageHints),
+			Model:     spec.Model,
+			Language:  firstLanguage(spec.LanguageHints),
+			Languages: spec.LanguageHints,
+			Settings:  settings,
 		})
 	})
 

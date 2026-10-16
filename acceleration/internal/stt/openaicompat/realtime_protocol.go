@@ -8,19 +8,21 @@ import (
 )
 
 type realtimeEvent struct {
-	Type         string `json:"type"`
-	ItemID       string `json:"item_id"`
-	ContentIndex int    `json:"content_index"`
-	Delta        string `json:"delta"`
-	Transcript   string `json:"transcript"`
-	Code         string `json:"code"`
-	Error        struct {
+	Type          string `json:"type"`
+	ServerEventID string `json:"event_id"`
+	ItemID        string `json:"item_id"`
+	ContentIndex  int    `json:"content_index"`
+	Delta         string `json:"delta"`
+	Transcript    string `json:"transcript"`
+	Code          string `json:"code"`
+	Error         struct {
 		Code    string `json:"code"`
+		EventID string `json:"event_id"`
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-func realtimeEndpoint(base, model string) (string, error) {
+func realtimeEndpoint(base string) (string, error) {
 	parsed, err := parseBaseURL(base)
 	if err != nil {
 		return "", err
@@ -33,7 +35,6 @@ func realtimeEndpoint(base, model string) (string, error) {
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/realtime"
 	query := url.Values{}
 	query.Set("intent", "transcription")
-	query.Set("model", model)
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
@@ -50,24 +51,46 @@ func parseBaseURL(base string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func sessionUpdate(model, language string) map[string]any {
+func sessionUpdate(model, language string, languages []string, settings TranscriptionSettings) map[string]any {
 	transcription := map[string]any{"model": model}
-	if language != "" {
+	if settings.Prompt != "" {
+		transcription["prompt"] = settings.Prompt
+	}
+	if len(settings.Keywords) > 0 {
+		transcription["keywords"] = settings.Keywords
+	}
+	if settings.Delay != "" {
+		transcription["delay"] = settings.Delay
+	}
+	switch {
+	case settings.Language != "":
+		transcription["language"] = settings.Language
+	case len(settings.Languages) > 0:
+		transcription["languages"] = settings.Languages
+	case len(languages) == 1:
+		transcription["language"] = languages[0]
+	case len(languages) > 1:
+		transcription["languages"] = languages
+	case language != "":
 		transcription["language"] = language
 	}
-	return map[string]any{
-		"type": "session.update",
-		"session": map[string]any{
-			"type": "transcription",
-			"audio": map[string]any{
-				"input": map[string]any{
-					"format":          map[string]any{"type": "audio/pcm", "rate": 24000},
-					"transcription":   transcription,
-					"turn_detection":  nil,
-					"noise_reduction": nil,
-				},
+	session := map[string]any{
+		"type": "transcription",
+		"audio": map[string]any{
+			"input": map[string]any{
+				"format":          map[string]any{"type": "audio/pcm", "rate": 24000},
+				"transcription":   transcription,
+				"turn_detection":  nil,
+				"noise_reduction": nil,
 			},
 		},
+	}
+	if len(settings.Include) > 0 {
+		session["include"] = settings.Include
+	}
+	return map[string]any{
+		"type":    "session.update",
+		"session": session,
 	}
 }
 

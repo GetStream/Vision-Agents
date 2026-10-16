@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,23 +24,37 @@ import (
 var fixtures embed.FS
 
 type endpointReply struct {
-	status     int
-	body       []byte
-	location   string
-	waitCancel bool
+	status      int
+	body        []byte
+	contentType string
+	location    string
+	waitCancel  bool
 }
 
 type requestCapture struct {
-	err           string
-	method        string
-	path          string
-	authorization string
-	contentType   string
-	fileName      string
-	audio         []byte
-	model         string
-	format        string
-	language      string
+	err             string
+	method          string
+	path            string
+	authorization   string
+	contentType     string
+	fileName        string
+	fileType        string
+	audio           []byte
+	model           string
+	format          string
+	language        string
+	languages       []string
+	prompt          string
+	keywords        []string
+	temperature     string
+	granularities   []string
+	include         []string
+	chunking        string
+	chunkingType    string
+	chunkingSilence string
+	speakers        []string
+	references      []string
+	stream          string
 }
 
 type OpenAICompatSuite struct {
@@ -79,15 +94,19 @@ func (s *OpenAICompatSuite) SetupTest() {
 	}
 }
 
-func (s *OpenAICompatSuite) TestNewRequiresExplicitEndpointAndKey() {
+func (s *OpenAICompatSuite) TestNewRequiresEndpointAndAllowsAKeylessExplicitEndpoint() {
 	s.T().Setenv("OPENAI_STT_BASE_URL", "")
 	s.T().Setenv("OPENAI_STT_API_KEY", "")
 
 	_, err := openaicompat.New(openaicompat.Options{})
 	s.ErrorContains(err, "OPENAI_STT_BASE_URL")
 
-	_, err = openaicompat.New(openaicompat.Options{BaseURL: s.server.URL})
-	s.ErrorContains(err, "OPENAI_STT_API_KEY")
+	s.T().Setenv("OPENAI_STT_API_KEY", "unrelated-env-key")
+	provider, err := openaicompat.New(openaicompat.Options{BaseURL: s.server.URL})
+	s.Require().NoError(err)
+	_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+	s.NoError(err)
+	s.Empty(s.receiveRequest().authorization, "an explicit endpoint must not inherit an environment key")
 }
 
 func (s *OpenAICompatSuite) TestNewUsesEnvironmentAndDefaultModel() {
@@ -125,7 +144,7 @@ func (s *OpenAICompatSuite) TestTranscribeUsesConfiguredMultipartEndpoint() {
 	s.Require().NoError(err)
 	s.Equal("recognized words", transcription.Text)
 	s.Equal("en", transcription.Language)
-	s.EqualValues(100, transcription.AudioDurationMs)
+	s.Zero(transcription.AudioDurationMs, "the JSON response did not report duration")
 
 	request := s.receiveRequest()
 	s.Empty(request.err)
@@ -134,6 +153,7 @@ func (s *OpenAICompatSuite) TestTranscribeUsesConfiguredMultipartEndpoint() {
 	s.Equal("Bearer test-key", request.authorization)
 	s.Contains(request.contentType, "multipart/form-data; boundary=")
 	s.Equal("audio.wav", request.fileName)
+	s.Equal("audio/wav", request.fileType)
 	s.Equal(audio, request.audio)
 	s.Equal("whisper-1", request.model)
 	s.Equal("json", request.format)
@@ -155,10 +175,13 @@ func (s *OpenAICompatSuite) TestTranscribeDoesNotFollowRedirects() {
 }
 
 func (s *OpenAICompatSuite) TestTranscribeHidesUpstreamErrorBody() {
-	s.setReply(endpointReply{status: http.StatusTooManyRequests, body: []byte("private upstream detail")})
+	s.setReply(endpointReply{status: http.StatusTooManyRequests, body: []byte(`{"error":{"message":"private upstream detail","type":"rate_limit_error","code":"rate_limit_exceeded","param":"model"}}`)})
 	provider := s.newTranscriber(s.server.URL)
 	_, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
 	s.ErrorContains(err, "HTTP 429")
+	s.ErrorContains(err, "type=rate_limit_error")
+	s.ErrorContains(err, "code=rate_limit_exceeded")
+	s.ErrorContains(err, "param=model")
 	s.NotContains(err.Error(), "private upstream detail")
 }
 
@@ -170,6 +193,24 @@ func (s *OpenAICompatSuite) TestTranscribeRejectsNullTranscriptText() {
 	provider := s.newTranscriber(s.server.URL)
 	_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
 	s.ErrorContains(err, "text must be a string")
+}
+
+func (s *OpenAICompatSuite) TestTranscribeAcceptsEmptyTextAsSilence() {
+	s.setReply(endpointReply{status: http.StatusOK, body: []byte(`{"text":""}`)})
+	provider := s.newTranscriber(s.server.URL)
+	transcription, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+	s.NoError(err)
+	s.Empty(transcription.Text)
+	s.receiveRequest()
+}
+
+func (s *OpenAICompatSuite) TestCanonicalEmptyTextDoesNotResurrectStaleSegments() {
+	s.setReply(endpointReply{status: http.StatusOK, body: []byte(`{"text":"","segments":[{"text":"stale text"}]}`)})
+	provider := s.newTranscriber(s.server.URL)
+	transcription, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+	s.NoError(err)
+	s.Empty(transcription.Text)
+	s.receiveRequest()
 }
 
 func (s *OpenAICompatSuite) TestTranscribeBoundsTranscriptResponse() {
@@ -225,32 +266,271 @@ func (s *OpenAICompatSuite) TestTranscribeRejectsUnsupportedSourcesAndFeatures()
 	s.Empty(s.captured)
 }
 
-func (s *OpenAICompatSuite) TestTranscribeRequiresOneLowercaseLanguageCode() {
+func (s *OpenAICompatSuite) TestTranscribeForwardsMultipleLanguageHints() {
+	provider := s.newTranscriber(s.server.URL)
+	transcription, err := provider.Transcribe(context.Background(), stt.Recording{
+		Audio:     pcmWAV(16000, 1600),
+		Languages: []string{"en-US", "pt-BR"},
+	})
+	s.NoError(err)
+	s.Equal("recognized words", transcription.Text)
+	request := s.receiveRequest()
+	s.Empty(request.language)
+	s.Equal([]string{"en-US", "pt-BR"}, request.languages)
+}
+
+func (s *OpenAICompatSuite) TestBatchOptionsLanguagesAreFallbackHints() {
+	for _, testCase := range []struct {
+		name      string
+		languages []string
+		want      string
+		wantMany  []string
+	}{
+		{name: "single", languages: []string{"pt-BR"}, want: "pt-BR"},
+		{name: "multiple", languages: []string{"pt-BR", "en-US"}, wantMany: []string{"pt-BR", "en-US"}},
+	} {
+		s.Run(testCase.name, func() {
+			provider, err := openaicompat.New(openaicompat.Options{
+				BaseURL:   s.server.URL,
+				Languages: testCase.languages,
+			})
+			s.Require().NoError(err)
+			_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+			s.NoError(err)
+			request := s.receiveRequest()
+			s.Equal(testCase.want, request.language)
+			s.Equal(testCase.wantMany, request.languages)
+		})
+	}
+}
+
+func (s *OpenAICompatSuite) TestTranscribeAcceptsAudioLongerThanSixtySeconds() {
+	provider := s.newTranscriber(s.server.URL)
+	audio := pcmWAV(24000, 24000*61)
+	_, err := provider.Transcribe(context.Background(), stt.Recording{Audio: audio})
+	s.NoError(err)
+	s.Equal(audio, s.receiveRequest().audio)
+}
+
+func (s *OpenAICompatSuite) TestTranscribeForwardsOriginalStereoAndHighRateAudio() {
+	provider := s.newTranscriber(s.server.URL)
+	audio := pcmWAVChannels(96000, 2, 9600)
+	_, err := provider.Transcribe(context.Background(), stt.Recording{Audio: audio})
+	s.NoError(err)
+	s.Equal(audio, s.receiveRequest().audio)
+}
+
+func (s *OpenAICompatSuite) TestTranscribeMapsSharedFeaturesAndTypedStandardSettings() {
+	stream := true
+	temperature := 0.25
+	provider, err := openaicompat.New(openaicompat.Options{
+		BaseURL:  s.server.URL,
+		APIKey:   "test-key",
+		Keyterms: []string{"Vision Agents"},
+		Settings: openaicompat.TranscriptionSettings{
+			Prompt:                 "clinical calls",
+			Language:               "en-US",
+			Keywords:               []string{"Stream"},
+			Temperature:            &temperature,
+			TimestampGranularities: []string{"segment"},
+			Include:                []string{"logprobs"},
+			ChunkingStrategy:       json.RawMessage(`"auto"`),
+			KnownSpeakerNames:      []string{"agent"},
+			KnownSpeakerReferences: []string{"data:audio/wav;base64,AAAA"},
+			Stream:                 &stream,
+		},
+	})
+	s.Require().NoError(err)
+	_, err = provider.Transcribe(context.Background(), stt.Recording{
+		Audio:     pcmWAV(16000, 1600),
+		Languages: []string{"pt-BR", "en-US"},
+		Keyterms:  []string{"Vision Agents"},
+		Words:     true,
+		Format:    true,
+	})
+	s.NoError(err)
+	request := s.receiveRequest()
+	s.Equal("en-US", request.language)
+	s.Empty(request.languages)
+	s.Equal("verbose_json", request.format)
+	s.Equal("clinical calls\nVocabulary: Vision Agents.", request.prompt)
+	s.Equal([]string{"Stream"}, request.keywords, "shared keyterms use the generic prompt mapping")
+	s.Equal("0.25", request.temperature)
+	s.Equal([]string{"segment", "word"}, request.granularities)
+	s.Equal([]string{"logprobs"}, request.include)
+	s.Equal("auto", request.chunking)
+	s.Equal([]string{"agent"}, request.speakers)
+	s.Equal([]string{"data:audio/wav;base64,AAAA"}, request.references)
+	s.Equal("true", request.stream)
+}
+
+func (s *OpenAICompatSuite) TestTranscribeReturnsProviderDurationAndOnlyRealWordTimestamps() {
+	s.setReply(endpointReply{status: http.StatusOK, body: []byte(`{"text":"go now","languages":[{"code":"fr"}],"duration":12.3,"usage":{"type":"duration","seconds":12.6},"words":[{"word":"go","start":0,"end":0.5},{"word":"now","start":0.6}]}`)})
+	provider := s.newTranscriber(s.server.URL)
+	transcription, err := provider.Transcribe(context.Background(), stt.Recording{
+		Audio: pcmWAV(16000, 1600), Words: true,
+	})
+	s.NoError(err)
+	s.Equal("go now", transcription.Text)
+	s.Equal("fr", transcription.Language, "single-item language arrays map to the router's singular language field")
+	s.EqualValues(12300, transcription.AudioDurationMs, "duration is the recording length; usage seconds are a fallback")
+	s.Equal([]stt.Word{{Text: "go", StartMs: 0, EndMs: 500}}, transcription.Words)
+	s.receiveRequest()
+}
+
+func (s *OpenAICompatSuite) TestTranscribeReadsDiarizedSegmentsWithoutInventingWordTimings() {
+	s.setReply(endpointReply{status: http.StatusOK, body: []byte(`{"text":"Agent: hello","duration":1.25,"segments":[{"type":"transcript.text.segment","start":0,"end":1.25,"text":"hello","speaker":"agent"}]}`)})
+	provider := s.newTranscriber(s.server.URL)
+	transcription, err := provider.Transcribe(context.Background(), stt.Recording{
+		Audio: pcmWAV(16000, 1600), Diarize: true,
+	})
+	s.NoError(err)
+	s.Equal("diarized_json", s.receiveRequest().format)
+	s.Equal("Agent: hello", transcription.Text)
+	s.EqualValues(1250, transcription.AudioDurationMs)
+	s.Equal([]string{"agent"}, transcription.Speakers)
+	s.Empty(transcription.Words)
+}
+
+func (s *OpenAICompatSuite) TestTranscribeCollectsServerSentEvents() {
+	s.setReply(endpointReply{
+		status:      http.StatusOK,
+		contentType: "text/event-stream",
+		body: []byte("data: {\"type\":\"transcript.text.delta\",\"delta\":\"hello\"}\n\n" +
+			"data: {\"type\":\"transcript.text.delta\",\"delta\":\" world\"}\n\n" +
+			"data: {\"type\":\"transcript.text.segment\",\"start\":0,\"end\":1.5,\"text\":\"hello world\",\"speaker\":\"A\"}\n\n" +
+			"data: {\"type\":\"transcript.text.done\",\"text\":\"hello world\",\"usage\":{\"seconds\":1.5}}\n\n"),
+	})
+	stream := true
+	provider, err := openaicompat.New(openaicompat.Options{
+		BaseURL: s.server.URL, APIKey: "test-key",
+		Settings: openaicompat.TranscriptionSettings{Stream: &stream},
+	})
+	s.Require().NoError(err)
+	transcription, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+	s.NoError(err)
+	request := s.receiveRequest()
+	s.Equal("true", request.stream)
+	s.Equal("hello world", transcription.Text)
+	s.EqualValues(1500, transcription.AudioDurationMs)
+	s.Equal([]string{"A"}, transcription.Speakers)
+}
+
+func (s *OpenAICompatSuite) TestTranscribeRejectsIncompleteServerSentEvents() {
+	s.setReply(endpointReply{
+		status:      http.StatusOK,
+		contentType: "text/event-stream",
+		body:        []byte("data: {\"type\":\"transcript.text.delta\",\"delta\":\"partial\"}\n\n"),
+	})
+	stream := true
+	provider, err := openaicompat.New(openaicompat.Options{
+		BaseURL: s.server.URL, Settings: openaicompat.TranscriptionSettings{Stream: &stream},
+	})
+	s.Require().NoError(err)
+	_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+	s.ErrorContains(err, "transcript.text.done")
+	s.receiveRequest()
+}
+
+func (s *OpenAICompatSuite) TestTranscribeUsesBracketedChunkingStrategyFields() {
+	provider, err := openaicompat.New(openaicompat.Options{
+		BaseURL: s.server.URL,
+		Settings: openaicompat.TranscriptionSettings{
+			ChunkingStrategy: json.RawMessage(`{"type":"server_vad","silence_duration_ms":400}`),
+		},
+	})
+	s.Require().NoError(err)
+	_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+	s.NoError(err)
+	request := s.receiveRequest()
+	s.Equal("server_vad", request.chunkingType)
+	s.Equal("400", request.chunkingSilence)
+}
+
+func (s *OpenAICompatSuite) TestTranscribeConsumesTextAndSubtitleFormats() {
+	for _, reply := range []endpointReply{
+		{status: http.StatusOK, contentType: "text/plain", body: []byte("recognized words")},
+		{status: http.StatusOK, contentType: "application/x-subrip", body: []byte("1\n00:00:00,000 --> 00:00:01,000\nrecognized words\n")},
+		{status: http.StatusOK, contentType: "text/vtt", body: []byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nrecognized words\n")},
+	} {
+		s.setReply(reply)
+		provider := s.newTranscriber(s.server.URL)
+		transcription, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+		s.NoError(err)
+		s.Equal("recognized words", transcription.Text)
+		s.Empty(transcription.Words, "subtitle cue boundaries are not word timestamps")
+		s.receiveRequest()
+	}
+}
+
+func (s *OpenAICompatSuite) TestTranscribeHonorsTextAndSubtitleResponseFormats() {
+	for _, test := range []struct {
+		format string
+		body   string
+		want   string
+	}{
+		{format: "text", body: "{hello}", want: "{hello}"},
+		{format: "text", body: `"hello"`, want: `"hello"`},
+		{format: "srt", body: "1\n00:00:00,000 --> 00:00:01,000\n42\n", want: "42"},
+		{format: "vtt", body: "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nrecognized words\n", want: "recognized words"},
+		{format: "vtt", body: "WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.000\n42\n\n2\n00:00:01.000 --> 00:00:02.000\nnext\n", want: "42 next"},
+	} {
+		s.setReply(endpointReply{status: http.StatusOK, contentType: "text/plain", body: []byte(test.body)})
+		provider, err := openaicompat.New(openaicompat.Options{
+			BaseURL:  s.server.URL,
+			Settings: openaicompat.TranscriptionSettings{ResponseFormat: test.format},
+		})
+		s.Require().NoError(err)
+		transcription, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(16000, 1600)})
+		s.NoError(err)
+		s.Equal(test.want, transcription.Text)
+		s.receiveRequest()
+	}
+}
+
+func (s *OpenAICompatSuite) TestTranscribePreservesCompressedAudioAndFileMetadata() {
+	audio := append([]byte("ID3\x04\x00\x00"), []byte("compressed fixture")...)
 	provider := s.newTranscriber(s.server.URL)
 	_, err := provider.Transcribe(context.Background(), stt.Recording{
-		Audio:     pcmWAV(16000, 1600),
-		Languages: []string{"en-US"},
+		Audio: audio, Filename: "call.mp3", ContentType: "audio/mpeg",
 	})
-	s.ErrorContains(err, "two-letter lowercase ISO 639-1")
-	s.Empty(s.captured)
-}
-
-func (s *OpenAICompatSuite) TestTranscribeAcceptsSixtySecondsAndRejectsLongerAudio() {
-	provider := s.newTranscriber(s.server.URL)
-	_, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(24000, 24000*60)})
 	s.NoError(err)
-	s.receiveRequest()
+	request := s.receiveRequest()
+	s.Equal("call.mp3", request.fileName)
+	s.Equal("audio/mpeg", request.fileType)
+	s.Equal(audio, request.audio)
 
-	_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(24000, 24000*61)})
-	s.ErrorContains(err, "audio exceeds 60 seconds")
-	s.Empty(s.captured)
+	_, err = provider.Transcribe(context.Background(), stt.Recording{Audio: audio, Filename: "call"})
+	s.NoError(err)
+	request = s.receiveRequest()
+	s.Equal("call.mp3", request.fileName, "a metadata name without an extension gets the detected suffix")
+	s.Equal("audio/mpeg", request.fileType)
+	s.Equal(audio, request.audio)
 }
 
-func (s *OpenAICompatSuite) TestTranscribeRejectsUnsupportedWAVSampleRate() {
-	provider := s.newTranscriber(s.server.URL)
-	_, err := provider.Transcribe(context.Background(), stt.Recording{Audio: pcmWAV(44100, 4410)})
-	s.ErrorContains(err, "unsupported PCM WAV format")
-	s.Empty(s.captured)
+func (s *OpenAICompatSuite) TestTranscribeForwardsOggOpusBytesAndFilename() {
+	audio := append([]byte("OggS"), []byte("synthetic opus payload")...)
+	for _, testCase := range []struct {
+		name        string
+		filename    string
+		contentType string
+		wantName    string
+	}{
+		{name: "known Opus filename", filename: "voice.opus", contentType: "audio/ogg; codecs=opus", wantName: "voice.opus"},
+		{name: "sniffed Ogg filename", wantName: "audio.ogg"},
+	} {
+		s.Run(testCase.name, func() {
+			provider := s.newTranscriber(s.server.URL)
+			_, err := provider.Transcribe(context.Background(), stt.Recording{
+				Audio: audio, Filename: testCase.filename, ContentType: testCase.contentType,
+			})
+			s.NoError(err)
+			request := s.receiveRequest()
+			s.Equal(testCase.wantName, request.fileName)
+			s.Equal("audio/ogg", request.fileType)
+			s.Equal(audio, request.audio)
+		})
+	}
 }
 
 func (s *OpenAICompatSuite) serve(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +546,9 @@ func (s *OpenAICompatSuite) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if reply.location != "" {
 		w.Header().Set("Location", reply.location)
+	}
+	if reply.contentType != "" {
+		w.Header().Set("Content-Type", reply.contentType)
 	}
 	if reply.status != 0 {
 		w.WriteHeader(reply.status)
@@ -287,6 +570,18 @@ func captureRequest(r *http.Request) requestCapture {
 	captured.model = r.FormValue("model")
 	captured.format = r.FormValue("response_format")
 	captured.language = r.FormValue("language")
+	captured.languages = r.Form["languages[]"]
+	captured.prompt = r.FormValue("prompt")
+	captured.keywords = r.Form["keywords[]"]
+	captured.temperature = r.FormValue("temperature")
+	captured.granularities = r.Form["timestamp_granularities[]"]
+	captured.include = r.Form["include[]"]
+	captured.chunking = r.FormValue("chunking_strategy")
+	captured.chunkingType = r.FormValue("chunking_strategy[type]")
+	captured.chunkingSilence = r.FormValue("chunking_strategy[silence_duration_ms]")
+	captured.speakers = r.Form["known_speaker_names[]"]
+	captured.references = r.Form["known_speaker_references[]"]
+	captured.stream = r.FormValue("stream")
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		captured.err = err.Error()
@@ -294,6 +589,7 @@ func captureRequest(r *http.Request) requestCapture {
 	}
 	defer file.Close()
 	captured.fileName = header.Filename
+	captured.fileType = header.Header.Get("Content-Type")
 	captured.audio, err = io.ReadAll(file)
 	if err != nil {
 		captured.err = err.Error()
@@ -332,7 +628,12 @@ func (s *OpenAICompatSuite) newTranscriber(baseURL string) *openaicompat.Transcr
 }
 
 func pcmWAV(sampleRate, frames int) []byte {
-	dataBytes := frames * 2
+	return pcmWAVChannels(sampleRate, 1, frames)
+}
+
+func pcmWAVChannels(sampleRate, channels, frames int) []byte {
+	blockAlign := channels * 2
+	dataBytes := frames * blockAlign
 	wav := make([]byte, 44+dataBytes)
 	copy(wav[0:4], "RIFF")
 	binary.LittleEndian.PutUint32(wav[4:8], uint32(len(wav)-8))
@@ -340,10 +641,10 @@ func pcmWAV(sampleRate, frames int) []byte {
 	copy(wav[12:16], "fmt ")
 	binary.LittleEndian.PutUint32(wav[16:20], 16)
 	binary.LittleEndian.PutUint16(wav[20:22], 1)
-	binary.LittleEndian.PutUint16(wav[22:24], 1)
+	binary.LittleEndian.PutUint16(wav[22:24], uint16(channels))
 	binary.LittleEndian.PutUint32(wav[24:28], uint32(sampleRate))
-	binary.LittleEndian.PutUint32(wav[28:32], uint32(sampleRate*2))
-	binary.LittleEndian.PutUint16(wav[32:34], 2)
+	binary.LittleEndian.PutUint32(wav[28:32], uint32(sampleRate*blockAlign))
+	binary.LittleEndian.PutUint16(wav[32:34], uint16(blockAlign))
 	binary.LittleEndian.PutUint16(wav[34:36], 16)
 	copy(wav[36:40], "data")
 	binary.LittleEndian.PutUint32(wav[40:44], uint32(dataBytes))

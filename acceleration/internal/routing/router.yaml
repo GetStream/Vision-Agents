@@ -811,6 +811,8 @@ stt:
       # supported language hint.
       languages: [und]
       realtime: false
+      recorded: true
+      supports: [words, keyterms, format]
       data_policy:
         trains_on_data: unknown
         retention: unknown
