@@ -18,8 +18,11 @@ type countingLister struct {
 	asked  int
 }
 
-func (l *countingLister) List(context.Context) ([]Library, error) {
+func (l *countingLister) List(ctx context.Context) ([]Library, error) {
 	l.asked++
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -192,6 +195,16 @@ func (s *CatalogueSuite) TestACapitalisedNameIsMatchedToTheVoiceWithoutRegardToC
 	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)")
 }
 
+func (s *CatalogueSuite) TestANameInOtherCaseBeatsAnIdThatIsOneEditAway() {
+	finder := s.library()
+	finder.voices = []Library{{ID: "sarax", Name: "Other"}, {ID: "id1", Name: "SARAH"}}
+
+	err := s.catalogue.Check(s.ctx, "elevenlabs", "sarah")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "(id1)")
+}
+
 func (s *CatalogueSuite) TestAMistypedIdIsMatchedToTheVoiceItWasMeantToBe() {
 	s.library()
 
@@ -288,6 +301,22 @@ func (s *CatalogueSuite) TestALookupThatTakesTooLongLetsTheVoiceThrough() {
 	s.catalogue.lookup = 10 * time.Millisecond
 
 	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+}
+
+func (s *CatalogueSuite) TestACallerWhoGaveUpIsNotRememberedAsAVendorFailure() {
+	finder := s.library()
+	finder.slow = true
+	gone, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	s.NoError(s.catalogue.Check(gone, "elevenlabs", "Sara"))
+	_, err := s.catalogue.List(gone, "elevenlabs")
+	s.Require().Error(err)
+
+	finder.slow = false
+	err = s.catalogue.Check(s.ctx, "elevenlabs", "Sara")
+	s.Require().Error(err, "the check is still on for everyone else")
+	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)", "and the listing is read")
 }
 
 func (s *CatalogueSuite) TestAnUnreadableLibraryStillRefusesButSuggestsNothing() {

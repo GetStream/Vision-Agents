@@ -1104,6 +1104,20 @@ func (s *RoutingSuite) TestARefusalIsWhatTheCallerIsToldWhenNothingServes() {
 	s.NotContains(err.Error(), "every candidate", "the caller's mistake is not an outage")
 }
 
+func (s *RoutingSuite) TestOneVendorsModelsRefusingInTheSameWordsAreToldOnce() {
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" || spec.Model == "multi" {
+			return nil, Refused(errors.New("quick: no voice x"))
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "quick/multi"}})
+
+	s.Require().ErrorIs(err, ErrRequest)
+	s.Equal(1, strings.Count(err.Error(), "quick: no voice x"), "said once, not once per model: %s", err)
+}
+
 func (s *RoutingSuite) TestAnOverwriteOneModelCannotReadIsTriedOnTheSameVendorsOtherModels() {
 	// OpenAI's realtime and Live models read different structs out of one "openai" block,
 	// which is the shape this copies: quick/en has a threshold, quick/multi a backend.

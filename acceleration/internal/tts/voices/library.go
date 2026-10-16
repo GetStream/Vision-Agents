@@ -236,6 +236,10 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 
 	exists, err := finder.Exists(ctx, id)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// The caller gave up; the vendor did not fail.
+			return nil
+		}
 		// The voice goes through unchecked, and nothing else shows that the check is off.
 		c.logger.Warn("could not look a voice up at its provider, letting it through",
 			"provider", provider, "error", err)
@@ -281,6 +285,10 @@ func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister)
 
 	voices, err := lister.List(ctx)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// The caller gave up; the vendor did not fail, so nothing is remembered.
+			return nil, stack.Wrap(fmt.Errorf("voices: list %s: %w", provider, err))
+		}
 		c.logger.Warn("could not list a provider's voices", "provider", provider, "error", err)
 		c.mu.Lock()
 		c.unlisted[provider] = missed{err: err, at: c.now()}
