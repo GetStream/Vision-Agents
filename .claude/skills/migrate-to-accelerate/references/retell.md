@@ -114,4 +114,7 @@ async def lookup_order_status(order_id: str) -> str:
     ...  # the same HTTPS call the Retell tool made
 ```
 
-Report line: `voice_id retell-Cimo` has no known accelerate voice; backend default used.
+Report line: no served accelerate voice for `voice_id retell-Cimo`. On a new config,
+leaving `tts`/`voice` out uses the backend default; on an existing config under this
+name, omitted fields keep their stored values and `voice` cannot be cleared by syncing
+an empty value, so check `ListAgentConfigs` after sync.

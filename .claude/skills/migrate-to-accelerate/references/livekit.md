@@ -113,6 +113,7 @@ tts: cartesia/sonic-preview
 voice: 71a7ad14-091c-4e8e-a314-022ece01c121
 greeting:
   text: Hello, this is Northwind support. How can I help?
+  mode: variation
 ```
 
 ```python

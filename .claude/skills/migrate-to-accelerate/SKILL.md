@@ -48,7 +48,10 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
    webhooks; dynamic variables; guardrails and eval suites. Ask for what is missing.
    Vendor ids, secrets, and webhook signing keys are never copied into the output.
 2. **Map config** with the shared table below and the platform reference. Write the folder:
-   `getstream agents init <name> --template voice` (or `text`), then replace its files.
+   `getstream agents init <name> --template voice` (or `text`) creates `agents/<name>/`
+   (with editor schemas alongside in `agents/`), then replace its files. Sync and test
+   accept a path to that folder; if you move it, drop the `$schema` comment line from
+   `agent.yaml`.
 3. **Map tools** (rules below), **knowledge** (documents into `knowledge/`, URL sources
    into `knowledge/urls.yaml`), and **integrations** (catalog connectors and
    `mcp_servers` in `agent.yaml`; phone numbers and messaging lines under `channels:`).
@@ -107,7 +110,11 @@ spelling (for example `openai/gpt-live-1` under `sts-duplex`), and report every
 substitution ("gpt-4.1-mini is not served; llm-fast used"). When nothing fits, leave the
 field out (backend default) rather than inventing a name, but only on a new config: a
 field left out of a re-sync keeps the value already stored under that name, so migrating
-over an existing config means setting every model field explicitly.
+over an existing config means setting every model field explicitly. Even that has
+limits: `sts: ""` clears speech-to-speech, but `voice: ""` and `keyterms: []` do not
+clear a stored voice or keyterms. When migrating over an existing name, check
+`getstream agents api ListAgentConfigs` after syncing and say in the report what the
+stored config actually ended up with.
 
 ## Tool rules
 

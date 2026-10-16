@@ -6,6 +6,9 @@ base) and the assistant API reference (`POST /assistant`).
 ## Source artifacts to ask for
 
 - `GET /assistant/{id}` in full, plus squad membership if the assistant is in a squad.
+  Call the Vapi API with the private (server) key as Bearer (often stored as
+  `VAPI_PRIVATE_KEY`, not `VAPI_API_KEY`); if a script client gets a Cloudflare
+  403/1010 where the dashboard works, retry with curl.
 - Tool objects (`GET /tool/{id}`) for every id in `model.tools` / `toolIds`, with server URLs.
 - Knowledge base files (`GET /file`) behind any query tool.
 - Phone number / SIP setup, `server` webhook config, `credentialIds`, analysis plans.
@@ -112,5 +115,7 @@ async def lookup_order_status(order_id: str) -> str:
     ...
 ```
 
-Report line: `voice.provider vapi` (voice `Elliot`) is not served by the router; backend
-default TTS used.
+Report line: `voice.provider vapi` (voice `Elliot`) is not served by the router. On a
+new config, leaving `tts`/`voice` out uses the backend default; on an existing config
+under this name, omitted fields keep their stored values and `voice` cannot be cleared
+by syncing an empty value, so check `ListAgentConfigs` after sync.
