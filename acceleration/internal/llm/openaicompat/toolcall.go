@@ -42,7 +42,8 @@ type toolCallSplitter struct {
 	// quote is the mark that opened the string being read, `<|"|>`, `"` or `'`, or empty
 	// outside one.
 	quote string
-	// parens is set for a call written `NAME(key=value)`, where `'` marks a string too.
+	// parens is set for a call written `NAME(key=value)`, where a closing parenthesis ends
+	// bare values and single quotes may begin anywhere in one.
 	parens bool
 	// closing is set after a call, while its closing marker may still follow.
 	closing bool
@@ -223,9 +224,10 @@ func (c *toolCallSplitter) readCall() bool {
 			i += 2
 			continue
 		}
+		mark := ch == '"' || ch == '\'' &&
+			(c.parens || c.quote == "'" || singleQuoteBoundary(c.body.String()))
 		c.body.WriteByte(ch)
 		i++
-		mark := ch == '"' || ch == '\'' && c.parens
 		if mark && (c.quote == "" || c.quote == string(ch)) {
 			c.quote = toggle(c.quote, string(ch))
 			continue
@@ -247,6 +249,19 @@ func (c *toolCallSplitter) readCall() bool {
 	}
 	c.pending = c.pending[i:]
 	return false
+}
+
+func singleQuoteBoundary(body string) bool {
+	body = strings.TrimRight(body, " \t\r\n")
+	if body == "" {
+		return true
+	}
+	switch body[len(body)-1] {
+	case '{', '[', '(', ',', ':', '=':
+		return true
+	default:
+		return false
+	}
 }
 
 // toggle is the quote after mark: mark opens a string outside one and closes it inside.
@@ -296,13 +311,13 @@ func parseGemmaCall(text string) (name, arguments string, ok bool) {
 	return text[:brace], string(raw), true
 }
 
-// gemmaParser reads the argument syntax Gemma 4 writes: bare keys, strings between `<|"|>`
-// marks or double quotes, numbers, true, false and null, and nested objects and lists.
+// gemmaParser reads the argument syntax Gemma 4 writes: bare or quoted keys, strings between
+// `<|"|>` marks, single quotes or double quotes, numbers, true, false and null, and nested
+// objects and lists.
 type gemmaParser struct {
 	text string
 	pos  int
-	// parens is set for `NAME(key=value)` arguments, where a parenthesis ends a bare value
-	// and single quotes mark a string as well.
+	// parens is set for `NAME(key=value)` arguments, where a parenthesis ends a bare value.
 	parens bool
 }
 
@@ -322,7 +337,7 @@ func (p *gemmaParser) value() (any, bool) {
 		return p.quoted()
 	case p.text[p.pos] == '"':
 		return p.jsonString()
-	case p.text[p.pos] == '\'' && p.parens:
+	case p.text[p.pos] == '\'':
 		return p.singleQuoted()
 	case p.text[p.pos] == '{':
 		p.pos++
@@ -462,6 +477,8 @@ func (p *gemmaParser) key(assign byte) (string, bool) {
 		quoted = p.quoted
 	case strings.HasPrefix(p.text[p.pos:], `"`):
 		quoted = p.jsonString
+	case strings.HasPrefix(p.text[p.pos:], `'`):
+		quoted = p.singleQuoted
 	}
 	if quoted != nil {
 		value, ok := quoted()

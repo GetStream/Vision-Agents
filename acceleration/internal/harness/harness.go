@@ -724,13 +724,17 @@ func (h *Harness) actUnknown(found directive) {
 		if strings.TrimSpace(found.body) == "" {
 			return
 		}
+		arguments, ok := h.proseArguments(tool, found.body)
+		if !ok {
+			return
+		}
 		h.logger.Debug("the model asked for a tool as if it were a skill", "tool", tool.Name)
 		h.mu.Lock()
 		h.askN++
 		h.asked = append(h.asked, llm.ToolCall{
 			ID:        fmt.Sprintf("ask-%d", h.askN),
 			Name:      tool.Name,
-			Arguments: argumentsFor(tool, found.body),
+			Arguments: arguments,
 		})
 		h.mu.Unlock()
 		return
@@ -766,7 +770,11 @@ func (h *Harness) actCall(found directive) {
 		}
 		arguments = string(raw)
 	} else if strings.TrimSpace(found.body) != "" {
-		arguments = argumentsFor(tool, found.body)
+		var ok bool
+		arguments, ok = h.proseArguments(tool, found.body)
+		if !ok {
+			return
+		}
 	}
 	h.logger.Debug("the model wrote a tool call as a tag", "tool", tool.Name)
 	h.mu.Lock()
@@ -779,13 +787,28 @@ func (h *Harness) actCall(found directive) {
 	h.mu.Unlock()
 }
 
-// argumentsFor turns the body of a skill tag into the JSON object the tool expects. The
-// tag is prose, so it is filed under query when the tool has one, otherwise under the
-// first required argument. A body that is already an object is left alone.
-func argumentsFor(tool Tool, body string) string {
+// proseArguments turns a tool tag's prose body into arguments when that leaves no required
+// fields missing. A body that cannot supply all required fields becomes corrective feedback
+// instead of an external call with a fabricated argument.
+func (h *Harness) proseArguments(tool Tool, body string) (string, bool) {
+	arguments, required := argumentsFor(tool, body)
+	if len(required) == 0 {
+		return arguments, true
+	}
+	h.mu.Lock()
+	h.correct(fmt.Sprintf("The prose body for %s was not run; this tool requires named arguments: %s. "+
+		"Use details already in the caller's request, and ask only for values that are missing.",
+		tool.Name, strings.Join(required, ", ")))
+	h.mu.Unlock()
+	return "", false
+}
+
+// argumentsFor turns a prose body into the legacy scalar argument for a tool. A body that
+// is already a JSON object is already structured and is left alone.
+func argumentsFor(tool Tool, body string) (string, []string) {
 	body = strings.TrimSpace(body)
 	if json.Valid([]byte(body)) && strings.HasPrefix(body, "{") {
-		return body
+		return body, nil
 	}
 
 	name := "query"
@@ -797,12 +820,33 @@ func argumentsFor(tool Tool, body string) string {
 			}
 		}
 	}
+	required := requiredNames(tool.Parameters["required"])
+	for _, field := range required {
+		if field != name {
+			return "", required
+		}
+	}
 
 	raw, err := json.Marshal(map[string]string{name: body})
 	if err != nil {
-		return "{}"
+		return "{}", nil
 	}
-	return string(raw)
+	return string(raw), nil
+}
+
+func requiredNames(required any) []string {
+	var names []string
+	switch fields := required.(type) {
+	case []any:
+		for _, field := range fields {
+			if name, ok := field.(string); ok {
+				names = append(names, name)
+			}
+		}
+	case []string:
+		names = append(names, fields...)
+	}
+	return names
 }
 
 func firstRequired(required any) string {
