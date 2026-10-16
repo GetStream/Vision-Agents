@@ -411,6 +411,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
+            /// What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/instructions`.
+            internal var instructions: Swift.String?
             /// Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/keyterms`.
@@ -524,6 +528,7 @@ extension Components {
             ///   - history: The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
             ///   - id: The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
             ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+            ///   - instructions: What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
             ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///   - languages: Language hints, which narrow the candidates in every modality.
             ///   - llm: A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
@@ -560,6 +565,7 @@ extension Components {
                 history: [Components.Schemas.HistoryMessage]? = nil,
                 id: Swift.String? = nil,
                 incognito: Swift.Bool? = nil,
+                instructions: Swift.String? = nil,
                 keyterms: [Swift.String]? = nil,
                 languages: [Swift.String]? = nil,
                 llm: Swift.String? = nil,
@@ -596,6 +602,7 @@ extension Components {
                 self.history = history
                 self.id = id
                 self.incognito = incognito
+                self.instructions = instructions
                 self.keyterms = keyterms
                 self.languages = languages
                 self.llm = llm
@@ -633,6 +640,7 @@ extension Components {
                 case history
                 case id
                 case incognito
+                case instructions
                 case keyterms
                 case languages
                 case llm
@@ -1043,7 +1051,7 @@ extension Components {
             }
         }
         /// What to change about the models for one session, over whatever its agent config decided.
-        /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+        /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
         ///
         /// - Remark: Generated from `#/components/schemas/ModelOverwrites`.
         internal struct ModelOverwrites: Codable, Hashable, Sendable {

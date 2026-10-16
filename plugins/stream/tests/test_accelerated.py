@@ -187,8 +187,44 @@ class TestAccelerated:
         assert router.created is not None
         assert router.created["id"] == "call-1"
         assert router.created["start_voice"] is True
-        for field in ("call_id", "call_type", "instructions", "text"):
+        for field in ("call_id", "call_type", "text"):
             assert field not in router.created
+
+    async def test_an_agent_without_a_config_plays_the_instructions_it_was_given(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        assert router.created is not None
+        assert router.created["instructions"] == "be brief"
+
+    async def test_an_agent_told_nothing_sends_no_instructions(self, router: Router):
+        pipeline = stream.Accelerated(url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-2",
+                agent_user_id="agent",
+                instructions="",
+            )
+        )
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert "instructions" not in router.created
+
+    async def test_an_agent_with_a_config_is_told_what_to_be_by_the_config(
+        self, router: Router, call: RemoteCall
+    ):
+        # The folder holds the agent's instructions, so the ones the call carries are not
+        # sent over them.
+        pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(call)
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert router.created["config_id"] == "config-7"
+        assert "instructions" not in router.created
 
     async def test_a_greeting_is_sent_with_its_mode(
         self, router: Router, call: RemoteCall

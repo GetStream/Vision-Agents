@@ -61,7 +61,8 @@ class Session:
             It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides
             the config, and a caller reading a session back wants to see what they changed in one place rather than diffed
             against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
-            a caller able to rewrite those could make a session impersonate a different agent.
+            a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's
+            instructions with the instructions of CreateSessionRequest instead, which a device may not send.
         project_id (str | Unset):
         review_notes (str | Unset): Why the review scored the conversation as it did. Read by a backend only.
         review_score (int | Unset): How well the agent handled the conversation, from 1 to 5, written a few seconds

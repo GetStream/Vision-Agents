@@ -510,7 +510,8 @@ func (s *SpecSuite) TestLLMOverwritesCarryOnlyTheSafeKnobs() {
 	s.Equal(&tokens, over.MaxOutputTokens)
 	s.Equal("high", over.Verbosity)
 	// Instructions belong to the agent. A caller able to rewrite them could make a session
-	// impersonate a different agent, so they are not something a session may overwrite.
+	// impersonate a different agent, so model overwrites never carry them: a backend sets a
+	// session's instructions on the request that creates it, which a device may not send.
 	s.Empty(over.Instructions)
 	s.Empty(over.Target)
 }

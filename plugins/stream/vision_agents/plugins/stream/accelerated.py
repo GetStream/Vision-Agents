@@ -331,6 +331,10 @@ class Accelerated(OmniLLM):
         # Anything named here wins over the stored config, so a field this agent does not
         # decide is left out rather than sent empty: sending it would replace what the
         # config says with nothing.
+        # A folder config carries the agent's instructions itself, so they go over only for
+        # an agent without one: its own, or the default it was given, for this session.
+        if call.instructions and not self.config:
+            request.instructions = call.instructions
         if self.greeting:
             request.greeting = Greeting(text=self.greeting)
             if self.greeting_mode:
