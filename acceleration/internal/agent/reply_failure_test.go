@@ -8,11 +8,14 @@ import (
 )
 
 func (s *AgentSuite) TestAProviderTimeoutSettlesTheReply() {
+	off := false
+	s.speculation = &off
 	s.providerTimeoutSettlesTheReply()
 }
 
 func (s *AgentSuite) TestAnEarlyProviderTimeoutSettlesTheReply() {
-	s.speculates = true
+	on := true
+	s.speculation = &on
 	s.providerTimeoutSettlesTheReply()
 }
 

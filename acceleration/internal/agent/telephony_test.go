@@ -80,9 +80,11 @@ func (s *AgentSuite) onACall() {
 // stubToolRunner stands in for whoever owns the tools this package does not, which in
 // production is a caller on the other end of a socket.
 type stubToolRunner struct {
-	result string
-	err    error
-	run    func(context.Context, llm.ToolCall) ([]llm.ContentPart, error)
+	result  string
+	err     error
+	run     func(context.Context, llm.ToolCall) ([]llm.ContentPart, error)
+	entered chan struct{}
+	release <-chan struct{}
 
 	mu   sync.Mutex
 	runs []llm.ToolCall
@@ -268,7 +270,19 @@ func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Cont
 	r.mu.Lock()
 	r.runs = append(r.runs, call)
 	err, result, run := r.err, r.result, r.run
+	entered, release := r.entered, r.release
+	r.entered, r.release = nil, nil
 	r.mu.Unlock()
+	if entered != nil {
+		close(entered)
+	}
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1326,19 +1340,8 @@ func (s *AgentSuite) TestANegativeAssertionWaitsForItsLastCheck() {
 
 // never asserts that something stays untrue for long enough to believe it.
 func (s *AgentSuite) never(condition func() bool, message string) {
-	// Keep callbacks in this test so they cannot read the next test's fixtures.
-	deadline := time.NewTimer(500 * time.Millisecond)
-	defer deadline.Stop()
-	tick := time.NewTicker(5 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-deadline.C:
-			return
-		case <-tick.C:
-			s.Require().False(condition(), message)
-		}
-	}
+	s.T().Helper()
+	s.neverWithin(condition, 500*time.Millisecond, message)
 }
 
 // spokenText reports whether the voice was asked to say something containing the text.
@@ -1617,7 +1620,8 @@ func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt
 }
 
 func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt() {
-	s.speculates = true
+	on := true
+	s.speculation = &on
 	s.ownsTools("order 12 ships tomorrow")
 	s.join(false)
 	s.model.reply = []string{"It ships tomorrow morning."}
@@ -1631,8 +1635,8 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 	s.agent.mu.Unlock()
 	ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
 
-	s.agent.speculate(s.agent.harness, ready, false, false)
-	s.Require().True(s.agent.adoptSpeculation(ready, ""))
+	s.agent.preview(ready, s.agent.harness, s.agent.instructions())
+	s.Require().NoError(s.agent.respondCandidate(ready, ""))
 
 	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
 	input := s.model.requests()[0].Input

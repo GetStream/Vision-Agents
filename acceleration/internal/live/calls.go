@@ -41,6 +41,8 @@ type Turn struct {
 	ModelToFirstTextMs *float64          `json:"model_to_first_text_ms,omitempty"`
 	TextToTTSMs        *float64          `json:"text_to_tts_ms,omitempty"`
 	TTSToAudioMs       *float64          `json:"tts_to_audio_ms,omitempty"`
+	// ReplyHoldMs is the first-audio silence hold, included in TTSToAudioMs and RoundtripMs.
+	ReplyHoldMs *float64 `json:"reply_hold_ms,omitempty"`
 	// STTLatencyMs is the provider's decode time for the transcript that settled the turn.
 	STTLatencyMs *float64 `json:"stt_latency_ms,omitempty"`
 	// LLMTTFTMs is the wait between asking the model and its first token.

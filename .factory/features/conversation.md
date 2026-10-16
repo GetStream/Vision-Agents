@@ -132,6 +132,11 @@ and the controller answers the same way every time, so waiting is a loop only th
 end. After `defaultPatience` of unchanged words the conversation stops waiting and answers
 with a short question instead.
 
+An acoustic score below its threshold is put again after 200 ms rather than 700 ms, and only once
+new audio has arrived since the last score. The patience deadline is that of the transcript
+revision the first score ruled on, so the retries share it; when it passes with nothing new to
+score, the words are answered with the question without asking the scorer again.
+
 It matters because the reason for waiting is often wrong. A transcriber that mishears half a
 sentence produces something that reads as unfinished, the agent decides not to reply, and the
 caller is left talking to a line that has gone quiet on them. Asking them to say it again
@@ -140,6 +145,16 @@ recovers the turn; waiting never does.
 The two reasons to ask a question rather than answer are told to the model separately:
 `ambiguousNote` for a clear sentence with an unclear intent, which is the controller's own
 `clarify` ruling, and `unfinishedNote` for a thought that never arrived.
+
+## Words that stop mid-thought wait longer
+
+A transcript that ends where the caller is plainly about to say more is waited on for
+`defaultCadenceRetry` rather than the usual gap or the short wait for a final, and a final that
+ends that way is not expedited to the acoustic scorer. `visiblyUnfinished` in
+[cadence.go](../../acceleration/internal/agent/cadence.go) decides it: a trailing comma in any
+language, even before a closing quotation mark, or, for a transcript in English or with no
+language, a last word that is `and`, `or`, `but`, `because`, `um`, `uh` or `er`. `so` is not one:
+it ends a sentence as often as it joins one.
 
 ## An overlap buys the next turn 150ms
 

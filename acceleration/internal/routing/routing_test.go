@@ -322,20 +322,22 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	s.Equal([]string{"muse/muse-voice-transcribe-1.0"}, names(serving))
 }
 
-func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
+func (s *RoutingSuite) TestDefaultConfigPricesBilledProviders() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	for modality, section := range config {
 		for _, provider := range section.Providers {
+			// AudioTurn has no per-request provider charge; TPU hosting is deployment cost.
+			if provider.Provider == "audioturn" {
+				continue
+			}
 			if provider.Provider == "mock" {
-				// The load benchmark's stand-ins reach no vendor, so nothing is what they
-				// cost and nothing is what they should report.
+				// The load benchmark stand-ins reach no vendor, so nothing is what they cost.
 				continue
 			}
 			if modality == Detection && provider.Provider == "ultralytics" {
-				// Ultralytics' shared API bills nothing; a dedicated endpoint is billed by
-				// the hour, which no per-request rate describes.
+				// Its shared API bills nothing; a dedicated endpoint is billed by the hour.
 				continue
 			}
 			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
@@ -1465,5 +1467,22 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMet
 			continue
 		}
 		s.Emptyf(provider.InputModalities, "%s is text-only", provider.Name())
+	}
+}
+
+func (s *RoutingSuite) TestExplicitModelsDoNotJoinAutomaticAliases() {
+	provider := s.config().Providers[0]
+	provider.ExplicitOnly = true
+	s.False((Alias{Languages: []string{"en"}}).matches(provider))
+	s.True((Alias{Only: []string{provider.Name()}}).matches(provider))
+}
+
+func (s *RoutingSuite) TestAudioTurnRequiresAnExplicitSelection() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+	provider, ok := config[STT].Provider("audioturn/audioturn-stack16k-blend")
+	s.Require().True(ok)
+	for name, alias := range config[STT].Aliases {
+		s.False(alias.matches(provider), "AudioTurn unexpectedly joined %s", name)
 	}
 }

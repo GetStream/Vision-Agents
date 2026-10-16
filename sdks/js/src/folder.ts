@@ -626,7 +626,7 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       }
       const value = scalar(inline);
       if (value !== undefined && (value || key === "sts")) {
-        assign(declared, key, value, where);
+        assign(declared, key, value);
       }
     } else if (LISTS.has(key)) {
       const items = inline ? flowList(inline, key, where) : nested.map((item) => listItem(item, key, where));
@@ -1086,7 +1086,7 @@ function connectorOf(
   return declared;
 }
 
-function assign(declared: Declaration, key: string, value: string, where: string): void {
+function assign(declared: Declaration, key: string, value: string): void {
   switch (key) {
     case "mode":
       declared.mode = value as Schemas["AgentMode"];

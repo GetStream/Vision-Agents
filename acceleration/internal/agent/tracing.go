@@ -49,7 +49,11 @@ func traceTurn(owner routing.Owner, turnID string, current *openTurn) {
 			current.transcriptAt)
 	}
 	stage(ctx, "turn.cadence", current.transcriptAt, current.readyAt)
-	stage(ctx, "turn.decision", current.readyAt, current.modelAt)
+	decisionAt := current.decisionAt
+	if decisionAt.IsZero() {
+		decisionAt = current.modelAt
+	}
+	stage(ctx, "turn.decision", current.readyAt, decisionAt)
 	stage(ctx, "turn.llm", current.modelAt, current.firstTextAt)
 	stage(ctx, "turn.tts", current.firstTextAt, current.firstAudioAt)
 	stage(ctx, "turn.playout", current.queuedAt, current.pulledAt)
@@ -69,7 +73,7 @@ func stage(ctx context.Context, name string, from, to time.Time) {
 func lastMoment(current *openTurn) time.Time {
 	latest := time.Time{}
 	for _, at := range []time.Time{
-		current.readyAt, current.modelAt, current.firstTextAt, current.ttsAt,
+		current.readyAt, current.decisionAt, current.modelAt, current.firstTextAt, current.ttsAt,
 		current.firstAudioAt, current.queuedAt, current.pulledAt,
 	} {
 		if at.After(latest) {

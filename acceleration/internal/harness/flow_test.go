@@ -113,6 +113,27 @@ func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
 	s.Contains(question, `is speaking right now and has so far said "party of four at 7:30"`)
 }
 
+func (s *FlowSuite) TestASettledUnheardReplyIsNotQuotedAsWhatTheAgentHasSaid() {
+	s.assertUnheardReplyIsNotQuoted(FlowTurn{Text: "for two at seven"})
+}
+
+func (s *FlowSuite) TestAnInProgressUnheardReplyIsNotQuotedAsWhatTheAgentHasSaid() {
+	s.assertUnheardReplyIsNotQuoted(FlowTurn{Text: "for two at", Unfinished: true})
+}
+
+func (s *FlowSuite) assertUnheardReplyIsNotQuoted(turn FlowTurn) {
+	turn.ID, turn.Participant, turn.Speaking, turn.Unheard = "candidate-1", "Alex", true, true
+	// The reply is passed to show that it is the flag that keeps it out of the question.
+	turn.Reply = "a table for two at seven, under what name?"
+
+	s.Require().NoError(s.flow.Decide(turn))
+
+	question := s.waitAsked(1)[0].Input[0].Content
+	s.Contains(question, "The agent is speaking right now, though none of its reply has reached the caller yet.")
+	s.NotContains(question, "under what name")
+	s.NotContains(question, "speaking right now and has so far said")
+}
+
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
 	var history []llm.Message
 	for turn := range flowHistory {
@@ -210,6 +231,26 @@ func (s *FlowSuite) TestCancelAbandonsACreateThatHasNotReturned() {
 		return len(s.model.requests()) == 1 && len(s.decisions()) == 0
 	}, settleFor, 5*time.Millisecond, "the cancelled create still produced a ruling")
 	s.Empty(s.decisions(), "a ruling about words that have moved on must not be acted on")
+}
+
+func (s *FlowSuite) TestCancelWhileTheStreamIsBeingHandedOverIsNotARace() {
+	// Cancel reads the stream the decision has opened while the decision is storing it, which
+	// the race detector reports whichever of them wins. Each round has a Create that comes back
+	// at the moment it is cancelled.
+	for round := range 100 {
+		id := fmt.Sprintf("round-%d", round)
+		hold := make(chan struct{})
+		s.model.mu.Lock()
+		s.model.holdCreate = hold
+		s.model.mu.Unlock()
+		s.Require().NoError(s.flow.Decide(FlowTurn{ID: id, Participant: "Alex", Text: "okay"}))
+		s.waitAsked(round + 1)
+
+		cancelled := make(chan error, 1)
+		go func() { cancelled <- s.flow.Cancel(id) }()
+		close(hold)
+		s.Require().NoError(<-cancelled)
+	}
 }
 
 func (s *FlowSuite) TestCancelStartsTheWaitingTurnBeforeCreateReturns() {

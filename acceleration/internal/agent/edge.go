@@ -33,6 +33,13 @@ type Edge interface {
 	Leave() error
 }
 
+// ContextPlayout is an edge that can abandon a chunk already being published when the
+// reply it belongs to is interrupted. The context is shared by every active synthesis
+// until the next interruption, so an edge can reject a stale write after its queue drops.
+type ContextPlayout interface {
+	PublishAudioContext(ctx context.Context, pcm audio.PcmData) error
+}
+
 // PlayoutMarks is told when the speech an edge was handed reaches its outgoing track.
 //
 // Publishing says neither. It returns once a chunk is queued, and a chunk longer than the
@@ -48,12 +55,12 @@ type PlayoutMarks interface {
 }
 
 // MarkedPlayout is an edge that reports PlayoutMarks for the speech it is given. Marks may
-// be nil, which makes this PublishAudio.
+// be nil, which makes this PublishAudioContext.
 //
-// Separate from Edge rather than a change to it, because only an edge with a track of its
-// own has a moment the speech is taken at.
+// Separate from ContextPlayout rather than a change to it, because only an edge with a
+// track of its own has a moment the speech is taken at.
 type MarkedPlayout interface {
-	PublishAudioMarked(pcm audio.PcmData, marks PlayoutMarks) error
+	PublishAudioMarked(ctx context.Context, pcm audio.PcmData, marks PlayoutMarks) error
 }
 
 // Attendance is somebody arriving in or leaving the call.

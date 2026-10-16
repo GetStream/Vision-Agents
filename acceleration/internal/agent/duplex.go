@@ -66,6 +66,9 @@ type DuplexOptions struct {
 	// Backchannel makes the agent murmur while someone is still talking, the way a person
 	// on the phone does. It never reaches the model: a listening noise is not a turn.
 	Backchannel bool
+	// DisableIdleCheckIn suppresses the invitation after a long silence. It is off by
+	// default so library users keep the existing idle behavior.
+	DisableIdleCheckIn bool
 	// Phrases are what the agent murmurs. Empty means the built-in ones.
 	Phrases []string
 	// BackchannelWords is how much someone must have said before it is worth
@@ -177,7 +180,7 @@ func (d *duplex) Idle(lastActivity time.Time, quiet bool) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
+	if d.options.DisableIdleCheckIn || !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
 		return false
 	}
 	if d.asked >= idleAsks {

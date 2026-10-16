@@ -384,6 +384,158 @@ func (s *CadenceSuite) TestIncompleteIdentifiersAreTheOnesThatStillHaveADigitTai
 	s.True(incompleteIdentifier("PIN 4471"))
 	s.False(incompleteIdentifier("book a table"))
 	s.False(incompleteIdentifier("party of 4"))
+	s.False(incompleteIdentifier("a burger, and"), "words that are still going are not identifiers")
+	s.False(incompleteIdentifier("name,"))
+}
+
+func (s *CadenceSuite) TestUnfinishedWordsEndOnACommaAConjunctionOrAHesitation() {
+	for _, text := range []string{
+		"Burger, no bun,", "Name,", "Burger, no bun, ", "你好，", "これ、", "مرحبا،",
+		"a burger and", "Or", "I want that but", "it is late because", "I would like, um", "uh", "er",
+		"a burger and.", "AND...", "um…",
+		`He said "no bun,"`, "she said ‘no bun,’", "«no bun,»", "「你好，」",
+	} {
+		s.Truef(visiblyUnfinished(text, ""), "%q is a caller part way through", text)
+	}
+	for _, text := range []string{
+		"", "book a table", "Book a table.", "a rock band", "next summer", "the doctor", "my brother",
+		"I said uh-huh", "a burger, no bun", "yes, please.", "PIN 4471", "that is all, thanks",
+		"I think so.", "I think so", "So", "Is that so?", `He said "no bun"`,
+	} {
+		s.Falsef(visiblyUnfinished(text, ""), "%q is not still going", text)
+	}
+}
+
+func (s *CadenceSuite) TestTheWordsAThinkingSpeakerLeavesASentenceOnAreEnglish() {
+	for _, language := range []string{"", "en", "EN", "en-US", "en-GB"} {
+		s.Truef(visiblyUnfinished("a burger and", language), "%q is English or unsaid", language)
+		s.Truef(visiblyUnfinished("I would like, um", language), "%q is English or unsaid", language)
+	}
+	for _, language := range []string{"de", "es", "fr-CA", "ja", "eng", "end"} {
+		s.Falsef(visiblyUnfinished("um", language), "an \"um\" in %q is not a hesitation", language)
+		s.Falsef(visiblyUnfinished("or", language), "an \"or\" in %q is not a conjunction", language)
+		s.Truef(visiblyUnfinished("pan, queso,", language), "a comma is a comma in %q", language)
+		s.Truef(visiblyUnfinished("你好，", language), "a comma is a comma in %q", language)
+	}
+}
+
+// settleDelay is how long a transcript of the given kind is made to wait on the default
+// pacing, read off the timer it schedules rather than waited out.
+func (s *CadenceSuite) settleDelay(mode stt.Mode, text string) time.Duration {
+	return s.settleDelayIn("", mode, text)
+}
+
+// settleDelayIn is settleDelay for a transcript in the given language.
+func (s *CadenceSuite) settleDelayIn(language string, mode stt.Mode, text string) time.Duration {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	s.cadence.Observe(stt.Transcript{
+		Participant: stt.Participant{ID: "caller"}, Mode: mode, Text: text, Language: language,
+	})
+	s.Require().Len(*timers, 1)
+	return (*timers)[0].delay
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnACommaWaitsTheRetryGap() {
+	// A caller reading out an order stops after every item, and the transcriber finalizes
+	// each stop. Answering the first of them is how the agent talks over the rest.
+	for _, text := range []string{"Burger, no bun,", "Name,", "你好，"} {
+		s.Equalf(defaultCadenceRetry, s.settleDelay(stt.ModeFinal, text), "%q", text)
+	}
+	s.Equal(defaultCadenceRetry, s.settleDelay(stt.ModeReplacement, "Burger, no bun,"),
+		"words that are still going wait the longer gap whether or not they are final")
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAConjunctionOrHesitationWaitsTheRetryGap() {
+	for _, text := range []string{"a burger and", "Or", "maybe but", "late because", "I would like, um", "uh.", "Er"} {
+		s.Equalf(defaultCadenceRetry, s.settleDelay(stt.ModeFinal, text), "%q", text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnSoSettlesAtOnce() {
+	// "so" closes a sentence as often as it joins one.
+	for _, text := range []string{"I think so.", "I think so", "Is that so?", "So"} {
+		s.Equalf(cadenceFinalGap, s.settleDelay(stt.ModeFinal, text), "%q", text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAnEnglishFillerIsOnlyHeldInEnglish() {
+	for _, language := range []string{"", "en", "en-US"} {
+		s.Equalf(defaultCadenceRetry, s.settleDelayIn(language, stt.ModeFinal, "um"), "%q", language)
+	}
+	for _, language := range []string{"de", "pt-BR", "ja"} {
+		s.Equalf(cadenceFinalGap, s.settleDelayIn(language, stt.ModeFinal, "um"), "%q", language)
+		s.Equalf(cadenceFinalGap, s.settleDelayIn(language, stt.ModeFinal, "a burger or"), "%q", language)
+		s.Equalf(defaultCadenceRetry, s.settleDelayIn(language, stt.ModeFinal, "pan, queso,"), "%q", language)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnACommaBeforeAClosingQuoteWaitsTheRetryGap() {
+	for _, text := range []string{`He said "no bun,"`, "«sin cebolla,»"} {
+		s.Equalf(defaultCadenceRetry, s.settleDelayIn("es", stt.ModeFinal, text), "%q", text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAWordThatOnlyContainsOneSettlesAtOnce() {
+	// Only whole words count: "band" is not "and" and "summer" is not "um".
+	for _, text := range []string{"a rock band", "next summer", "the doctor", "my brother"} {
+		s.Equalf(cadenceFinalGap, s.settleDelay(stt.ModeFinal, text), "%q", text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAPeriodStillSettlesAtOnce() {
+	s.Equal(cadenceFinalGap, s.settleDelay(stt.ModeFinal, "Book a table."))
+	s.Equal(defaultCadenceGap, s.settleDelay(stt.ModeReplacement, "Book a table"),
+		"a revision that is not final keeps the usual gap")
+}
+
+func (s *CadenceSuite) TestTheSameUnfinishedWordsFinalizedAgainDoNotShortenTheWait() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "Burger, no bun,"})
+	s.Require().Len(*timers, 1)
+	s.Equal(defaultCadenceRetry, (*timers)[0].delay)
+
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Burger, no bun,"})
+	s.Len(*timers, 1, "the final of words that are still going is not a reason to reschedule them")
+	s.False((*timers)[0].stopped)
+
+	// The transcriber punctuating on the way out is the same: the words have not changed,
+	// and what they now say is that there is more to come, not less.
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "Name"})
+	s.Require().Len(*timers, 2)
+	s.Equal(defaultCadenceGap, (*timers)[1].delay)
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Name,"})
+	s.Len(*timers, 2)
+	s.False((*timers)[1].stopped)
+}
+
+func (s *CadenceSuite) TestTheSameFinishedWordsFinalizedAgainAreStillSettledAtOnce() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"})
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Book a table."})
+
+	s.Require().Len(*timers, 2)
+	s.True((*timers)[0].stopped)
+	s.Equal(cadenceFinalGap, (*timers)[1].delay)
+}
+
+func (s *CadenceSuite) TestAnUnfinishedFinalReleasesTheTurnOnceTheRetryGapHasPassed() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	s.cadence.Observe(stt.Transcript{
+		Participant: stt.Participant{ID: "caller"}, Mode: stt.ModeFinal, Text: "Burger, no bun,",
+	})
+	s.Require().Len(*timers, 1)
+	s.quiet()
+
+	(*timers)[0].fire()
+	s.Equal("Burger, no bun,", s.ready().Text)
 }
 
 func (s *CadenceSuite) TestGraceGivesOneTurnLongerToHoldStill() {
@@ -428,4 +580,154 @@ func (s *CadenceSuite) TestParticipantsKeepIndependentCadences() {
 	first := s.ready()
 	second := s.ready()
 	s.ElementsMatch([]string{"alice", "bob"}, []string{first.Participant.ID, second.Participant.ID})
+}
+
+type capturedCadenceTimer struct {
+	delay    time.Duration
+	callback func()
+	stopped  bool
+}
+
+func (timer *capturedCadenceTimer) Stop() bool {
+	wasActive := !timer.stopped
+	timer.stopped = true
+	return wasActive
+}
+
+func (timer *capturedCadenceTimer) fire() { timer.callback() }
+
+func (s *CadenceSuite) captureTimers() *[]*capturedCadenceTimer {
+	var timers []*capturedCadenceTimer
+	s.cadence.after = func(delay time.Duration, callback func()) cadenceTimer {
+		timer := &capturedCadenceTimer{delay: delay, callback: callback}
+		timers = append(timers, timer)
+		return timer
+	}
+	return &timers
+}
+
+func (s *CadenceSuite) useDefaultCadence() {
+	s.cadence.Close()
+	s.cadence = newCadence(defaultCadenceGap, defaultCadenceRetry, defaultCadenceSettle,
+		slog.New(slog.DiscardHandler))
+	s.T().Cleanup(s.cadence.Close)
+}
+
+func (s *CadenceSuite) TestOrdinaryCandidateRetainsConfiguredInitialGap() {
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "hello"})
+	s.Require().Len(*timers, 1)
+	s.Equal(5*time.Millisecond, (*timers)[0].delay,
+		"the final-only fast path is opt-in at the agent callsite, not a global cadence change")
+}
+
+func (s *CadenceSuite) TestPrimaryFinalExpeditesOnceButWaitRetryKeepsItsFullGap() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	interim := stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"}
+	s.cadence.Observe(interim)
+	s.Require().Len(*timers, 1)
+	s.Equal(defaultCadenceGap, (*timers)[0].delay)
+
+	final := interim
+	final.Mode = stt.ModeFinal
+	s.True(s.cadence.ExpediteFinal(final), "a settled primary candidate should not wait for the initial gap")
+	ready := s.ready()
+	s.Equal(interim.Text, ready.Text)
+	(*timers)[0].fire()
+	s.quiet()
+
+	s.Require().True(s.cadence.Resolve(ready.ID, true))
+	s.Require().Len(*timers, 2)
+	s.Equal(defaultCadenceRetry, (*timers)[1].delay)
+	s.False(s.cadence.ExpediteFinal(final), "duplicate final events must not bypass the retry gap")
+	(*timers)[1].fire()
+	s.Equal(interim.Text, s.ready().Text)
+}
+
+func (s *CadenceSuite) TestAFinalThatIsStillGoingIsNotExpedited() {
+	// A comma or a joining word says the caller has more to read out, so the primary
+	// scorer is not asked early and the retry wait stands.
+	caller := stt.Participant{ID: "caller"}
+	for _, text := range []string{"Burger, no bun,", "a burger and", "I would like, um"} {
+		s.useDefaultCadence()
+		timers := s.captureTimers()
+		final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: text}
+		s.cadence.Observe(final)
+		s.Require().Len(*timers, 1, "%q", text)
+		s.Equal(defaultCadenceRetry, (*timers)[0].delay, "%q", text)
+
+		s.False(s.cadence.ExpediteFinal(final), "%q is not done", text)
+		s.False((*timers)[0].stopped, "the wait for %q stays", text)
+		s.quiet()
+
+		(*timers)[0].fire()
+		s.Equal(text, s.ready().Text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalThatAddsACommaToSettledWordsIsNotExpedited() {
+	// The cadence holds the words as first heard, and the final may be the first to say
+	// there is more to come.
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "Name"})
+	final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Name,"}
+	s.cadence.Observe(final)
+
+	s.False(s.cadence.ExpediteFinal(final))
+	s.Require().Len(*timers, 1)
+	s.False((*timers)[0].stopped)
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAPeriodIsStillExpedited() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"})
+	final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Book a table."}
+	s.cadence.Observe(final)
+
+	s.True(s.cadence.ExpediteFinal(final))
+	s.Equal("book a table", s.ready().Text)
+	for _, timer := range *timers {
+		timer.fire()
+	}
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestChangedFinalCanExpediteAndEscapedTimerCannotReleaseIt() {
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"})
+	oldTimer := (*timers)[0]
+
+	final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "book a table for four"}
+	s.cadence.Observe(final)
+	newTimer := (*timers)[1]
+	s.True(s.cadence.ExpediteFinal(final))
+	first := s.ready()
+	oldTimer.fire()
+	newTimer.fire()
+	s.quiet()
+	s.Equal(final.Text, first.Text)
+}
+
+func (s *CadenceSuite) TestEscapedTimerAfterForgetCannotReleaseRejoinedParticipant() {
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "old words"})
+	oldTimer := (*timers)[0]
+	s.cadence.Forget(caller)
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "new words"})
+	newTimer := (*timers)[1]
+
+	oldTimer.fire()
+	s.quiet()
+	newTimer.fire()
+	s.Equal("new words", s.ready().Text)
 }

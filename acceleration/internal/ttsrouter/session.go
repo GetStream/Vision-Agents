@@ -69,6 +69,10 @@ func (s *Session) Synthesize(request tts.Request) error {
 func (s *Session) Interrupt() error { return s.provider.Interrupt() }
 
 // Events returns the provider's events. The channel closes when the session closes.
+//
+// Whoever reads it must keep reading: the session sends each event on as it passes, so a reader
+// that waits on something holds up every event behind it, and the statistics recorded as they
+// go by. What has to wait for a moment is held aside by the reader, not by not reading.
 func (s *Session) Events() <-chan tts.Event { return s.events }
 
 // Provider is the provider serving this session.

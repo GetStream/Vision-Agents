@@ -1,3 +1,7 @@
 name: restaurant
 description: The skills the restaurant pack's subagent may run.
 subagent: openai/gpt-6.1-sol
+keyterms:
+  - "Alvarez"
+  - "Patel"
+  - "512-555-0142"

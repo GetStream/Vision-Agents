@@ -36,6 +36,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
@@ -78,6 +79,11 @@ type ManagerOptions struct {
 	// conversation with instead of the three above. A deployment without one refuses
 	// such a session rather than falling back to the cascade unasked.
 	STS *stsrouter.Router
+	// EOT optionally gates or resolves settled quiet-floor cascade candidates.
+	EOT          *audioturn.Client
+	Interruption *agent.InterruptionClient
+	EOTMode      agent.EOTMode
+	EOTThreshold float64
 
 	// Edge is required: without it there is no call to join.
 	Edge EdgeFactory
@@ -96,8 +102,31 @@ type ManagerOptions struct {
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
-	// ruled on the words, and hold it until the ruling says to answer.
-	SpeculativeReplies bool
+	// ruled on the words, and hold it until the ruling says to answer. Nil leaves it on, and
+	// a pointer to false asks for each reply only once the ruling is in.
+	SpeculativeReplies *bool
+	// ReplySilence is how long a caller must have been quiet before the first audio of the
+	// reply to them is let out, for every agent. Nil leaves it at the agent's default, and a
+	// pointer to zero lets a reply start as soon as it is ready.
+	ReplySilence *time.Duration
+	// ReplySilenceMax is the longest the first audio of a reply is held for that silence, for
+	// every agent. Nil leaves it at the agent's default.
+	ReplySilenceMax *time.Duration
+	// ReplySilenceConfident is the silence that applies instead for a reply to a turn decided by
+	// an acoustic end-of-turn score of at least ReplyConfidentScore, for every agent. Nil leaves
+	// it at the agent's default.
+	ReplySilenceConfident *time.Duration
+	// ReplyConfidentScore is the acoustic end-of-turn score from which a turn is taken to have
+	// ended for sure, for every agent. Nil leaves it at the agent's default.
+	ReplyConfidentScore *float64
+	// PreviewDebounce is how long a caller's words have to hold still before every agent starts
+	// the reply to them, ahead of the wait that decides whether they have finished. Nil leaves
+	// it at the agent's default, and a pointer to zero starts the reply when that wait is over.
+	PreviewDebounce *time.Duration
+	// PreviewQuiet is how long a caller's audio has to have been quiet, as well as their words
+	// having held still, before every agent starts the reply to them ahead of that wait. Nil
+	// leaves it at the agent's default, and a pointer to zero looks at the words alone.
+	PreviewQuiet *time.Duration
 	// Stream says which Stream app, and with which credential, each session acts in. It
 	// is optional: without it a session has no app, and anything needing one fails where
 	// it needs it, as it does on a deployment with no Stream credentials.
@@ -578,40 +607,50 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			TTSTarget:     spec.TTSTarget,
 			// Every router the deployment has is handed over, whichever pipeline the session
 			// starts on, so it can be moved onto the other one mid-call.
-			STS:                m.options.STS,
-			STSTarget:          spec.STSTarget,
-			SubagentTarget:     spec.SubagentTarget,
-			ControllerTarget:   spec.ControllerTarget,
-			Skills:             skills,
-			Telephony:          line,
-			ToolRunner:         runner,
-			Tools:              harness.Tools{Tools: tools},
-			Sandbox:            box,
-			Publish:            publisher(conv),
-			Tasks:              spec.Tasks,
-			Duplex:             spec.duplex(),
-			VideoSource:        spec.VideoSource,
-			VideoMaxFrames:     spec.VideoMaxFrames,
-			Voice:              spec.Voice,
-			LanguageHints:      spec.LanguageHints,
-			Keyterms:           spec.Keyterms,
-			MaxTokens:          spec.MaxTokens,
-			Overwrites:         spec.LLMOverwrites(),
-			Memory:             remembering,
-			Knowledge:          m.options.Knowledge,
-			KnowledgeNamespace: spec.KnowledgeNamespace,
-			Search:             m.options.Search,
-			SearchTarget:       spec.SearchTarget,
-			Guardrail:          screening,
-			SpeculativeReplies: m.options.SpeculativeReplies,
-			AppID:              spec.Memory.AppID,
-			SessionID:          spec.ID,
-			Incognito:          spec.Incognito,
-			MemoryUserID:       spec.Memory.UserID,
-			MemoryFilter:       spec.Memory.Filter,
-			Store:              m.options.Store,
-			Live:               m.options.Live,
-			Logger:             m.logger,
+			STS:                   m.options.STS,
+			EOT:                   m.options.EOT,
+			Interruption:          m.options.Interruption,
+			EOTMode:               m.options.EOTMode,
+			EOTThreshold:          m.options.EOTThreshold,
+			STSTarget:             spec.STSTarget,
+			SubagentTarget:        spec.SubagentTarget,
+			ControllerTarget:      spec.ControllerTarget,
+			Skills:                skills,
+			Telephony:             line,
+			ToolRunner:            runner,
+			Tools:                 harness.Tools{Tools: tools},
+			Sandbox:               box,
+			Publish:               publisher(conv),
+			Tasks:                 spec.Tasks,
+			Duplex:                spec.duplex(),
+			VideoSource:           spec.VideoSource,
+			VideoMaxFrames:        spec.VideoMaxFrames,
+			Voice:                 spec.Voice,
+			LanguageHints:         spec.LanguageHints,
+			Keyterms:              spec.Keyterms,
+			MaxTokens:             spec.MaxTokens,
+			Overwrites:            spec.LLMOverwrites(),
+			Memory:                remembering,
+			Knowledge:             m.options.Knowledge,
+			KnowledgeNamespace:    spec.KnowledgeNamespace,
+			Search:                m.options.Search,
+			SearchTarget:          spec.SearchTarget,
+			Guardrail:             screening,
+			SpeculativeReplies:    m.options.SpeculativeReplies,
+			ReplySilence:          m.options.ReplySilence,
+			ReplySilenceMax:       m.options.ReplySilenceMax,
+			ReplySilenceConfident: m.options.ReplySilenceConfident,
+			ReplyConfidentScore:   m.options.ReplyConfidentScore,
+			PreviewDebounce:       m.options.PreviewDebounce,
+			PreviewQuiet:          m.options.PreviewQuiet,
+			AppID:                 spec.Memory.AppID,
+			SessionID:             spec.ID,
+			Incognito:             spec.Incognito,
+			MemoryUserID:          spec.Memory.UserID,
+			MemoryFilter:          spec.Memory.Filter,
+			Store:                 m.options.Store,
+			Live:                  m.options.Live,
+			Logger:                m.logger,
 		})
 	}
 	built, err := created.build(ctx, spec)

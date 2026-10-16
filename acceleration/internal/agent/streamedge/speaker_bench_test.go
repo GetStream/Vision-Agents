@@ -1,6 +1,7 @@
 package streamedge
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -17,15 +18,22 @@ func BenchmarkSpeakerWrite(b *testing.B) {
 	}
 	chunk := audio.PcmData{Samples: samples, SampleRate: rate, Channels: 1}
 	talker := newSpeaker(nil)
+	ctx := context.Background()
+	if _, err := talker.NextSample(ctx); err != nil {
+		b.Fatal(err)
+	}
+	defer talker.Close()
 	b.ReportAllocs()
 	for b.Loop() {
 		for range 5 {
-			if _, err := talker.queue(chunk, nil); err != nil {
+			if err := talker.WriteContext(ctx, chunk); err != nil {
 				b.Fatal(err)
 			}
+			for talker.pending() {
+				if _, err := talker.NextSample(ctx); err != nil {
+					b.Fatal(err)
+				}
+			}
 		}
-		talker.mu.Lock()
-		talker.forgetFramesLocked()
-		talker.mu.Unlock()
 	}
 }

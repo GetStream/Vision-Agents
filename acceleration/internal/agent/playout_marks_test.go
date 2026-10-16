@@ -22,7 +22,7 @@ type markedEdge struct {
 	marked int
 }
 
-func (e *markedEdge) PublishAudioMarked(pcm audio.PcmData, marks PlayoutMarks) error {
+func (e *markedEdge) PublishAudioMarked(_ context.Context, pcm audio.PcmData, marks PlayoutMarks) error {
 	if err := e.loopbackEdge.PublishAudio(pcm); err != nil {
 		return err
 	}

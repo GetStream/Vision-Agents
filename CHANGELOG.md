@@ -61,6 +61,22 @@ too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from 
 declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
 updates.
 
+### The standalone voice agent waits quietly by default
+
+`cmd/agent` no longer adds listening acknowledgements or questions during long silences.
+Use `-backchannel=true` and `-check-in=true` to opt in to those behaviors. The
+embedded agent and router keep their existing idle behavior. (#749)
+
+### Router voice calls use hosted primary EOT by default
+
+`cmd/router` and `cmd/agent` now use the hosted EU end-of-turn demo automatically when
+no EOT URL is specified, with `primary` mode and threshold `0.5`. Eligible voice turns
+send a trailing caller-audio window over HTTPS and use the acoustic score to decide
+completion. No EOT token, Google Cloud login or TPU setup is required. An explicit
+`ROUTER_EOT_URL=` disables this behavior; custom endpoints retain the `gate` default
+unless a mode is explicitly selected. The ordinary Stream and model-provider credentials
+are still needed. (#749)
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,
@@ -781,10 +797,10 @@ says something first is kept, and the other is cancelled the moment it loses and
 both calls are reported as model calls and recorded, the cancelled one as any cancelled call is.
 The wait counts from the request, so a model that is slow to answer at all is hedged as well as
 one that is slow to start streaming. A reply is hedged once, a hedge that fails leaves the first
-request going, and a target with no other candidate is asked once, as before. Replies are hedged;
-the flow controller, the guardrails, background work and a reply that continues from a response
-the provider holds are not. `0` turns it off, `cmd/agent -reply-hedge` is the same setting, and
-the router option is `llmrouter.Options.ReplyHedge`.
+request going, and a target with no other candidate is asked once, as before. Replies are hedged,
+a preview among them; the flow controller, the guardrails, background work and a reply that
+continues from a response the provider holds are not. `0` turns it off, `cmd/agent -reply-hedge`
+is the same setting, and the router option is `llmrouter.Options.ReplyHedge`.
 
 ### A log severity is the least serious level to show, not the only one
 
@@ -1090,10 +1106,37 @@ that may still be growing.
 
 The flow controller decides whether the words a caller settled on were meant for the agent,
 and the reply used to wait for that ruling, so every answered turn paid for two model round
-trips one after the other. With `ROUTER_SPECULATIVE_REPLIES=true` the reply is asked for
-beside the ruling and held until it comes back: an answer for the same words speaks it, and
-anything else drops it unheard. It is off by default, because a dropped reply is still paid
-for, and on a pause-heavy call most of them are dropped.
+trips one after the other. The reply is now asked for beside the ruling and held until it
+comes back: an answer for the same words speaks it, and anything else drops it unheard. It
+is on by default, and `ROUTER_SPECULATIVE_REPLIES=false` asks for the reply only once the
+ruling is in. A dropped reply is still paid for, and on a pause-heavy call most of them are
+dropped.
+
+### Voice replies start early and wait for caller silence (#749)
+
+Stable transcripts can start a reply after `ROUTER_PREVIEW_DEBOUNCE` (60ms) and
+`ROUTER_PREVIEW_QUIET` (120ms of caller silence). Incomplete endings wait longer.
+A reply survives a wait decision for the same words; revisions, a floor change or
+expired patience discard it. Early replies are bounded per utterance.
+
+The first audio waits for `ROUTER_REPLY_SILENCE` (700ms), capped by
+`ROUTER_REPLY_SILENCE_MAX` (1s). Acoustic scores at or above
+`ROUTER_REPLY_CONFIDENT_SCORE` (0.9) shorten this to
+`ROUTER_REPLY_SILENCE_CONFIDENT` (300ms). New voice restarts the silence window;
+new words can cancel the unheard reply. Other synthesis events keep draining.
+
+Low acoustic scores retry after 200ms only when fresh audio arrives, with one
+request in flight per participant. After 2.5s of uncertainty the agent asks a
+short clarifying question. Semantic waits retain their 700ms retry.
+
+`reply_hold_ms` reports the first-audio hold in session events, call timelines and
+turn storage. It is included in `tts_to_audio_ms` and `roundtrip_ms`; chat timing
+lines display it when enabled. See the acceleration README for configuration.
+
+Selecting `audioturn/audioturn-stack16k-blend` as STT uses AudioTurn for both words
+and turn scores, without a separate transcription provider or a second scoring
+request. This is opt-in and requires a transcript-capable AudioTurn deployment.
+Existing STT targets and automatic model groups keep their behavior.
 
 ### A turn says when its reply could first be heard
 
@@ -2051,6 +2094,33 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `POST /v1/agents/connections/{id}/validate` no longer returns a provider error that echoes the credential. The answer's error is the same text GET and list store: every value the credential is sent as is replaced, and the text is cut at 1 KiB. When credentials change during the check, the answer keeps no provider text (AI-1078).
 - Native speech sessions retry recoverable connection failures before leaving the call (#894).
 - A test copy or a duplicate of an agent no longer silences the agent on its Slack bot, Linq, Telnyx or WhatsApp connection. A channel connection belongs to one live agent config: a create, update, patch or sync that newly binds one as `fixed` while another live config binds it is a 409 `channel_connection_taken` naming that config. A config tagged `draft_of` (the dashboard's test copy) is not refused, answers no channel message and subscribes to no MCP event. Configs that already shared a connection keep working: the oldest answers, and the router logs a warning naming the others. An MCP event is subscribed to once per connection, by the oldest live config that declares it, so a copy no longer opens a second conversation for each event (AI-1049, AI-1048).
+
+- Primary EOT checks whether words were addressed to the agent alongside the reply.
+  An ignore decision cancels it only before audio starts. Noise-only transcripts
+  start no reply and do not interrupt one. (#749)
+- Complete spoken times and digit sequences stay with the fast model instead of
+  being delegated as incomplete identifiers. (#749)
+- Words extending a caller turn replace its unheard reply and history entry. Held
+  text is excluded from echo detection and the flow controller's spoken context;
+  acknowledgements still let the pending reply finish. (#749)
+
+- Interrupted voice replies retain their unfinished generated text as conversation
+  context, so the next caller turn can be answered naturally and explicit continuation
+  requests can pick up the explanation. Repeated transcription updates no longer cancel
+  a reply without scheduling a replacement. (#749)
+
+- Primary EOT voice calls stop an active reply on clear caller interruptions without
+  waiting for a second model decision. Local playback clears before provider cancellation,
+  and delayed audio from the interrupted reply cannot restart it. Brief acknowledgements
+  and likely echo keep the cautious path. (#749)
+
+- ElevenLabs streaming speech recovers from a closed connection on the next new
+  utterance, rather than remaining silent until the agent restarts. Failed utterances
+  are settled without replaying already spoken audio. (#749)
+
+- Standalone agent demo links now select the actual call type and the `agent` chat
+  channel, allowing Pronto to display conversation messages when transcript storage
+  is configured. (#749)
 - `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of
   the app's hooks while any hook in it is at a host that does not resolve, and the command
   dropped a tunnel's call hook and its message hook in two updates, so the first was refused

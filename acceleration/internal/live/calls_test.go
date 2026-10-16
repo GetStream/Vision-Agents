@@ -23,9 +23,10 @@ func (s *LiveSuite) decision(kind, reason string, at time.Time) CallEvent {
 
 func (s *LiveSuite) TestACallsTurnsAreReadBackInTheOrderTheyStarted() {
 	now := time.Now()
-	queuedMs, audibleMs := 880.0, 940.0
+	queuedMs, audibleMs, heldMs := 880.0, 940.0, 620.0
 	first := s.turn("turn-1", now.Add(-2*time.Minute), 1400)
 	first.FirstFrameQueuedMs, first.FirstAudibleFrameMs = &queuedMs, &audibleMs
+	first.ReplyHoldMs = &heldMs
 	s.Require().NoError(s.client.RecordTurn(s.ctx, s.turn("turn-2", now.Add(-time.Minute), 900)))
 	s.Require().NoError(s.client.RecordTurn(s.ctx, first))
 
@@ -37,6 +38,7 @@ func (s *LiveSuite) TestACallsTurnsAreReadBackInTheOrderTheyStarted() {
 	s.InDelta(1400, *turns[0].RoundtripMs, 0.001)
 	s.InDelta(880, *turns[0].FirstFrameQueuedMs, 0.001)
 	s.InDelta(940, *turns[0].FirstAudibleFrameMs, 0.001)
+	s.InDelta(620, *turns[0].ReplyHoldMs, 0.001)
 	s.Nil(turns[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
 }
 

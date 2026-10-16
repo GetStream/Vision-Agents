@@ -117,6 +117,8 @@ describe("loadFolder", () => {
     for (const declaration of [
       "lmm: openai/gpt-5.6\n",
       "speed: 0.9\n",
+      "speed: fast\n",
+      "speed: -1\n",
       "greeting: Hello\n",
       "greeting:\n  mode: exact\n",
       "keyterms: Vision Agents\n",

@@ -49,11 +49,14 @@ func (s *AgentSuite) TestAReplacementReplyDoesNotInheritAnInterruptedSentence() 
 		s.NotContains(request.Text, "old answer")
 		s.NotContains(request.Text, "whis")
 	}
+	var answers []string
 	for _, message := range s.history() {
 		if message.Role == llm.Assistant {
-			s.Equal("Only the replacement answer.", message.Content)
+			answers = append(answers, message.Content)
 		}
 	}
+	s.Equal([]string{"The old answer was", "Only the replacement answer."}, answers,
+		"interruption context stays separate from the replacement reply")
 }
 
 func (s *AgentSuite) TestAFailedReplacementReplyDoesNotReuseInterruptedText() {

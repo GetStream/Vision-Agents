@@ -80,6 +80,23 @@ func (s *TurnTracingSuite) TestEveryStageOfATurnIsASpanOfItsOwnLength() {
 	s.Equal(600*time.Millisecond, spans["agent.turn"].EndTime().Sub(spans["agent.turn"].StartTime()))
 }
 
+func (s *TurnTracingSuite) TestAnEarlyPreviewKeepsTheDecisionAndOverlappingModelStages() {
+	current := s.turn()
+	current.modelAt = current.transcriptAt.Add(50 * time.Millisecond)
+	current.decisionAt = current.transcriptAt.Add(200 * time.Millisecond)
+	current.firstTextAt = current.transcriptAt.Add(300 * time.Millisecond)
+
+	traceTurn(s.owner, "turn-1", current)
+
+	spans := s.spans()
+	s.Require().Contains(spans, "turn.decision")
+	s.Require().Contains(spans, "turn.llm")
+	s.Equal(100*time.Millisecond, spans["turn.decision"].EndTime().Sub(spans["turn.decision"].StartTime()))
+	s.Equal(250*time.Millisecond, spans["turn.llm"].EndTime().Sub(spans["turn.llm"].StartTime()))
+	s.True(spans["turn.llm"].StartTime().Before(spans["turn.decision"].EndTime()),
+		"the preview's model interval starts before the decision completes")
+}
+
 func (s *TurnTracingSuite) TestTheTurnSaysWhoItWasFor() {
 	traceTurn(s.owner, "turn-1", s.turn())
 

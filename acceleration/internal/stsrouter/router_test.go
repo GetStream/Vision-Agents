@@ -411,16 +411,23 @@ func (s *STSRouterSuite) TestInterruptMutesTheReplyBeforeTheProviderHearsOfIt() 
 	provider.emitter.Send(sts.ResponseStarted{ResponseID: "r", Generation: 1, At: time.Now()})
 	provider.emitter.Send(chunk(1, 0))
 	// Let the start and the chunk through before interrupting, so the interrupt is
-	// unambiguously about a reply in flight. Nothing reads the events until the drain, so
-	// both are forwarded once both are queued.
-	s.Eventually(func() bool { return len(session.Events()) == 2 }, time.Second, 10*time.Millisecond)
+	// unambiguously about a reply in flight.
+	var received []sts.Event
+	s.Require().Eventually(func() bool {
+		select {
+		case event := <-session.Events():
+			received = append(received, event)
+		default:
+		}
+		return len(chunks(received)) == 1
+	}, time.Second, 10*time.Millisecond)
 
 	s.Require().NoError(session.Interrupt(350))
 	provider.emitter.Send(chunk(1, 1))
 	s.Require().NoError(session.Close())
 
 	s.Equal([]int{350}, provider.interrupts, "the provider should be told how much the listener heard")
-	forwarded := chunks(s.drain(session))
+	forwarded := chunks(append(received, s.drain(session)...))
 	s.Require().Len(forwarded, 1, "audio after the caller cut in must not reach them")
 	s.Equal(0, forwarded[0].Index)
 }
