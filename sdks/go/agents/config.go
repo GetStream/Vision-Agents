@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -123,11 +124,21 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 		body.Simulations = &declared
 	}
 	declareSettings(&body, folder.Settings)
-	bindings, err := connectorBindings(ctx, client, folder.Settings)
+	bindings, missing, err := connectorBindings(ctx, client, folder.Settings)
 	if err != nil {
 		return nil, err
 	}
 	body.Connectors = bindings
+	for _, connection := range missing {
+		a.logger.Warn("agent.yaml connector left out: the app has no such connection",
+			"agent", a.options.Name, "connector", connection.name, "connection", connection.token)
+	}
+	if len(missing) > 0 {
+		// Another hash for a sync that left a connector out, sent and stamped: the router does
+		// nothing for a hash it already stored, and the sync that finds the connection must not
+		// be taken for this one.
+		body.Hash = fingerprint(hash, "missing connections", fmt.Sprint(missing), nil, nil, nil, nil)
+	}
 	if harness != nil {
 		body.Harness = harness
 	}
@@ -159,7 +170,7 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	for _, warning := range deref(result.Warnings) {
 		a.logger.Warn("synced with a warning", "agent", a.options.Name, "warning", warning)
 	}
-	if err := WriteStamp(folder.Path, hash); err != nil {
+	if err := WriteStamp(folder.Path, body.Hash); err != nil {
 		return nil, err
 	}
 	return &result.Config, nil
@@ -314,19 +325,40 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 // connectorBindings are the connectors agent.yaml names, in the shape the sync takes.
 // Nil when the key was left out, so the stored bindings stay; empty when the file
 // lists none, which removes them.
-func connectorBindings(ctx context.Context, client *acceleration.ClientWithResponses, settings Settings) (*[]acceleration.AgentConnectorBinding, error) {
+//
+// An entry whose connection the app does not have is left out and returned, so the rest of
+// the agent still syncs, unless the entry is required: a session needs that one.
+func connectorBindings(ctx context.Context, client *acceleration.ClientWithResponses, settings Settings) (*[]acceleration.AgentConnectorBinding, []missingConnection, error) {
 	if settings.Connectors == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	bindings := make([]acceleration.AgentConnectorBinding, 0, len(settings.Connectors))
+	var missing []missingConnection
 	for _, entry := range settings.Connectors {
 		binding, err := connectorBinding(ctx, client, entry)
+		var absent missingConnection
+		if errors.As(err, &absent) {
+			if deref(entry.Required) {
+				return nil, nil, fmt.Errorf("%w: add the connection, or drop required", err)
+			}
+			missing = append(missing, absent)
+			continue
+		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		bindings = append(bindings, binding)
 	}
-	return &bindings, nil
+	return &bindings, missing, nil
+}
+
+// missingConnection is a connection an agent.yaml entry names that the app does not have.
+type missingConnection struct {
+	name, token string
+}
+
+func (m missingConnection) Error() string {
+	return fmt.Sprintf("agents: connector %q: no app connection with id or label %q", m.name, m.token)
 }
 
 func connectorBinding(ctx context.Context, client *acceleration.ClientWithResponses, entry ConnectorSettings) (acceleration.AgentConnectorBinding, error) {
@@ -383,7 +415,7 @@ func fixedConnection(ctx context.Context, client *acceleration.ClientWithRespons
 	case 1:
 		return labels[0], nil
 	case 0:
-		return "", fmt.Errorf("agents: connector %q: no app connection with id or label %q", name, token)
+		return "", missingConnection{name: name, token: token}
 	default:
 		return "", fmt.Errorf("agents: connector %q: %q matches %d app connections", name, token, len(labels))
 	}

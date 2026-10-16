@@ -1035,23 +1035,141 @@ func TestSyncResolvesTheOneConnectionWithThatLabel(t *testing.T) {
 	}
 }
 
-func TestSyncRefusesAConnectionNobodyHas(t *testing.T) {
+// resolvingYAML names a session binding and a connection the app has. Its sync body was
+// probed on a5721c90, before a missing connection was left out.
+const resolvingYAML = "name: concierge\nconnectors:\n  - linear\n  - name: code\n    connector: github\n    connection: company\n"
+
+func TestSyncOfConnectionsThatAllResolveSendsTheBodyItSentBefore(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: missing\n")
+	write(t, root, "agent.yaml", resolvingYAML)
 	router := newBackend(t)
-	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("conn-1", "company"))
+	})
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	const probed = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]},{"connection":{"connection_id":"conn-1","type":"fixed"},"connector_id":"github","name":"code","tool_patterns":["*"],"tools":[]}],"hash":"84cee98b6c473b082438ee7b52cea7c6","name":"concierge"}`
+	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
+		t.Errorf("body = %s", router.syncRaw)
+	}
+	if stamp := ReadStamp(root); stamp != router.syncs[0].Hash {
+		t.Errorf("stamped %q after sending %q", stamp, router.syncs[0].Hash)
+	}
+	if strings.Contains(logged.String(), "left out") {
+		t.Errorf("warned of a connection the app has: %q", logged.String())
+	}
+}
+
+func TestSyncLeavesOutAConnectorWhoseConnectionIsMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: missing\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	stored, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stored == nil || stored.Name != "concierge" {
+		t.Errorf("the sync answered %+v", stored)
+	}
+	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml connector left out: the app has no such connection" agent=concierge connector=issues connection=missing`) {
+		t.Errorf("no warning in %q", logged.String())
+	}
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 1 {
+		t.Fatalf("%d syncs were sent", len(router.syncs))
+	}
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "linear" {
+		t.Errorf("connectors went as %+v", sent)
+	}
+}
+
+func TestSyncRefusesARequiredConnectorWhoseConnectionIsMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: missing\n    required: true\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
 		return connectionPage("", listedConnection("other", "work"))
 	})
 	agent := agentOn(t, router, Options{Dir: root})
 
 	_, err := agent.Sync(t.Context())
-	if err == nil || !strings.Contains(err.Error(), `connector "issues"`) || !strings.Contains(err.Error(), `"missing"`) {
+	if err == nil || !strings.Contains(err.Error(), `connector "issues"`) || !strings.Contains(err.Error(), `"missing"`) ||
+		!strings.Contains(err.Error(), "add the connection, or drop required") {
 		t.Fatalf("sync error = %v", err)
 	}
 	router.mu.Lock()
 	defer router.mu.Unlock()
 	if len(router.syncRaw) != 0 {
 		t.Errorf("a sync was sent: %s", router.syncRaw[0])
+	}
+}
+
+func TestSyncFailsWhenConnectionsCannotBeListed(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: work\n")
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	agent, err := New(Options{Dir: root, LLM: stream.Accelerated(stream.Config{
+		Backend: stream.Backend{URL: closed.URL, CustomerID: "acme"},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := agent.Sync(t.Context()); err == nil || !strings.Contains(err.Error(), "listing connections") {
+		t.Fatalf("sync error = %v", err)
+	}
+}
+
+// The router does nothing for a hash it already stored (acceleration/internal/api/sync.go:180),
+// so the sync that finds the connection has to send another one.
+func TestASyncThatLeftAConnectorOutAddsItOnceTheConnectionExists(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: company\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("conn-1", "company"))
+	})
+	for range 2 {
+		if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Fatalf("three syncs, the last of an unchanged directory, sent %d requests", len(router.syncs))
+	}
+	if router.syncs[0].Hash == router.syncs[1].Hash {
+		t.Errorf("both syncs sent hash %q, so the router keeps the first", router.syncs[0].Hash)
+	}
+	sent := router.syncs[1].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Connection.ConnectionId == nil || *(*sent)[0].Connection.ConnectionId != "conn-1" {
+		t.Errorf("connectors went as %+v", sent)
 	}
 }
 
