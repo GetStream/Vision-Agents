@@ -31,8 +31,9 @@ class STT(stt.STT):
     credited to them. The router's socket carries no participant, and a transcript lags
     the audio it is of, so on a shared socket a line still arriving when someone else
     starts talking would go to the wrong speaker. The socket opened by `start` goes to
-    whoever speaks first; everyone after gets a new one on their first frame. Sockets are
-    kept until `close`.
+    whoever speaks first; everyone after gets a new one on their first frame, opened in
+    the background so nobody else's audio waits for it, with their frames held in order
+    until it is open. Sockets are kept until `close`.
     """
 
     def __init__(
@@ -74,7 +75,9 @@ class STT(stt.STT):
         self._unclaimed: Optional[Socket] = None
         self._sockets: dict[str, Socket] = {}
         self._speakers: dict[Socket, Participant] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        # _held is the audio of each participant whose socket is still opening.
+        self._held: dict[str, list[bytes]] = {}
+        self._opening: list[asyncio.Task] = []
         self._readers: list[asyncio.Task] = []
 
     async def start(self):
@@ -103,17 +106,19 @@ class STT(stt.STT):
         if self.closed or not self.started:
             return
 
-        resampled = pcm_data.resample(SAMPLE_RATE, 1)
-        # A participant's frames wait in order behind the opening of their socket.
-        async with self._locks.setdefault(participant.id, asyncio.Lock()):
-            socket = self._sockets.get(participant.id)
-            if socket is None:
-                socket = await self._claim(participant)
-            if socket.open:
-                await socket.send_audio(resampled.samples.tobytes())
+        payload = pcm_data.resample(SAMPLE_RATE, 1).samples.tobytes()
+        socket = self._sockets.get(participant.id) or self._claim(participant)
+        held = self._held.get(participant.id)
+        if held is not None:
+            held.append(payload)
+        elif socket.open:
+            await socket.send_audio(payload)
 
     async def close(self):
-        """Close every socket and stop reading them."""
+        """Close every socket, including one still opening, and stop reading them."""
+        await cancel_and_wait(*self._opening)
+        self._opening.clear()
+        self._held.clear()
         for reader in self._readers:
             await cancel_and_wait(reader)
         self._readers.clear()
@@ -147,27 +152,37 @@ class STT(stt.STT):
         )
         self._readers.append(asyncio.create_task(self._read(socket)))
 
-    async def _claim(self, participant: Participant) -> Socket:
+    def _claim(self, participant: Participant) -> Socket:
         """The socket `participant` is heard on: the one start opened if nobody has it yet,
-        or a new one.
-
-        A socket the router refuses is reported once and kept, closed, so the rest of that
-        participant's audio is dropped as a closed socket's always was, rather than each
-        frame asking again.
-        """
+        or a new one, opened in the background while their frames are held."""
         unclaimed, self._unclaimed = self._unclaimed, None
         socket = unclaimed or self._socket()
         self._sockets[participant.id] = socket
         self._speakers[socket] = participant
         if unclaimed is None:
-            try:
-                await self._open(socket)
-            except (RouterError, aiohttp.ClientError, OSError) as e:
-                await socket.close()
-                self._emit_error_event(
-                    e, context=f"opening a socket for {participant.id}"
-                )
+            self._held[participant.id] = []
+            self._opening.append(
+                asyncio.create_task(self._open_for(participant, socket))
+            )
         return socket
+
+    async def _open_for(self, participant: Participant, socket: Socket) -> None:
+        """Open a participant's socket, then send what they said meanwhile, in order.
+
+        A socket the router refuses is reported once and kept, closed, so the rest of that
+        participant's audio is dropped as a closed socket's always was, rather than each
+        frame asking again.
+        """
+        held = self._held[participant.id]
+        try:
+            await self._open(socket)
+            while held:
+                await socket.send_audio(held.pop(0))
+        except (RouterError, aiohttp.ClientError, OSError) as e:
+            await socket.close()
+            self._emit_error_event(e, context=f"opening a socket for {participant.id}")
+        finally:
+            self._held.pop(participant.id, None)
 
     async def _read(self, socket: Socket) -> None:
         """Turn what the router says on `socket` into transcripts on the output stream."""

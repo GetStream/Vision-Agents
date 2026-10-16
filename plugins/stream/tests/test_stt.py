@@ -3,6 +3,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
+import aiohttp
 import numpy as np
 import pytest
 from aiohttp import WSMsgType, web
@@ -58,6 +59,11 @@ class Router:
         self.heard: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
         # refusing makes opening a socket answer 429, as a customer over its limit is.
         self.refusing = False
+        # dropping makes opening a socket hang up before answering, as a router going away does.
+        self.dropping = False
+        # answering holds every handshake while it is clear, as a slow router does.
+        self.answering = asyncio.Event()
+        self.answering.set()
 
     def app(self) -> web.Application:
         app = web.Application()
@@ -75,6 +81,11 @@ class Router:
         return await asyncio.wait_for(self.heard.get(), SETTLE)
 
     async def _stream(self, request: web.Request) -> web.StreamResponse:
+        await self.answering.wait()
+        if self.dropping:
+            assert request.transport is not None
+            request.transport.close()
+            return web.Response()
         if self.refusing:
             return web.json_response(
                 status=429,
@@ -182,15 +193,18 @@ class TestSTT:
         self, router: Router, stt: stream.STT
     ):
         errors: list[STTErrorEvent] = []
+        reported = asyncio.Event()
 
         @stt.events.subscribe
         async def on_error(event: STTErrorEvent):
             errors.append(event)
+            reported.set()
 
         await stt.process_audio(audio(100), ALICE)
         await router.next_heard()
         router.refusing = True
         await stt.process_audio(audio(200), BOB)
+        await asyncio.wait_for(reported.wait(), SETTLE)
         await stt.process_audio(audio(201), BOB)
         await stt.process_audio(audio(101), ALICE)
         index, _ = await router.next_heard()
@@ -224,3 +238,77 @@ class TestSTT:
 
         assert len(router.opened) == 2
         assert seen == [STTConnectedEvent, STTDisconnectedEvent]
+
+    async def test_a_dropped_handshake_is_reported_once_and_not_raised(
+        self, router: Router, stt: stream.STT
+    ):
+        errors: list[STTErrorEvent] = []
+        reported = asyncio.Event()
+
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            errors.append(event)
+            reported.set()
+
+        await stt.process_audio(audio(100), ALICE)
+        await router.next_heard()
+        router.dropping = True
+        await stt.process_audio(audio(200), BOB)
+        await asyncio.wait_for(reported.wait(), SETTLE)
+        await stt.process_audio(audio(201), BOB)
+        await stt.process_audio(audio(101), ALICE)
+        index, _ = await router.next_heard()
+        await stt.events.wait()
+
+        assert index == 0, "the participant already heard is heard on"
+        assert len(errors) == 1
+        assert isinstance(errors[0].error, aiohttp.ClientError)
+
+    async def test_a_slow_handshake_holds_up_nobody_else_and_loses_nothing(
+        self, router: Router, stt: stream.STT
+    ):
+        await stt.process_audio(audio(100), ALICE)
+        await router.next_heard()
+        router.answering.clear()
+
+        bobs = [audio(level) for level in range(201, 206)]
+        for frame in bobs[:3]:
+            await asyncio.wait_for(stt.process_audio(frame, BOB), 0.2)
+        await asyncio.wait_for(stt.process_audio(audio(101), ALICE), 0.2)
+        alices_next = await router.next_heard()
+        router.answering.set()
+        for frame in bobs[3:]:
+            await stt.process_audio(frame, BOB)
+        for _ in bobs:
+            await router.next_heard()
+
+        assert alices_next == (0, audio(101).samples.tobytes())
+        assert len(router.opened) == 2
+        assert router.opened[1].audio == [f.samples.tobytes() for f in bobs]
+
+    async def test_closing_during_a_handshake_leaves_no_socket_open(
+        self, router: Router, stt: stream.STT
+    ):
+        await stt.process_audio(audio(100), ALICE)
+        await router.next_heard()
+        router.answering.clear()
+        await stt.process_audio(audio(200), BOB)
+
+        await stt.close()
+        router.answering.set()
+        await asyncio.sleep(0.2)
+        for opened in router.opened:
+            await asyncio.wait_for(opened.closed.wait(), SETTLE)
+
+        assert router.heard.empty(), "nothing Bob said reached the router"
+
+    async def test_audio_before_start_opens_no_socket(self, router: Router):
+        transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
+        await transcriber.process_audio(audio(100), ALICE)
+        await transcriber.start()
+        await transcriber.process_audio(audio(101), ALICE)
+        heard = await router.next_heard()
+        await transcriber.close()
+
+        assert heard == (0, audio(101).samples.tobytes())
+        assert len(router.opened) == 1
