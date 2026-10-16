@@ -3096,13 +3096,13 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// When the validate ran.
+        /// When the validate ran, or the provider refused the consent.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("checked_at")]
         public System.DateTimeOffset CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string? Code { get; set; } = default!;
