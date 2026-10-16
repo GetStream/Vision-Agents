@@ -85,10 +85,18 @@ func (r *Recordings) Transcribe(
 	ctx context.Context,
 	recording Recording,
 ) (stt.Transcription, routing.ProviderConfig, error) {
+	// A priority list is held to the batch half by Realtime below; a single target is not.
+	target := recording.Options.Target
+	if len(recording.Options.Providers) == 0 {
+		var err error
+		if target, err = r.Config().Recorded(target, recording.Options.Languages); err != nil {
+			return stt.Transcription{}, routing.ProviderConfig{}, err
+		}
+	}
 	request := routing.Request{
 		CustomerID:    recording.CustomerID,
 		Tags:          recording.Tags,
-		Target:        recording.Options.Target,
+		Target:        target,
 		Providers:     recording.Options.Providers,
 		Realtime:      &batch,
 		LanguageHints: recording.Options.Languages,

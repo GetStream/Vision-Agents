@@ -760,7 +760,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.T().Cleanup(speaker.Close)
 
 	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
-		Config:       routableConfig(),
+		Config:       recordingConfig(),
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
