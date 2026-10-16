@@ -77,7 +77,8 @@ const (
 	unavailableOpenFailed = "open_failed"
 	// unavailableTool: the provider no longer offers a granted tool with the schema it was
 	// granted against, or for a grant by name or a pattern match, pinned at for the connection
-	// (pinGrants, patternGrants). The tools it still offers are kept.
+	// (pinGrants, patternGrants). The tools it still offers are kept. A tool the connector's
+	// manifest leaves out for a scope it never asks for (AI-1394) is not offered either.
 	unavailableTool = "tool_unavailable"
 	// unavailableDropped: a fork's or a reopened chat's selection for an alias its config no
 	// longer declares as a session binding.
@@ -96,7 +97,8 @@ var unavailableWhy = map[string]string{
 		"revision it was saved on is marked broken; save it again with PUT /v1/agents/connections/{id}/credentials",
 	unavailableNotConnected: "the connection is not connected",
 	unavailableOpenFailed:   "its tools could not be listed",
-	unavailableTool:         "the provider no longer offers a granted tool with the schema it was granted against",
+	unavailableTool: "the provider no longer offers a granted tool with the schema it was granted against, " +
+		"or the connector leaves a granted tool out because it needs a scope the connector never asks for",
 }
 
 // attachConnectors opens the connector bindings the session may use and returns the

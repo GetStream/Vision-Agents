@@ -565,6 +565,31 @@ func (s *ConnectionToolsSuite) TestAGrantLackingAScopeAToolNeedsValidatesAsNeeds
 	s.Equal([]string{"channels:read"}, tools.Tools[1].NeedsScopes)
 }
 
+// TestAToolNeedingAScopeTheConnectorNeverAsksForIsLeftOut (AI-1394): fail needs
+// channels:history, which scopes.list does not hold, so no consent grants it. It is not listed,
+// not checked against the grant, and naming it is refused like any tool not offered.
+func (s *ConnectionToolsSuite) TestAToolNeedingAScopeTheConnectorNeverAsksForIsLeftOut() {
+	id := s.scopedTo(`    tools:
+      - name: echo
+        needs_scopes: [chat:write]
+      - name: fail
+        needs_scopes: [channels:history]
+`, "chat:write")
+
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"fail"}})
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.MissingScopes)
+	s.Require().Len(tools.Tools, 1)
+	s.Equal("echo", tools.Tools[0].Name)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `no tool named \"fail\"`)
+}
+
 func (s *ConnectionToolsSuite) TestAGrantWithEveryScopeItsToolsNeedValidatesAsConnected() {
 	id := s.scoped("chat:write,channels:read")
 
@@ -751,12 +776,18 @@ func (s *ConnectionToolsSuite) listedDigests(id string) map[string]string {
 // scoped is an oauth2_code connection whose grant was imported with scope, to a connector
 // whose echo needs chat:write and fail channels:read.
 func (s *ConnectionToolsSuite) scoped(scope string) string {
-	connector := s.connector(oauth2code.Name, `    tools:
+	return s.scopedTo(`    tools:
       - name: echo
         needs_scopes: [chat:write]
       - name: fail
         needs_scopes: [channels:read]
-`)
+`, scope)
+}
+
+// scopedTo is an oauth2_code connection whose grant was imported with scope, to a connector
+// whose mcp source says tools.
+func (s *ConnectionToolsSuite) scopedTo(tools, scope string) string {
+	connector := s.connector(oauth2code.Name, tools)
 	var created Connection
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",

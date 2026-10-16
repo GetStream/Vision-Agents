@@ -1,7 +1,8 @@
 # Metabase's built-in MCP server, which each Metabase instance serves for itself, asked for in
 # WWSD's platform feedback #46 (AI-1381). Vendor pages, opened October 16, 2026:
 #   [mcp]   https://www.metabase.com/docs/latest/ai/mcp («MCP server», v0.64 docs)
-#   [tools] https://www.metabase.com/docs/latest/ai/mcp-tools («MCP server tools»)
+#   [tools] https://www.metabase.com/docs/latest/ai/mcp-tools («MCP server tools»; each tool's
+#           «Permission scope» read again 2026-10-16T19:54:46Z, v0.64 docs, for revision 2)
 # And one public instance's metadata, read without signing in («[prm]», «[as]» and «[401]»):
 #   [prm] GET https://stats.metabase.com/.well-known/oauth-protected-resource/api/metabase-mcp
 #         at 2026-10-16T17:16:53Z: resource https://stats.metabase.com/api/metabase-mcp,
@@ -20,8 +21,9 @@
 #         scope="agent:content:read agent:content:write agent:query:run agent:sql:run
 #         agent:delivery:write".
 id: metabase
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. Revision 2 (AI-1394)
+# names the tools that need a scope scopes.list leaves out, so they are not offered.
+revision: 2
 name: Metabase
 category: Analytics
 # [mcp]: tools «for searching, browsing, querying, and creating content», «scoped to the
@@ -80,3 +82,32 @@ scopes:
 sources:
   - kind: mcp
     endpoint: mcp
+    # Each tool whose «Permission scope» in [tools] is one scopes.list leaves out: the mcp
+    # source does not offer it, since Metabase refuses its calls with this grant (AI-1394:
+    # 403 on staging). The tools [tools] gives agent:content:read or agent:query:run stay
+    # offered. Every tool there names one scope.
+    tools:
+      - name: alert_write
+        needs_scopes: [agent:delivery:write]
+      - name: bookmark_content
+        needs_scopes: [agent:content:write]
+      - name: collection_write
+        needs_scopes: [agent:content:write]
+      - name: dashboard_write
+        needs_scopes: [agent:content:write]
+      - name: document_write
+        needs_scopes: [agent:content:write]
+      - name: duplicate_content
+        needs_scopes: [agent:content:write]
+      - name: execute_sql
+        needs_scopes: [agent:sql:run]
+      - name: measure_write
+        needs_scopes: [agent:content:write]
+      - name: metric_write
+        needs_scopes: [agent:content:write]
+      - name: question_write
+        needs_scopes: [agent:content:write]
+      - name: segment_write
+        needs_scopes: [agent:content:write]
+      - name: subscription_write
+        needs_scopes: [agent:delivery:write]
