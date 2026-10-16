@@ -15,9 +15,9 @@ import (
 
 // ConnectorScopeRequired is a connector tool call the provider refused because the grant
 // lacks access it needs (core.OutcomeScopeRequired), and the step-up consent begun for it on
-// the caller's own connection (AI-854). A client opens LaunchURL in a popup and posts it
-// HandoffToken, as for a consent the backend begins. The old grant keeps working until that
-// consent succeeds.
+// the caller's own connection (AI-854). The dashboard opens LaunchURL in a popup and posts it
+// HandoffToken, as for a consent the backend begins without a return_url. The old grant keeps
+// working until that consent succeeds.
 type ConnectorScopeRequired struct {
 	// Name is the binding's alias.
 	Name         string
