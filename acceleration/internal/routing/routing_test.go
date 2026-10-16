@@ -1111,15 +1111,17 @@ func (s *RoutingSuite) TestAnOverwriteOneModelCannotReadIsTriedOnTheSameVendorsO
 func (s *RoutingSuite) TestEachElevenLabsModelDeclaresTheVoiceSettingsItsSocketSends() {
 	// The text-to-speech socket sends stability and similarity_boost on every context
 	// (tts/elevenlabs/elevenlabs.go openContext); the dialogue socket sends a stability and
-	// takes no speed or similarity (dialogue.go NewDialogue); the batch endpoint sends all
-	// three (recorder.go).
+	// takes no speed or similarity (dialogue.go NewDialogue); the batch endpoint sends
+	// stability and similarity. It declares no speed: live on 2026-10-16 eleven_v3 answered
+	// 200 to a speed of 0.7, 1.0, 1.2 and 1.5 alike, in times that did not follow it, where
+	// Flash refused 1.5 with a 400.
 	want := map[string][]options.Term{
 		"eleven_flash_v2_5":        {options.Speed, options.Stability, options.Similarity},
 		"eleven_multilingual_v2":   {options.Speed, options.Stability, options.Similarity},
 		"eleven_v4_turbo":          {options.Stability},
 		"eleven_v3_conversational": {options.Stability},
 		"eleven_v4":                {options.Stability},
-		"eleven_v3":                {options.Speed, options.Stability, options.Similarity, options.Format},
+		"eleven_v3":                {options.Stability, options.Similarity, options.Format},
 	}
 	config, err := DefaultConfig()
 	s.Require().NoError(err)

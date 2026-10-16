@@ -26,11 +26,24 @@ func DefaultRecorderRegistry() *Recorders {
 	registry := NewRecorderRegistry()
 
 	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.Recorder, error) {
-		return elevenlabs.NewRecorder(elevenlabs.RecorderOptions{
-			VoiceID: spec.Voice,
+		settings := elevenlabsSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+
+		recorder, err := elevenlabs.NewRecorder(elevenlabs.RecorderOptions{
+			VoiceID: voiceOr(settings.VoiceID, spec.Voice),
 			Model:   spec.Model,
-			Logger:  spec.Logger,
+			Style:   settings.VoiceSettings.Style,
+			// Checked against 0 to 1 here, before the call, as the live voices do.
+			Stability:  spec.TTS.Stability,
+			Similarity: spec.TTS.Similarity,
+			Logger:     spec.Logger,
 		})
+		if err != nil {
+			return nil, elevenlabsRefusal(spec.Model, err)
+		}
+		return recorder, nil
 	})
 
 	return registry
@@ -97,9 +110,10 @@ func (r *Recordings) Record(
 	defer provider.Close()
 
 	startedAt := time.Now()
+	// No voice is named here: the recorder was built for the voice this vendor knows the
+	// request's by, or the one its overwrite named, and the request's own is neither.
 	recorded, err := provider.Record(ctx, tts.Recording{
 		Text:           recording.Text,
-		Voice:          recording.Options.Voice,
 		Language:       first(recording.Options.Languages),
 		Format:         recording.Options.Format,
 		Speed:          number(recording.Options.Speed),
