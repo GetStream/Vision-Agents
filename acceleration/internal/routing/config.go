@@ -432,6 +432,61 @@ func (c ModalityConfig) Names(target string) bool {
 	return c.Declares(target)
 }
 
+// Spoken reports whether any of the languages is not English: the one question that decides
+// between the English and the multilingual shortcuts for a job that named no target.
+func Spoken(languages []string) bool {
+	return slices.ContainsFunc(languages, func(language string) bool {
+		return language != "" && !strings.HasPrefix(language, "en")
+	})
+}
+
+// Recorded is the target a whole recording sent to target goes to. A live-only shortcut
+// holds streaming models, which a vendor's batch endpoint refuses, so a recording sent to
+// one goes to the recorded shortcut for the same languages. A live shortcut that names no
+// language (stt-fast) goes by the recording's language hints: English or none, the English
+// recorded shortcut; any other, the multilingual one. A provider/model naming a
+// streaming-only model is refused, and any other target is its own answer.
+func (c ModalityConfig) Recorded(target string, hints []string) (string, error) {
+	if provider, ok := c.Provider(target); ok {
+		if provider.Realtime {
+			return "", stack.Wrap(fmt.Errorf("routing: %s is a model for live calls; %s", target, c.recordedAdvice()))
+		}
+		return target, nil
+	}
+	live, ok := c.Aliases[target]
+	if !ok || !live.RequireRealtime {
+		return target, nil
+	}
+	multilingual, languages := live.Multilingual, live.Languages
+	if !multilingual && len(languages) == 0 {
+		multilingual = Spoken(hints)
+		if !multilingual {
+			languages = []string{"en"}
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {
+		alias := c.Aliases[name]
+		if alias.RequireRecorded && alias.Multilingual == multilingual && slices.Equal(alias.Languages, languages) {
+			return name, nil
+		}
+	}
+	return "", stack.Wrap(fmt.Errorf("routing: %s is a shortcut for live calls; %s", target, c.recordedAdvice()))
+}
+
+// recordedAdvice tells a caller whose recording was refused where one goes.
+func (c ModalityConfig) recordedAdvice() string {
+	var recorded []string
+	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {
+		if c.Aliases[name].RequireRecorded {
+			recorded = append(recorded, name)
+		}
+	}
+	if len(recorded) == 0 {
+		return "name a batch model for a recording"
+	}
+	return "send a recording to " + strings.Join(recorded, " or ") + ", or name a batch model"
+}
+
 // Meets reports whether any model here could serve a request asking for that data policy.
 // A policy nothing meets is worth refusing when it is written down, since every request
 // made under it afterwards would be refused anyway.

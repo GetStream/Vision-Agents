@@ -68,6 +68,20 @@ func routableConfig() routing.ModalityConfig {
 	}
 }
 
+// recordingConfig adds the batch half a whole recording is served by, so a job sent to the
+// live shortcut can be told apart from one that reached the recorded one.
+func recordingConfig() routing.ModalityConfig {
+	config := routableConfig()
+	config.Providers = append(config.Providers, routing.ProviderConfig{
+		Provider: "stub", Model: "stub-batch", Languages: []string{"en"}, Terms: everyTerm,
+	}, routing.ProviderConfig{
+		Provider: "stub", Model: "stub-batch-es", Languages: []string{"es"}, Terms: everyTerm,
+	})
+	config.Aliases["multilingual-recorded"] = routing.Alias{Languages: []string{"es"}, RequireRecorded: true}
+	config.Aliases["en-recorded"] = routing.Alias{Languages: []string{"en"}, RequireRecorded: true}
+	return config
+}
+
 // everyTerm is everything a caller may ask a provider for, apart from the smart mode that
 // cannot be combined with word timings.
 var everyTerm = []options.Term{

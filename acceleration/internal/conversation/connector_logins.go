@@ -13,9 +13,10 @@ import (
 // A reply that needed a connector binding the end user has no usable connection for carries
 // the request as a connector_authorization attachment: the consent the router began for the
 // user's own connection (POST /v1/agents/connections/{id}/authorizations does the same for a
-// backend). A client opens launch_url in a popup and posts it handoff_token, as it does for
-// one the backend began. It is the connector counterpart of plugin_authorization
-// (authorizations.go), which stays as it is until the plugins go (T23).
+// backend). The dashboard opens launch_url in a popup and posts it handoff_token, as for one
+// the backend began without a return_url, and the consent goes back to the dashboard. It is
+// the connector counterpart of plugin_authorization (authorizations.go), which stays as it is
+// until the plugins go (T23).
 
 // ConnectorAuthorizationType is the Chat attachment type that asks an end user to connect a
 // connector binding.
