@@ -542,6 +542,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The agent is built again whenever voice starts or stops, with everything wired up
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
+	created.supersede = m.supersede
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
 		switch {

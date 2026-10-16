@@ -28,8 +28,8 @@ class Session:
     """
     Attributes:
         agent_id (str):
-        call_id (str): The call the agent is on, the session's id, while voice is started. Empty while the conversation
-            is held in writing.
+        call_id (str): The call the agent is on while voice is started: the session's id unless a call was named. Empty
+            while the conversation is held in writing.
         call_type (str):
         created_at (datetime.datetime):
         id (str):

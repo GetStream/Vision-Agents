@@ -193,6 +193,36 @@ func TestAConfigHandedOverAsAnIDIsNamedAsOne(t *testing.T) {
 	}
 }
 
+func TestJoiningANamedCallAsksTheRouterToJoinIt(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true, CallType: "default", CallID: "practice-1"}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Call == nil || *request.Call != (acceleration.SessionCall{Type: "default", Id: "practice-1"}) {
+		t.Errorf("the router was asked to join %+v", request.Call)
+	}
+}
+
+// The control: a call naming no Stream call leaves the router to join agent:<session id>.
+func TestJoiningWithNoNamedCallNamesNone(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if request := backend.created(t); request.Call != nil {
+		t.Errorf("a call was named: %+v", request.Call)
+	}
+}
+
 func TestACallWithoutVoiceIsHeldInWriting(t *testing.T) {
 	backend := newRouter(t, hold)
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})

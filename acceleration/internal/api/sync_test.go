@@ -628,6 +628,16 @@ func (s *SyncSuite) TestASyncBindingAConnectorThatDoesNotExistIsRefusedAndStores
 	s.Empty(s.configsNamed("support"))
 }
 
+func (s *SyncSuite) TestASyncGrantingAToolItsConnectorLeavesOutIsRefusedAndStoresNothing() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "support", "hash": "v1", "connectors": []map[string]any{sessionMetabase("execute_sql")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, leftOutSQL)
+	s.Empty(s.configsNamed("support"))
+}
+
 func (s *SyncSuite) TestASyncWithAnAliasHoldingTheToolSeparatorIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
 		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("team__inbox")}})

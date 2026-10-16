@@ -255,6 +255,7 @@ type CreateSessionRequest struct {
 	Agent             *string                    `json:"agent,omitempty" doc:"The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree."`
 	AgentId           *string                    `json:"agent_id,omitempty" doc:"Keys transcripts and statistics. Empty means the call id."`
 	Backchannel       *bool                      `json:"backchannel,omitempty" doc:"Murmur while a participant is still talking, the way a person does." default:"false"`
+	Call              *SessionCall               `json:"call,omitempty" doc:"An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:<session id>. Left out, the agent joins agent:<session id>, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer's own Stream app: app tenancy with an app of its own, or the deployment's own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) is refused with a 403, since a call there could be another customer's. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent's Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403."`
 	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty" maxItems:"64" doc:"The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork."`
 	ConfigId          *string                    `json:"config_id,omitempty" doc:"An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call."`
 	ContextTruncated  *bool                      `json:"context_truncated,omitempty" doc:"Older history was omitted from the model context."`
@@ -279,7 +280,7 @@ type CreateSessionRequest struct {
 	Phone             *SessionPhone              `json:"phone,omitempty"`
 	ProjectId         *string                    `json:"project_id,omitempty" doc:"What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins."`
 	Search            *string                    `json:"search,omitempty" doc:"Omit it and the config decides, or search-fast when there is no config."`
-	StartVoice        *bool                      `json:"start_voice,omitempty" doc:"Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started." default:"false"`
+	StartVoice        *bool                      `json:"start_voice,omitempty" doc:"Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started." default:"false"`
 	Sts               *string                    `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
 	Stt               *string                    `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
 	Tags              *map[string]string         `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins."`
@@ -767,7 +768,7 @@ func (*SandboxOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *hu
 type Session struct {
 	Agent            *string                 `json:"agent,omitempty" doc:"The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against."`
 	AgentId          string                  `json:"agent_id"`
-	CallId           string                  `json:"call_id" doc:"The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing."`
+	CallId           string                  `json:"call_id" doc:"The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing."`
 	CallType         string                  `json:"call_type"`
 	ClosedAt         *time.Time              `json:"closed_at,omitempty" doc:"When the session ended. Absent while it is still running."`
 	ConfigId         *string                 `json:"config_id,omitempty" doc:"The agent config the session ran under, empty for one that spelled itself out."`
@@ -868,6 +869,17 @@ func (e SessionMode) Valid() bool {
 
 func (SessionMode) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "SessionMode", "How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.", "cascade", "native", "text")
+}
+
+// SessionCall is an existing Stream call for the agent to join.
+type SessionCall struct {
+	Type string `json:"type" minLength:"1" doc:"The call type, such as default."`
+	Id   string `json:"id" minLength:"1" doc:"The call id."`
+}
+
+func (*SessionCall) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "An existing Stream call for the agent to join, by its type and id."
+	return schema
 }
 
 // SessionPhone The number the session acts from, which is what turns transferring on.

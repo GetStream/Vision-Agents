@@ -53,7 +53,8 @@ type Spec struct {
 	Thread           bool
 	ContextTruncated bool
 	// CallID is the call the agent is on while voice is started: agent:<ID>, which joining
-	// creates. Empty while the conversation is held in writing.
+	// creates, unless the caller named a call of its own. Empty while the conversation is
+	// held in writing.
 	CallID string
 	// Text holds the conversation in writing: no call is joined, nothing is transcribed
 	// and nothing is spoken. Everything between hearing and answering is unchanged, so a
@@ -64,6 +65,9 @@ type Spec struct {
 	// conversation runs on while voice is started, kept while it is held in writing.
 	heldSTS      string
 	heldSubagent string
+	// heldCall is the call voice goes back to once started again: the one it was on when it
+	// stopped. Zero is agent:<ID>.
+	heldCall Call
 	// Edge is a call the caller has already opened, used instead of the manager's own.
 	// It is how a conversation is held against something other than a real transport: the
 	// manager's factory is handed a spec and cannot be given a particular one back.
@@ -529,14 +533,31 @@ func (s Spec) KeyedAgentID() string {
 	return joinedCallID(s.CallID)
 }
 
-// Voiced is the spec once voice is started: on the call agent:<ID>, speaking with the
-// models the conversation was configured with, or the defaults.
+// Call is a Stream call: its type and its id.
+type Call struct {
+	Type string
+	ID   string
+}
+
+// Holding is the spec with call as the one voice joins once started. The zero Call is
+// agent:<ID>.
+func (s Spec) Holding(call Call) Spec {
+	s.heldCall = call
+	return s
+}
+
+// Voiced is the spec once voice is started: on the call it holds, else agent:<ID>,
+// speaking with the models the conversation was configured with, or the defaults.
 func (s Spec) Voiced() Spec {
 	if !s.Text {
 		return s
 	}
 	s.Text = false
 	s.CallID, s.CallType = s.ID, defaultCallType
+	if s.heldCall.ID != "" {
+		s.CallID, s.CallType = s.heldCall.ID, s.heldCall.Type
+	}
+	s.heldCall = Call{}
 	s.STSTarget, s.heldSTS = s.heldSTS, ""
 	s.SubagentTarget, s.heldSubagent = s.heldSubagent, ""
 	if !s.Native() {
@@ -557,7 +578,7 @@ func (s Spec) Written() Spec {
 		return s
 	}
 	s.Text = true
-	s.CallID = ""
+	s.heldCall, s.CallID = Call{Type: s.CallType, ID: s.CallID}, ""
 	s.heldSTS, s.STSTarget = s.STSTarget, ""
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
