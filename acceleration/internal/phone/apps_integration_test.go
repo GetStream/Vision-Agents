@@ -5,6 +5,7 @@ package phone
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -91,6 +92,133 @@ func (s *AppsSuite) credentials(vendor string) []string {
 // ownApp gives the suite's customer an app of its own from now on.
 func (s *AppsSuite) ownApp() {
 	s.apps.give(s.customer, 4242, s.own)
+}
+
+// onAnAllowlist is a number held on a vendor that cannot send a trunk password, and the
+// addresses that vendor calls from.
+type onAnAllowlist struct {
+	e164       string
+	signalling []string
+}
+
+// vendorOnAnAllowlist registers vonage, which authenticates by address, and gives the
+// suite's customer a number on it.
+func (s *AppsSuite) vendorOnAnAllowlist() onAnAllowlist {
+	declared, ok := s.config().Lookup("vonage")
+	s.Require().True(ok)
+	s.Require().NotEmpty(declared.Signalling, "the test needs a vendor that declares its addresses")
+
+	vonage := &stub{vendor: "vonage"}
+	registry := NewRegistry(s.config())
+	registry.Register(s.vendor.vendor, func() (Provider, error) { return s.vendor, nil })
+	registry.Register(vonage.vendor, func() (Provider, error) { return vonage, nil })
+	for _, name := range append(s.credentials(s.vendor.vendor), s.credentials(vonage.vendor)...) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
+	s.Require().NoError(err)
+	s.service = service
+
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: vonage.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+	return onAnAllowlist{e164: e164, signalling: declared.Signalling}
+}
+
+// planStub is a vendor that fetches its call plan when the call is answered, and renders
+// the bridge it is given into the plan so a test can read it back.
+type planStub struct {
+	stub
+	rendered Bridge
+}
+
+func (p *planStub) Answer(bridge Bridge, _ string) (Plan, error) {
+	p.rendered = bridge
+	return Plan{ContentType: "text/plain", Body: []byte(bridge.Password)}, nil
+}
+
+func (s *AppsSuite) TestACallsTrunkHasAPasswordTheVendorIsGiven() {
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.NotEmpty(password, "a trunk with no allowlist and no password lets anybody in")
+	s.Empty(allowed)
+	s.Equal(password, s.vendor.dialed.Bridge.Password, "the vendor answers the challenge with it")
+}
+
+func (s *AppsSuite) TestEveryCallsTrunkHasAPasswordOfItsOwn() {
+	call := func() string {
+		_, err := s.service.Call(s.ctx, CallRequest{
+			Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+		})
+		s.Require().NoError(err)
+		return s.vendor.dialed.Bridge.Password
+	}
+
+	s.NotEqual(call(), call())
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersTrunkHasAPasswordTheVendorIsGiven() {
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	password, allowed := s.deployment.TrunkAuth(attached.TrunkID)
+	s.NotEmpty(password)
+	s.Empty(allowed)
+	s.Equal(password, s.vendor.inbound.Bridge.Password)
+}
+
+func (s *AppsSuite) TestACallOnAVendorThatCannotSendAPasswordHasItsAddressesAndNoPassword() {
+	vonage := s.vendorOnAnAllowlist()
+
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: vonage.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, allowed := s.deployment.TrunkAuth(trunks[0])
+	s.Equal(vonage.signalling, allowed)
+	s.Empty(password, "Stream would challenge a vendor that has no way to answer")
+}
+
+func (s *AppsSuite) TestACallPlanFetchedOnAnswerCarriesTheTrunksPassword() {
+	plivo := &planStub{stub: stub{vendor: "plivo"}}
+	registry := NewRegistry(s.config())
+	registry.Register(plivo.vendor, func() (Provider, error) { return plivo, nil })
+	for _, name := range s.credentials(plivo.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{
+		Registry: registry, Store: s.store, Apps: s.apps, PublicURL: "https://router.example.test",
+	})
+	s.Require().NoError(err)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: plivo.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+
+	_, err = service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+	token := plivo.dialed.AnswerURL[strings.LastIndex(plivo.dialed.AnswerURL, "/")+1:]
+
+	_, err = service.Answer(s.ctx, token)
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	password, _ := s.deployment.TrunkAuth(trunks[0])
+	s.NotEmpty(password)
+	s.Equal(password, plivo.rendered.Password)
 }
 
 func (s *AppsSuite) number() store.PhoneNumber {
@@ -487,8 +615,10 @@ func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {
 	s.Require().NoError(err)
 	s.Equal("sip:"+s.e164+"@sip.example.test", bridge.URI, "the address names the number")
 	s.Equal(attached.TrunkID, bridge.Username)
-	s.Equal("secret", bridge.Password, "the password Stream returned at attach")
-	s.NotContains(string(s.number().BridgePasswordSealed), "secret", "the password is stored sealed")
+	password, _ := s.deployment.TrunkAuth(attached.TrunkID)
+	s.Require().NotEmpty(password)
+	s.Equal(password, bridge.Password, "the password the trunk was made with")
+	s.NotContains(string(s.number().BridgePasswordSealed), password, "the password is stored sealed")
 }
 
 func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials() {
