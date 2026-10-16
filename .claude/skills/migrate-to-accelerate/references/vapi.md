@@ -25,8 +25,8 @@ base) and the assistant API reference (`POST /assistant`).
 
 | Vapi | Accelerate |
 | --- | --- |
-| `transcriber: {provider: deepgram, model: nova-3, keywords}` | `stt: deepgram/nova-3`; keywords become `keyterms: [...]` |
-| `model: {provider: openai, model: gpt-4.1-mini}` | `llm: openai/gpt-4.1-mini` |
+| `transcriber: {provider: deepgram, model: nova-3, keywords}` | `stt: deepgram/flux-general-en` (nova-3 is not served) or `stt-fast`; keywords become `keyterms: [...]` |
+| `model: {provider: openai, model: gpt-4.1-mini}` | `llm: llm-fast` (that spelling is not a served target) |
 | `voice: {provider, voiceId}` | `tts: <provider>/<model>` when the router serves it, plus `voice: <voiceId>`; an unserved provider means leave out and report |
 | A realtime model as `model` (OpenAI Realtime / Gemini Live) | `sts: <provider>/<model>`; drop transcriber/voice keys |
 | Model presets (Balanced etc.) | Nothing to map; the preset's three choices were already expanded above |
@@ -98,8 +98,8 @@ Migrated:
 ```yaml
 name: northwind_support
 description: Northwind support.
-stt: deepgram/nova-3
-llm: openai/gpt-4.1-mini
+stt: deepgram/flux-general-en
+llm: llm-fast
 keyterms: [Northwind]
 greeting:
   text: Hello, this is Northwind support. How can I help?

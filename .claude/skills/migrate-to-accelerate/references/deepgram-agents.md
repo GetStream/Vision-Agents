@@ -26,9 +26,9 @@ the whole migration source is that JSON (plus whatever answers its function endp
 
 | Deepgram | Accelerate |
 | --- | --- |
-| `listen.provider {type: deepgram, model: nova-3, keyterms, language}` | `stt: deepgram/nova-3`; keyterms become `keyterms: [...]`; one language becomes `Accelerated(language=...)` |
+| `listen.provider {type: deepgram, model: nova-3, keyterms, language}` | `stt: deepgram/flux-general-en` (the served Deepgram spelling; nova-3 is not a target); keyterms become `keyterms: [...]`; one language becomes `Accelerated(language=...)` |
 | `listen` EOT thresholds/timeouts | No equivalent keys; the backend owns endpointing. Report |
-| `think.provider {type: open_ai, model: gpt-4o-mini}` | `llm: openai/gpt-4o-mini` |
+| `think.provider {type: open_ai, model: gpt-4o-mini}` | `llm: llm-fast` (gpt-4o-mini is not a served target) |
 | `think` with a third-party `endpoint` (own LLM URL) | No equivalent custom-LLM endpoint unless the router serves that model; report |
 | `speak.provider {type: deepgram, model: aura-2-...}` | `tts: deepgram/aura-2-...` when served, else leave out and report; a voice name is not a `voice:` id |
 | `speak` with a non-Deepgram provider | Same rule: map when served, otherwise backend default and a report line |
@@ -92,8 +92,8 @@ Migrated:
 ```yaml
 name: northwind_support
 description: Northwind support.
-stt: deepgram/nova-3
-llm: openai/gpt-4o-mini
+stt: deepgram/flux-general-en
+llm: llm-fast
 keyterms: [Northwind]
 greeting:
   text: Hello, this is Northwind support. How can I help?

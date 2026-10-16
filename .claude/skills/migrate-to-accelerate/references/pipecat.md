@@ -29,9 +29,9 @@ Read the pipeline list in order; the services in it are the whole mapping:
 
 | Pipecat | Accelerate |
 | --- | --- |
-| `DeepgramSTTService(model=...)`, `AssemblyAI...`, `Whisper...` | `stt: <provider>/<model>` in `agent.yaml` |
-| `OpenAILLMService(model=...)`, Anthropic/Gemini LLM services | `llm: <provider>/<model>` |
-| `CartesiaTTSService(Settings(voice=...))`, ElevenLabs, etc. | `tts: <provider>/<model>` plus `voice: <id>` |
+| `DeepgramSTTService(model=...)`, `AssemblyAI...`, `Whisper...` | The served target for that provider or `stt-fast`; vendor model names (nova-3, whisper-1) are not targets until `ListRoutes` says so |
+| `OpenAILLMService(model=...)`, Anthropic/Gemini LLM services | A served candidate spelling or `llm-fast`/`llm-smart`; gpt-4o/gpt-4.1 spellings are not served |
+| `CartesiaTTSService(Settings(voice=...))`, ElevenLabs, etc. | A served candidate (e.g. `cartesia/sonic-preview`) plus `voice: <id>`, or `tts-fast` |
 | A realtime service (OpenAI Realtime, Gemini Live) in place of STT+LLM+TTS | `sts: <provider>/<model>`; drop STT/TTS keys |
 | `SileroVADAnalyzer`, turn strategies, interruption config | No keys; the backend owns this. Report custom strategies |
 
@@ -93,9 +93,9 @@ Migrated: the system instruction becomes `instructions.md`, and:
 ```yaml
 name: northwind_support
 description: Northwind support.
-stt: deepgram/nova-3
-llm: openai/gpt-4.1-mini
-tts: cartesia/sonic-3
+stt: deepgram/flux-general-en
+llm: llm-fast
+tts: cartesia/sonic-preview
 voice: 71a7ad14-091c-4e8e-a314-022ece01c121
 ```
 

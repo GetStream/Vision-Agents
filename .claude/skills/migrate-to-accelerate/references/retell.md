@@ -20,7 +20,7 @@ agent, Retell LLM, and knowledge base endpoints).
 | LLM `begin_message`, agent `begin_message` delay settings | `greeting: {text: ..., mode: exact}` |
 | `start_speaker: user` | No greeting key; leave greeting out and say the agent waits |
 | `default_dynamic_variables` (`{{var}}` in prompts) | Values fetched by a tool or stated once; `{{var}}` slots do not exist. Report any variable with no source |
-| LLM `model`, `s2s_model` | Cascaded: `llm: <provider>/<model>`. Speech-to-speech (`s2s_model`): `sts: openai/<model>` and no STT/TTS |
+| LLM `model`, `s2s_model` | Cascaded: a served candidate or `llm-fast` (Retell's gpt-4.1/gpt-5 spellings are not targets verbatim). Speech-to-speech (`s2s_model`): `sts: openai/<served model>` and no STT/TTS |
 | `model_temperature`, `tool_call_strict_mode`, `kb_config.top_k` | No equivalent keys; report |
 
 ## Voice and model pipeline
@@ -100,7 +100,7 @@ Migrated:
 ```yaml
 name: northwind_support
 description: Northwind support.
-llm: openai/gpt-4.1-mini
+llm: llm-fast
 greeting:
   text: Hello, this is Northwind support.
   mode: exact

@@ -25,15 +25,16 @@ Sources checked 2026-10-16: LiveKit Agents docs (`docs.livekit.io/agents`,
 
 | LiveKit | Accelerate |
 | --- | --- |
-| `stt=inference.STT("deepgram/nova-3")` or a plugin STT | `stt: deepgram/nova-3` in `agent.yaml` |
-| `llm=inference.LLM("openai/gpt-4.1-mini")` or a plugin LLM | `llm: openai/gpt-4.1-mini` |
-| `tts=inference.TTS("cartesia/sonic-3", voice=...)` | `tts: cartesia/sonic-3` plus `voice: <id>` |
-| `openai.realtime.RealtimeModel(...)` / Gemini Live plugin | `sts: openai/gpt-realtime-2` (provider/model the router serves), no STT/TTS keys |
+| `stt=inference.STT("deepgram/nova-3")` or a plugin STT | The served Deepgram target (`stt: deepgram/flux-general-en`) or `stt-fast`; `nova-3` is not served |
+| `llm=inference.LLM("openai/gpt-4.1-mini")` or a plugin LLM | `llm: llm-fast` (gpt-4.1-mini is not a served target) |
+| `tts=inference.TTS("cartesia/sonic-3", voice=...)` | `tts: cartesia/sonic-preview` plus `voice: <id>` when that voice exists there, else `tts-fast` |
+| `openai.realtime.RealtimeModel(...)` / Gemini Live plugin | `sts: openai/gpt-realtime-2` (a served candidate under `sts-vision`), no STT/TTS keys |
 | `vad=silero.VAD.load()`, turn detection, noise cancellation | No keys. The backend owns turn detection and noise handling; report, do not approximate |
 | `preemptive_generation`, `max_tool_steps` | No equivalent keys. Leave out and report |
 
-Inference strings (`provider/model`) usually carry across unchanged; plugin class names
-do not. A custom plugin (your own STT/TTS) has no equivalent unless the router serves that
+Inference strings name the vendor model, not a router target: check each against
+`ListRoutes` (see SKILL.md). `deepgram/nova-3` is not served; the served Deepgram
+spelling is `deepgram/flux-general-en`. Plugin class names never carry across. A custom plugin (your own STT/TTS) has no equivalent unless the router serves that
 provider; report it instead of substituting a different vendor silently.
 
 ## Tool calling
@@ -106,9 +107,9 @@ Migrated `agent.yaml`, `instructions.md` (`You are Northwind support...`), and e
 ```yaml
 name: northwind_support
 description: Northwind support.
-stt: deepgram/nova-3
-llm: openai/gpt-4.1-mini
-tts: cartesia/sonic-3
+stt: deepgram/flux-general-en
+llm: llm-fast
+tts: cartesia/sonic-preview
 voice: 71a7ad14-091c-4e8e-a314-022ece01c121
 greeting:
   text: Hello, this is Northwind support. How can I help?

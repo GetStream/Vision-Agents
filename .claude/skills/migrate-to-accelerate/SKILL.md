@@ -20,6 +20,8 @@ An accelerate agent is a folder, not a vendor object:
 
 `agent.yaml` refuses unknown keys. Only send keys from the mapping tables here and in the
 reference for the source platform; never carry a competitor field name across hoping it works.
+The folder name, the directory, and `name:` in `agent.yaml` are the same name, and it must
+be unique in the app: syncing a second agent under an existing name overwrites that config.
 
 ## First: read the right reference
 
@@ -53,7 +55,12 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
 4. **Sync and test.** `getstream agents sync <path>` then
    `echo "Where is order NW-1001?" | getstream agents test <name>` (stdin lines in a
    non-interactive terminal). Fix what the sync refuses; do not silence it by dropping
-   fields silently.
+   fields silently. A session that refuses to start with `unknown target` means a model
+   field names something unserved: go back to `ListRoutes`, do not retry spellings.
+   `agents test` runs the stored config only: Python `register_function` tools in the
+   entry point do not execute there. Validate tools by running the Python agent joined
+   to a router (`STREAM_ACCELERATION_URL`), or report them as untested code. A tool that
+   must work without Python running needs a connector or `mcp_servers:` instead.
 5. **Report.** End with three lists: migrated, approximated (and how it differs), and
    no equivalent. A silent drop is a failed migration.
 
@@ -85,10 +92,22 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
 | Multilingual language setting | `Accelerated(language=...)`; keyterms lists map to `keyterms:` in `agent.yaml` |
 | Sandbox / code execution | `sandbox: daytona` plus `sandbox_options:`; skills run code there |
 
-Provider/model spellings: targets are `provider/model` names the router serves
-(`deepgram/nova-3`, `openai/gpt-4.1-mini`, `cartesia/sonic-3`, `openai/gpt-live-1`).
-When no model mapping is known, leave the field out (backend default) rather than
-inventing a name, and note it in the report.
+Provider/model spellings: a competitor's model name is almost never a valid target.
+`openai/gpt-4.1-mini`, `deepgram/nova-3`, and `cartesia/sonic-3` all fail session start
+with `routing: unknown target`. Before writing any `stt`/`tts`/`sts`/`llm` value, list
+what the deployment serves:
+
+```bash
+getstream agents api ListRoutes --modality llm   # also stt, tts, sts
+```
+
+Each route (`llm-fast`, `stt-fast`, `tts-fast`, `sts-fast`, `sts-duplex`, ...) lists its
+candidate `provider/model` spellings. Use either a capability route or an exact candidate
+spelling (for example `openai/gpt-live-1` under `sts-duplex`), and report every
+substitution ("gpt-4.1-mini is not served; llm-fast used"). When nothing fits, leave the
+field out (backend default) rather than inventing a name, but only on a new config: a
+field left out of a re-sync keeps the value already stored under that name, so migrating
+over an existing config means setting every model field explicitly.
 
 ## Tool rules
 
