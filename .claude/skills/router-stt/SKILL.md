@@ -16,8 +16,10 @@ more accurate than the same vendor's streaming model, because they have the whol
 of them. `en-recorded` and `multilingual-recorded` are the aliases for that half, and they
 `require_recorded`, so a recording is never streamed at a live model by accident. A recording
 sent to a live-only shortcut goes to the recorded one for the same languages (`en-low-latency`
-to `en-recorded`), and one with no such counterpart (`stt-fast`) is refused before any vendor
-is asked (`ModalityConfig.Recorded`).
+to `en-recorded`). One that names no language (`stt-fast`, `stt-accurate`) goes by the
+recording's language hints: none or all English, `en-recorded`; any other, `multilingual-recorded`.
+A recording pinned to a `realtime: true` model (`deepgram/flux-general-en`) is refused before any
+vendor is asked, naming the recorded shortcuts (`ModalityConfig.Recorded`).
 
 ## The top five, and what each calls the same thing
 

@@ -2,6 +2,8 @@ package sttrouter
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,6 +76,7 @@ func (s *RecordingsSuite) TestARecordingToAShortcutWithNoLanguageGoesByItsLangua
 			"en-US": "en-recorded",
 			"es":    "multilingual-recorded",
 			"en,es": "multilingual-recorded",
+			",":     "en-recorded",
 		} {
 			var languages []string
 			if hints != "" {
@@ -85,6 +88,39 @@ func (s *RecordingsSuite) TestARecordingToAShortcutWithNoLanguageGoesByItsLangua
 		}
 		s.Equal("deepgram/nova-3", s.servedBy(options.STT{Target: live, Languages: []string{"es"}}))
 	}
+}
+
+func (s *RecordingsSuite) TestTheHintsOfARecordingDecideWhichRecordedShortcutServesIt() {
+	// Each recorded shortcut gets a model of its own, so the one that served is the one chosen.
+	config := s.config
+	config.Providers = append(slices.Clone(s.config.Providers),
+		routing.ProviderConfig{Provider: "deepgram", Model: "nova-multi", Languages: []string{"de", "en", "es", "fr", "hi", "it", "ja", "nl", "pt", "ru"}})
+	config.Aliases = maps.Clone(s.config.Aliases)
+	config.Aliases["en-recorded"] = routing.Alias{Languages: []string{"en"}, RequireRecorded: true, Only: []string{"deepgram/nova-3"}}
+	config.Aliases["multilingual-recorded"] = routing.Alias{Multilingual: true, RequireRecorded: true, Only: []string{"deepgram/nova-multi"}}
+	transcribers := NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(spec routing.Spec) (stt.Transcriber, error) {
+		return &anyModelTranscriber{model: spec.Model}, nil
+	})
+	recordings, err := NewRecordings(Options{Config: config, Transcribers: transcribers})
+	s.Require().NoError(err)
+
+	_, served, err := recordings.Transcribe(s.ctx, Recording{
+		CustomerID: "acme",
+		Options:    options.STT{Target: "stt-fast", Languages: []string{"es"}},
+	})
+	s.Require().NoError(err)
+	s.Equal("deepgram/nova-multi", served.Name())
+
+	_, served, err = recordings.Transcribe(s.ctx, Recording{CustomerID: "acme", Options: options.STT{Target: "stt-fast"}})
+	s.Require().NoError(err)
+	s.Equal("deepgram/nova-3", served.Name())
+}
+
+func (s *RecordingsSuite) TestAPriorityListWinsOverAPinnedLiveOnlyModel() {
+	s.Equal("deepgram/nova-3", s.servedBy(options.STT{
+		Target: "deepgram/flux-general-en", Providers: []string{"deepgram"},
+	}))
 }
 
 func (s *RecordingsSuite) TestARecordingPinnedToALiveOnlyModelIsRefusedBeforeAnyVendorIsAsked() {
