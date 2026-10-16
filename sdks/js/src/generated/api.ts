@@ -4814,7 +4814,7 @@ export type components = {
                 readonly [key: string]: string;
             };
             readonly label?: string;
-            /** @description What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh). */
+            /** @description What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh). */
             readonly last_validation?: components["schemas"]["ConnectionLastValidation"];
             /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
             readonly metadata: {
@@ -4897,10 +4897,10 @@ export type components = {
         readonly ConnectionLastValidation: {
             /**
              * Format: date-time
-             * @description When the validate ran.
+             * @description When the validate ran, or the provider refused the consent.
              */
             readonly checked_at: string;
-            /** @description The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies. */
+            /** @description The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies. */
             readonly code?: string;
             /** @description Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote. */
             readonly error?: string;
@@ -5023,7 +5023,7 @@ export type components = {
             readonly tools?: readonly string[] | null;
         };
         /**
-         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
+         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
          * @enum {string}
          */
         readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "needs_reapproval" | "failed";

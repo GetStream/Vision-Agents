@@ -21,7 +21,7 @@ class ConnectionLastValidation:
     needs_reauthorization.
 
         Attributes:
-            checked_at (datetime.datetime): When the validate ran.
+            checked_at (datetime.datetime): When the validate ran, or the provider refused the consent.
             status (ConnectionValidationStatus): connected: the credential works and the tools were listed. pending: no
                 credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps,
                 or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and
@@ -29,10 +29,12 @@ class ConnectionLastValidation:
                 needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the
                 connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and
                 POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant.
-                failed: the provider could not be reached or listed nothing usable; error says why.
+                failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code
+                connector_consent_refused); error says why.
             code (str | Unset): The validate's code (connector_credential_rejected, connector_scope_required,
-                connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error,
-                its status, such as 400 or 503. Absent when neither applies.
+                connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent
+                with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its
+                status, such as 400 or 503. Absent when neither applies.
             error (str | Unset): Why the status is not connected, for a person to read: the validate's error with every
                 value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold
                 anything else the provider wrote.
