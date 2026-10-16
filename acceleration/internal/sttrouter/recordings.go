@@ -8,6 +8,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/openaicompat"
 )
 
 // Transcribers is the set of batch transcription providers a build can construct.
@@ -37,6 +38,12 @@ func DefaultTranscriberRegistry() *Transcribers {
 			MipOptOut: trainingRefused(spec),
 			Logger:    spec.Logger,
 		})
+	})
+	registry.Register(openaicompat.ProviderName, func(spec routing.Spec) (stt.Transcriber, error) {
+		if err := spec.Settings(&struct{}{}); err != nil {
+			return nil, err
+		}
+		return openaicompat.New(openaicompat.Options{Model: spec.Model})
 	})
 
 	return registry

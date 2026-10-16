@@ -333,6 +333,11 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 				// cost and nothing is what they should report.
 				continue
 			}
+			if modality == STT && provider.Provider == "openai-compatible" {
+				// The configured endpoint may use any compatible vendor or self-hosted
+				// service, so the application cannot assign it a universal per-request price.
+				continue
+			}
 			if modality == Detection && provider.Provider == "ultralytics" {
 				// Ultralytics' shared API bills nothing; a dedicated endpoint is billed by
 				// the hour, which no per-request rate describes.

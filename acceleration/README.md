@@ -143,6 +143,8 @@ the other commands that read them there.
 | `FISH_API_KEY`          | Fish Audio credentials                                     |
 | `FISH_VOICE_ID`         | Optional Fish reference id to clone a voice from           |
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |
+| `OPENAI_STT_BASE_URL`   | Required base URL for the configured OpenAI-compatible batch transcription endpoint; the adapter appends `/audio/transcriptions` |
+| `OPENAI_STT_API_KEY`    | Bearer token for that endpoint; required when `openai-compatible/whisper-1` is selected |
 | `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
@@ -451,6 +453,13 @@ A group is its models and nothing else. It carries no terms, so a config that wa
 still writes `diarize: true`, and the accurate group then narrows to Muse, which is the one of
 its four that declares it and the one the pin already starts with. Both groups are the live
 path only; a recording belongs at `en-recorded`, where the batch models are.
+
+`openai-compatible/whisper-1` is also available as an explicit batch target when
+`OPENAI_STT_BASE_URL` and `OPENAI_STT_API_KEY` are configured. It accepts uploaded mono PCM16
+WAV files at 16 or 24 kHz, up to 60 seconds, and one optional two-letter lowercase language
+hint. It returns JSON transcript text only. URL sources, other recording options, timestamps,
+speaker labels and live transcription are unsupported; this target is not included in the
+language-based batch shortcuts.
 
 Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`

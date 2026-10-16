@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/gemini"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/openaicompat"
 )
 
 type STTRouterSuite struct {
@@ -129,9 +130,59 @@ func (s *STTRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	RegisterMock(registry)
 
 	for _, provider := range router.Config().Providers {
+		if !provider.Realtime {
+			continue
+		}
 		s.Truef(registry.Has(provider.Provider),
-			"%s is configured but has no factory, so it can never serve a request", provider.Provider)
+			"%s is a live provider but has no factory, so it can never serve a session", provider.Provider)
 	}
+}
+
+func (s *STTRouterSuite) TestOpenAICompatibleModelIsExplicitAndBatchOnly() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	name := openaicompat.ProviderName + "/" + openaicompat.DefaultModel
+	model, ok := config[routing.STT].Provider(name)
+	s.Require().True(ok)
+	s.False(model.Realtime)
+	s.Equal([]string{"und"}, model.Languages,
+		"language-based shortcuts should not claim this endpoint's model coverage")
+	s.Empty(model.Terms)
+
+	s.T().Setenv("OPENAI_STT_BASE_URL", "http://127.0.0.1:8083/v1")
+	s.T().Setenv("OPENAI_STT_API_KEY", "test-key")
+	transcribers := DefaultTranscriberRegistry()
+	s.True(transcribers.Has(openaicompat.ProviderName))
+	built, err := transcribers.Build(openaicompat.ProviderName, routing.Spec{Model: model.Model})
+	s.Require().NoError(err)
+	s.Equal(name, built.Provider()+"/"+built.Model())
+	s.NoError(built.Close())
+	_, err = transcribers.Build(openaicompat.ProviderName, routing.Spec{
+		Model:      model.Model,
+		Overwrites: json.RawMessage(`{"base_url":"http://untrusted.example"}`),
+	})
+	s.ErrorIs(err, routing.ErrRequest, "provider overwrites cannot replace the operator-configured endpoint")
+
+	batchRouter, err := NewRecordings(Options{Config: config[routing.STT], Transcribers: transcribers})
+	s.Require().NoError(err)
+	candidates, err := batchRouter.Resolve(s.ctx, "en-recorded", []string{"en"})
+	s.Require().NoError(err)
+	for _, candidate := range candidates {
+		s.NotEqual(name, candidate.Config.Name(), "the unknown-language sentinel keeps it out of the shortcut")
+	}
+	explicit, err := batchRouter.Resolve(s.ctx, name, []string{"en"})
+	s.Require().NoError(err)
+	s.Require().Len(explicit, 1)
+	s.Equal(name, explicit[0].Config.Name(), "a concrete target may request a language hint")
+
+	liveRouter, err := New(Options{Config: config[routing.STT], Registry: DefaultRegistry()})
+	s.Require().NoError(err)
+	_, err = liveRouter.Start(s.ctx, Request{CustomerID: "test", Target: name})
+	s.ErrorContains(err, "no factory registered",
+		"the batch adapter is not available through the live provider registry")
+	liveRouter.Close()
+	batchRouter.Close()
 }
 
 func (s *STTRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
