@@ -828,6 +828,38 @@ func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesOnlyTheWaysItsConne
 	s.Equal(codeNoOAuthClient, failure.Code)
 }
 
+// TestAConsentWhoseRegistrationIsRefusedNamesTheAppsOwnClient (AI-1363, WWSD feedback #31):
+// Gong takes the app's own client or a registration (providers/gong.yaml), and refused the
+// registration. The answer quotes the provider's reason and names the client the app can put
+// instead, with the redirect URI it must list.
+func (s *AuthorizationsSuite) TestAConsentWhoseRegistrationIsRefusedNamesTheAppsOwnClient() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.RefusedRegistration)
+	connector := s.connectorRegistering("customer, dcr", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: register: HTTP 400: invalid_client_metadata: "+
+		"scope is required; put the app's own OAuth client with PUT /v1/agents/connectors/"+connector+
+		"/oauth-client, giving its client_id and client_secret; the client must list the redirect URI "+
+		consentPublicURL+ConnectorCallbackPath, failure.Message)
+	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWhoseRegistrationIsRefusedSaysWhyWhereNoClientCanBeGiven (AI-1363): a connector
+// that only registers has no client to ask the app for, so the answer is the provider's reason.
+func (s *AuthorizationsSuite) TestAConsentWhoseRegistrationIsRefusedSaysWhyWhereNoClientCanBeGiven() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.RefusedRegistration)
+	connector := s.connectorRegistering("dcr", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: register: HTTP 400: invalid_client_metadata: "+
+		"scope is required", failure.Message)
+	s.Equal(string(ErrorTypeInvalidRequest), failure.Code)
+}
+
 // TestAConsentWithoutAClientNamesNoAppTheRouterCannotCreate (AI-1357): a connector may list
 // managed without authorizing at Slack, and PUT provider-app refuses it (managedConnector), so
 // the answer names the oauth-client PUT alone.

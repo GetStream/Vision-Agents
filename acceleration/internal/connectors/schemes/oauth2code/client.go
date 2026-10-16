@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -220,14 +220,23 @@ func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.Re
 	if err := checkMethod(method, d); err != nil {
 		return client{}, err
 	}
-	// RFC 7591 section 2: the client metadata of the registration request.
-	body, err := json.Marshal(map[string]any{
+	// RFC 7591 section 2: the client metadata of the registration request. None of it is
+	// secret.
+	metadata := map[string]any{
 		"client_name":                clientName,
 		"redirect_uris":              []string{redirectURI},
 		"grant_types":                grantTypes,
 		"response_types":             responseTypes,
 		"token_endpoint_auth_method": method,
-	})
+	}
+	if len(m.Scopes.List) > 0 {
+		// The scopes the authorize request asks for (Begin), a step-up's included. RFC 7591
+		// section 2 makes scope «a string containing a space-separated list», whatever
+		// separator the manifest's authorize request uses. Gong refuses a registration without
+		// it (400 invalid_client_metadata «scope is required», probed 2026-10-16T00:34:47Z).
+		metadata["scope"] = strings.Join(m.Scopes.List, " ")
+	}
+	body, err := json.Marshal(metadata)
 	if err != nil {
 		return client{}, err
 	}
@@ -240,18 +249,17 @@ func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.Re
 	request.Header.Set("Accept", "application/json")
 	response, err := s.cfg.HTTP.Do(request)
 	if err != nil {
-		return client{}, fmt.Errorf("oauth2code: register: %w", err)
+		return client{}, fmt.Errorf("%w: %w", ErrRegistration, err)
 	}
 	defer response.Body.Close()
 	// RFC 7591 section 3.2.1 answers 201 Created. Any 2xx is taken, as the prototype did
 	// (internal/mcp/oauth.go:760), since the body is what carries the client.
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		// The body is not quoted: a registration error may echo what was sent.
-		return client{}, fmt.Errorf("oauth2code: register: HTTP %d", response.StatusCode)
+		return client{}, fmt.Errorf("%w: HTTP %d%s", ErrRegistration, response.StatusCode, registrationError(response.Body))
 	}
 	raw, err := read(response.Body)
 	if err != nil {
-		return client{}, err
+		return client{}, fmt.Errorf("%w: %w", ErrRegistration, err)
 	}
 	var registered struct {
 		ClientID     string                `json:"client_id"`
@@ -259,11 +267,11 @@ func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.Re
 		Method       core.ClientAuthMethod `json:"token_endpoint_auth_method"`
 	}
 	if err := json.Unmarshal(raw, &registered); err != nil {
-		return client{}, fmt.Errorf("oauth2code: register: %w", err)
+		return client{}, fmt.Errorf("%w: %w", ErrRegistration, err)
 	}
 	if registered.ClientID == "" {
 		// RFC 7591 section 3.2.1: client_id is REQUIRED.
-		return client{}, errors.New("oauth2code: register: no client_id in the response")
+		return client{}, fmt.Errorf("%w: no client_id in the response", ErrRegistration)
 	}
 	// RFC 7591 section 3.2.1: the server may replace a value it was sent, so the method it
 	// answers is the one the client has.
@@ -271,10 +279,10 @@ func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.Re
 		method = registered.Method
 	}
 	if !slices.Contains(supportedMethods, method) {
-		return client{}, fmt.Errorf("oauth2code: register: the server assigned %q, which this scheme does not implement", method)
+		return client{}, fmt.Errorf("%w: the server assigned %q, which this scheme does not implement", ErrRegistration, method)
 	}
 	if method != core.AuthNone && registered.ClientSecret == "" {
-		return client{}, fmt.Errorf("oauth2code: register: %s without a client_secret", method)
+		return client{}, fmt.Errorf("%w: %s without a client_secret", ErrRegistration, method)
 	}
 	// The one record of the registration outside the sealed attempt and credentials (AI-990
 	// F16): who registered which client at which server. A client_id is not a secret (RFC 6749
@@ -282,6 +290,34 @@ func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.Re
 	s.cfg.Logger.InfoContext(ctx, "registered an OAuth client", "connector", m.ConnectorID, "connection", ref.ConnectionID,
 		"client_id", registered.ClientID, "registration_host", hostOf(d.Registration), "auth_method", method)
 	return client{RegistrationMethod: core.ClientDCR, ID: registered.ClientID, Secret: registered.ClientSecret, AuthMethod: method}, nil
+}
+
+// registrationError is ": <error>: <error_description>" from a refused registration's body, the
+// error response of RFC 7591 section 3.2.2, or "" when the body is not one. Only those two
+// members are quoted, each as a log line holds a provider's error_description
+// (core.LoggedDescription: URLs kept to their host, at most core.DescriptionBytes): a server may
+// echo the client metadata it was sent, and none of that is secret (register), but the rest of a
+// body is the server's to fill.
+//
+// Example: {"error":"invalid_client_metadata","error_description":"scope is required"} is
+// ": invalid_client_metadata: scope is required".
+func registrationError(body io.Reader) string {
+	raw, err := read(body)
+	if err != nil {
+		return ""
+	}
+	var refused struct {
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
+	}
+	if json.Unmarshal(raw, &refused) != nil || refused.Error == "" {
+		return ""
+	}
+	reason := ": " + core.LoggedDescription(refused.Error)
+	if refused.Description != "" {
+		reason += ": " + core.LoggedDescription(refused.Description)
+	}
+	return reason
 }
 
 // hostOf is the host of a registration endpoint, the part of it that names the server, or ""

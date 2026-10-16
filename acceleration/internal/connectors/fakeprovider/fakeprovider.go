@@ -163,6 +163,11 @@ const (
 	ForeignIssuer Personality = "foreign_issuer"
 	// ConsentDenied sends the browser back with error=access_denied (RFC 6749 §4.1.2.1).
 	ConsentDenied Personality = "consent_denied"
+	// RefusedRegistration answers every dynamic registration (RFC 7591) 400 with
+	// invalid_client_metadata and an error_description (§3.2.2), as Gong answered one without
+	// scope ({"error":"invalid_client_metadata","error_description":"scope is required"},
+	// probed 2026-10-16T00:34:47Z).
+	RefusedRegistration Personality = "refused_registration"
 	// ClientMetadataDocuments makes the server accept an https URL as client_id, fetching
 	// the client's metadata from it at authorize, as draft-ietf-oauth-client-id-metadata-
 	// document-02 («CIMD» below) describes: it advertises
