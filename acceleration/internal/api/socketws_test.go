@@ -166,6 +166,18 @@ func (s *SocketSessionSuite) TestTheSocketTakesNoCall() {
 	s.Equal(errSocketCall.Message, refused["error"])
 }
 
+// A socket session carries its own audio, so voice started on it names no Stream call either.
+func (s *SocketSessionSuite) TestVoiceOnASocketSessionTakesNoCall() {
+	_, answered := s.starts("hi")
+	id := answered["session"].(map[string]any)["id"].(string)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/voice",
+		StartSessionVoiceRequest{Call: &SessionCall{Type: "default", Id: s.utils.uuid()}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(errSocketCall.Message, failure)
+}
+
 // The control: the backend hands the socket a history, as it does POST /v1/agents/sessions.
 func (s *SocketSessionSuite) TestTheBackendMayHandTheSocketAHistory() {
 	connection := s.serverClient.opens("/v1/agents/socket")

@@ -87,6 +87,11 @@ var errCallWithPhone = invalidRequest("call cannot be given with phone: a phone 
 // in: the agent would join a call of the same name in its own app, where nobody is.
 var errCallInAnotherApp = invalidRequest("the call is in another Stream app than the one this session acts in")
 
+// errCallInSharedApp refuses a call named by a session that acts in a Stream app shared with
+// other customers: every customer's calls are in that app, so a named call could be anyone's.
+var errCallInSharedApp = forbidden("call can be named only by a session that acts in the customer's own " +
+	"Stream app: this one acts in an app shared with other customers, whose calls are not this customer's to join")
+
 // refuseCall is the failure a new session naming a call is refused with, or nil. The session
 // acts in the app the call is pinned to (callPinApp, as the manager resolves it), so the call
 // is refused only when another session runs it in a different app.
@@ -107,7 +112,8 @@ func (s *Server) refuseCall(ctx context.Context, customerID string, request Crea
 	return s.refuseCallOutside(ctx, customerID, *request.Call, acting)
 }
 
-// refuseCallOutside refuses a call that callApp places in another Stream app than acting.
+// refuseCallOutside refuses a call that callApp places in another Stream app than acting,
+// or any call when acting is not the customer's own app.
 func (s *Server) refuseCallOutside(ctx context.Context, customerID string, call SessionCall, acting int64) error {
 	app, err := s.callApp(ctx, customerID, call.Type, call.Id)
 	if err != nil {
@@ -116,7 +122,19 @@ func (s *Server) refuseCallOutside(ctx context.Context, customerID string, call 
 	if app != acting {
 		return errCallInAnotherApp
 	}
+	if !s.ownApp(customerID, acting) {
+		return errCallInSharedApp
+	}
 	return nil
+}
+
+// ownApp reports whether app is the customer's own Stream app, as ownKey in the session
+// manager tells it. Zero is the deployment's app, which only its own customer owns.
+func (s *Server) ownApp(customerID string, app int64) bool {
+	if app == 0 && s.stream != nil {
+		app = s.stream.DeploymentApp()
+	}
+	return app != 0 && streamapp.CustomerOf(app) == customerID
 }
 
 // refuseServerSideFields reports the failure a new session is refused with when an end user's

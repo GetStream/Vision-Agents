@@ -21,7 +21,7 @@ type startSessionVoiceRequest struct {
 
 // StartSessionVoiceRequest is what voice is started with.
 type StartSessionVoiceRequest struct {
-	Call *SessionCall `json:"call,omitempty" doc:"An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403."`
+	Call *SessionCall `json:"call,omitempty" doc:"An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403."`
 }
 
 type sessionVoiceResponse struct {
@@ -81,6 +81,12 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 	defer sent()
 	var call session.Call
 	if named != nil {
+		if found.Spec().Phone != nil {
+			return nil, errCallWithPhone
+		}
+		if found.Spec().Edge != nil {
+			return nil, errSocketCall
+		}
 		customerID, _ := CustomerFrom(ctx)
 		if err := s.refuseCallOutside(ctx, customerID, *named, found.Spec().StreamApp); err != nil {
 			return nil, err

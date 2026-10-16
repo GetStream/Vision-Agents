@@ -4,10 +4,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -53,6 +57,7 @@ func (s *SessionVoiceSuite) TestASessionCreatedToStartVoiceIsOnItsCall() {
 }
 
 func (s *SessionVoiceSuite) TestASessionCreatedOnANamedCallJoinsIt() {
+	s.inOwnApp()
 	call := s.namedCall()
 
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
@@ -63,6 +68,7 @@ func (s *SessionVoiceSuite) TestASessionCreatedOnANamedCallJoinsIt() {
 }
 
 func (s *SessionVoiceSuite) TestStartingVoiceOnANamedCallJoinsIt() {
+	s.inOwnApp()
 	opened := s.serverClient.createSession(textSession(nil))
 	call := s.namedCall()
 
@@ -88,6 +94,21 @@ func (s *SessionVoiceSuite) TestACallNamedForAPhoneSessionIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
 		StartVoice: pointerTo(true), Call: &call, Phone: &SessionPhone{Number: "+15551234567"},
 	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(errCallWithPhone.Message, failure)
+}
+
+func (s *SessionVoiceSuite) TestVoiceOnAPhoneSessionTakesNoCall() {
+	s.inOwnApp()
+	// The suite has no telephony to place a call with, so the session is opened as the phone
+	// service opens one, by the manager.
+	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(), Phone: &session.PhoneSpec{}})
+	s.Require().NoError(err)
+	call := s.namedCall()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions/"+opened.ID()+"/voice",
+		StartSessionVoiceRequest{Call: &call})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal(errCallWithPhone.Message, failure)
@@ -121,6 +142,7 @@ func (s *SessionVoiceSuite) TestADeviceStartsVoiceOnItsSessionsOwnCall() {
 }
 
 func (s *SessionVoiceSuite) TestVoiceStartedAgainGoesBackToTheNamedCall() {
+	s.inOwnApp()
 	call := s.namedCall()
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 	s.stopVoice(opened.Id)
@@ -132,6 +154,7 @@ func (s *SessionVoiceSuite) TestVoiceStartedAgainGoesBackToTheNamedCall() {
 }
 
 func (s *SessionVoiceSuite) TestVoiceStartedAgainOnAnotherCallMovesThere() {
+	s.inOwnApp()
 	first, second := s.namedCall(), s.namedCall()
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &first})
 	s.stopVoice(opened.Id)
@@ -142,6 +165,7 @@ func (s *SessionVoiceSuite) TestVoiceStartedAgainOnAnotherCallMovesThere() {
 }
 
 func (s *SessionVoiceSuite) TestNamingAnotherCallWhileVoiceIsOnIsRefused() {
+	s.inOwnApp()
 	first, second := s.namedCall(), s.namedCall()
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &first})
 
@@ -155,6 +179,7 @@ func (s *SessionVoiceSuite) TestNamingAnotherCallWhileVoiceIsOnIsRefused() {
 
 // The control: naming the call voice is already on changes nothing.
 func (s *SessionVoiceSuite) TestNamingTheCallVoiceIsOnChangesNothing() {
+	s.inOwnApp()
 	call := s.namedCall()
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 
@@ -178,6 +203,7 @@ func (s *SessionVoiceSuite) TestStartingVoiceOnACallInAnotherAppIsRefused() {
 // Another session runs the call in the app it was created in, and the call's lines have
 // since been pinned to another app, which a new session would act in.
 func (s *SessionVoiceSuite) TestCreatingASessionOnACallInAnotherAppIsRefused() {
+	s.inOwnApp()
 	call := s.namedCall()
 	s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 	s.pinCall(call, 4242)
@@ -192,6 +218,7 @@ func (s *SessionVoiceSuite) TestCreatingASessionOnACallInAnotherAppIsRefused() {
 // The session ended, so voice is started on it again from its row alone, as another process
 // would.
 func (s *SessionVoiceSuite) TestASessionCarriedOnFromItsRowGoesBackToTheNamedCall() {
+	s.inOwnApp()
 	call := s.namedCall()
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 	// The row is written off the request path, and the session is carried on from it.
@@ -209,6 +236,7 @@ func (s *SessionVoiceSuite) TestASessionCarriedOnFromItsRowGoesBackToTheNamedCal
 }
 
 func (s *SessionVoiceSuite) TestAForkJoinsItsOwnCallRatherThanTheParents() {
+	s.inOwnApp()
 	call := s.namedCall()
 	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 	var forked Session
@@ -222,6 +250,7 @@ func (s *SessionVoiceSuite) TestAForkJoinsItsOwnCallRatherThanTheParents() {
 }
 
 func (s *SessionVoiceSuite) TestASecondSessionOnANamedCallEndsTheFirst() {
+	s.inOwnApp()
 	call := s.namedCall()
 	first := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 
@@ -231,6 +260,7 @@ func (s *SessionVoiceSuite) TestASecondSessionOnANamedCallEndsTheFirst() {
 }
 
 func (s *SessionVoiceSuite) TestStartingVoiceOnANamedCallEndsTheSessionAlreadyOnIt() {
+	s.inOwnApp()
 	call := s.namedCall()
 	first := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
 	second := s.serverClient.createSession(textSession(nil))
@@ -271,6 +301,43 @@ func (s *SessionVoiceSuite) TestStartingVoiceOnASessionNobodyHasIsNotFound() {
 	status, _ := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+s.utils.uuid()+"/voice", nil)
 
 	s.Equal(http.StatusNotFound, status)
+}
+
+// A shared Stream app holds every customer's calls, so a customer acting in one names none:
+// not another customer's live agent call, not a default call.
+func (s *SessionVoiceSuite) TestACustomerInASharedAppMayNotNameACall() {
+	otherCustomer := s.serverClient
+	other := otherCustomer.createSession(CreateSessionRequest{StartVoice: pointerTo(true)})
+	s.useApp(s.data.createApp())
+
+	for _, call := range []SessionCall{{Type: "agent", Id: other.Id}, s.namedCall()} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+			CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
+
+		s.Equal(http.StatusForbidden, status, call.Type)
+		s.Equal(errCallInSharedApp.Message, failure, call.Type)
+	}
+	s.Equal(Live, otherCustomer.getSession(other.Id).State, "the other customer's agent stays on its call")
+}
+
+func (s *SessionVoiceSuite) TestStartingVoiceOnANamedCallInASharedAppIsRefused() {
+	opened := s.serverClient.createSession(textSession(nil))
+	call := s.namedCall()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/voice",
+		StartSessionVoiceRequest{Call: &call})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(errCallInSharedApp.Message, failure)
+	s.Empty(s.serverClient.getSession(opened.Id).CallId, "the session stays in writing")
+}
+
+// inOwnApp makes the suite's clients a customer acting in a Stream app of its own, which is
+// the app a named call has to be in.
+func (s *SessionVoiceSuite) inOwnApp() {
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.giveApp(s.customerID(), id, "key-"+s.customerID())
 }
 
 // namedCall is a default call nobody has named before.
@@ -321,4 +388,101 @@ func (s *SessionVoiceSuite) answerTo(id, question string) string {
 		"/v1/agents/sessions/"+id+"/responses", CreateResponseRequest{Text: question}, nil))
 	answered, _ := s.await(watching, "responded")["text"].(string)
 	return answered
+}
+
+// DeploymentNamedCallSuite names calls in deployment tenancy with the deployment's own app
+// known, where every customer acts in that one app and only its own customer owns it.
+type DeploymentNamedCallSuite struct {
+	RouterSuite
+}
+
+func TestDeploymentNamedCallSuite(t *testing.T) {
+	runSuite(t, new(DeploymentNamedCallSuite))
+}
+
+func (s *DeploymentNamedCallSuite) SetupSuite() {
+	s.deploymentKnown = true
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *DeploymentNamedCallSuite) TestTheDeploymentAppsOwnCustomerNamesACall() {
+	s.asTheDeploymentsCustomer()
+	call := SessionCall{Type: "default", Id: "practice-" + s.utils.uuid()}
+
+	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
+
+	s.Equal(call.Id, opened.CallId)
+}
+
+func (s *DeploymentNamedCallSuite) TestAnotherCustomerOfTheDeploymentAppMayNotNameACall() {
+	s.useApp(s.data.createApp())
+	call := SessionCall{Type: "default", Id: "practice-" + s.utils.uuid()}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(errCallInSharedApp.Message, failure)
+}
+
+// The control: another customer of the shared app still opens a session on its own call.
+func (s *DeploymentNamedCallSuite) TestAnotherCustomerStillJoinsItsSessionsOwnCall() {
+	s.useApp(s.data.createApp())
+
+	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true)})
+
+	s.Equal("agent", opened.CallType)
+	s.Equal(opened.Id, opened.CallId)
+}
+
+// asTheDeploymentsCustomer makes the suite's clients the customer whose app the deployment's
+// is, which an earlier run may have made already.
+func (s *DeploymentNamedCallSuite) asTheDeploymentsCustomer() {
+	app, err := s.store.AppByID(context.Background(), strconv.Itoa(suiteStreamApp))
+	if errors.Is(err, store.ErrNoApp) {
+		s.useApp(s.numberedApp(suiteStreamApp))
+		return
+	}
+	s.Require().NoError(err)
+	s.useApp(s.data.keyed(store.Organization{ID: app.OrganizationID}, app))
+}
+
+// AppModeNamedCallSuite names calls in app tenancy, where a customer acts in its own app or,
+// with none, falls back to the deployment's app that every such customer shares.
+type AppModeNamedCallSuite struct {
+	RouterSuite
+}
+
+func TestAppModeNamedCallSuite(t *testing.T) {
+	runSuite(t, new(AppModeNamedCallSuite))
+}
+
+func (s *AppModeNamedCallSuite) SetupSuite() {
+	s.appMode = true
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *AppModeNamedCallSuite) TestACustomerInItsOwnAppNamesACall() {
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	key := "key-" + s.customerID()
+	s.answerAs(key, id)
+	s.forwarded(key)
+	call := SessionCall{Type: "default", Id: "practice-" + s.utils.uuid()}
+
+	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
+
+	s.Equal(call.Id, opened.CallId)
+}
+
+func (s *AppModeNamedCallSuite) TestACustomerFallingBackToTheDeploymentAppMayNotNameACall() {
+	s.chat.SetAppFor(suiteStreamKey, chattest.App{ID: suiteStreamApp})
+	s.useApp(s.numberedApp(streamAppID()))
+	call := SessionCall{Type: "default", Id: "practice-" + s.utils.uuid()}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{StartVoice: pointerTo(true), Call: &call})
+
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(errCallInSharedApp.Message, failure)
 }

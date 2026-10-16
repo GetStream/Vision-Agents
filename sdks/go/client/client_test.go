@@ -497,6 +497,46 @@ func TestStartingVoiceWithNoCallNamesNone(t *testing.T) {
 	}
 }
 
+func TestVideoIsTheNamedCallVoiceStartedOn(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	if _, err := session.Voice.Start(t.Context(), OnCall("default", "practice-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := videoCallAsked(t, session); asked != "/video/call/default/practice-1" {
+		t.Errorf("the video call asked Stream for %s", asked)
+	}
+}
+
+func TestVideoIsTheNamedCallTheSessionOpenedOn(t *testing.T) {
+	backend := newRouter(t)
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{
+		StartVoice: true, Call: &acceleration.SessionCall{Type: "default", Id: "practice-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(t.Context()) })
+
+	if asked := videoCallAsked(t, session); asked != "/video/call/default/practice-1" {
+		t.Errorf("the video call asked Stream for %s", asked)
+	}
+}
+
+// The control: voice started with no call is on the session's own call, agent:<session id>.
+func TestVideoIsTheSessionsOwnCallWhenNoneWasNamed(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	if _, err := session.Voice.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := videoCallAsked(t, session); asked != "/video/call/agent/session-1" {
+		t.Errorf("the video call asked Stream for %s", asked)
+	}
+}
+
 func TestStoppingVoiceCarriesTheConversationOnInWriting(t *testing.T) {
 	backend := newRouter(t)
 	session := onCall(t, backend)
@@ -1338,6 +1378,38 @@ func TestVideoIsRefusedForAConversationHeldInWriting(t *testing.T) {
 
 	if _, err := session.Video(); err == nil {
 		t.Error("a written conversation handed back a call")
+	}
+}
+
+// videoCallAsked is the path, past the API version, that the session's video call asks
+// Stream for, from a Stream that only records it.
+func videoCallAsked(t *testing.T, session *Session) string {
+	t.Helper()
+	asked := make(chan string, 1)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case asked <- r.URL.Path:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(fake.Close)
+	t.Setenv("STREAM_BASE_URL", fake.URL)
+	t.Setenv(stream.APIKeyEnv, "key")
+	t.Setenv(stream.APISecretEnv, "secret")
+
+	video, err := session.Video()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = video.Call.Get(t.Context(), nil)
+	select {
+	case path := <-asked:
+		return strings.TrimPrefix(path, "/api/v2")
+	default:
+		t.Fatal("the video call asked Stream nothing")
+		return ""
 	}
 }
 
