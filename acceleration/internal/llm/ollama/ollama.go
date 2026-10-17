@@ -59,7 +59,12 @@ func New(options openweights.Options) (*openaicompat.LLM, error) {
 	})
 }
 
-// requestFields turns thinking off, which is what Ollama documents "none" as.
-func requestFields(llm.ResponseParams, string) map[string]any {
-	return map[string]any{"reasoning_effort": "none"}
+// requestFields turns thinking off, which is what Ollama documents "none" as. It also
+// caps the answer with max_tokens, because Ollama ignores max_completion_tokens.
+func requestFields(params llm.ResponseParams, _ string) map[string]any {
+	fields := map[string]any{"reasoning_effort": "none"}
+	if params.MaxOutputTokens > 0 {
+		fields["max_tokens"] = params.MaxOutputTokens
+	}
+	return fields
 }

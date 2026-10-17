@@ -30,3 +30,8 @@ func (s *OllamaSuite) TestAModelEntryThatAsksToThinkIsRefused() {
 func (s *OllamaSuite) TestEveryRequestTurnsThinkingOff() {
 	s.Equal(map[string]any{"reasoning_effort": "none"}, requestFields(llm.ResponseParams{}, ""))
 }
+
+func (s *OllamaSuite) TestAnOutputCapTravelsAsMaxTokensWhichIsTheOnlyNameOllamaReads() {
+	fields := requestFields(llm.ResponseParams{MaxOutputTokens: 32}, "")
+	s.Equal(32, fields["max_tokens"])
+}
