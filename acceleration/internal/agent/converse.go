@@ -2,6 +2,7 @@ package agent
 
 import (
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -188,6 +189,9 @@ type converse struct {
 	delegated map[string]string
 	// waiting is the unfinished words each participant is being given longer to finish.
 	waiting map[string]unfinished
+	// announced is when each participant said they would give every detail at once, for
+	// as long as they have not yet asked anything or said they are done.
+	announced map[string]time.Time
 	// overlaps names the participant each provisional ask still with the controller is
 	// about, so a ruling can find what was asked.
 	overlaps map[string]string
@@ -263,6 +267,7 @@ func newConverse(
 		candidates:  map[string]candidate{},
 		delegated:   map[string]string{},
 		waiting:     map[string]unfinished{},
+		announced:   map[string]time.Time{},
 		overlaps:    map[string]string{},
 		overlapping: map[string]overlapState{},
 		reported:    map[ActionKind]judged{},
@@ -517,6 +522,10 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 			// spoken over the agent is still set aside below.
 			ruling.Floor = harness.Stop
 		}
+	}
+
+	if ruling.Disposition == harness.Respond && c.monologue(ready) {
+		ruling.Disposition = harness.Wait
 	}
 
 	clarify, clarified := "", ""
@@ -962,12 +971,58 @@ func settlement(result harness.Result) string {
 	return "the subagent could not answer " + result.Skill
 }
 
+var (
+	// announcesMonologue is a caller saying every detail is coming before they want an answer.
+	announcesMonologue = regexp.MustCompile(`(?i)\b(everything|it all|all of it|all the details|every detail)\b.{0,24}\b(up ?front|at once|in one go)\b|\bbear with me\b`)
+	// endsMonologue is a caller handing the turn back: a question, a go-ahead, or done.
+	endsMonologue = regexp.MustCompile(`(?i)\?|\b(that's|that is) (everything|all|it)\b|\bgo ahead\b|\b(can|could|would|will) you\b|\bplease (move|book|change|cancel|reschedule|update|send|check|switch)\b`)
+)
+
+// monologueSpan bounds how long an announcement holds the floor for the caller.
+const monologueSpan = 2 * time.Minute
+
+// monologue reports whether an answer to these words would cut into details the caller
+// said they would give all at once. The model forgets the announcement a few turns later
+// and answers the first complete detail; it is held to it here, for no longer than the
+// patience an unfinished thought gets.
+func (c *converse) monologue(ready candidate) bool {
+	c.mu.Lock()
+	id := ready.Participant.ID
+	if announcesMonologue.MatchString(ready.Text) {
+		c.announced[id] = time.Now()
+	}
+	since, held := c.announced[id]
+	if held && (time.Since(since) > monologueSpan || endsMonologue.MatchString(ready.Text)) {
+		delete(c.announced, id)
+		held = false
+	}
+	c.mu.Unlock()
+	if !held {
+		return false
+	}
+	if !c.patient(ready) {
+		c.mu.Lock()
+		delete(c.announced, id)
+		c.mu.Unlock()
+		return false
+	}
+	return true
+}
+
 // patient reports whether an unfinished thought is still worth waiting on.
 //
 // The controller is asked about the same words every retry for as long as the caller says
 // nothing more, and it answers the same way every time, so waiting is a loop that only the
 // caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
 // misheard, and at that point asking them is better than listening to silence.
+// waitedOn says the same words were waited on before.
+func (c *converse) waitedOn(ready candidate) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	waiting, known := c.waiting[ready.Participant.ID]
+	return known && sameWords(waiting.text, ready.Text)
+}
+
 func (c *converse) patient(ready candidate) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

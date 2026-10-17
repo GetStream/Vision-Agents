@@ -19,6 +19,22 @@ type Judge interface {
 // judgeNeutral is where a probability stops leaning one way.
 const judgeNeutral = 0.5
 
+// judgeAmbiguous is higher than neutral because a clarifying question costs the caller a turn,
+// and Jev puts plain requests such as "move my Thursday appointment to Tuesday" at 0.5 to 0.6.
+const judgeAmbiguous = 0.7
+
+// judgeFinished is higher than neutral because answering a caller part way through talks over
+// the rest, and Jev puts a pause after a name or a date of birth at 0.5 to 0.7. judgeGrowing
+// is lower for the same reason: a number Jev half suspects is unfinished usually is.
+const (
+	judgeFinished = 0.7
+	judgeGrowing  = 0.3
+)
+
+// judgeAddressed is higher than neutral because asking whether any part of the words is for
+// the agent puts side talk such as "I'll call you back, Mum" at 0.5 to 0.55.
+const judgeAddressed = 0.6
+
 // judgeHistory is how much of the conversation the judge is shown. Accuracy falls as the
 // state fills with what the decision does not need, and who holds the floor now is settled
 // by the last exchange.
@@ -59,10 +75,12 @@ func judgeState(turn FlowTurn) map[string]any {
 func judgeQuestions() map[string]decisionmodel.Question {
 	return map[string]decisionmodel.Question{
 		"addressed_to_agent": decisionmodel.Noul(
-			"Were the words in `heard` meant for the agent described in `agent_was_told`?",
-			"Spoken to the agent, whether or not they are finished.",
-			"Spoken to somebody else in the room, to a pet or a child, read off a television, "+
-				"or otherwise not meant for the agent."),
+			"Is any part of `heard` meant for the agent described in `agent_was_told`?",
+			"Some or all of it is spoken to the agent, whether or not it is finished, even if "+
+				"the speaker also turned aside to somebody else, as in \"yes honey, one sec. "+
+				"Sorry, the name is Okafor\".",
+			"All of it is spoken to somebody else in the room, to a pet or a child, read off a "+
+				"television, or otherwise not meant for the agent."),
 		"finished": decisionmodel.Noul(
 			"Is `heard` a complete thought that now waits for the agent to reply?",
 			"The speaker has said what they meant to say and expects an answer.",
@@ -73,6 +91,24 @@ func judgeQuestions() map[string]decisionmodel.Question {
 				"speaker is still reading out?",
 			"It ends mid-sequence, so more digits or words are still coming.",
 			"Whatever number it contains is complete, or it contains none."),
+		"listing": decisionmodel.Noul(
+			"Has the speaker said, earlier in `conversation` or in `heard` itself, that they will "+
+				"give several details in one go, and is `heard` that promise or one more of those "+
+				"details, rather than a question for the agent or a plain sign they have finished?",
+			"They promised everything up front and are still going: the promise itself, a name, "+
+				"a date, a booking, a preference.",
+			"No such promise was made, or `heard` asks the agent something, or says they are done."),
+		"expects_reply": decisionmodel.Noul(
+			"Does `heard` ask the agent something, ask it to do something, or answer what the "+
+				"agent last asked in `conversation`?",
+			"A question, a request, or the answer the agent asked for.",
+			"Something the speaker volunteers unasked, such as why they are calling or one "+
+				"more detail, which leaves room for them to go on."),
+		"greeting_only": decisionmodel.Noul(
+			"Is `heard` only a greeting, such as \"hi\" or \"hello there\", with nothing asked "+
+				"or said yet?",
+			"A greeting and nothing more, so what they called about is still coming.",
+			"It says or asks something beyond a greeting."),
 		"recorded_menu": decisionmodel.Noul(
 			"Is `heard` a recording reading out its options rather than a person talking?",
 			"An automated menu, hold message or greeting.",
@@ -124,11 +160,23 @@ func judged(turn FlowTurn, answers map[string]decisionmodel.Answer) (flowAnswer,
 
 	if !turn.Speaking {
 		switch {
-		case yes("non_speech"), !yes("addressed_to_agent"):
-			return flowAnswer{Disposition: Ignore, Floor: Continue}, nil
-		case yes("recorded_menu"), yes("still_growing"), !yes("finished"):
+		case yes("recorded_menu"):
 			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
-		case yes("ambiguous"):
+		case yes("non_speech"), answers["addressed_to_agent"].Yes < judgeAddressed:
+			return flowAnswer{Disposition: Ignore, Floor: Continue}, nil
+		case answers["still_growing"].Yes >= judgeGrowing, yes("listing"), yes("greeting_only"),
+			answers["finished"].Yes < judgeFinished:
+			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
+		case !turn.Waited && !turn.Ended:
+			// The cadence asks after 350ms of silence and Flux marks the end of a turn about
+			// 570ms after the last word, so answering on the silence alone answered callers
+			// in the middle of what they were asking.
+			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
+		case !turn.Waited && !yes("expects_reply"):
+			// A caller volunteering details goes on after a breath, and answering each one
+			// talked over Voicebench's monologues. One more pause is what they are given.
+			return flowAnswer{Disposition: Wait, Floor: Continue}, nil
+		case answers["ambiguous"].Yes >= judgeAmbiguous:
 			return flowAnswer{Disposition: Clarify, Floor: Continue}, nil
 		default:
 			return flowAnswer{Disposition: Respond, Floor: Continue}, nil
@@ -139,19 +187,25 @@ func judged(turn FlowTurn, answers map[string]decisionmodel.Answer) (flowAnswer,
 	if turn.Unfinished {
 		settled = Wait
 	}
+	// Words said over the agent settle on the same short pause, and "actually, no" answered
+	// on its own had the agent reply "No."
+	thought := settled
+	if answers["finished"].Yes < judgeFinished || answers["still_growing"].Yes >= judgeGrowing {
+		thought = Wait
+	}
 	switch {
 	case yes("non_speech"):
 		return flowAnswer{Disposition: Ignore, Floor: Continue}, nil
 	case yes("echo"), yes("acknowledgement"):
 		return flowAnswer{Disposition: settled, Floor: Continue}, nil
-	case !yes("addressed_to_agent"):
+	case answers["addressed_to_agent"].Yes < judgeAddressed:
 		return flowAnswer{Disposition: Ignore, Floor: Continue}, nil
 	case yes("adds_to_request"):
-		return flowAnswer{Disposition: settled, Floor: Shorten}, nil
+		return flowAnswer{Disposition: thought, Floor: Shorten}, nil
 	case yes("objects"):
-		return flowAnswer{Disposition: settled, Floor: Stop}, nil
+		return flowAnswer{Disposition: thought, Floor: Stop}, nil
 	default:
-		return flowAnswer{Disposition: settled, Floor: Continue}, nil
+		return flowAnswer{Disposition: thought, Floor: Continue}, nil
 	}
 }
 
@@ -182,7 +236,9 @@ func (f *flow) runJudge(asked *candidate) {
 	}
 	f.logger.Debug("flow judge answered", "candidate", turn.ID, "text", turn.Text,
 		"speaking", turn.Speaking, "unfinished", turn.Unfinished,
-		"disposition", answer.Disposition, "floor", answer.Floor, "took_ms", took)
+		"disposition", answer.Disposition, "floor", answer.Floor, "took_ms", took,
+		"finished", answered.Answers["finished"].Yes, "addressed", answered.Answers["addressed_to_agent"].Yes,
+		"growing", answered.Answers["still_growing"].Yes, "listing", answered.Answers["listing"].Yes)
 	f.emitter.Send(Decided{
 		CandidateID: turn.ID,
 		Disposition: answer.Disposition,

@@ -105,19 +105,43 @@ func (s *JudgeSuite) ruling(turn FlowTurn) Decided {
 			return false
 		}
 		got = s.decided[len(s.decided)-1]
-		return true
+		return got.CandidateID == turn.ID
 	}, time.Second, 5*time.Millisecond, "the judge never ruled")
 	return got
 }
 
 func (s *JudgeSuite) TestACompleteThoughtForTheAgentIsAnswered() {
-	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9})
+	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "expects_reply": 0.9})
 
-	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "A table for four at seven, please."})
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "A table for four at seven, please.", Ended: true})
 
 	s.Require().NoError(got.Err)
 	s.Equal(Respond, got.Disposition)
 	s.Equal("A table for four at seven, please.", s.states[0]["heard"])
+}
+
+func (s *JudgeSuite) TestARequestTheTranscriberHasNotEndedWaitsForTheEnd() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "expects_reply": 0.9})
+	said := FlowTurn{ID: "t1", Participant: "caller", Text: "A table for four this Saturday at seven thirty"}
+
+	first := s.ruling(said)
+	said.ID, said.Ended = "t2", true
+	ended := s.ruling(said)
+
+	s.Equal(Wait, first.Disposition)
+	s.Equal(Respond, ended.Disposition)
+}
+
+func (s *JudgeSuite) TestAVolunteeredDetailIsGivenOneMorePause() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "expects_reply": 0.2})
+	said := FlowTurn{ID: "t1", Participant: "caller", Text: "It's my mother's seventieth this Saturday.", Ended: true}
+
+	first := s.ruling(said)
+	said.ID, said.Waited = "t2", true
+	second := s.ruling(said)
+
+	s.Equal(Wait, first.Disposition)
+	s.Equal(Respond, second.Disposition, "the caller has been quiet for longer since")
 }
 
 func (s *JudgeSuite) TestACoughOverTheAgentNeverTakesTheFloor() {
@@ -157,13 +181,64 @@ func (s *JudgeSuite) TestAnUnfinishedInterruptionDecidesOnlyTheFloor() {
 }
 
 func (s *JudgeSuite) TestAnAdditionShortensTheReply() {
-	s.answer(map[string]float64{"addressed_to_agent": 0.95, "adds_to_request": 0.8, "objects": 0.2})
+	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "adds_to_request": 0.8, "objects": 0.2})
 
 	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "and Saturday as well", Speaking: true,
 		Reply: "Friday at seven is free"})
 
 	s.Equal(Respond, got.Disposition)
 	s.Equal(Shorten, got.Floor)
+}
+
+func (s *JudgeSuite) TestARecordedMenuIsWaitedOnThoughItIsNotForTheAgent() {
+	s.answer(map[string]float64{"recorded_menu": 0.96, "addressed_to_agent": 0.37, "finished": 0.7})
+
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "For balances, press one. For payments,"})
+
+	s.Equal(Wait, got.Disposition)
+}
+
+func (s *JudgeSuite) TestACallerStillGivingWhatTheyPromisedIsWaitedOn() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "listing": 0.9})
+
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "My name is Maya Chen."})
+
+	s.Equal(Wait, got.Disposition)
+}
+
+func (s *JudgeSuite) TestAPlainRequestJevIsUnsureOfIsAnsweredRatherThanQuestioned() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.97, "finished": 0.95, "expects_reply": 0.95, "ambiguous": 0.56})
+
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller",
+		Text: "I'd like to move my Thursday appointment to Tuesday morning please.", Ended: true})
+
+	s.Equal(Respond, got.Disposition)
+}
+
+func (s *JudgeSuite) TestAPauseJevIsUnsureEndsTheThoughtIsWaitedOn() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.96, "finished": 0.62})
+
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Maya Chen, born March fourth 1987"})
+
+	s.Equal(Wait, got.Disposition)
+}
+
+func (s *JudgeSuite) TestAGreetingOnItsOwnIsWaitedOn() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "greeting_only": 0.9})
+
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Hi."})
+
+	s.Equal(Wait, got.Disposition)
+}
+
+func (s *JudgeSuite) TestAHalfSaidCorrectionStopsTheAgentButIsNotAnswered() {
+	s.answer(map[string]float64{"addressed_to_agent": 0.92, "finished": 0.33, "objects": 0.9})
+
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Speaking: true,
+		Reply: "A party of six at seven this Saturday.", Text: "A table for six at seven. Actually, no"})
+
+	s.Equal(Wait, got.Disposition)
+	s.Equal(Stop, got.Floor)
 }
 
 func (s *JudgeSuite) TestAnUnansweredFactIsAFailure() {

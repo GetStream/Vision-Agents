@@ -59,6 +59,11 @@ type FlowTurn struct {
 	// It is evidence rather than a verdict: somebody else in the room is usually talking
 	// to the room, but they may equally have leaned in to answer for the caller.
 	AnotherVoice bool
+	// Waited says the same words were waited on before, so the speaker has since been quiet
+	// a while longer.
+	Waited bool
+	// Ended says the transcriber marked the end of the turn, or is one that never does.
+	Ended bool
 }
 
 type flow struct {

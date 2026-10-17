@@ -62,6 +62,18 @@ func (s *CadenceSuite) quiet() {
 	}
 }
 
+func (s *CadenceSuite) TestOnlyATranscriberThatMarksEndsHasTurnsThatHaveNotEnded() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Text: "a table for four"})
+	s.True(s.ready().Ended, "a transcriber that never marks an end is not waited on for one")
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "a table for four please"})
+	s.True(s.ready().Ended)
+
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Text: "a table for four please and"})
+
+	s.False(s.ready().Ended, "the words grew after the end was marked")
+}
+
 func (s *CadenceSuite) TestTheFinalCopyOfAnAnsweredUtteranceIsNotAnsweredAgain() {
 	// The transcriber settles on words the agent has already started answering, which is
 	// not the caller saying them a second time.

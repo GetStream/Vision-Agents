@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -489,6 +490,11 @@ func (w *ResponseWriter) assembled() []ToolCall {
 	calls := make([]ToolCall, 0, len(w.order))
 	for _, index := range w.order {
 		call := w.calls[index]
+		// A reply cut off mid-call leaves arguments that are not JSON. Such a call cannot
+		// run, and replayed in the history it has the provider refuse every later turn.
+		if arguments := call.arguments.String(); arguments != "" && !json.Valid([]byte(arguments)) {
+			continue
+		}
 		id := call.id
 		if id == "" {
 			id = fmt.Sprintf("%s-tool-%d", w.options.ResponseID, index)

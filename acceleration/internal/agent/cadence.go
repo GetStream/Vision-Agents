@@ -43,6 +43,8 @@ type candidate struct {
 	// Unfinished says the words are a provisional revision of an utterance still in
 	// progress, put to the controller to decide the floor rather than settled.
 	Unfinished bool
+	// Ended says the transcriber marked the end of the turn, or never marks one.
+	Ended bool
 }
 
 // cadence decides when an evolving transcript has stayed unchanged long enough to act on.
@@ -61,12 +63,19 @@ type cadence struct {
 	// turn is given it and not only the first.
 	grace  time.Duration
 	closed bool
+	// marksEnds says the transcriber has sent a final, so it is one that says when a turn
+	// has ended.
+	marksEnds bool
 }
 
 type cadenceSpeaker struct {
 	participant stt.Participant
 	// speaker is the diarised voice the words were last heard in.
-	speaker     string
+	speaker string
+	// ended says the words were last sent as final, and askedEnded whether they had been
+	// when they were last put.
+	ended       bool
+	askedEnded  bool
 	text        string
 	language    string
 	confidence  float64
@@ -215,6 +224,8 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
+	current.ended = transcript.Mode == stt.ModeFinal
+	c.marksEnds = c.marksEnds || current.ended
 	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
 	if sameWords(current.text, text) {
 		// The transcriber finalizing words already waited on means they have stopped, so
@@ -267,9 +278,15 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 		}
 		current.candidateID = ""
 		if wait {
+			retry := c.retry
+			// The end the transcriber marked while the words were being judged is the
+			// longer pause the wait was for.
+			if current.ended && !current.askedEnded {
+				retry = c.finalGapLocked()
+			}
 			c.logger.Debug("giving the caller longer to finish",
-				"participant", current.participant.ID, "candidate", candidateID, "retry", c.retry)
-			c.scheduleLocked(current, c.retry)
+				"participant", current.participant.ID, "candidate", candidateID, "retry", retry)
+			c.scheduleLocked(current, retry)
 		} else {
 			current.committed = current.text
 			current.committedUtterance = current.utterance
@@ -466,11 +483,14 @@ func (c *cadence) emit(participantID string, generation int64) {
 		STTLatencyMs: current.latencyMs,
 		RevisedAt:    current.revisedAt,
 		ReadyAt:      time.Now(),
+		Ended:        current.ended || !c.marksEnds,
 	}
+	current.askedEnded = ready.Ended
 	c.mu.Unlock()
 
 	c.logger.Debug("the words held still, asking whether to answer them",
-		"participant", participantID, "candidate", ready.ID, "text", ready.Text, "waited", waited)
+		"participant", participantID, "candidate", ready.ID, "text", ready.Text, "waited", waited,
+		"ended", ready.Ended)
 
 	select {
 	case c.ready <- ready:

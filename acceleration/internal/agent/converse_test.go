@@ -1093,6 +1093,27 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesANewTurnThatStartsTheSameWay() {
 	s.Equal(queued.Candidate.ID, action.Candidate.ID)
 }
 
+func (s *ConverseSuite) TestAnAnnouncedMonologueIsNotAnsweredUntilItEnds() {
+	announced := s.settle("I'll give you everything up front so we don't go back and forth.", s.quiet())
+	held := s.converse.Ruled(harness.Decided{
+		CandidateID: announced.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActWait}, kinds(held))
+
+	detail := s.settle("I'll give you everything up front so we don't go back and forth. Member ID ABC123456.", s.quiet())
+	held = s.converse.Ruled(harness.Decided{
+		CandidateID: detail.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActWait}, kinds(held), "a complete detail is not the end of what was announced")
+
+	done := s.settle("I'll give you everything up front so we don't go back and forth. Member ID ABC123456. "+
+		"That's everything.", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: done.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+}
+
 func (s *ConverseSuite) TestAfterAProvisionalStopTheSettledWordsAreAnsweredOnce() {
 	asked := s.overhears("actually wait", s.talking())
 	stopped := s.converse.Ruled(harness.Decided{
