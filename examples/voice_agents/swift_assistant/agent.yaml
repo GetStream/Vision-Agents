@@ -1,0 +1,17 @@
+name: swift_assistant
+description: Juno, the personal assistant the iOS assistant app talks to.
+llm: gemini/gemini-3.8-flash
+stt: deepgram/flux-general-en
+tts: inworld/inworld-tts-2-flash
+search: search-fast
+# Said as written: varying it asks the session's model first, and on Grok, which thinks
+# before it writes, that ran out its 3 s every time and held up opening every chat.
+greeting:
+  text: Hey, it's Juno. What's on your mind?
+  mode: exact
+# Each person's own Gmail, connected from the composer's Gmail button. Google's MCP server reads,
+# searches and drafts; sending is send_email, a tool on the phone that asks first and goes
+# through the router's proxy for this same connection.
+connectors:
+  - name: gmail
+    tools: [search_threads, get_thread, get_message, list_labels, list_drafts, create_draft]
