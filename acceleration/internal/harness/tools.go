@@ -120,8 +120,8 @@ func SandboxTool() Tool {
 //
 // It says nothing about any one tool, so it holds for any set, and it leaves confirmation to
 // the operator's own instructions and to a tool's approval.
-const usePolicy = "Before calling a tool, say one short sentence that opens with a brief hold " +
-	"phrase in your own words, never the same twice, and goes straight on, with no full stop " +
+const usePolicy = "Before calling a tool, say one short sentence whose very first words ask " +
+	"the caller to hold a moment while you check, and goes straight on, with no full stop " +
 	"between, into what your instructions ask you to say before acting (such as reading the " +
 	"caller's details back) or else what you are doing. Say it there and only there: never " +
 	"as a sentence of its own, never in place of a required read-back, never after the call " +
@@ -167,12 +167,20 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
 	"tool result in this conversation shows it, nor that you are doing it now (logging, " +
 	"booking, opening a ticket) unless you call the tool in that same reply; if you have " +
-	"not called that tool, call it now. " +
+	"not called that tool, call it now. Never tell the caller what a tool would find (an " +
+	"outage, a free slot, a record) without its result in this conversation: call it first. " +
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
 	"it, with no hold phrase and no call, until they agree. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
 	"asking for anything optional again. When a tool does the step you would describe, such " +
-	"as walking the caller through something, call it instead of describing the step."
+	"as walking the caller through something, call it instead of describing the step, " +
+	"even if the caller says they already tried that step themselves: the tool records " +
+	"that it was done and later steps may need it. " +
+	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
+	"it, first call the tool that lists them. " +
+	"When you read details back or confirm a change, say each value whole, exactly as you " +
+	"pass it to the tool, and never right after a number word: say ending in 9821, not last " +
+	"four 9821."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the

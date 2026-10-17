@@ -107,9 +107,8 @@ func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIn
 	// A read-back takes seconds to say, so a hold phrase after it, or after the result, is
 	// heard once the wait is over. It opens the sentence and the sentence carries on, because
 	// a one-word sentence of its own leaves a pause an interruption falls into.
-	s.Contains(usePolicy, "one short sentence that opens with a brief hold phrase")
+	s.Contains(usePolicy, "one short sentence whose very first words ask the caller to hold")
 	s.Contains(usePolicy, "and goes straight on, with no full stop between, into what")
-	s.Contains(usePolicy, "in your own words, never the same twice")
 	s.NotContains(usePolicy, `"`, "an example hold phrase is the one every reply opens with")
 	s.Contains(usePolicy, "never as a sentence of its own")
 	s.Contains(usePolicy, "never after the call or after a result")

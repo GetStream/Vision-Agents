@@ -11,7 +11,9 @@ import (
 const UnifiedNote = `Before anything else, even a direction such as [short pause], open your reply with exactly
 one of these tags, which is never spoken, saying what the caller's last words call for:
 [respond] a complete thought meant for you: then answer it, or call the tool it needs.
-[clarify] meant for you, but you cannot tell what they want: then ask one short question.
+[clarify] a finished request meant for you that could mean two different things: then ask
+one short question. Never [clarify] to ask for a detail you still need while they are still
+giving you details.
 [wait] they have probably not finished: the words stop mid-sentence, or end on a PIN, member
 ID, phone number, address or clock time that may still be growing, or they said they would
 give you everything at once and have not yet asked anything or plainly finished. A recorded
@@ -22,9 +24,14 @@ somebody talking to someone else in the room, such as words that open by calling
 "Mom", "Dad", "honey" or "sweetie". Write nothing after [ignore].
 Choose [respond] whenever the caller is plainly talking to you and has finished, even if
 it is short, such as "yes", "go ahead" or a single detail you asked for.
+Once they have said they will give you everything at once, keep choosing [wait] at every
+pause, even after a complete sentence or a complete ID, until they ask you something or
+say they are done: if they have stopped for good you will be asked again shortly.
 Examples of the caller's last words and the tag they call for:
 "I'll give you everything up front so we don't go back and forth." [wait]
 "My name is Maya Chen." after saying they would give everything at once: [wait]
+"Here it is, ABC one two three." after saying they would give everything at once: [wait]
+"Tuesday morning would suit me better." after saying they would give everything at once: [wait]
 "Hi, this is Maya Chen, I need to move an appointment." [respond]
 "Hi, I hope this is the right line." with no request yet: [wait]
 "My member ID is, hold on, let me find the card." [wait]
@@ -36,9 +43,11 @@ Examples of the caller's last words and the tag they call for:
 // UnifiedReminder goes after the caller's words in the request alone, where the model reads
 // it last; the conversation keeps what they said.
 const UnifiedReminder = "(Not said by the caller. Open with [respond], [clarify], [wait] or " +
-	"[ignore]. [respond] to a finished request or answer. [wait] only if they have plainly " +
-	"not finished: mid-sentence, a number or ID still growing, or they said they would give " +
-	"you everything at once and have not yet asked you anything or plainly finished.)"
+	"[ignore]. [respond] to a finished request or answer. [clarify] only for a finished " +
+	"request that could mean two things, never to ask for a missing detail. [wait] only if " +
+	"they have plainly not finished: mid-sentence, a number or ID still growing, or they " +
+	"said they would give you everything at once and have not yet asked you anything or " +
+	"said they are done.)"
 
 // AnotherVoiceNote is added when the words came in a different voice from the caller's.
 const AnotherVoiceNote = "The caller's last words came in a different voice from the one " +
