@@ -666,6 +666,21 @@ it has one. An agent with no config and no `instructions` now sends `DEFAULT_INS
 `config` and no `instructions` of its own is unchanged: the default is not sent over its
 folder's instructions.
 
+### A login the chat asks for can go back to the app's own page
+
+`POST /v1/agents/sessions` (`createSession`) and the session socket's `start` frame take an
+optional `return_url` (AI-1384): the app's own page that the logins and step-ups the chat asks
+for go back to, as `createAuthorization`'s `return_url` does for a consent the backend starts.
+A page of that URL's origin opens the `connector_authorization` attachment's or the
+`connector_scope_required` frame's `launch_url` and posts it `handoff_token`; the browser then
+comes back to the URL with `connection_id` and `status` added to its query. The same rules
+apply as on `createAuthorization`, and a URL they refuse is a 400 `invalid_request` starting
+`return_url:` (an error frame on the socket), with no session created. The session keeps it:
+a chat carried on after it ended, in this process or another, and a fork, go back to the same
+page. An end user's device may send it, since a consent the chat asks for is only ever for
+the caller's own connection and shown to the caller alone. The Go SDK's `SessionOptions` has
+`ReturnURL` and the Python SDK's has `return_url`. Without it, nothing changes: those consents go back to the dashboard.
+
 ### A connector consent can go back to the app's own page
 
 `POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`) takes an optional
@@ -684,7 +699,7 @@ replaced by the router's. A consent that has a `return_url` no longer sends the 
 reads one, so a body that is not a JSON object (`null`, `{`, a `text/plain` one) is a 400 or 415
 where it was a 201; no known caller sends one.
 Without it, nothing changes: the dashboard opens the launch page and the consent goes back to
-the dashboard, as does a consent the chat starts. The generated clients are regenerated: Go's
+the dashboard, as does a consent the chat starts (until AI-1384, above). The generated clients are regenerated: Go's
 `CreateAuthorization` and Rust's `create_authorization` now take the request body.
 
 ### Built-in BigQuery and Metabase connectors
@@ -2087,6 +2102,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `stream.STT` credits each transcript to the participant whose audio it is of. It sent every participant's audio over one router socket and credited each transcript to whoever sent the last frame, so a line still arriving when the next person started talking went to them. Each participant now has a socket of their own: the one `start` opens goes to whoever speaks first, and the others open on a participant's first frame. A socket the router refuses for a later participant is reported once as an `STTErrorEvent` and that participant's audio is dropped; one participant still uses exactly one socket (AI-1403).
 - A Python `Agent` built by hand, without `AgentLauncher`, loads its components' models when it joins: the multi-speaker filter's Silero VAD, a local STT such as `fast_whisper`, a local turn detector or processor. It loaded none, so once two people spoke on the call the first frame failed with `warmup() must be called before process_audio()` and the agent took no more audio for the rest of the call, though the join had succeeded. A model that fails to load now fails the join before the agent enters the call. An agent from `AgentLauncher` keeps the models the launcher loaded, and `Agent.warmup(cache)` loads them ahead of the join (AI-1402).
 - A voice id ElevenLabs does not have is refused on a shortcut that also reaches Cartesia or Inworld, such as `tts-quality`. The router fell back to them, so the stream started and failed on the first line (`Unknown voice: … not found!`, `voice ID must be a valid UUID`). They now take such an id only when their own voice listing holds it, in whatever order the candidates are ranked. This covers a voice shaped like an ElevenLabs id (20 letters and digits); a Cartesia UUID or a name such as `Ashley` routes as before, and a mistyped name on such a shortcut still fails on the first line (AI-1395).
 - An ElevenLabs voice that ElevenLabs does not have is refused when the voice opens, naming the closest voice in its library: `elevenlabs has no voice "Sara"; the closest in its library is "Sarah - Mature, Reassuring, Confident" (EXAVITQu4vr4xnSDxMaL)`. Any id was passed on, so a wrong one failed on the first line spoken. The `/v1/tts/stream` socket answers it as its `error` frame, a session's voice with a 400, and a recording as a failed job. A voice in the account, a Voice Library voice and a legacy voice still speak; Cartesia and Inworld voices are not checked (AI-1395).

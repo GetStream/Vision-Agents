@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Any, Optional
 
+import aiohttp
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
@@ -9,6 +10,7 @@ from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._backend import Backend
+from ._errors import RouterError
 from ._routerconfig import ensure_router
 from ._socket import Socket
 
@@ -24,6 +26,14 @@ class STT(stt.STT):
     For a pipeline that stays in Python: the turns, the model and the conversation are all
     here, and only the transcribing is somewhere else. Failover and cost tracking work
     exactly as they do inside a session, because it is the same router doing the routing.
+
+    Each participant is transcribed on a socket of their own, and what comes back on it is
+    credited to them. The router's socket carries no participant, and a transcript lags
+    the audio it is of, so on a shared socket a line still arriving when someone else
+    starts talking would go to the wrong speaker. The socket opened by `start` goes to
+    whoever speaks first; everyone after gets a new one on their first frame, opened in
+    the background so nobody else's audio waits for it, with their frames held in order
+    until it is open. Sockets are kept until `close`.
     """
 
     def __init__(
@@ -61,30 +71,21 @@ class STT(stt.STT):
         self.options = options or {}
         self.backend = backend or Backend(url=url, customer_id=customer_id)
 
-        self._socket: Optional[Socket] = None
-        self._reader: Optional[asyncio.Task] = None
-        self._speaker: Optional[Participant] = None
+        # _unclaimed is the socket opened by start, until somebody speaks into it.
+        self._unclaimed: Optional[Socket] = None
+        self._sockets: dict[str, Socket] = {}
+        self._speakers: dict[Socket, Participant] = {}
+        # _held is the audio of each participant whose socket is still opening.
+        self._held: dict[str, list[bytes]] = {}
+        self._opening: list[asyncio.Task] = []
+        self._readers: list[asyncio.Task] = []
 
     async def start(self):
-        """Open the socket and start reading transcripts off it."""
+        """Open the first socket, so that a refusal is raised here, and start reading it."""
         await super().start()
         await ensure_router(self.config_id, self.backend)
-        self._socket = Socket(
-            self.backend.socket("/v1/stt/stream"), self.backend.headers
-        )
-        await self._socket.connect()
-        await self._socket.send(
-            {
-                "type": "start",
-                "config_id": self.config_id,
-                "target": self.model,
-                "languages": [self.language] if self.language else [],
-                "tags": self.tags,
-                "sample_rate": SAMPLE_RATE,
-                "stt": self.options,
-            }
-        )
-        self._reader = asyncio.create_task(self._read())
+        self._unclaimed = self._socket()
+        await self._open(self._unclaimed)
         self._on_connected()
 
     async def __aenter__(self) -> "STT":
@@ -100,45 +101,110 @@ class STT(stt.STT):
         pcm_data: PcmData,
         participant: Participant,
     ):
-        """Send audio to be transcribed, resampled to what the router expects."""
-        if self.closed or self._socket is None or not self._socket.open:
+        """Send audio to be transcribed on the participant's own socket, resampled to what
+        the router expects."""
+        if self.closed or not self.started:
             return
 
-        self._speaker = participant
-        resampled = pcm_data.resample(SAMPLE_RATE, 1)
-        await self._socket.send_audio(resampled.samples.tobytes())
+        payload = pcm_data.resample(SAMPLE_RATE, 1).samples.tobytes()
+        socket = self._sockets.get(participant.id) or self._claim(participant)
+        held = self._held.get(participant.id)
+        if held is not None:
+            held.append(payload)
+        elif socket.open:
+            await socket.send_audio(payload)
 
     async def close(self):
-        """Close the socket and stop reading it."""
-        if self._reader is not None:
-            await cancel_and_wait(self._reader)
-            self._reader = None
-        if self._socket is not None:
-            await self._socket.close()
-            self._socket = None
+        """Close every socket, including one still opening, and stop reading them."""
+        # closed is set first, so audio arriving while this runs opens no socket it would miss.
+        self.closed = True
+        await cancel_and_wait(*self._opening)
+        self._opening.clear()
+        self._held.clear()
+        for reader in self._readers:
+            await cancel_and_wait(reader)
+        self._readers.clear()
+        sockets = list(self._sockets.values())
+        if self._unclaimed is not None:
+            sockets.append(self._unclaimed)
+            self._unclaimed = None
+        self._sockets.clear()
+        self._speakers.clear()
+        await asyncio.gather(*(socket.close() for socket in sockets))
+        if sockets:
             self._on_disconnected()
         await super().close()
 
-    async def _read(self) -> None:
-        """Turn what the router says into transcripts on the output stream."""
-        if self._socket is None:
-            return
+    def _socket(self) -> Socket:
+        return Socket(self.backend.socket("/v1/stt/stream"), self.backend.headers)
 
-        async for frame in self._socket.frames():
+    async def _open(self, socket: Socket) -> None:
+        """Connect `socket`, say what to transcribe on it and start reading it."""
+        await socket.connect()
+        await socket.send(
+            {
+                "type": "start",
+                "config_id": self.config_id,
+                "target": self.model,
+                "languages": [self.language] if self.language else [],
+                "tags": self.tags,
+                "sample_rate": SAMPLE_RATE,
+                "stt": self.options,
+            }
+        )
+        self._readers.append(asyncio.create_task(self._read(socket)))
+
+    def _claim(self, participant: Participant) -> Socket:
+        """The socket `participant` is heard on: the one start opened if nobody has it yet,
+        or a new one, opened in the background while their frames are held."""
+        unclaimed, self._unclaimed = self._unclaimed, None
+        socket = unclaimed or self._socket()
+        self._sockets[participant.id] = socket
+        self._speakers[socket] = participant
+        if unclaimed is None:
+            self._held[participant.id] = []
+            self._opening.append(
+                asyncio.create_task(self._open_for(participant, socket))
+            )
+        return socket
+
+    async def _open_for(self, participant: Participant, socket: Socket) -> None:
+        """Open a participant's socket, then send what they said meanwhile, in order.
+
+        A socket the router refuses is reported once and kept, closed, so the rest of that
+        participant's audio is dropped as a closed socket's always was, rather than each
+        frame asking again.
+        """
+        held = self._held[participant.id]
+        context = f"opening a socket for {participant.id}"
+        try:
+            await self._open(socket)
+            context = f"sending what {participant.id} said while it opened"
+            while held:
+                await socket.send_audio(held.pop(0))
+        except (RouterError, aiohttp.ClientError, OSError) as e:
+            await socket.close()
+            self._emit_error_event(e, context=context)
+        finally:
+            self._held.pop(participant.id, None)
+
+    async def _read(self, socket: Socket) -> None:
+        """Turn what the router says on `socket` into transcripts on the output stream."""
+        async for frame in socket.frames():
             if isinstance(frame, bytes):
                 continue
-            self._received(frame)
+            self._received(frame, self._speakers.get(socket))
 
-    def _received(self, frame: dict[str, Any]) -> None:
+    def _received(self, frame: dict[str, Any], speaker: Optional[Participant]) -> None:
         kind = frame.get("type", "")
 
         if kind == "transcript":
             text = frame.get("text", "")
-            if not text or self._speaker is None:
+            if not text or speaker is None:
                 return
             self._emit_transcript_event(
                 text=text,
-                participant=self._speaker,
+                participant=speaker,
                 response=TranscriptResponse(
                     confidence=frame.get("confidence"),
                     language=frame.get("language"),

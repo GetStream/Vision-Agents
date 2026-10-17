@@ -13,8 +13,10 @@ import (
 // A reply that needed a connector binding the end user has no usable connection for carries
 // the request as a connector_authorization attachment: the consent the router began for the
 // user's own connection (POST /v1/agents/connections/{id}/authorizations does the same for a
-// backend). The dashboard opens launch_url in a popup and posts it handoff_token, as for one
-// the backend began without a return_url, and the consent goes back to the dashboard. It is
+// backend). A page of the session's return_url's origin opens launch_url in a popup and posts it
+// handoff_token, as for one the backend began with that return_url, and the consent goes back
+// to that page; for a session created without one, the dashboard does, as for a consent begun
+// without a return_url. It is
 // the connector counterpart of plugin_authorization (authorizations.go), which stays as it is
 // until the plugins go (T23).
 

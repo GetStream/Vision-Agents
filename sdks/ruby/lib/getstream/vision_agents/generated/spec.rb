@@ -1770,7 +1770,7 @@ module GetStream
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id return_url search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {

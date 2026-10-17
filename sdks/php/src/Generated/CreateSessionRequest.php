@@ -60,6 +60,8 @@ final readonly class CreateSessionRequest
         public ?SessionPhone $phone = null,
         // What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project...
         public ?string $projectId = null,
+        // The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url:...
+        public ?string $returnUrl = null,
         // Omit it and the config decides, or search-fast when there is no config.
         public ?string $search = null,
         // Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else a...
@@ -118,6 +120,7 @@ final readonly class CreateSessionRequest
             navigating: array_key_exists('navigating', $data) && $data['navigating'] !== null ? Json::bool($data, 'navigating') : null,
             phone: array_key_exists('phone', $data) && $data['phone'] !== null ? SessionPhone::fromArray(Json::object($data, 'phone')) : null,
             projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
+            returnUrl: array_key_exists('return_url', $data) && $data['return_url'] !== null ? Json::string($data, 'return_url') : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             startVoice: array_key_exists('start_voice', $data) && $data['start_voice'] !== null ? Json::bool($data, 'start_voice') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
@@ -213,6 +216,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->projectId !== null) {
             $out['project_id'] = $this->projectId;
+        }
+        if ($this->returnUrl !== null) {
+            $out['return_url'] = $this->returnUrl;
         }
         if ($this->search !== null) {
             $out['search'] = $this->search;

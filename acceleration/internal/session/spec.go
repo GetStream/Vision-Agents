@@ -231,6 +231,10 @@ type Spec struct {
 	// bindings, one per alias. Only references: the session checks each against the
 	// binding and the verified Caller when it opens, and again on every call.
 	ConnectorSelections []ConnectorSelection
+	// ReturnURL is the app's page a consent this session asks for in the chat goes back to,
+	// the session request's return_url, checked when the session was created. Empty is the
+	// dashboard.
+	ReturnURL string
 	// ServerInstructions are what those servers said at initialize about using their
 	// tools, added after Instructions. The session fills it in once they are open.
 	ServerInstructions string
