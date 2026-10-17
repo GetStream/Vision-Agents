@@ -67,7 +67,7 @@ func (s *Suite) TestAToolIsCalledWithItsArguments() {
 		Instructions: "Use the tool to answer.",
 		Input:        []llm.Message{weather},
 		Tools:        []llm.Tool{weatherTool},
-		ToolChoice:   "required",
+		ToolChoice:   s.forcedTool(),
 	})
 
 	s.Require().Len(called.ToolCalls, 1)
@@ -87,7 +87,7 @@ func (s *Suite) TestAToolResultIsAnsweredRatherThanRefused() {
 		Instructions: "Use the tool to answer.",
 		Input:        []llm.Message{weather},
 		Tools:        []llm.Tool{weatherTool},
-		ToolChoice:   "required",
+		ToolChoice:   s.forcedTool(),
 	})
 	s.Require().Len(called.ToolCalls, 1)
 
