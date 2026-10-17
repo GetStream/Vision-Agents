@@ -156,8 +156,19 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 // phrase before a call can say the outcome instead: in Voicebench Gemma told a caller
 // "You're all set" for a booking it never made. It sits beside the use policy rather than in
 // it, so that stays short.
+//
+// A go-ahead is acted on there too: in Voicebench the caller said "Please go ahead" with every
+// required argument known, and Gemma asked for a phone number or a seating preference instead,
+// so the call ended with nothing booked.
+//
+// Waiting for agreement is the exception to calling once the arguments are known: Voicebench
+// operators ask for it, and Gemma read the details back and called in the same breath, so a
+// correction the caller made a moment later never reached the call.
 const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
-	"tool result in this conversation shows it; if you have not called that tool, call it now."
+	"tool result in this conversation shows it; if you have not called that tool, call it now. " +
+	"If your instructions say to wait for agreement after a read-back, end your turn after " +
+	"it, with no hold phrase and no call, until they agree. " +
+	"Once told to go ahead, call it with what you have and ask for nothing more first."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the

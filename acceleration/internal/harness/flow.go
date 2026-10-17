@@ -127,10 +127,15 @@ is one JSON object and no other text:
 
 Choose wait when the words are probably incomplete, especially when they end on a PIN,
 member ID, phone number, or clock time that may still be growing.
+Once the caller has said they will give everything at once, choose wait at each pause until
+they ask something or plainly finish; a detail that sounds complete is not the end of the list.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
 Words in a different voice come from somebody else at the caller's microphone, who is
 usually talking to the room rather than to the agent, so lean towards ignore unless they
 plainly address it.
+Words that open by calling somebody "Mom", "Dad", "honey" or "sweetie", such as "Mom, can I have
+the nuggets?", are addressed to them, not the agent: choose ignore, and continue if the agent
+is speaking.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
 Choose respond for a complete, relevant thought.
 A recorded menu reading out its options is one thought and not several, however long the

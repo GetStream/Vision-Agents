@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -169,6 +170,45 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 	a.executeTool(ctx, cancel, requested)
 }
 
+// alreadyCalled opens the result a repeated call is given instead of being run again.
+const alreadyCalled = "You already made this exact call and it returned the following. " +
+	"Answer the caller from it and do not call it again: "
+
+// didNotWork opens the result of a call that failed.
+const didNotWork = "That did not work: "
+
+// answeredSinceCaller returns the result of an identical call, the same tool with the same
+// arguments, already answered since the caller last spoke. After a result Gemma often asks
+// for the same call again, and run twice a dispatch or a booking is made twice. A call that
+// failed may be tried again, since what failed may not fail twice.
+func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
+	same := func(other llm.ToolCall) bool {
+		return other.Name == call.Name && sameArguments(other.Arguments, call.Arguments)
+	}
+	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
+		if history[i].Role != llm.ToolResult || strings.HasPrefix(history[i].Content, didNotWork) {
+			continue
+		}
+		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
+			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
+				return asked.ID == history[i].ToolCallID && same(asked)
+			}) {
+				return history[i].Content, true
+			}
+		}
+	}
+	return "", false
+}
+
+// sameArguments compares two calls' arguments as JSON, so spacing and key order do not count.
+func sameArguments(a, b string) bool {
+	var left, right any
+	if json.Unmarshal([]byte(a), &left) != nil || json.Unmarshal([]byte(b), &right) != nil {
+		return strings.TrimSpace(a) == strings.TrimSpace(b)
+	}
+	return reflect.DeepEqual(left, right)
+}
+
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
@@ -223,7 +263,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	var files []sandbox.Attachment
 	var left bool
 	var err error
-	if requested.Call.Name == sandbox.ToolName && a.runsCode() {
+	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+		parts = llm.TextParts(alreadyCalled + earlier)
+	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
@@ -241,7 +283,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 	}
 	if err != nil {
-		parts = llm.TextParts(fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err))
+		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. If it names a step one of your "+
+			"tools does, call that tool and try again; otherwise tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()

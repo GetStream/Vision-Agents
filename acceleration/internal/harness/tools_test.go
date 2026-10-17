@@ -87,6 +87,20 @@ func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
 	s.Contains(usePolicy, "call the tool in the same turn")
 }
 
+func (s *ToolsSuite) TestAGoAheadIsActedOnWithoutAskingForOptionalDetails() {
+	s.Contains(testTools().Prompt(), "Once told to go ahead, call it with what you have and ask for nothing more first.")
+	s.Contains(testTools().TextPrompt(), "Once told to go ahead, call it with what you have and ask for nothing more first.")
+}
+
+func (s *ToolsSuite) TestAReadBackThatWaitsForAgreementEndsTheTurn() {
+	// Voicebench operators say to read details back and wait for agreement before acting,
+	// and Gemma read them back and called the tool in the same breath.
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "If your instructions say to wait for agreement after a read-back, "+
+			"end your turn after it, with no hold phrase and no call, until they agree.")
+	}
+}
+
 func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIntoTheReadBack() {
 	// A read-back takes seconds to say, so a hold phrase after it, or after the result, is
 	// heard once the wait is over. It opens the sentence and the sentence carries on, because

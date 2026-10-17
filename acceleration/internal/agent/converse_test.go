@@ -381,14 +381,24 @@ func (s *ConverseSuite) TestHowOftenAnOverlapIsAskedAbout() {
 		return len(asks)
 	}
 
-	s.Equal(1, ask("one"), "the first revision is asked about")
-	s.Equal(0, ask("one two"), "one more word is not enough to ask again")
-	s.Equal(1, ask("one two three four"), "three more words asks again")
-	s.Equal(1, ask("one two three four five six seven"), "and again")
-	s.Equal(0, ask("one two three four five six seven eight nine ten"),
+	s.Equal(0, ask("one"), "a lone word that is no interruption waits for another")
+	s.Equal(1, ask("one two"), "the first revision with two words is asked about")
+	s.Equal(0, ask("one two three"), "one more word is not enough to ask again")
+	s.Equal(1, ask("one two three four five"), "three more words asks again")
+	s.Equal(1, ask("one two three four five six seven eight"), "and again")
+	s.Equal(0, ask("one two three four five six seven eight nine ten eleven"),
 		"a fourth ask on the same utterance is not made")
 	s.Equal(1, ask("something completely different now"),
 		"a new utterance starts the count again")
+}
+
+func (s *ConverseSuite) TestALoneWordOverTheAgentIsAskedAboutOnlyWhenItInterrupts() {
+	// Voicebench's child said "Mom" over the agent, Gemma ruled it a stop, and the reply was
+	// abandoned for words meant for somebody else.
+	for text, asks := range map[string]int{"Mom": 0, "okay": 0, "wait": 1, "No,": 1, "Hang": 1, "Mom, can": 1} {
+		s.build(DuplexOptions{})
+		s.Equal(asks, len(s.overheard(text, s.talking())), text)
+	}
 }
 
 func (s *ConverseSuite) TestSomeThingsOverTheAgentAreNeverAskedAbout() {
@@ -406,11 +416,11 @@ func (s *ConverseSuite) TestSomeThingsOverTheAgentAreNeverAskedAbout() {
 
 func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
 	s.build(DuplexOptions{})
-	first := s.overhears("okay", s.talking())
+	first := s.overhears("okay so", s.talking())
 
 	var superseded, asked Action
 	for _, action := range s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Text: "okay wait make it six",
+		Participant: caller, Mode: stt.ModeReplacement, Text: "okay so wait make it six",
 	}, s.talking()) {
 		switch action.Kind {
 		case ActSupersede:
@@ -422,7 +432,7 @@ func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
 
 	s.Equal(first.ID, superseded.TurnID, "the first ask is about words that have changed")
 	s.NotEqual(first.ID, asked.Candidate.ID)
-	s.Equal("okay wait make it six", asked.Text)
+	s.Equal("okay so wait make it six", asked.Text)
 	s.True(asked.Candidate.Unfinished)
 
 	s.Empty(kinds(s.converse.Ruled(harness.Decided{
@@ -1547,6 +1557,23 @@ func (s *ConverseSuite) TestTheAgentDoesNotMurmurOverItself() {
 	s.NotContains(kinds(s.converse.Observe(stt.Transcript{
 		Participant: caller, Mode: stt.ModeReplacement, Text: "so I was wondering whether",
 	}, s.talking())), ActBackchannel, "a murmur over the agent's own reply is not made")
+}
+
+func (s *ConverseSuite) TestACallerWhoDoesNotAnswerAQuestionIsCheckedOnSooner() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Asked = true
+	state.LastSpokeAt = time.Now().Add(-answerIdleGap - time.Second)
+
+	actions := s.converse.Tick(state)
+	s.Require().Equal([]ActionKind{ActCheckIn}, kinds(actions),
+		"a caller who owes an answer and says nothing may have stepped away or lost the line")
+	s.Equal(answerPurpose, actions[0].Compose)
+
+	state.Asked = false
+	s.build(DuplexOptions{})
+	s.Empty(s.converse.Tick(state), "after a statement the same silence is somebody thinking")
 }
 
 func (s *ConverseSuite) TestALongSilenceWhileWorkRunsSaysWhatIsStillGoing() {

@@ -369,6 +369,9 @@ type Agent struct {
 	// toolRounds is how many replies to tool results have been started since the caller
 	// last spoke (maxToolRounds).
 	toolRounds int
+	// promiseChased is set once a reply that promised to check and called nothing has been
+	// asked for the call (keepPromise), since the caller last spoke.
+	promiseChased bool
 	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
 	// the reply delivering that work continues.
 	owedTurn string
@@ -1314,6 +1317,7 @@ func (a *Agent) floor() floor {
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,
+		Asked:           owesAnAnswer(lastAssistantSaid(a.history)),
 	}
 	tools := slices.Sorted(maps.Values(a.toolsRunning))
 	current := a.harness
@@ -1499,6 +1503,15 @@ func lastAssistantSaid(history []llm.Message) string {
 	return ""
 }
 
+// owesAnAnswer reports whether the agent's last words asked the caller something they owe an
+// answer to. "Anything else?" is an invitation, not a question left open: a caller who says
+// nothing to it is done, and checking on them seconds later sounds like the agent is
+// rushing them.
+func owesAnAnswer(said string) bool {
+	said = strings.ToLower(strings.TrimSpace(said))
+	return strings.HasSuffix(said, "?") && !strings.Contains(said, "anything else")
+}
+
 // turnStamp names a turn. The clock is enough: a conversation cannot produce two turns
 // in the same nanosecond.
 func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
@@ -1612,6 +1625,7 @@ func (a *Agent) respondTurn(
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolRounds = 0
+	a.promiseChased = false
 	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
@@ -2215,9 +2229,138 @@ func (a *Agent) finish(response llm.Response) {
 		a.mu.Unlock()
 		a.checkIn(participant, holdPurpose)
 	}
+	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
+	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
+		len(a.availableTools().Tools) > 0 {
+		backed := toolRanSinceCaller(history)
+		switch {
+		case owesACall(said, backed):
+			a.keepPromise(response.ID, keepPromise)
+		case !backed && wentAhead(history):
+			a.keepPromise(response.ID, actOnGoAhead)
+		}
+	}
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
 	a.followUp()
+}
+
+// keepPromise asks the model once more, with its tools, after a reply that told the caller
+// it was checking, or that something was done, and called nothing: Gemma did both in
+// Voicebench, and the caller waited on a lookup, or left with a booking, that was never
+// made. It is asked once per thing the caller said, so a model that still calls nothing is
+// left to the caller's next words.
+func (a *Agent) keepPromise(promised, note string) {
+	a.mu.Lock()
+	if a.promiseChased || a.harness == nil || a.generating || a.interrupting ||
+		a.recoveringVoice != nil || a.converse.Listening() {
+		a.mu.Unlock()
+		return
+	}
+	a.promiseChased = true
+	turnID := toolPrefix + turnStamp()
+	history := a.replayLocked()
+	participant := a.lastParticipant
+	a.speakingTurn = turnID
+	a.generating = true
+	instructions := a.instructions()
+	asked := a.asked
+	a.mu.Unlock()
+
+	a.logger.Debug("the reply owed a call and made none, asking for it", "turn", promised, "note", note)
+	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: promised})
+	if err := a.generate(harness.Turn{
+		ID:           turnID,
+		Instructions: instructions,
+		History:      history,
+		AfterTool:    true,
+		Note:         note,
+		Asked:        asked,
+	}, ""); err != nil {
+		a.fail(err, "llm")
+	}
+}
+
+// keepPromise is the note a reply chasing up an unkept promise is given.
+const keepPromise = "You just told the caller you were checking, or that something was done, " +
+	"but called no tool. Call the tool that does it now, without saying anything first."
+
+// actOnGoAhead is the note a reply that met a go-ahead with no call is chased up with.
+const actOnGoAhead = "The caller just told you to go ahead. Call the tool that does what they " +
+	"agreed to now, with what you have, without asking for anything optional first."
+
+// wentAhead reports whether the caller's last words told the agent to go ahead.
+func wentAhead(history []llm.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != llm.User {
+			continue
+		}
+		said := strings.ToLower(history[i].Content)
+		return slices.ContainsFunc(goAheads, func(phrase string) bool { return strings.Contains(said, phrase) })
+	}
+	return false
+}
+
+// goAheads are what a caller says to have the agent act.
+var goAheads = []string{"go ahead", "please do", "book it", "do it", "proceed", "yes please", "yes, please"}
+
+// owesACall reports whether a reply that called nothing said what only a tool could make
+// true: a last sentence that asks the caller to wait on a lookup, or, when no tool has run
+// since the caller last spoke (backed), that something has been done.
+func owesACall(said string, backed bool) bool {
+	lower := strings.ToLower(said)
+	if !backed {
+		for _, claim := range doneClaims {
+			if strings.Contains(lower, claim) {
+				return true
+			}
+		}
+	}
+	last := strings.TrimRight(lower, " .…!\n")
+	if last == "" || strings.HasSuffix(last, "?") {
+		return false
+	}
+	for _, end := range []string{". ", "! ", "? ", "… "} {
+		if i := strings.LastIndex(last, end); i >= 0 {
+			last = last[i+len(end):]
+		}
+	}
+	for _, hold := range holdWords {
+		if strings.Contains(last, hold) {
+			return true
+		}
+	}
+	return false
+}
+
+// doneClaims are what a reply telling the caller something has been done says.
+var doneClaims = []string{
+	"you're booked", "you are booked", "you're all set", "you are all set", "has been booked",
+	"i've booked", "i have booked", "i've checked", "i have checked", "i've updated",
+	"i've cancelled", "i've canceled", "i've scheduled", "i've rescheduled", "i've opened",
+	"i've verified", "i've placed", "i've sent", "is confirmed", "has been scheduled",
+	"has been cancelled", "has been dispatched", "is on the way",
+}
+
+// toolRanSinceCaller reports whether a tool has answered since the caller last spoke.
+func toolRanSinceCaller(history []llm.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		switch history[i].Role {
+		case llm.ToolResult:
+			return true
+		case llm.User:
+			return false
+		}
+	}
+	return false
+}
+
+// holdWords are what a sentence asking the caller to wait on a lookup says.
+var holdWords = []string{
+	"one moment", "a moment", "one sec", "a sec", "hold on", "bear with me", "checking",
+	"let me check", "let me look", "let me see", "looking that up", "looking into",
+	"pulling that up", "pulling up",
 }
 
 // preSpeech is what the first of calls that names one asks to be said while it runs
@@ -2603,6 +2746,11 @@ func (a *Agent) speakSentence(turnID, text string) error {
 	voice := a.voice()
 	if voice == nil {
 		return errors.New("agent: not joined")
+	}
+	// A direction with no words to act it on is refused as empty text by voices that
+	// strip their tags first, and refusing it costs the call its voice.
+	if strings.TrimSpace(tts.Unperformed(text)) == "" {
+		return nil
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 
