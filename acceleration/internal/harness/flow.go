@@ -135,7 +135,8 @@ usually talking to the room rather than to the agent, so lean towards ignore unl
 plainly address it.
 Words that open by calling somebody "Mom", "Dad", "honey" or "sweetie", such as "Mom, can I have
 the nuggets?", are addressed to them, not the agent: choose ignore, and continue if the agent
-is speaking.
+is speaking. But if the caller turns back to the agent in the same words, such as "Yes honey,
+now shush. Sorry about that, the name is Okafor.", the part for the agent counts: respond.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
 Choose respond for a complete, relevant thought.
 A recorded menu reading out its options is one thought and not several, however long the

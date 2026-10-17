@@ -37,6 +37,7 @@ Examples of the caller's last words and the tag they call for:
 "My member ID is, hold on, let me find the card." [wait]
 "My PIN is four four" [wait]
 "Mom, can I have the nuggets?" [ignore]
+"Yes honey, now shush. Sorry about that, the name is Okafor." [respond]
 "Yes, that's right. Please go ahead." [respond]
 "March fourth, 1987." after you asked for their date of birth: [respond]`
 
