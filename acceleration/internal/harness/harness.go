@@ -147,6 +147,9 @@ type Turn struct {
 	Asked llmoptions.LLM
 }
 
+// mustCallTokens bounds a reply that must call a tool.
+const mustCallTokens = 256
+
 // answerNow is the note a reply that Answers is given.
 const answerNow = "There is no time for another tool: answer the caller now from what the " +
 	"tools returned, and say plainly what you could not get."
@@ -367,8 +370,15 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	}
 
 	toolChoice := ""
+	maxTokens := h.options.MaxTokens
 	if turn.MustCall && len(tools) > 0 {
 		toolChoice = "required"
+		// Constrained to a call, Gemma on vLLM once wrote nothing for 37 seconds while the
+		// caller waited; a call fits well inside this.
+		maxTokens = mustCallTokens
+		if h.options.MaxTokens > 0 {
+			maxTokens = min(h.options.MaxTokens, mustCallTokens)
+		}
 	}
 
 	return session.Create(ctx, llm.ResponseParams{
@@ -380,7 +390,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,
 		Input:              input,
-		MaxOutputTokens:    h.options.MaxTokens,
+		MaxOutputTokens:    maxTokens,
 		Tools:              tools,
 		Store:              model.Store,
 		PreviousResponseID: previous,
