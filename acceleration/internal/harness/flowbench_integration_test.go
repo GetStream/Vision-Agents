@@ -538,7 +538,41 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 				return s.askJevDecomposed(ctx, client, set, one, attempt)
 			},
 		},
+		{
+			name:    "jev-production",
+			model:   client.Model(),
+			repeats: jevRepeats,
+			price:   price,
+			judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
+				return askJevProduction(ctx, client, set, one, attempt)
+			},
+		},
 	}
+}
+
+// askJevProduction asks what the flow controller asks a judge, and reads it as the controller does.
+func askJevProduction(
+	ctx context.Context, client *systemone.Client, set flowSet, one flowCase, attempt int,
+) (judgement, error) {
+	turn := one.turn(one.ID, set.Contracts)
+	askedAt := time.Now()
+	answered, err := client.Classify(ctx, decisionmodel.Request{State: judgeState(turn), Questions: judgeQuestions()})
+	if err != nil {
+		return judgement{}, err
+	}
+	answer, err := judged(turn, answered.Answers)
+	if err != nil {
+		return judgement{}, err
+	}
+	return judgement{
+		CaseID:  one.ID,
+		State:   one.State,
+		Attempt: attempt,
+		Expect:  one.Expect,
+		TookMs:  float64(time.Since(askedAt).Microseconds()) / 1000,
+		Usage:   routing.Usage{InputTokens: answered.Usage.InputTokens},
+		Got:     one.outcome(answer.Disposition, answer.Floor),
+	}, nil
 }
 
 // jevDecomposed is every fact the conversation's policy turns on, each asked as its own yes or

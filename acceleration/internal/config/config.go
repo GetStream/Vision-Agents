@@ -264,6 +264,9 @@ type Agent struct {
 	// kept and the other is cancelled. It only applies to a target with more than one candidate.
 	// 1.2s by default; 0 turns it off.
 	ReplyHedge time.Duration `koanf:"reply_hedge"`
+	// FlowJudge routes the flow controller to a decision model, such as
+	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
+	FlowJudge string `koanf:"flow_judge"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -361,6 +364,7 @@ var variables = map[string]string{
 	"agent.unified_replies":     "ROUTER_UNIFIED_REPLIES",
 	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
+	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",

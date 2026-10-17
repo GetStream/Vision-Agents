@@ -62,6 +62,9 @@ type Options struct {
 	// Controller is a second fast-model session that decides when evolving speech is
 	// complete, relevant, or interrupting. The harness takes ownership of it.
 	Controller *llmrouter.Session
+	// Judge is a decision model the flow controller asks in place of Controller, which it
+	// then ignores. The harness takes ownership of it.
+	Judge Judge
 	// Skills are what the fast model may hand over. They mean nothing without a subagent.
 	Skills Skills
 	// Tools are what the fast model may do rather than say. The harness offers them and
@@ -241,8 +244,9 @@ func New(options Options) (*Harness, error) {
 		h.running.Add(1)
 		go h.consumeTasks()
 	}
-	if options.Controller != nil {
+	if options.Controller != nil || options.Judge != nil {
 		h.flow = newFlow(options.Controller, h.emitter, h.logger)
+		h.flow.judge = options.Judge
 		h.flow.onModelCall = options.OnModelCall
 	}
 	return h, nil

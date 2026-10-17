@@ -93,6 +93,9 @@ type ManagerOptions struct {
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
 	Classifier *decisionrouter.Router
+	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
+	// language model. Empty keeps the language model.
+	FlowJudge string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -585,6 +588,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			STSTarget:          spec.STSTarget,
 			SubagentTarget:     spec.SubagentTarget,
 			ControllerTarget:   spec.ControllerTarget,
+			Judge:              m.options.Classifier,
+			JudgeTarget:        m.options.FlowJudge,
 			Skills:             skills,
 			Telephony:          line,
 			ToolRunner:         runner,

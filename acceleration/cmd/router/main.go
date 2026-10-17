@@ -1580,6 +1580,7 @@ func buildSessions(
 		Knowledge:  reading,
 		Search:     finding,
 		Classifier: judging,
+		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.

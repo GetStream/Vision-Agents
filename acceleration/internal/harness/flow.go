@@ -62,7 +62,9 @@ type FlowTurn struct {
 }
 
 type flow struct {
-	model       *llmrouter.Session
+	model *llmrouter.Session
+	// judge, when set, is asked in place of model.
+	judge       Judge
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
@@ -208,6 +210,11 @@ func (f *flow) run(asked *candidate) {
 	turn := asked.turn
 	defer f.running.Done()
 	defer f.advance(turn.ID)
+
+	if f.judge != nil {
+		f.runJudge(asked)
+		return
+	}
 
 	f.mu.Lock()
 	model := f.model
@@ -386,11 +393,19 @@ func (f *flow) Close() error {
 	// what lets every consumer reach the end of its stream.
 	var failures []error
 	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
 		if err := session.Close(); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	f.running.Wait()
+	if f.judge != nil {
+		if err := f.judge.Close(); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	return errors.Join(failures...)
 }
 

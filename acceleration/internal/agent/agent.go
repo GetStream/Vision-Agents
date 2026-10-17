@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -121,6 +122,10 @@ type Options struct {
 	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
 	// controller shares the conversation's model.
 	ControllerTarget string
+	// Judge routes a decision model the flow controller asks in place of ControllerTarget,
+	// when JudgeTarget names one. Nil or an empty JudgeTarget keeps the language model.
+	Judge       *decisionrouter.Router
+	JudgeTarget string
 	// Skills are what the voice model may hand over to the subagent. A written
 	// conversation with no subagent loads them itself, with load_skill.
 	Skills harness.Skills
