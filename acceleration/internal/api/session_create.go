@@ -22,7 +22,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	if failure, refused := refuseServerSideFields(ctx, *request.Body); refused {
+	if failure, refused := refuseSessionRequest(ctx, *request.Body); refused {
 		return nil, failure
 	}
 	if failure := s.refuseCall(ctx, customerID, *request.Body); failure != nil {
@@ -72,6 +72,22 @@ var errDeviceHistory = forbidden("history is sent server-side: an assistant mess
 // errDeviceInstructions refuses instructions sent by an end user's device.
 var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is " +
 	"told decides who it is, which a device may not")
+
+// refuseSessionRequest reports the failure a new session's request is refused with before
+// anything is made for it. createSession and the session socket both call it, so a request one
+// of them refuses the other refuses too, with the same error.
+func refuseSessionRequest(ctx context.Context, request CreateSessionRequest) (APIError, bool) {
+	if failure, refused := refuseServerSideFields(ctx, request); refused {
+		return failure, true
+	}
+	// The same rules as createAuthorization's, since it is the same attempt that seals it.
+	if returnURL := value(request.ReturnUrl); returnURL != "" {
+		if err := checkReturnURL(returnURL); err != nil {
+			return invalidRequest("return_url: " + err.Error()), true
+		}
+	}
+	return APIError{}, false
+}
 
 // errDeviceCall refuses a call named by an end user's device.
 var errDeviceCall = forbidden("call is sent server-side: which call the agent joins puts it " +
@@ -138,9 +154,7 @@ func (s *Server) ownApp(customerID string, app int64) bool {
 }
 
 // refuseServerSideFields reports the failure a new session is refused with when an end user's
-// device sent a field only the backend may send. createSession and the session socket both
-// call it, so a field one of them refuses from a device the other refuses too, with the same
-// error.
+// device sent a field only the backend may send.
 //
 // What the model is told is the backend's to decide: an assistant message in a device's
 // history would be the agent having said it, and a device's instructions could make the

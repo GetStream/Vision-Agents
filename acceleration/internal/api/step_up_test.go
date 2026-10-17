@@ -128,13 +128,20 @@ scopes:
 // binding it as crm with echo granted, and a session on that config choosing it, with its
 // events socket. The fake refuses echo for want of fakeprovider.RequiredScope.
 func (s *ChatLoginsSuite) steppingUp() (string, *websocket.Conn, string) {
+	return s.steppingUpReturningTo(nil)
+}
+
+// steppingUpReturningTo is steppingUp with the session's return_url.
+func (s *ChatLoginsSuite) steppingUpReturningTo(returnURL *string) (string, *websocket.Conn, string) {
 	connector, grant := s.connectorWith(`
 scopes:
   list: [files:read]
 `)
 	mine := s.connected(s.client, connector)
 	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.InsufficientScope)
-	opened := s.client.createSession(s.session(s.config(connector, grant), map[string]string{"crm": mine}))
+	request := s.session(s.config(connector, grant), map[string]string{"crm": mine})
+	request.ReturnUrl = returnURL
+	opened := s.client.createSession(request)
 	return mine, s.client.opens("/v1/agents/sessions/" + opened.Id + "/events"), opened.Id
 }
 

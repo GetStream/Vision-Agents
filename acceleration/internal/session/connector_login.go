@@ -46,6 +46,9 @@ type ConsentRequest struct {
 	// outcome (step_up.go): the consent is a step-up that asks for that access. Nil for a
 	// login.
 	StepUp *core.Outcome
+	// ReturnURL is the session's (Spec.ReturnURL): where the consent goes back to. Empty is
+	// the dashboard.
+	ReturnURL string
 }
 
 // Consent is a consent begun for one connection, as a client is handed it.
@@ -312,7 +315,7 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
 	}
 	consent, err := d.logins.consents(ctx, ConsentRequest{
 		CustomerID: d.spec.CustomerID, ConnectorID: l.binding.ConnectorID,
-		UserID: d.spec.Caller.UserID, ConnectionID: l.connectionID,
+		UserID: d.spec.Caller.UserID, ConnectionID: l.connectionID, ReturnURL: d.spec.ReturnURL,
 	})
 	if err != nil {
 		d.logins.logger.Warn("could not begin a consent in the conversation", "connector", l.binding.Name, "error", err)
