@@ -7,9 +7,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -64,10 +66,11 @@ func run(query string, handles []string, days int, model string, timeout time.Du
 		search["from_date"] = time.Now().AddDate(0, 0, -days).Format(time.DateOnly)
 	}
 	body, err := json.Marshal(map[string]any{
-		"model": model,
-		"input": []map[string]string{{"role": "user", "content": query}},
-		"tools": []map[string]any{search},
-		"store": false,
+		"model":  model,
+		"input":  []map[string]string{{"role": "user", "content": query}},
+		"tools":  []map[string]any{search},
+		"store":  false,
+		"stream": true,
 	})
 	if err != nil {
 		return err
@@ -87,12 +90,16 @@ func run(query string, handles []string, days int, model string, timeout time.Du
 		return err
 	}
 	defer resp.Body.Close()
-	payload, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		payload, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("xai: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	payload, err := completed(resp.Body)
 	if err != nil {
 		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("xai: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 	}
 
 	text, sources, err := answer(payload)
@@ -107,6 +114,38 @@ func run(query string, handles []string, days int, model string, timeout time.Du
 		}
 	}
 	return nil
+}
+
+// completed reads the event stream to its end and returns the finished response. The answer
+// is streamed only to keep the connection busy: xAI cut a request that has sent nothing back
+// for about a minute, and a search across a few busy accounts takes longer than that.
+func completed(body io.Reader) ([]byte, error) {
+	scanner := bufio.NewScanner(body)
+	// The last event carries the whole response, encrypted reasoning included.
+	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			Type     string          `json:"type"`
+			Response json.RawMessage `json:"response"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return nil, fmt.Errorf("xai: %w", err)
+		}
+		switch event.Type {
+		case "response.completed":
+			return event.Response, nil
+		case "response.failed", "response.incomplete", "error":
+			return nil, fmt.Errorf("xai: %s", data)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("xai: %w", err)
+	}
+	return nil, errors.New("xai: the stream ended before the response completed")
 }
 
 // response is the part of the Responses API payload this command reads: the text of the
