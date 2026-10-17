@@ -3073,6 +3073,25 @@ func (s *AgentSuite) TestAClaimThatSomethingIsDoneWithNoCallMustCallATool() {
 	s.Equal("required", s.model.requests()[1].ToolChoice)
 }
 
+func (s *AgentSuite) TestAForcedChaseThatWritesNothingIsAskedAgainUnforced() {
+	// Constrained to a call, Gemma on vLLM wrote only whitespace and the caller was left
+	// with a booking that was never made.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Order twelve, you're all set."}
+	s.model.then = []string{" "}
+	s.model.callsOn = 3
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the empty forced chase was not asked again")
+	s.Equal("required", s.model.requests()[1].ToolChoice)
+	s.Empty(s.model.requests()[2].ToolChoice)
+}
+
 func (s *AgentSuite) TestAGoAheadAnsweredWithAQuestionIsChasedUp() {
 	// After "Yes, that's right. Please go ahead." Gemma asked Voicebench callers for a phone
 	// number instead of booking, and the call ended with nothing booked.

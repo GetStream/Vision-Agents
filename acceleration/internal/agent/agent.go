@@ -375,6 +375,10 @@ type Agent struct {
 	// promiseChased is set once a reply that promised to check and called nothing has been
 	// asked for the call (keepPromise), since the caller last spoke.
 	promiseChased bool
+	// forcedChase is the chase that was made to call a tool, and forcedNote what it was
+	// told, so a forced chase that produced nothing can be asked again without forcing.
+	forcedChase string
+	forcedNote  string
 	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
 	// the reply delivering that work continues.
 	owedTurn string
@@ -2238,6 +2242,20 @@ func (a *Agent) finish(response llm.Response) {
 		a.mu.Unlock()
 		a.checkIn(participant, holdPurpose)
 	}
+	a.mu.Lock()
+	forced, forcedNote := a.forcedChase == response.ID, a.forcedNote
+	if forced {
+		a.forcedChase = ""
+	}
+	a.mu.Unlock()
+	if forced && len(calls) == 0 && said == "" {
+		// Constrained to a call, Gemma on vLLM sometimes writes only whitespace; asked again
+		// with the note alone it at least answers.
+		a.mu.Lock()
+		a.promiseChased = false
+		a.mu.Unlock()
+		a.keepPromise(response.ID, forcedNote, false)
+	}
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
@@ -2270,6 +2288,9 @@ func (a *Agent) keepPromise(promised, note string, mustCall bool) {
 	}
 	a.promiseChased = true
 	turnID := toolPrefix + turnStamp()
+	if mustCall {
+		a.forcedChase, a.forcedNote = turnID, note
+	}
 	history := a.replayLocked()
 	participant := a.lastParticipant
 	a.speakingTurn = turnID
