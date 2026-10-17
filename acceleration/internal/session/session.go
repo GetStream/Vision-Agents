@@ -51,6 +51,10 @@ const (
 	// conversation carries on without it: what is handed over is what the talking model
 	// could not answer itself.
 	defaultSubagentTarget = "llm-thinking"
+	// noSubagent is the subagent an agent names to answer everything on its voice model,
+	// with no skills to hand over: a small model offered skills hands over the tool calls
+	// it should be making itself.
+	noSubagent = "none"
 	// The model the flow controller runs on. A non-thinking fast model, since deciding who
 	// holds the floor is a small classification the caller waits through on every turn.
 	defaultControllerTarget = "llm-flow"
@@ -1521,6 +1525,10 @@ func (s *Session) askTool(call ToolCall) error {
 // deployment cannot route is a refusal, but a deployment routing no subagent model should
 // still take calls: that agent answers everything itself, the way it goes without search.
 func (m *Manager) think(ctx context.Context, spec *Spec) {
+	if spec.SubagentTarget == noSubagent {
+		spec.SubagentTarget = ""
+		return
+	}
 	if spec.Text || spec.SubagentTarget != "" {
 		return
 	}

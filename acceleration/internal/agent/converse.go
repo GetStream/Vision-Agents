@@ -81,8 +81,9 @@ const (
 const (
 	ambiguousNote = "The caller addressed you, but their meaning is ambiguous. " +
 		"Ask one short clarifying question."
-	unfinishedNote = "You may not have heard the whole of what the caller said, and they " +
-		"have gone quiet. Ask them briefly to say it again."
+	unfinishedNote = "The caller has gone quiet, and you may not have heard all of what " +
+		"they meant to say. If what you heard is enough to act on, answer it; otherwise ask " +
+		"briefly for the part that is missing."
 )
 
 // Action is one thing the conversation decided to do. It says what and why; carrying it

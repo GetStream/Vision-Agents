@@ -25,6 +25,7 @@ it is short, such as "yes", "go ahead" or a single detail you asked for.
 Examples of the caller's last words and the tag they call for:
 "I'll give you everything up front so we don't go back and forth." [wait]
 "My name is Maya Chen." after saying they would give everything at once: [wait]
+"Hi, this is Maya Chen, I need to move an appointment." [respond]
 "My member ID is, hold on, let me find the card." [wait]
 "My PIN is four four" [wait]
 "Mom, can I have the nuggets?" [ignore]
@@ -34,9 +35,9 @@ Examples of the caller's last words and the tag they call for:
 // UnifiedReminder goes after the caller's words in the request alone, where the model reads
 // it last; the conversation keeps what they said.
 const UnifiedReminder = "(Not said by the caller. Open with [respond], [clarify], [wait] or " +
-	"[ignore]. [wait] if they may not have finished: mid-sentence, a number or ID still " +
-	"growing, or they said they would give you everything at once and have not yet asked " +
-	"you anything or plainly finished.)"
+	"[ignore]. [respond] to a finished request or answer. [wait] only if they have plainly " +
+	"not finished: mid-sentence, a number or ID still growing, or they said they would give " +
+	"you everything at once and have not yet asked you anything or plainly finished.)"
 
 // AnotherVoiceNote is added when the words came in a different voice from the caller's.
 const AnotherVoiceNote = "The caller's last words came in a different voice from the one " +
