@@ -74,6 +74,19 @@ func (s *FlowSuite) waitAsked(n int) []llm.ResponseParams {
 	return s.model.requests()
 }
 
+func (s *FlowSuite) TestWordsThatCallSomebodyByAFamilyNameAreForThem() {
+	// Voicebench's child said "Mom, can I get the chicken nuggets there?" at the caller's end,
+	// Gemma ruled it respond, and the agent answered the child.
+	s.Contains(flowInstructions, `Words that open by calling somebody "Mom", "Dad", "honey" or "sweetie"`)
+	s.Contains(flowInstructions, "are addressed to them, not the agent: choose ignore")
+}
+
+func (s *FlowSuite) TestACallerWhoSaidTheyWouldGiveEverythingIsWaitedOn() {
+	// "I'll give you everything up front so we don't go back and forth" was ruled respond,
+	// and the agent started talking ten times inside the caller's monologue.
+	s.Contains(flowInstructions, "Once the caller has said they will give everything at once, choose wait at each pause")
+}
+
 func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 	s.Require().NoError(s.flow.Decide(FlowTurn{
 		ID:           "candidate-1",

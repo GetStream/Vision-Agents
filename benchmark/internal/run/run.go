@@ -57,6 +57,7 @@ type Config struct {
 	Frozen            bool
 	Short             bool
 	Supershort        bool
+	Basics            bool
 	Extended          bool
 	Target            benchtarget.Target
 	SkipSTT           bool
@@ -113,13 +114,13 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		scenarios = filtered
 	}
 	sets := 0
-	for _, picked := range []bool{cfg.Frozen, cfg.Short, cfg.Supershort, cfg.Extended} {
+	for _, picked := range []bool{cfg.Frozen, cfg.Short, cfg.Supershort, cfg.Basics, cfg.Extended} {
 		if picked {
 			sets++
 		}
 	}
 	if sets > 1 {
-		return report.Summary{}, fmt.Errorf("run: --frozen, --short, --supershort and --extended are separate scenario sets, pick one")
+		return report.Summary{}, fmt.Errorf("run: --frozen, --short, --supershort, --basics and --extended are separate scenario sets, pick one")
 	}
 	if sets == 1 {
 		list := scenario.FrozenPath(cfg.Root)
@@ -128,6 +129,8 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 			list = scenario.ShortPath(cfg.Root)
 		case cfg.Supershort:
 			list = scenario.SupershortPath(cfg.Root)
+		case cfg.Basics:
+			list = scenario.BasicsPath(cfg.Root)
 		case cfg.Extended:
 			list = scenario.ExtendedPath(cfg.Root)
 		}

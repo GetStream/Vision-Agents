@@ -1021,7 +1021,7 @@ func (s *AgentSuite) interruptsWaitCallsThenCalls(runner *heldCalls, first []llm
 	s.join(true)
 	s.agent.options.ToolRunner = runner
 	s.model.reply = []string{"Let me check the order."}
-	s.model.then = []string{"Checking."}
+	s.model.then = []string{"Done."}
 	s.model.calls = first
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
@@ -1285,6 +1285,9 @@ func (s *AgentSuite) TestACallersToolThatFailsIsToldToTheModel() {
 	ran := s.awaitToolRan()
 	s.Require().Error(ran.Err)
 	s.Contains(ran.Result, "did not work")
+	// Told only to tell the caller, Gemma answered "reboot the gateway before dispatching a
+	// truck" by reading the caller reboot steps instead of calling the reboot tool it had.
+	s.Contains(ran.Result, "If it names a step one of your tools does, call that tool and try again")
 	s.eventually(func() bool {
 		return s.spokenText("cannot look that up")
 	}, "the caller was left in silence by a tool that failed")
@@ -1501,7 +1504,7 @@ func (s *AgentSuite) TestAChainOfToolsIsFollowedToItsAnswerOnACall() {
 	// needed, and a voice caller is owed the answer at the end of the chain too.
 	s.ownsTools("order 12 ships tomorrow")
 	s.join(false)
-	s.model.reply = []string{"Let me check."}
+	s.model.reply = []string{"Sure."}
 	s.model.then = []string{"It ships tomorrow."}
 	s.agent.mu.Lock()
 	s.agent.history = []llm.Message{

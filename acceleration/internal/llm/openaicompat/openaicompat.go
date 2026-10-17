@@ -189,7 +189,7 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 			Model:      l.options.StatsModel,
 		},
 		&puller{
-			llm: l, id: id, upstream: upstream, cancel: cancel,
+			llm: l, id: id, turn: params.ID, upstream: upstream, cancel: cancel,
 			channel: l.channelSplitter(), toolText: l.toolCallSplitter(params),
 		},
 	), nil
@@ -273,6 +273,7 @@ func (l *LLM) forget(id uint64) {
 type puller struct {
 	llm      *LLM
 	id       uint64
+	turn     string
 	upstream *ssestream.Stream[openai.ChatCompletionChunk]
 	cancel   context.CancelFunc
 	// channel takes the thought channel out of the answer, when the model writes one.
@@ -283,6 +284,8 @@ type puller struct {
 
 	err  error
 	done bool
+	// raw is everything the model streamed, before any splitting, for the debug log.
+	raw strings.Builder
 
 	// slots maps the index a provider streamed a call under to where it is recorded, and
 	// ids the call recorded at each slot.
@@ -318,6 +321,10 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 	}
 
 	for _, choice := range chunk.Choices {
+		p.raw.WriteString(choice.Delta.Content)
+		for _, call := range choice.Delta.ToolCalls {
+			p.raw.WriteString(call.Function.Name + call.Function.Arguments)
+		}
 		p.text(w, choice.Delta.Content)
 		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
 		for _, call := range choice.Delta.ToolCalls {
@@ -350,15 +357,33 @@ func (p *puller) text(w *llm.ResponseWriter, delta string) {
 // answer records a piece of what the model said, making any tool call written in it.
 func (p *puller) answer(w *llm.ResponseWriter, text string) {
 	if p.toolText == nil {
-		w.OutputText(text)
+		w.OutputText(p.speakable(text))
 		return
 	}
 	text, calls := p.toolText.Write(text)
-	w.OutputText(text)
+	w.OutputText(p.speakable(text))
 	for _, call := range calls {
 		p.textCall(w, call)
 	}
 }
+
+// speakable drops what a model that writes tool calls as text leaves of its control syntax
+// outside a call. Gemma 4 sent a lone `<|"|>` beside a real call, and a lone U+FFFD where
+// a character was cut between tokens, and both reached the caller as a turn of their own.
+// Each control token is one token, so it never arrives split across deltas.
+// A closing channel marker with no opening one, "<channel|> I found your appointment", got past
+// the channel splitter the same way.
+func (p *puller) speakable(text string) string {
+	if !p.llm.options.ToolCallText && !p.llm.options.ThoughtChannel {
+		return text
+	}
+	return gemmaControl.Replace(text)
+}
+
+var gemmaControl = strings.NewReplacer(
+	toolCallOpen, "", toolCallClose, "", gemmaQuote, "",
+	"<|tool_response>", "", "<tool_response|>", "", channelOpen, "", channelClose, "", "\ufffd", "",
+)
 
 // textCall makes a tool call the model wrote as text. One that does not read whole is kept
 // as thinking: it is not something to say to the caller either.
@@ -409,6 +434,7 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
+	p.llm.logger.Debug("the model streamed", "turn", p.turn, "raw", p.raw.String())
 	if p.channel != nil {
 		answer, thought := p.channel.Flush()
 		w.ReasoningText(thought)

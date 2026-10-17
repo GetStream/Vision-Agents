@@ -69,6 +69,13 @@ func (d *Directions) Add(text string) string {
 	return kept.String()
 }
 
+// Unperformed returns complete text without its directions: what a voice would say of it
+// rather than act.
+func Unperformed(text string) string {
+	var d Directions
+	return d.Add(text) + d.Flush()
+}
+
 // Flush releases what is left at the end of a reply. Text held back for a direction that
 // never closed was only ever text.
 func (d *Directions) Flush() string {

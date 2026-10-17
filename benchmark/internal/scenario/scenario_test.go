@@ -192,6 +192,27 @@ func TestFrozenListLoads(t *testing.T) {
 	}
 }
 
+func TestBasicsListIsFourScenariosAPack(t *testing.T) {
+	root := findRepoRoot(t)
+	ids, err := LoadIDList(BasicsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	perPack := map[string]int{}
+	for _, id := range ids {
+		pack, name, _ := strings.Cut(id, ".")
+		if _, err := LoadFile(filepath.Join(root, "scenarios", pack, name+".yaml")); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		perPack[pack]++
+	}
+	for _, pack := range []string{"restaurant", "healthcare", "telecom"} {
+		if perPack[pack] != 4 {
+			t.Fatalf("got %v, want four scenarios in each pack so the packs finish together", perPack)
+		}
+	}
+}
+
 func TestSupershortListIsOneFrozenScenarioAPack(t *testing.T) {
 	root := findRepoRoot(t)
 	supershort, err := LoadIDList(SupershortPath(root))
@@ -291,7 +312,7 @@ func TestALineIsSpokenInItsTurnsVoiceElseTheScenarios(t *testing.T) {
 	if sc.VoiceOf("Table for three.") != "caller-voice" || sc.VoiceOf("Mom, look!") != "child-voice" {
 		t.Fatalf("voices = %q, %q", sc.VoiceOf("Table for three."), sc.VoiceOf("Mom, look!"))
 	}
-	if !strings.Contains(sc.CallerTranscript(), "(someone else in the room, not to the agent) Mom, look!") {
+	if !strings.Contains(sc.CallerTranscript(), "(not meant for the agent) Mom, look!") {
 		t.Fatalf("the judge should know the aside is not for the agent: %q", sc.CallerTranscript())
 	}
 }

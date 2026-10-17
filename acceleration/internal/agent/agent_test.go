@@ -1704,6 +1704,22 @@ func (s *AgentSuite) TestADirectionIsSpokenButNeverRead() {
 	s.Equal("That is a good one.", history[1].Content)
 }
 
+func (s *AgentSuite) TestADirectionWithNothingToSayIsNeverSentToTheVoice() {
+	// Gemma answered "[short pause] <ask skill=...>", and ElevenLabs refused the bare
+	// "[short pause]" as empty text, which cost the call its voice for two seconds.
+	s.performing = "You may write stage directions in square brackets."
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`[short pause] <ask skill="think">15% of 84.20</ask>`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+	s.NotContains(said(s.voice.spoken()), "[short pause]")
+}
+
 func (s *AgentSuite) TestANameBothSidesHaveSaidIsExpectedFromThenOn() {
 	// Flux heard "Chen" once, the agent said it back, and the caller's next "Yes, Chen" came
 	// back as "Yes. Ten". Once both have said it, the transcriber is told to expect it.
@@ -1993,7 +2009,7 @@ func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedInTheNameOfWhoeverType
 	s.speculates = true
 	s.ownsTools("order 12 ships tomorrow")
 	s.join(false)
-	s.model.reply = []string{"Let me check."}
+	s.model.reply = []string{"Hello."}
 	s.model.then = []string{"It ships tomorrow."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
 	s.model.callsOn = 2
@@ -2981,6 +2997,130 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.eventually(func() bool { return s.spokenText("Both came back") },
 		"the caller was left in silence after the second tool stole the floor")
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
+}
+
+func (s *AgentSuite) TestAPromiseToCheckThatCalledNothingIsKept() {
+	// Gemma told Voicebench callers "one moment, checking..." and stopped there, so the
+	// caller waited on a lookup that was never made.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Order twelve, one moment, checking..."}
+	s.model.then = []string{}
+	s.model.callsOn = 2
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the promised lookup was never made")
+	kept := s.model.requests()[1]
+	s.True(strings.HasPrefix(kept.ID, toolPrefix))
+	s.Contains(kept.Instructions, keepPromise)
+}
+
+func (s *AgentSuite) TestAGoAheadAnsweredWithAQuestionIsChasedUp() {
+	// After "Yes, that's right. Please go ahead." Gemma asked Voicebench callers for a phone
+	// number instead of booking, and the call ended with nothing booked.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Shall I look up order twelve?"}
+	s.model.then = []string{"Could I get a phone number first?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is order twelve")
+	s.eventually(func() bool { return s.spokenText("Shall I look up") }, "the first reply was not spoken")
+
+	s.says(participant, "yes, please go ahead")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the go-ahead was left unacted on")
+	s.Contains(s.model.requests()[2].Instructions, actOnGoAhead)
+}
+
+func (s *AgentSuite) TestAPromiseHandedToTheSubagentIsNotChasedUp() {
+	// Gemma met "please go ahead" with "<ask skill=...>", and asking it again for a call
+	// superseded the work it had just handed over.
+	s.delegates()
+	s.ownsTools("order 12 ships tomorrow")
+	held := make(chan struct{})
+	defer close(held)
+	s.join(false)
+	s.subagent.holdCreate = held
+	s.model.reply = []string{`One moment, checking. <ask skill="think">where order twelve is</ask>`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "yes, please go ahead")
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+	s.never(func() bool { return len(s.model.requests()) > 1 }, "the handed-over work was chased up")
+}
+
+func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() {
+	// After a result, Gemma often asked for the same call again: a second dispatch, a second
+	// booking.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return m.Role == llm.ToolResult && strings.Contains(m.Content, "order 12 ships tomorrow") &&
+				strings.HasPrefix(m.Content, alreadyCalled)
+		})
+	}, "the repeated call was not answered from the first")
+	s.Len(s.runner.asked(), 1, "the same call ran twice")
+}
+
+func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
+	for said, asked := range map[string]bool{
+		"What time would you like?":                         true,
+		"Is there anything else you need help with?":        false,
+		"Is there anything else I can help you with today?": false,
+		"Anything else?":                                    false,
+		"Your table is booked.":                             false,
+	} {
+		s.Equal(asked, owesAnAnswer(said), said)
+	}
+}
+
+func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
+	cases := []struct {
+		said   string
+		backed bool
+		owes   bool
+	}{
+		{"Order twelve, one moment, checking...", false, true},
+		{"One moment, checking to see if we can finalize that, Patel, you're booked: 8 at 8:15.", false, true},
+		{"Patel, you're booked for eight at 8:15.", false, true},
+		{"I've checked the outage map and there are no outages.", false, true},
+		{"Alvarez, you're booked: 4 at 7:30.", true, false},
+		{"Checking orders is what I do. Which order is it?", false, false},
+		{"Is there anything else I can help you with?", false, false},
+	}
+	for _, c := range cases {
+		s.Equal(c.owes, owesACall(c.said, c.backed), c.said)
+	}
+}
+
+func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Checking orders is what I do. Which order is it?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "can you check an order")
+
+	s.eventually(func() bool { return s.spokenText("Which order is it") }, "the reply was not spoken")
+	s.Never(func() bool { return len(s.model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
+		"a question to the caller owes no tool")
 }
 
 func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {

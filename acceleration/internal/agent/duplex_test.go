@@ -93,7 +93,7 @@ func (s *DuplexSuite) TestASilentCallIsAskedWhetherAnythingElseIsNeeded() {
 	// up is not a judgement call the way murmuring over them is.
 	listener := newDuplex(DuplexOptions{})
 
-	s.True(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), true),
+	s.True(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), true, false),
 		"a call nobody is talking on gets an invitation back into it")
 }
 
@@ -129,31 +129,31 @@ func (s *DuplexSuite) TestWorkIsNotUpdatedOnBeforeTheCallerHasWaited() {
 func (s *DuplexSuite) TestAShortSilenceIsLeftAlone() {
 	listener := newDuplex(DuplexOptions{})
 
-	s.False(listener.Idle(time.Now().Add(-time.Second), true),
+	s.False(listener.Idle(time.Now().Add(-time.Second), true, false),
 		"a pause is somebody thinking, not a call that has died")
 }
 
 func (s *DuplexSuite) TestACallWhereNothingHasHappenedYetIsNotIdle() {
 	listener := newDuplex(DuplexOptions{})
 
-	s.False(listener.Idle(time.Time{}, true),
+	s.False(listener.Idle(time.Time{}, true, false),
 		"the agent has not so much as greeted anyone yet")
 }
 
 func (s *DuplexSuite) TestTheAgentDoesNotAskWhileItIsTalking() {
 	listener := newDuplex(DuplexOptions{})
 
-	s.False(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), false))
+	s.False(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), false, false))
 }
 
 func (s *DuplexSuite) TestACallerWhoNeverAnswersIsLeftInPeace() {
 	listener := newDuplex(DuplexOptions{})
 	silent := time.Now().Add(-defaultIdleGap - time.Second)
 
-	s.True(listener.Idle(silent, true))
-	s.True(listener.Idle(silent, true))
+	s.True(listener.Idle(silent, true, false))
+	s.True(listener.Idle(silent, true, false))
 
-	s.False(listener.Idle(silent, true),
+	s.False(listener.Idle(silent, true, false),
 		"somebody who has not answered twice has walked away, and asking again is nagging")
 }
 
@@ -162,10 +162,10 @@ func (s *DuplexSuite) TestASilenceAfterSomebodySpeaksIsAskedAboutAgain() {
 	alice := stt.Participant{ID: "alice"}
 	silent := time.Now().Add(-defaultIdleGap - time.Second)
 
-	listener.Idle(silent, true)
-	listener.Idle(silent, true)
+	listener.Idle(silent, true, false)
+	listener.Idle(silent, true, false)
 	listener.Heard(alice, "sorry, I am back", true)
 
-	s.True(listener.Idle(silent, true),
+	s.True(listener.Idle(silent, true, false),
 		"they came back, so a later silence is worth asking about")
 }

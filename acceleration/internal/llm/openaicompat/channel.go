@@ -96,6 +96,15 @@ func bareChannelName(s string) (n int, undecided bool) {
 		return 0, false
 	}
 	after := rest[len(word):]
+	// Gemma 4 also writes the name with a colon, "thought:[excited] You're all set!", and
+	// nothing a reply opens with reads "thought:" to a caller.
+	if strings.HasPrefix(after, ":") {
+		n := start + len(word) + 1
+		if gap := len(after[1:]) - len(strings.TrimLeft(after[1:], " \t\r")); strings.HasPrefix(after[1+gap:], "\n") {
+			n += gap + 1
+		}
+		return n, false
+	}
 	spaces := len(after) - len(strings.TrimLeft(after, " \t\r"))
 	switch {
 	case spaces == len(after):

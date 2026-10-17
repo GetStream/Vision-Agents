@@ -140,6 +140,9 @@ type floor struct {
 	LastHeardAt time.Time
 	// LastParticipant is who the agent was last talking to.
 	LastParticipant stt.Participant
+	// Asked reports that the agent's last reply asked the caller something, so a silence
+	// after it is an answer that has not come.
+	Asked bool
 }
 
 // active is when anything last happened on the call, either end of it. It is zero on a
@@ -329,7 +332,13 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 	}
 
 	participantID := transcript.Participant.ID
-	count := len(strings.Fields(words(saying)))
+	fields := strings.Fields(words(saying))
+	count := len(fields)
+	// One word is too little to rule on unless it is itself an interruption, and Gemma ruled a
+	// child's "Mom" a stop. The next revision is a fraction of a second away.
+	if count == 1 && !interruptsAlone[strings.ToLower(fields[0])] {
+		return nil
+	}
 
 	c.mu.Lock()
 	seen := c.overlapping[participantID]
@@ -732,8 +741,16 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 // idle invites a caller who has gone quiet back into the conversation, because a silence
 // that nobody breaks is how a call ends by accident rather than because it was over.
 func (c *converse) idle(state floor, participant stt.Participant) []Action {
-	if !c.duplex.Idle(state.active(), state.Quiet) {
+	if !c.duplex.Idle(state.active(), state.Quiet, state.Asked) {
 		return nil
+	}
+	if state.Asked {
+		return []Action{c.decide(Action{
+			Kind:        ActCheckIn,
+			Reason:      "the caller has not answered the agent's question, checking they are still there",
+			Participant: participant,
+			Compose:     answerPurpose,
+		})}
 	}
 	return []Action{c.decide(Action{
 		Kind:        ActCheckIn,
@@ -1066,6 +1083,14 @@ func (c *converse) decide(action Action) Action {
 
 // overlapNoise reports whether settled words overlapping the agent's reply are a cough or
 // similar non-speech, which the flow controller often classifies as a new request.
+// interruptsAlone are the words that take the floor from the agent on their own. "Way" is
+// how the transcriber first hears "wait".
+var interruptsAlone = map[string]bool{
+	"wait": true, "way": true, "stop": true, "no": true, "nope": true, "hold": true,
+	"hang": true, "actually": true, "sorry": true, "excuse": true, "pardon": true,
+	"hello": true, "hey": true,
+}
+
 func overlapNoise(text string) bool {
 	t := strings.ToLower(words(text))
 	if t == "" {
