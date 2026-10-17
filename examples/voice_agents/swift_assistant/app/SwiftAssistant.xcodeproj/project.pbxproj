@@ -1,0 +1,366 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B2000101 /* AssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001 /* AssistantApp.swift */; };
+		B2000102 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000002 /* RootView.swift */; };
+		B2000103 /* ConversationList.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000003 /* ConversationList.swift */; };
+		B2000104 /* ChatScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000004 /* ChatScreen.swift */; };
+		B2000105 /* AgentChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000005 /* AgentChat.swift */; };
+		B2000106 /* MessageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000006 /* MessageRow.swift */; };
+		B2000107 /* VoiceMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000007 /* VoiceMode.swift */; };
+		B2000108 /* VoiceMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000008 /* VoiceMeter.swift */; };
+		B2000109 /* Captions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000009 /* Captions.swift */; };
+		B200010A /* Assistant.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000A /* Assistant.swift */; };
+		B200010B /* DeviceTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000B /* DeviceTools.swift */; };
+		B200010C /* Conversations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000C /* Conversations.swift */; };
+		B200010D /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000D /* Photos.swift */; };
+		B200010F /* Gmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000F /* Gmail.swift */; };
+		B2000201 /* VisionAgentsCore in Frameworks */ = {isa = PBXBuildFile; productRef = B2000301 /* VisionAgentsCore */; };
+		B2000202 /* StreamChat in Frameworks */ = {isa = PBXBuildFile; productRef = B2000302 /* StreamChat */; };
+		B2000203 /* StreamChatAI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000303 /* StreamChatAI */; };
+		B2000204 /* StreamVideo in Frameworks */ = {isa = PBXBuildFile; productRef = B2000304 /* StreamVideo */; };
+		B2000205 /* StreamVideoSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000305 /* StreamVideoSwiftUI */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B2000001 /* AssistantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantApp.swift; sourceTree = "<group>"; };
+		B2000002 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		B2000003 /* ConversationList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationList.swift; sourceTree = "<group>"; };
+		B2000004 /* ChatScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScreen.swift; sourceTree = "<group>"; };
+		B2000005 /* AgentChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChat.swift; sourceTree = "<group>"; };
+		B2000006 /* MessageRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRow.swift; sourceTree = "<group>"; };
+		B2000007 /* VoiceMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMode.swift; sourceTree = "<group>"; };
+		B2000008 /* VoiceMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMeter.swift; sourceTree = "<group>"; };
+		B2000009 /* Captions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Captions.swift; sourceTree = "<group>"; };
+		B200000A /* Assistant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assistant.swift; sourceTree = "<group>"; };
+		B200000B /* DeviceTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceTools.swift; sourceTree = "<group>"; };
+		B200000C /* Conversations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Conversations.swift; sourceTree = "<group>"; };
+		B200000D /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
+		B200000F /* Gmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gmail.swift; sourceTree = "<group>"; };
+		B200000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B2000010 /* SwiftAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B2000400 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B2000201 /* VisionAgentsCore in Frameworks */,
+				B2000202 /* StreamChat in Frameworks */,
+				B2000203 /* StreamChatAI in Frameworks */,
+				B2000204 /* StreamVideo in Frameworks */,
+				B2000205 /* StreamVideoSwiftUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B2000500 = {
+			isa = PBXGroup;
+			children = (
+				B2000501 /* SwiftAssistant */,
+				B2000502 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B2000501 /* SwiftAssistant */ = {
+			isa = PBXGroup;
+			children = (
+				B2000001 /* AssistantApp.swift */,
+				B2000002 /* RootView.swift */,
+				B2000003 /* ConversationList.swift */,
+				B200000C /* Conversations.swift */,
+				B2000004 /* ChatScreen.swift */,
+				B2000005 /* AgentChat.swift */,
+				B2000006 /* MessageRow.swift */,
+				B200000D /* Photos.swift */,
+				B2000007 /* VoiceMode.swift */,
+				B2000008 /* VoiceMeter.swift */,
+				B2000009 /* Captions.swift */,
+				B200000A /* Assistant.swift */,
+				B200000B /* DeviceTools.swift */,
+				B200000F /* Gmail.swift */,
+				B200000E /* Info.plist */,
+			);
+			path = SwiftAssistant;
+			sourceTree = "<group>";
+		};
+		B2000502 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B2000010 /* SwiftAssistant.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B2000600 /* SwiftAssistant */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B2000701 /* Build configuration list for PBXNativeTarget "SwiftAssistant" */;
+			buildPhases = (
+				B2000800 /* Sources */,
+				B2000400 /* Frameworks */,
+				B2000900 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SwiftAssistant;
+			packageProductDependencies = (
+				B2000301 /* VisionAgentsCore */,
+				B2000302 /* StreamChat */,
+				B2000303 /* StreamChatAI */,
+				B2000304 /* StreamVideo */,
+				B2000305 /* StreamVideoSwiftUI */,
+			);
+			productName = SwiftAssistant;
+			productReference = B2000010 /* SwiftAssistant.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B2000A00 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					B2000600 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = B2000700 /* Build configuration list for PBXProject "SwiftAssistant" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B2000500;
+			packageReferences = (
+				B2000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */,
+				B2000B02 /* XCLocalSwiftPackageReference "../../../../../stream-chat-swift" */,
+				B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */,
+			);
+			productRefGroup = B2000502 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B2000600 /* SwiftAssistant */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B2000900 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B2000800 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B2000101 /* AssistantApp.swift in Sources */,
+				B2000102 /* RootView.swift in Sources */,
+				B2000103 /* ConversationList.swift in Sources */,
+				B2000104 /* ChatScreen.swift in Sources */,
+				B2000105 /* AgentChat.swift in Sources */,
+				B2000106 /* MessageRow.swift in Sources */,
+				B2000107 /* VoiceMode.swift in Sources */,
+				B2000108 /* VoiceMeter.swift in Sources */,
+				B2000109 /* Captions.swift in Sources */,
+				B200010A /* Assistant.swift in Sources */,
+				B200010B /* DeviceTools.swift in Sources */,
+				B200010C /* Conversations.swift in Sources */,
+				B200010D /* Photos.swift in Sources */,
+				B200010F /* Gmail.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B2000C01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		B2000C02 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B2000D01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = EHV7XZLAHA;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SwiftAssistant/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.getstream.visionagents.SwiftAssistant;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		B2000D02 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = EHV7XZLAHA;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SwiftAssistant/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.getstream.visionagents.SwiftAssistant;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B2000700 /* Build configuration list for PBXProject "SwiftAssistant" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B2000C01 /* Debug */,
+				B2000C02 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B2000701 /* Build configuration list for PBXNativeTarget "SwiftAssistant" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B2000D01 /* Debug */,
+				B2000D02 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B2000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../sdks/swift/core;
+		};
+		B2000B02 /* XCLocalSwiftPackageReference "../../../../../stream-chat-swift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../../../../stream-chat-swift";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/GetStream/stream-video-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.54.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B2000301 /* VisionAgentsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VisionAgentsCore;
+		};
+		B2000302 /* StreamChat */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StreamChat;
+		};
+		B2000303 /* StreamChatAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StreamChatAI;
+		};
+		B2000304 /* StreamVideo */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */;
+			productName = StreamVideo;
+		};
+		B2000305 /* StreamVideoSwiftUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */;
+			productName = StreamVideoSwiftUI;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B2000A00 /* Project object */;
+}
