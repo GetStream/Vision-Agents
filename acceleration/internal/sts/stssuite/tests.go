@@ -36,7 +36,16 @@ func (s *Suite) TestTheModelHearsTheCallerAndAnswersInItsOwnVoice() {
 	defer s.Hangup(provider)
 
 	s.Speak(provider)
-	reply := s.Settled(provider)
+	reply := s.Spoken(provider)
+
+	// A server turn detector may take a pause mid-sentence for the end of the turn and open
+	// a reply that the rest of the sentence cuts off. That reply has to settle silent.
+	for _, event := range reply.AllEvents {
+		if complete, ok := event.(sts.ResponseComplete); ok && complete.ResponseID != reply.Complete.ResponseID {
+			s.True(complete.Interrupted, "a reply before the spoken one should have been cut off")
+			s.Zero(complete.AudioDurationMs, "a reply the caller cut off should have said nothing")
+		}
+	}
 
 	s.Require().NotEmpty(reply.Chunks, "the model should have spoken")
 	for _, chunk := range reply.Chunks {
