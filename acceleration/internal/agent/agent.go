@@ -2350,6 +2350,8 @@ var doneClaims = []string{
 	"i've cancelled", "i've canceled", "i've scheduled", "i've rescheduled", "i've opened",
 	"i've verified", "i've placed", "i've sent", "is confirmed", "has been scheduled",
 	"has been cancelled", "has been dispatched", "is on the way",
+	"i'm logging", "i am logging", "i will log", "i'll log", "i'm opening", "i am opening",
+	"i'm booking", "i am booking", "i'm dispatching", "i am dispatching",
 }
 
 // toolRanSinceCaller reports whether a tool has answered since the caller last spoke.

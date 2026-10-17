@@ -83,7 +83,7 @@ func (t Tools) Requests() []llm.Tool {
 	for _, tool := range t.Tools {
 		rendered = append(rendered, llm.Tool{
 			Name:        tool.Name,
-			Description: tool.Description,
+			Description: strings.TrimSpace(tool.Description + " " + requiredOnly(tool.Parameters)),
 			Parameters:  tool.Parameters,
 		})
 	}
@@ -283,4 +283,28 @@ func parseTools(raw []byte) (Tools, error) {
 		return Tools{}, err
 	}
 	return tools, nil
+}
+
+// requiredOnly names the arguments a tool cannot be called without when it also takes
+// optional ones. Said beside the tool rather than only in the use policy, because that is
+// where a small model looks when it decides whether it has enough to call: Gemma held a
+// booking back for a phone number and a first name the schema never asked for.
+func requiredOnly(parameters map[string]any) string {
+	properties, _ := parameters["properties"].(map[string]any)
+	var required []string
+	switch listed := parameters["required"].(type) {
+	case []string:
+		required = listed
+	case []any:
+		for _, name := range listed {
+			if text, ok := name.(string); ok {
+				required = append(required, text)
+			}
+		}
+	}
+	if len(required) == 0 || len(properties) <= len(required) {
+		return ""
+	}
+	return "Only " + strings.Join(required, ", ") + " are needed to call it; never ask the " +
+		"caller for the others."
 }

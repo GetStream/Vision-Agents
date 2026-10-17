@@ -26,6 +26,7 @@ Examples of the caller's last words and the tag they call for:
 "I'll give you everything up front so we don't go back and forth." [wait]
 "My name is Maya Chen." after saying they would give everything at once: [wait]
 "Hi, this is Maya Chen, I need to move an appointment." [respond]
+"Hi, I hope this is the right line." with no request yet: [wait]
 "My member ID is, hold on, let me find the card." [wait]
 "My PIN is four four" [wait]
 "Mom, can I have the nuggets?" [ignore]

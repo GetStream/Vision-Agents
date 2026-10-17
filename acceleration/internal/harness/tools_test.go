@@ -235,3 +235,24 @@ func (s *ToolsSuite) TestLookupMissesWhatWasNeverDeclared() {
 
 	s.False(known)
 }
+
+func (s *ToolsSuite) TestAToolWithOptionalArgumentsNamesTheOnesItNeeds() {
+	tools := Tools{Tools: []Tool{{
+		Name:        "create_reservation",
+		Description: "Book the table.",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"time": map[string]any{}, "name": map[string]any{}, "phone": map[string]any{}},
+			"required":   []any{"time", "name"},
+		},
+	}, {
+		Name:        "check_outage",
+		Description: "Check for an outage.",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+	}}}
+
+	requests := tools.Requests()
+	s.Equal("Book the table. Only time, name are needed to call it; never ask the caller for the others.",
+		requests[0].Description)
+	s.Equal("Check for an outage.", requests[1].Description, "a tool with nothing optional says nothing more")
+}
