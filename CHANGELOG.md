@@ -720,6 +720,10 @@ Without it, nothing changes: the dashboard opens the launch page and the consent
 the dashboard, as does a consent the chat starts (until AI-1384, above). The generated clients are regenerated: Go's
 `CreateAuthorization` and Rust's `create_authorization` now take the request body.
 
+### A native app can run a connector consent
+
+`return_url` on `createAuthorization` and `createSession` may now be a native app's own private-use scheme, in the reverse domain form RFC 8252 section 7.1 asks for, such as `com.example.app:/connected`. An app has no web page to open the launch page from and post it the token, so it opens `launch_url#handoff_token=<handoff_token>` in its web authentication sheet (`ASWebAuthenticationSession` on iOS, a Custom Tab on Android). The launch page of such a consent reads the token from its fragment, which no server is sent, and drops it from its history; the callback then hands the sheet back to the app's scheme with `connection_id` and `status`. A scheme with no dot, such as `myapp://`, is still refused, and so are a fragment, a user name and a query that is not key=value pairs. A consent that returns to a web page or to the dashboard gets the same launch page as before, byte for byte.
+
 ### Built-in BigQuery and Metabase connectors
 
 The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase` (AI-1381).

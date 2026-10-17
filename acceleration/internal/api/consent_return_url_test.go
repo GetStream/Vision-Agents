@@ -42,6 +42,10 @@ else status.textContent = 'Start from the dashboard, so this browser can be chec
 // appReturnURL is a page of the app's own with a query of its own, which the callback keeps.
 const appReturnURL = "https://app.example/connectors/done?tab=tools&from=chat"
 
+// nativeReturnURL is a native app's own scheme, in the reverse domain form RFC 8252 section 7.1
+// asks for, with a query of its own.
+const nativeReturnURL = "io.getstream.assistant:/gmail?from=composer"
+
 func (s *AuthorizationsSuite) TestAConsentStartedWithAReturnURLIsLaunchedFromItsOriginAndGoesBackThere() {
 	id := s.connection("")
 	started := s.startReturningTo(id, appReturnURL)
@@ -219,6 +223,41 @@ func (s *AuthorizationsSuite) TestAReturnURLOverPlainHTTPToAHostThatIsNotLoopbac
 func (s *AuthorizationsSuite) TestAReturnURLWithASchemeOtherThanHTTPSIsRefused() {
 	s.assertReturnURLRefused("the scheme must be https", "myapp://callback")
 	s.assertReturnURLRefused("the scheme must be https", "ftp://app.example/done")
+}
+
+// TestAConsentReturningToANativeAppIsHandedOffFromItsFragmentAndGoesBackToTheApp: an app has
+// no page to post the token from, so it opens launch_url#handoff_token=... in its web
+// authentication sheet. The page reads the token from its fragment, which the router is never
+// sent, and the callback hands the sheet back to the app's own scheme.
+func (s *AuthorizationsSuite) TestAConsentReturningToANativeAppIsHandedOffFromItsFragmentAndGoesBackToTheApp() {
+	id := s.connection("")
+	started := s.startReturningTo(id, nativeReturnURL)
+	alice := s.browser()
+
+	page := s.launchPage(alice.get(started.LaunchURL + "#handoff_token=" + started.HandoffToken))
+	finished := alice.finish(s.consent(alice.handOff(started)))
+
+	s.Contains(page, `const handoffToken = new URLSearchParams(window.location.hash.slice(1)).get('handoff_token');`)
+	s.Contains(page, `history.replaceState(null, '', window.location.pathname);`)
+	s.NotContains(page, "dashboardOrigin", "there is no opener to take it from")
+	s.NotContains(page, "dashboard", "no word of a dashboard the person never used")
+	s.NotContains(page, started.HandoffToken, "the fragment never reaches the router")
+	s.Equal(s.returnedTo(nativeReturnURL, id, consentConnected), finished.Header.Get("Location"))
+	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(id).Status)
+}
+
+func (s *AuthorizationsSuite) TestANativeAppsOwnSchemeInReverseDomainFormIsTaken() {
+	for _, returnURL := range []string{"com.example.app:/done", "com.example.app://callback?x=1", nativeReturnURL} {
+		started := s.startReturningTo(s.connection(""), returnURL)
+
+		s.NotContains(s.launchPage(s.browser().get(started.LaunchURL)), "dashboardOrigin", returnURL)
+	}
+}
+
+func (s *AuthorizationsSuite) TestANativeAppsSchemeKeepsTheRulesOfAnyReturnURL() {
+	s.assertReturnURLRefused("fragment", "com.example.app:/done#tools")
+	s.assertReturnURLRefused("user name or password", "com.example.app://admin@callback/done")
+	s.assertReturnURLRefused("a query that is not key=value pairs", "com.example.app:/done?a=%zz")
 }
 
 func (s *AuthorizationsSuite) TestAReturnURLCarryingAUserNameIsRefused() {
