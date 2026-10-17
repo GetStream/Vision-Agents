@@ -140,6 +140,8 @@ type Turn struct {
 	// Answers says the reply is offered no tools and must answer from what it has: the
 	// chain of tools before it has gone on as long as the caller can be kept waiting.
 	Answers bool
+	// MustCall has the model call one of its tools rather than answer in words.
+	MustCall bool
 	// Asked is what the caller asked to change about this reply, written over the
 	// session's own overwrites.
 	Asked llmoptions.LLM
@@ -364,9 +366,15 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		reasoning.Effort = toolReplyEffort
 	}
 
+	toolChoice := ""
+	if turn.MustCall && len(tools) > 0 {
+		toolChoice = "required"
+	}
+
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
+		ToolChoice:         toolChoice,
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,

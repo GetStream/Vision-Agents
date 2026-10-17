@@ -2285,7 +2285,10 @@ func (a *Agent) keepPromise(promised, note string) {
 		History:      history,
 		AfterTool:    true,
 		Note:         note,
-		Asked:        asked,
+		// Told in a note alone, Gemma met it with "Is there anything else?" and the
+		// booking it had announced was never made.
+		MustCall: true,
+		Asked:    asked,
 	}, ""); err != nil {
 		a.fail(err, "llm")
 	}

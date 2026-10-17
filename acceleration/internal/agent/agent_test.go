@@ -3052,6 +3052,7 @@ func (s *AgentSuite) TestAPromiseToCheckThatCalledNothingIsKept() {
 	kept := s.model.requests()[1]
 	s.True(strings.HasPrefix(kept.ID, toolPrefix))
 	s.Contains(kept.Instructions, keepPromise)
+	s.Equal("required", kept.ToolChoice, "the chase must call a tool, not talk")
 }
 
 func (s *AgentSuite) TestAGoAheadAnsweredWithAQuestionIsChasedUp() {
