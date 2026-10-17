@@ -720,6 +720,14 @@ Without it, nothing changes: the dashboard opens the launch page and the consent
 the dashboard, as does a consent the chat starts (until AI-1384, above). The generated clients are regenerated: Go's
 `CreateAuthorization` and Rust's `create_authorization` now take the request body.
 
+### A native app can run a connector consent
+
+`return_url` on `createAuthorization` and `createSession` may now be a native app's own private-use scheme, in the reverse domain form RFC 8252 section 7.1 asks for, such as `com.example.app:/connected`. An app has no web page to open the launch page from and post it the token, so it opens `launch_url#handoff_token=<handoff_token>` in its web authentication sheet (`ASWebAuthenticationSession` on iOS, a Custom Tab on Android). The launch page of such a consent reads the token from its fragment, which no server is sent, and drops it from its history; the callback then hands the sheet back to the app's scheme with `connection_id` and `status`. A scheme with no dot, such as `myapp://`, is still refused, and so are a fragment, a user name and a query that is not key=value pairs. A consent that returns to a web page or to the dashboard gets the same launch page as before, byte for byte.
+
+### The Gmail connector writes drafts, and a backend can send mail through it
+
+The `gmail` connector's revision 3 asks for `gmail.compose` beside `gmail.readonly`, so the Gmail MCP server's `create_draft` works, and gives `https://gmail.googleapis.com` as its `api_base`, so a backend can send through the connection proxy: `POST /v1/agents/connections/{id}/proxy/gmail/v1/users/me/messages/send` with the RFC 5322 message base64url-encoded as `raw`. Google's Gmail MCP server has no tool that sends. A connection made on revision 2 asks for the new scope at its next consent.
+
 ### Built-in BigQuery and Metabase connectors
 
 The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase` (AI-1381).
@@ -2120,6 +2128,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A chat that opened before its person connected an account uses the account once they have. A session binding with no connection chosen waits for a login; asked for the account after the person connected it outside the chat, from their app with a consent its backend began, it began a second consent and showed another `connector_authorization` card. It now opens on the caller's one connected connection, as a session opening then would have, with no second consent. With two connected, it still asks.
 - `stream.STT` credits each transcript to the participant whose audio it is of. It sent every participant's audio over one router socket and credited each transcript to whoever sent the last frame, so a line still arriving when the next person started talking went to them. Each participant now has a socket of their own: the one `start` opens goes to whoever speaks first, and the others open on a participant's first frame. A socket the router refuses for a later participant is reported once as an `STTErrorEvent` and that participant's audio is dropped; one participant still uses exactly one socket (AI-1403).
 - A Python `Agent` built by hand, without `AgentLauncher`, loads its components' models when it joins: the multi-speaker filter's Silero VAD, a local STT such as `fast_whisper`, a local turn detector or processor. It loaded none, so once two people spoke on the call the first frame failed with `warmup() must be called before process_audio()` and the agent took no more audio for the rest of the call, though the join had succeeded. A model that fails to load now fails the join before the agent enters the call. An agent from `AgentLauncher` keeps the models the launcher loaded, and `Agent.warmup(cache)` loads them ahead of the join (AI-1402).
 - A voice id ElevenLabs does not have is refused on a shortcut that also reaches Cartesia or Inworld, such as `tts-quality`. The router fell back to them, so the stream started and failed on the first line (`Unknown voice: … not found!`, `voice ID must be a valid UUID`). They now take such an id only when their own voice listing holds it, in whatever order the candidates are ranked. This covers a voice shaped like an ElevenLabs id (20 letters and digits); a Cartesia UUID or a name such as `Ashley` routes as before, and a mistyped name on such a shortcut still fails on the first line (AI-1395).

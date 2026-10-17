@@ -206,6 +206,41 @@ func (s *ConnectorLoginSuite) TestALoginFinishedWithoutAHandBackIsPickedUpOnTheN
 	s.False(handedBack, "a hand-back that arrives after is not run again")
 }
 
+// TestALoginWithNoneChosenOpensOnAnAccountConnectedOutsideTheChat: the session opened before
+// the caller had any connection, and they then connected one from their app, with a consent
+// their backend began. The next call opens on it, as the session would have had it been
+// connected then, and nobody is asked to log in again.
+func (s *ConnectorLoginSuite) TestALoginWithNoneChosenOpensOnAnAccountConnectedOutsideTheChat() {
+	s.begun = Consent{ConnectionID: "unused", AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, tools, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+
+	s.connection("alice", "primary")
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(tools), "it opened waiting for a login")
+	s.Equal("primary", said)
+	s.Zero(s.begins, "no consent begun")
+	s.Empty(s.shown, "no button shown")
+}
+
+// TestALoginWithNoneChosenStillAsksWhenTheCallerHasTwoAccounts: with two connected, which one
+// the session uses is the person's to say, so the login asks rather than picks.
+func (s *ConnectorLoginSuite) TestALoginWithNoneChosenStillAsksWhenTheCallerHasTwoAccounts() {
+	s.begun = Consent{ConnectionID: "unused", AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+
+	s.connection("alice", "primary")
+	s.connection("alice", "secondary")
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Contains(asked, `"status":"authorization_required"`)
+	s.Equal(1, s.begins)
+}
+
 // TestAReconnectFinishedWithoutAHandBackIsPickedUpOnTheNextCall: the same for a connection
 // the caller chose that needed reauthorization.
 func (s *ConnectorLoginSuite) TestAReconnectFinishedWithoutAHandBackIsPickedUpOnTheNextCall() {
