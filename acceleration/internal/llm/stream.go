@@ -154,6 +154,60 @@ func (s *Stream) Await() bool {
 	}
 }
 
+// Lead pulls the stream until the opening of its answer satisfies enough, a tool call starts,
+// or it ends, and returns the answer's text so far. Like Await it takes nothing off the
+// stream and runs before the first Next.
+func (s *Stream) Lead(enough func(text string) bool) string {
+	for seen := 0; ; {
+		var text strings.Builder
+		for _, event := range s.writer.pending {
+			if delta, ok := event.(OutputTextDelta); ok {
+				text.WriteString(delta.Delta)
+			}
+		}
+		for ; seen < len(s.writer.pending); seen++ {
+			if _, ok := s.writer.pending[seen].(FunctionCallArgumentsDelta); ok {
+				return text.String()
+			}
+		}
+		if enough(text.String()) || s.ended || s.exhausted {
+			return text.String()
+		}
+		s.exhausted = !s.puller.Advance(s.writer)
+	}
+}
+
+// TrimLead drops the first n bytes of the answer's text, which Lead returned, from the
+// deltas still to come and from the response they settle into. It runs before the first Next.
+func (s *Stream) TrimLead(n int) {
+	for i := 0; n > 0 && i < len(s.writer.pending); i++ {
+		delta, ok := s.writer.pending[i].(OutputTextDelta)
+		if !ok {
+			continue
+		}
+		cut := min(n, len(delta.Delta))
+		delta.Delta = delta.Delta[cut:]
+		s.writer.pending[i] = delta
+		n -= cut
+	}
+	kept := s.writer.pending[:0]
+	for _, event := range s.writer.pending {
+		if delta, ok := event.(OutputTextDelta); ok && delta.Delta == "" {
+			continue
+		}
+		kept = append(kept, event)
+	}
+	s.writer.pending = kept
+	var text strings.Builder
+	for _, event := range kept {
+		if delta, ok := event.(OutputTextDelta); ok {
+			text.WriteString(delta.Delta)
+		}
+	}
+	s.writer.text.Reset()
+	s.writer.text.WriteString(text.String())
+}
+
 // Current is the event Next advanced to.
 func (s *Stream) Current() Event { return s.current }
 

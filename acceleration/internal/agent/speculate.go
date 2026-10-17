@@ -33,6 +33,9 @@ type speculation struct {
 	// release says what became of the ruling, and is sent on exactly once: true speaks the
 	// reply, false drops it. Whoever takes the speculation out of the map sends it.
 	release chan bool
+	// unified says the reply opens with the tag that rules on it, so no flow controller
+	// was asked.
+	unified bool
 }
 
 // speculate starts the reply to a settled turn before the flow controller has ruled on it.
@@ -44,16 +47,34 @@ type speculation struct {
 //
 // It runs before the ruling is asked for, so a ruling that comes back at once still finds
 // the reply it is about.
-func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, anotherVoice bool) {
-	if !a.options.SpeculativeReplies || a.options.Text || a.options.Guardrail != nil ||
-		speaking || anotherVoice || ready.Unfinished || strings.TrimSpace(ready.Text) == "" {
-		return
+//
+// With UnifiedReplies the reply also rules on the words, and it reports true: nobody else
+// is asked, so the caller must not ask the flow controller as well.
+func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, anotherVoice bool) bool {
+	unified := a.options.UnifiedReplies
+	if !a.options.SpeculativeReplies && !unified {
+		return false
+	}
+	if a.options.Text || a.options.Guardrail != nil || speaking || (anotherVoice && !unified) ||
+		ready.Unfinished || strings.TrimSpace(ready.Text) == "" {
+		return false
 	}
 
 	a.mu.Lock()
 	if a.closed || a.harness != current || a.replies == nil || a.generating || a.switching.Load() {
 		a.mu.Unlock()
-		return
+		return false
+	}
+	note := a.duplex.Note(ready.Confidence)
+	if unified {
+		parts := []string{harness.UnifiedNote}
+		if anotherVoice {
+			parts = append(parts, harness.AnotherVoiceNote)
+		}
+		if note != "" {
+			parts = append(parts, note)
+		}
+		note = strings.Join(parts, "\n\n")
 	}
 	stale := a.takeSpeculationsLocked()
 	ctx, cancel := context.WithCancel(a.ctx)
@@ -65,12 +86,13 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 			ID:           ready.ID,
 			Instructions: a.instructions(),
 			History:      append(a.replayLocked(), a.userTurnLocked(ready.Text, nil)),
-			Note:         a.duplex.Note(ready.Confidence),
+			Note:         note,
 		},
 		startedAt: time.Now(),
 		ctx:       ctx,
 		cancel:    cancel,
 		release:   make(chan bool, 1),
+		unified:   unified,
 	}
 	a.speculations[ready.ID] = spec
 	a.pumps.Add(1)
@@ -80,6 +102,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		dropped.drop()
 	}
 	go a.runSpeculation(spec)
+	return unified
 }
 
 // runSpeculation asks for the reply and holds it until the ruling says what to do with it.
@@ -88,6 +111,9 @@ func (a *Agent) runSpeculation(spec *speculation) {
 	defer a.pumps.Done()
 
 	stream, err := spec.harness.Respond(spec.ctx, spec.turn)
+	if spec.unified {
+		a.ruleFromLead(spec, stream, err)
+	}
 
 	var speak bool
 	select {
@@ -140,7 +166,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 		return false
 	}
 	delete(a.speculations, ready.ID)
-	usable := note == "" && !a.closed && !a.generating && !a.switching.Load() &&
+	usable := (note == "" || spec.unified && note == ambiguousNote) && !a.closed && !a.generating && !a.switching.Load() &&
 		a.harness == spec.harness && len(a.history) == spec.history && ready.Text == spec.ready.Text
 	if !usable {
 		a.mu.Unlock()
@@ -212,4 +238,32 @@ func (a *Agent) takeSpeculationsLocked() []*speculation {
 func (s *speculation) drop() {
 	s.release <- false
 	s.cancel()
+}
+
+// ruleFromLead reads the tag a unified reply opened with and reports it as the ruling on
+// its words. The tag is taken off the reply, which is then spoken or dropped exactly as a
+// speculative one is once a controller has ruled.
+func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
+	if err != nil {
+		if spec.ctx.Err() == nil {
+			spec.harness.Rule(harness.Decided{CandidateID: spec.ready.ID, Err: err,
+				TookMs: float64(time.Since(spec.startedAt).Microseconds()) / 1000})
+		}
+		return
+	}
+	lead := stream.Lead(harness.UnifiedLead)
+	disposition, tag := harness.ParseUnified(lead)
+	stream.TrimLead(tag)
+	if spec.ctx.Err() != nil {
+		return
+	}
+	took := float64(time.Since(spec.startedAt).Microseconds()) / 1000
+	a.logger.Debug("the reply ruled on its own turn",
+		"candidate", spec.ready.ID, "disposition", disposition, "lead", lead, "took_ms", took)
+	spec.harness.Rule(harness.Decided{
+		CandidateID: spec.ready.ID,
+		Disposition: disposition,
+		Floor:       harness.Continue,
+		TookMs:      took,
+	})
 }

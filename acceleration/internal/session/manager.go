@@ -98,6 +98,8 @@ type ManagerOptions struct {
 	// SpeculativeReplies has every agent start its reply before the flow controller has
 	// ruled on the words, and hold it until the ruling says to answer.
 	SpeculativeReplies bool
+	// UnifiedReplies has the conversation model rule on a settled turn in its reply.
+	UnifiedReplies bool
 	// Stream says which Stream app, and with which credential, each session acts in. It
 	// is optional: without it a session has no app, and anything needing one fails where
 	// it needs it, as it does on a deployment with no Stream credentials.
@@ -605,6 +607,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			SearchTarget:       spec.SearchTarget,
 			Guardrail:          screening,
 			SpeculativeReplies: m.options.SpeculativeReplies,
+			UnifiedReplies:     m.options.UnifiedReplies,
 			AppID:              spec.Memory.AppID,
 			SessionID:          spec.ID,
 			Incognito:          spec.Incognito,

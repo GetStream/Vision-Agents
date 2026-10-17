@@ -716,6 +716,8 @@ type AgentSuite struct {
 	// speculates starts replies before the flow controller has ruled, off unless a test
 	// says otherwise.
 	speculates bool
+	// unified has the reply rule on its own turn in place of the flow controller.
+	unified bool
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -768,6 +770,7 @@ func (s *AgentSuite) SetupTest() {
 	s.toolPolicy = nil
 	s.duplex = DuplexOptions{}
 	s.speculates = false
+	s.unified = false
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -973,6 +976,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,
+		UnifiedReplies:     s.unified,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
@@ -1275,6 +1279,37 @@ func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyRepl
 		"a clarifying ruling should ask for a reply of its own")
 	s.Contains(s.model.requests()[1].Instructions, "ambiguous")
 	s.NotContains(s.model.requests()[0].Instructions, "ambiguous")
+}
+
+func (s *AgentSuite) TestAUnifiedReplyRulesOnItsTurnWithoutTheFlowController() {
+	s.unified = true
+	s.join(true)
+	s.model.reply = []string{"[respond] Hello", " there."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never spoken")
+	s.Empty(s.flow.requests(), "the reply rules on its own words, so nobody else is asked")
+	s.Contains(s.model.requests()[0].Instructions, "[respond]")
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the exchange was never kept")
+	s.Equal("Hello there.", s.agent.History()[1].Content, "the tag is never part of what was said")
+}
+
+func (s *AgentSuite) TestAUnifiedReplyThatIgnoresItsTurnIsNeverHeard() {
+	s.unified = true
+	s.join(true)
+	s.model.reply = []string{"[ignore]"}
+	participant := stt.Participant{ID: "child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"words the agent was not meant to answer must never be answered")
+	s.Empty(s.agent.History())
 }
 
 func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {

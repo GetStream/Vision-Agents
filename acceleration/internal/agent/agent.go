@@ -159,6 +159,9 @@ type Options struct {
 	// to answer. It takes the ruling's round trip off every answered turn, and costs the
 	// tokens of the replies a ruling throws away. Off by default.
 	SpeculativeReplies bool
+	// UnifiedReplies has the reply to a settled turn on a quiet floor open with a tag
+	// ruling on it, in place of the flow controller.
+	UnifiedReplies bool
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
@@ -1422,7 +1425,9 @@ func (a *Agent) ask(ready candidate) {
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
 
-	a.speculate(current, ready, speaking, anotherVoice)
+	if a.speculate(current, ready, speaking, anotherVoice) {
+		return
+	}
 	if err := current.Decide(harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
@@ -1988,6 +1993,11 @@ func (a *Agent) finishGenerate(turnID string) {
 func (a *Agent) pump(turnID string, stream *llm.Stream) {
 	defer stream.Close()
 
+	if a.options.UnifiedReplies {
+		if _, tag := harness.ParseUnified(stream.Lead(harness.UnifiedLead)); tag > 0 {
+			stream.TrimLead(tag)
+		}
+	}
 	a.mu.Lock()
 	replies := a.replies
 	a.mu.Unlock()

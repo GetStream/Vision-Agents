@@ -539,3 +539,24 @@ func (s *LLMSuite) TestParseDataURIRefusesAURL() {
 	s.Require().Error(err)
 	s.Contains(err.Error(), "data URI")
 }
+
+func (s *LLMSuite) TestALeadingTagIsTrimmedFromTheDeltasAndTheResponse() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("[res") },
+		func(w *ResponseWriter) { w.OutputText("pond] Sure") },
+		func(w *ResponseWriter) { w.OutputText(", what time?") },
+	)
+
+	lead := stream.Lead(func(text string) bool { return len(text) >= len("[respond]") })
+	s.Equal("[respond] Sure", lead)
+	stream.TrimLead(len("[respond] "))
+
+	var spoken string
+	for _, event := range s.drain(stream) {
+		if delta, ok := event.(OutputTextDelta); ok {
+			spoken += delta.Delta
+		}
+	}
+	s.Equal("Sure, what time?", spoken)
+	s.Equal("Sure, what time?", stream.Response().OutputText)
+}
