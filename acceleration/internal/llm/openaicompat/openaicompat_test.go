@@ -549,6 +549,12 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 			name:      "check_availability",
 			arguments: `{"party_size":4,"time":"7:30"}`,
 		},
+		"call followed by a space": {
+			frames:    []string{"One moment, checking... call check_avail", "ability(party_size=4, time='7:30')"},
+			spoken:    "One moment, checking... ",
+			name:      "check_availability",
+			arguments: `{"party_size":4,"time":"7:30"}`,
+		},
 		"bare brace call with no prefix": {
 			frames:    []string{"Booking now. create_reservation{name: \"Alvarez\", party_size: 6}"},
 			spoken:    "Booking now. ",

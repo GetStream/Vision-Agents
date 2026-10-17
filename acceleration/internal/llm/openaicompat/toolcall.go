@@ -23,7 +23,7 @@ const (
 )
 
 // toolCallPrefixes are what a call written as text starts with, ahead of the tool's name.
-var toolCallPrefixes = []string{"call:", "call_tool:", "call tool:"}
+var toolCallPrefixes = []string{"call:", "call_tool:", "call tool:", "call "}
 
 // toolCallSplitter moves tool calls written as text out of the answer as it streams. Like the
 // channel splitter, it holds back the end of what it has seen while that could still be the

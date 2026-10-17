@@ -93,11 +93,16 @@ type ManagerOptions struct {
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
 	Classifier *decisionrouter.Router
+	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
+	// language model. Empty keeps the language model.
+	FlowJudge string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
 	// ruled on the words, and hold it until the ruling says to answer.
 	SpeculativeReplies bool
+	// UnifiedReplies has the conversation model rule on a settled turn in its reply.
+	UnifiedReplies bool
 	// Stream says which Stream app, and with which credential, each session acts in. It
 	// is optional: without it a session has no app, and anything needing one fails where
 	// it needs it, as it does on a deployment with no Stream credentials.
@@ -583,6 +588,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			STSTarget:          spec.STSTarget,
 			SubagentTarget:     spec.SubagentTarget,
 			ControllerTarget:   spec.ControllerTarget,
+			Judge:              m.options.Classifier,
+			JudgeTarget:        m.options.FlowJudge,
 			Skills:             skills,
 			Telephony:          line,
 			ToolRunner:         runner,
@@ -605,6 +612,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			SearchTarget:       spec.SearchTarget,
 			Guardrail:          screening,
 			SpeculativeReplies: m.options.SpeculativeReplies,
+			UnifiedReplies:     m.options.UnifiedReplies,
 			AppID:              spec.Memory.AppID,
 			SessionID:          spec.ID,
 			Incognito:          spec.Incognito,

@@ -59,10 +59,17 @@ type FlowTurn struct {
 	// It is evidence rather than a verdict: somebody else in the room is usually talking
 	// to the room, but they may equally have leaned in to answer for the caller.
 	AnotherVoice bool
+	// Waited says the same words were waited on before, so the speaker has since been quiet
+	// a while longer.
+	Waited bool
+	// Ended says the transcriber marked the end of the turn, or is one that never does.
+	Ended bool
 }
 
 type flow struct {
-	model       *llmrouter.Session
+	model *llmrouter.Session
+	// judge, when set, is asked in place of model.
+	judge       Judge
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
@@ -135,7 +142,8 @@ usually talking to the room rather than to the agent, so lean towards ignore unl
 plainly address it.
 Words that open by calling somebody "Mom", "Dad", "honey" or "sweetie", such as "Mom, can I have
 the nuggets?", are addressed to them, not the agent: choose ignore, and continue if the agent
-is speaking.
+is speaking. But if the caller turns back to the agent in the same words, such as "Yes honey,
+now shush. Sorry about that, the name is Okafor.", the part for the agent counts: respond.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
 Choose respond for a complete, relevant thought.
 A recorded menu reading out its options is one thought and not several, however long the
@@ -207,6 +215,11 @@ func (f *flow) run(asked *candidate) {
 	turn := asked.turn
 	defer f.running.Done()
 	defer f.advance(turn.ID)
+
+	if f.judge != nil {
+		f.runJudge(asked)
+		return
+	}
 
 	f.mu.Lock()
 	model := f.model
@@ -385,11 +398,19 @@ func (f *flow) Close() error {
 	// what lets every consumer reach the end of its stream.
 	var failures []error
 	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
 		if err := session.Close(); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	f.running.Wait()
+	if f.judge != nil {
+		if err := f.judge.Close(); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	return errors.Join(failures...)
 }
 

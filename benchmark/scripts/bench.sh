@@ -79,8 +79,12 @@ preflight() {
     return 1
   fi
 
-  local busy
-  busy=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | grep -E ':(8080|800[1-9]|809[0-9]) ' || true)
+  local busy ports=() p
+  ports+=("${VOICEBENCH_ROUTER_PORT:-8080}")
+  for p in 0 1 2; do
+    ports+=("$(( ${VOICEBENCH_AGENT_PORT_BASE:-8001} + p ))" "$(( ${VOICEBENCH_WORLD_PORT_BASE:-8090} + p ))")
+  done
+  busy=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | grep -E ":($(IFS='|'; echo "${ports[*]}")) " || true)
   if [[ -n "$busy" ]]; then
     echo "ports a stage needs are taken, stop these first:"
     echo "$busy"
