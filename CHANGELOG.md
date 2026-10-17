@@ -724,6 +724,10 @@ the dashboard, as does a consent the chat starts (until AI-1384, above). The gen
 
 `return_url` on `createAuthorization` and `createSession` may now be a native app's own private-use scheme, in the reverse domain form RFC 8252 section 7.1 asks for, such as `com.example.app:/connected`. An app has no web page to open the launch page from and post it the token, so it opens `launch_url#handoff_token=<handoff_token>` in its web authentication sheet (`ASWebAuthenticationSession` on iOS, a Custom Tab on Android). The launch page of such a consent reads the token from its fragment, which no server is sent, and drops it from its history; the callback then hands the sheet back to the app's scheme with `connection_id` and `status`. A scheme with no dot, such as `myapp://`, is still refused, and so are a fragment, a user name and a query that is not key=value pairs. A consent that returns to a web page or to the dashboard gets the same launch page as before, byte for byte.
 
+### The Gmail connector writes drafts, and a backend can send mail through it
+
+The `gmail` connector's revision 3 asks for `gmail.compose` beside `gmail.readonly`, so the Gmail MCP server's `create_draft` works, and gives `https://gmail.googleapis.com` as its `api_base`, so a backend can send through the connection proxy: `POST /v1/agents/connections/{id}/proxy/gmail/v1/users/me/messages/send` with the RFC 5322 message base64url-encoded as `raw`. Google's Gmail MCP server has no tool that sends. A connection made on revision 2 asks for the new scope at its next consent.
+
 ### Built-in BigQuery and Metabase connectors
 
 The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase` (AI-1381).

@@ -10,14 +10,25 @@
 #         scopes_supported, gmail.readonly and gmail.compose among them.
 #   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
+# Opened October 16, 2026:
+#   [mcp]    https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server: the
+#            server's tools, create_draft among them and none that sends, and its two scopes,
+#            gmail.readonly and gmail.compose.
+#   [scopes] https://developers.google.com/workspace/gmail/api/auth/scopes: gmail.compose,
+#            «Manage drafts and send emails», restricted.
+#   [send]   https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send:
+#            POST https://gmail.googleapis.com/gmail/v1/users/{userId}/messages/send, which
+#            gmail.compose may call.
 id: gmail
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
-# false, which revision 1 was stored without (refresh.rotating became a pointer).
-revision: 2
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 asks for
+# gmail.compose and gives the REST API as api_base, so a backend can send mail through the
+# connection proxy, which the MCP server cannot ([mcp]).
+revision: 3
 # [plugin]
 name: Gmail
 category: Communication
-description: Search and read email threads, list labels and drafts.
+description: Search, read and label email threads, and write drafts. A backend sends mail through the connection proxy.
 setup:
   # [plugin] setup_url and setup_steps.
   url: https://console.cloud.google.com/auth/clients
@@ -30,7 +41,7 @@ setup:
       description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
     - title: Add the scope
       # [setup] adds gmail.readonly and gmail.compose.
-      description: Under Data Access, add https://www.googleapis.com/auth/gmail.readonly, and https://www.googleapis.com/auth/gmail.compose too if the agent should write drafts.
+      description: Under Data Access, add https://www.googleapis.com/auth/gmail.readonly and https://www.googleapis.com/auth/gmail.compose, which writes drafts and sends mail.
     - title: Create a web client
       # [setup]: a web application client.
       description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
@@ -41,6 +52,9 @@ endpoints:
   mcp: https://gmailmcp.googleapis.com/mcp/v1
   # Pinned for the trailing slash [prm] and [as] disagree on, as in google_calendar.yaml.
   issuer: https://accounts.google.com
+  # The REST API's host, under which the connection proxy sends a direct call such as
+  # gmail/v1/users/me/messages/send ([send]).
+  api_base: https://gmail.googleapis.com
   # RFC 8707 resource indicator: [prm]'s resource.
   resource: https://gmailmcp.googleapis.com/mcp/v1
 # Authorization code with PKCE S256: [as]; [web].
@@ -56,10 +70,12 @@ authorize_params:
   access_type: offline
   prompt: consent
 scopes:
-  # [plugin] scopes: read only. create_draft needs gmail.compose, which [setup] asks for
-  # too; the plugin's one is kept, so a moved grant keeps what it was granted.
+  # [plugin] scopes: read only, kept first so a moved grant keeps what it was granted.
+  # gmail.compose is the server's other scope ([mcp]): create_draft, and sending through the
+  # proxy ([scopes], [send]).
   list:
     - https://www.googleapis.com/auth/gmail.readonly
+    - https://www.googleapis.com/auth/gmail.compose
 # No identity, as google_calendar.yaml.
 refresh:
   # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh

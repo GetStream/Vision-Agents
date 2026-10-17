@@ -275,7 +275,7 @@ func (s *ConsentSuite) TestEachGoogleServerConnectsWithTheSharedClientAtThePinne
 		"google_calendar": "https://www.googleapis.com/auth/calendar.readonly",
 		"google_drive":    "https://www.googleapis.com/auth/drive.readonly",
 		"google_docs":     "https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/drive.readonly",
-		"gmail":           "https://www.googleapis.com/auth/gmail.readonly",
+		"gmail":           "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
 	}
 	servers := map[string]string{
 		"bigquery":        "https://bigquery.googleapis.com/mcp",
