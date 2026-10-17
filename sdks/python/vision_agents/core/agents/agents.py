@@ -70,6 +70,7 @@ from ..utils.logging import (
 from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
+from ..warmup import Warmable, WarmupCache
 from . import events
 from .agent_types import AgentOptions, TrackInfo, default_agent_options
 from .conversation import Conversation, InMemoryConversation
@@ -438,6 +439,7 @@ class Agent:
         self._authenticate_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._closed = False
+        self._warmed_up = False
 
         self._audio_input_stream = AudioInputStream()
         self._audio_output_stream = AudioOutputStream()
@@ -629,6 +631,31 @@ class Agent:
         """
         return self.events.subscribe(function)
 
+    async def warmup(self, cache: Optional[WarmupCache] = None) -> None:
+        """Load the models the agent's components need before they handle a call.
+
+        `join` calls this when nothing did before it. A launcher passes its cache,
+        so the agents it builds share models loaded once. A component you warmed
+        yourself loads again on `join` unless you call `agent.warmup()` first.
+
+        Args:
+            cache: Where loaded models are kept. Left out, each one loads fresh.
+        """
+        components: list[object] = [
+            self.llm,
+            self.tts,
+            self.stt,
+            self.turn_detection,
+            *self.processors,
+        ]
+        # A remote pipeline hears the call itself: no local audio reaches the filter.
+        if not isinstance(self.llm, RemotePipeline):
+            components.append(self._multi_speaker_filter)
+        await asyncio.gather(
+            *(c.warmup(cache) for c in components if isinstance(c, Warmable))
+        )
+        self._warmed_up = True
+
     @asynccontextmanager
     async def join(
         self,
@@ -688,6 +715,8 @@ class Agent:
             self._start_tracing(call)
             self.call = call
             self.conversation = None
+            if not self._warmed_up:
+                await self.warmup()
 
             if isinstance(self.llm, RemotePipeline):
                 await self._join_remote(self.llm, call, join_started)
