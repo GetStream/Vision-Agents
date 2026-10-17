@@ -64,7 +64,8 @@ type Turn struct {
 	Trigger      Trigger   `yaml:"trigger"`
 	// Voice overrides the scenario's voice for this line, for someone else in the room.
 	Voice string `yaml:"voice"`
-	// Aside marks a line not meant for the agent, such as a child talking to the caller. It
+	// Aside marks a line not meant for the agent, such as a child talking to the caller or the
+	// caller answering the child. It
 	// is scored like an overlap sound: the agent should neither answer it nor stop for it.
 	Aside bool `yaml:"aside"`
 	// CheckIn marks a turn the caller holds back for its trigger's delay after the agent
@@ -267,7 +268,7 @@ func (s Scenario) CallerTranscript() string {
 		switch {
 		case turn.Text == "":
 		case turn.Aside:
-			lines = append(lines, "(someone else in the room, not to the agent) "+turn.Text)
+			lines = append(lines, "(not meant for the agent) "+turn.Text)
 		default:
 			lines = append(lines, turn.Text)
 		}
@@ -313,6 +314,12 @@ func ShortPath(root string) string {
 // SupershortPath is the smallest set, one scenario a pack, for the quickest check of a change.
 func SupershortPath(root string) string {
 	return filepath.Join(root, "scenarios", "supershort.txt")
+}
+
+// BasicsPath is one scenario for each basic behavior a voice agent needs, frozen or extended,
+// for the short bench.
+func BasicsPath(root string) string {
+	return filepath.Join(root, "scenarios", "basics.txt")
 }
 
 // ExtendedPath is the set of scenarios outside the frozen one, run by hand until a
