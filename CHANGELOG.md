@@ -648,6 +648,24 @@ the agent was given: a call of any type but `agent` is sent as `call`, and the r
 session id, so a second session on the same call is not refused for reusing an id. An `agent`
 call is held by its call id as before. Other SDKs follow.
 
+### Grok Voice 3.0 and GPT-Realtime-2.1 for speech-to-speech
+
+`xai/grok-voice-3.0`, first on the Artificial Analysis speech-to-speech index, is in the
+low-latency tier at $4.80 an hour of caller audio, and `openai/gpt-realtime-2.1` is in the
+high-quality tier at GPT-Realtime-2's rates. `sts-vision` now prefers GPT-Realtime-2.1.
+`xai/grok-voice-think-fast-2.0`, which xAI have deprecated, and `openai/gpt-realtime-2`
+stay declared, so a config that names them keeps working. `openai/gpt-live-1` now lists
+German, French, Hindi, Japanese and Korean, the languages of OpenAI's new voices.
+
+### Nemotron 3.5 Super VL and Muse Wonder in the built-in LLM config
+
+`together/nvidia/NVIDIA-Nemotron-3.5-Super-VL`, the strongest US open-weight model, is in the
+low-latency tier with image input, so `vlm` can fall over to it; it answers without thinking.
+`meta/muse-wonder-1.0`, 52 on the Artificial Analysis Intelligence Index at max effort, is in
+the high-quality tier with image input at $4 in and $20 out per million tokens. It reuses
+`META_API_KEY`, and no shortcut prefers it. An open-weight model with `-VL` in its id now
+accepts images on any host.
+
 ### A backend can give one session instructions of its own
 
 `POST /v1/agents/sessions` and the session socket's start frame take `instructions`: what the

@@ -20,12 +20,17 @@ import (
 
 type MetaRouterIntegrationSuite struct {
 	suite.Suite
+	model   string
 	router  *Router
 	session *Session
 }
 
 func TestMetaRouterIntegrationSuite(t *testing.T) {
-	suite.Run(t, new(MetaRouterIntegrationSuite))
+	for _, model := range []string{meta.DefaultModel, "muse-wonder-1.0"} {
+		t.Run(model, func(t *testing.T) {
+			suite.Run(t, &MetaRouterIntegrationSuite{model: model})
+		})
+	}
 }
 
 func (s *MetaRouterIntegrationSuite) SetupSuite() {
@@ -36,18 +41,18 @@ func (s *MetaRouterIntegrationSuite) SetupSuite() {
 
 func (s *MetaRouterIntegrationSuite) SetupTest() {
 	config := routing.ModalityConfig{Providers: []routing.ProviderConfig{{
-		Provider: meta.ProviderName, Model: meta.DefaultModel,
+		Provider: meta.ProviderName, Model: s.model,
 		Languages: []string{"en"}, Realtime: true, Tier: routing.HighQuality,
 	}}}
 	var err error
 	s.router, err = New(Options{Config: config, Registry: DefaultRegistry()})
 	s.Require().NoError(err)
 	s.session, err = s.router.Start(s.T().Context(), Request{
-		CustomerID: "athena-integration", Target: "meta/" + meta.DefaultModel,
+		CustomerID: "athena-integration", Target: "meta/" + s.model,
 	})
 	s.Require().NoError(err)
 	s.Equal("meta", s.session.Provider())
-	s.Equal("muse-spark-1.3", s.session.Model())
+	s.Equal(s.model, s.session.Model())
 }
 
 func (s *MetaRouterIntegrationSuite) TearDownTest() {

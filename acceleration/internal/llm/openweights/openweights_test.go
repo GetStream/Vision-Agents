@@ -36,6 +36,9 @@ func (s *OpenWeightsSuite) TestTheSameWeightsAreRecognisedHoweverAHostSpellsThem
 	s.Equal(FamilyQwen, FamilyOf("Qwen/Qwen3.8-27B"))
 	s.Equal(FamilyKimi, FamilyOf("moonshotai/Kimi-K3"))
 	s.Equal(FamilyMiniMax, FamilyOf("MiniMaxAI/MiniMax-M3"))
+	for _, id := range []string{"nvidia/NVIDIA-Nemotron-3.5-Super-VL", "nvidia/nemotron-3.5-super-vl", "nvidia-nemotron-3-5-super-vl"} {
+		s.Equal(FamilyNemotron, FamilyOf(id), id)
+	}
 }
 
 func (s *OpenWeightsSuite) TestAModelWithNothingToSwitchIsAskedForNothing() {
@@ -58,6 +61,10 @@ func (s *OpenWeightsSuite) TestEachFamilyIsToldNotToThinkTheWayItsOwnTemplateRea
 	s.Equal(
 		map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
 		s.fields("Qwen/Qwen3.8-2.4T-A95B", false, ""),
+	)
+	s.Equal(
+		map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
+		s.fields("nvidia/NVIDIA-Nemotron-3.5-Super-VL", false, ""),
 	)
 	s.Equal(
 		map[string]any{"chat_template_kwargs": map[string]any{"thinking": false}},
@@ -107,4 +114,13 @@ func (s *OpenWeightsSuite) TestCapabilitiesFollowWhetherTheModelIsThinking() {
 	s.True(loud.StreamsReasoning)
 	s.Equal([]string{"low", "medium", "high"}, loud.ReasoningEfforts)
 	s.Equal("medium", loud.DefaultEffort)
+}
+
+func (s *OpenWeightsSuite) TestOnlyAVisionModelAcceptsImages() {
+	for _, id := range []string{"nvidia/NVIDIA-Nemotron-3.5-Super-VL", "Qwen/Qwen3-VL-235B-A22B-Instruct"} {
+		s.True(Capabilities(id, false, "").Accepts(llm.ModalityImage), id)
+	}
+	for _, id := range []string{"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B", "zai-org/GLM-5.3-Flash", "deepseek-ai/DeepSeek-V4.1-Flash"} {
+		s.False(Capabilities(id, false, "").Accepts(llm.ModalityImage), id)
+	}
 }

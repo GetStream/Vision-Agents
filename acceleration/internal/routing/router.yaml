@@ -1958,14 +1958,14 @@ sts:
     # Gemini 3.8 Live Extended Thinking, a separate model id rather than a setting on the
     # one above. It reasons in the background and runs tools asynchronously while speaking
     # a filler, then the answer, which is why a reply here can span several of the API's
-    # turns. First on the Artificial Analysis speech-to-speech index at 82.6 and on Tau
-    # Voice at 68.6%, both at high thinking and 1.35s to first audio. It refuses a session
+    # turns. 82.6 on the Artificial Analysis speech-to-speech index and 68.6% on Tau Voice,
+    # both at high thinking and 1.35s to first audio. It refuses a session
     # without a thinking level and the provider sends low, its floor, unless overwrites say
     # otherwise, so the benchmark figures are for a slower setting than the default. Same
     # rates as 3.8 Live, with the thinking billed as output. Same data terms.
     - provider: gemini
       model: gemini-3.8-live-extended-thinking
-      description: "Top of the Artificial Analysis speech-to-speech board. Thinks in the background and talks while a tool runs. Sees images."
+      description: "Near the top of the Artificial Analysis speech-to-speech board. Thinks in the background and talks while a tool runs. Sees images."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2000,12 +2000,35 @@ sts:
         per_million_input_tokens: 3.0
         per_million_output_tokens: 12.0
 
-    # GPT-Realtime-2. The only model here with a semantic turn detector. Audio in at
-    # $32/1M tokens, $0.40/1M cached, out at $64/1M. OpenAI do not train on API traffic
-    # and keep it thirty days for abuse monitoring; zero retention is an enterprise setting.
+    # GPT-Realtime-2.1, GPT-Realtime-2's update on the same socket and at the same rates,
+    # better at spoken letters and digits, silence, noise and being interrupted. Artificial
+    # Analysis put it at 75.2 on their speech-to-speech index against 2's 73.6, and it
+    # resolves 45.7% of their tau-Voice support calls against 39.8%, at 1.21s to first
+    # audio. Audio in at $32/1M tokens, $0.40/1M cached, out at $64/1M. OpenAI do not train
+    # on API traffic and keep it thirty days for abuse monitoring; zero retention is an
+    # enterprise setting.
+    - provider: openai
+      model: gpt-realtime-2.1
+      description: "OpenAI's realtime voice, and what Vision prefers. Semantic turn detection, sees images. Among the dearest."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      supports: [semantic_turns, endpointing, tools, text, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 32.0
+        per_million_cached_input_tokens: 0.40
+        per_million_output_tokens: 64.0
+
+    # GPT-Realtime-2, which 2.1 above replaces at the same price. It stays declared because
+    # callers name it outright, and a name that is no longer declared is an unknown target
+    # rather than a failover. Same rates and data terms as 2.1.
     - provider: openai
       model: gpt-realtime-2
-      description: "The only model here with semantic turn detection. Sees images. Among the dearest."
+      description: "OpenAI's previous realtime voice. Semantic turn detection, sees images. GPT-Realtime-2.1 is better at the same price."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2027,13 +2050,14 @@ sts:
     # 81.5 with a GPT-6 Astra backend, but at 1.24-1.34s to first audio there. The voice
     # layer is $0.05 a minute of session, billed per second, priced here by the caller's
     # audio; the backend's tokens are billed on top and not counted, so this undercounts.
-    # OpenAI name voices in English and Portuguese only and publish no language list.
+    # OpenAI publish no language list, so these are the languages their voices are named
+    # for: English, Portuguese, German, French, Hindi, Japanese and Korean.
     # They do not train on API traffic. Retention is unknown: the Live API is missing
     # from their per-endpoint table, and what the backend calls it makes keep is not said.
     - provider: openai
       model: gpt-live-1
-      description: "Tops the Artificial Analysis board and keeps talking while a tool runs, but is slower to first audio and cannot see. Backend tokens are billed on top."
-      languages: [en, pt]
+      description: "Second on the Artificial Analysis board and keeps talking while a tool runs, but is slower to first audio and cannot see. Backend tokens are billed on top."
+      languages: [de, en, fr, hi, ja, ko, pt]
       realtime: true
       tier: high-quality
       supports: [full_duplex, tools, text, input_transcript, output_transcript]
@@ -2043,13 +2067,31 @@ sts:
       price:
         per_audio_hour: 3.0
 
-    # xAI's Grok Voice over its OpenAI-compatible socket. It does not see, and it reports
-    # no usage, so it is priced by the caller's audio: $0.05 a minute of conversation on
-    # the launch pricing, which undercounts the model's own speaking time. xAI's API terms
-    # match their transcription ones: no training, thirty days.
+    # xAI's Grok Voice 3.0 over its OpenAI-compatible socket, first on the Artificial
+    # Analysis speech-to-speech index at 86.9 and 0.81s to first audio, and the top of their
+    # tau-Voice board among full-duplex models at 71.6%. Same socket, session and events
+    # as the 2.0 below. It does not see, and it reports no usage, so it is priced by the
+    # caller's audio: $0.08 a minute of session, which undercounts the model's own speaking
+    # time. xAI's API terms match their transcription ones: no training, thirty days.
+    - provider: xai
+      model: grok-voice-3.0
+      description: "xAI's Grok Voice 3.0, top of the Artificial Analysis speech-to-speech board and under a second to first audio. Cannot see."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      supports: [endpointing, tools, text, input_transcript, output_transcript]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_audio_hour: 4.80
+
+    # xAI's previous Grok Voice, which xAI deprecated when 3.0 above replaced it at the same
+    # price. Kept, as Gemini 3.1 Flash Live is, so a config that names it does not start
+    # failing before xAI retire it. Priced as at its launch, $0.05 a minute of caller audio.
     - provider: xai
       model: grok-voice-think-fast-2.0
-      description: "xAI's Grok Voice. Fast, cannot see, and priced by the minute of caller audio."
+      description: "xAI's previous Grok Voice, now deprecated. Fast, cannot see, and priced by the minute of caller audio."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2118,13 +2160,12 @@ sts:
       require_terms: [full_duplex]
       require_realtime: true
 
-    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
-    # is what vlm pins for the same reason.
+    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2.1.
     sts-vision:
       title: Vision
-      description: "A conversation the model can watch as well as hear. Prefers GPT-Realtime-2."
+      description: "A conversation the model can watch as well as hear. Prefers GPT-Realtime-2.1."
       require_input_modalities: [image]
-      prefer: openai/gpt-realtime-2
+      prefer: openai/gpt-realtime-2.1
 
     multilingual-high-accuracy:
       title: High quality
@@ -2538,6 +2579,29 @@ llm:
         per_million_cached_input_tokens: 0.15
         per_million_output_tokens: 4.25
 
+    # Meta's Muse Wonder, the model above Spark: 52 on the Artificial Analysis Intelligence
+    # Index at max effort against Spark's 48, at around 180 output tokens a second. It takes
+    # Spark's requests unchanged, so the same two limits apply: none is a 400, so the
+    # provider asks for low, and tool_choice takes auto and nothing else. Nothing prefers
+    # it; it is reached by name or as failover in the quality tier. There is no contributor
+    # mode, and the Standard terms are Spark's: no training, no retention window named.
+    - provider: meta
+      model: muse-wonder-1.0
+      description: "Meta's Muse Wonder, stronger than Spark at about three times the price. Reads images and always thinks first."
+      benchmark: { output_tokens_per_second: 184 }
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 4.00
+        per_million_cached_input_tokens: 0.20
+        per_million_output_tokens: 20.00
+
     # The open-weight models, and the hosts that serve them.
     #
     # The weights are the same wherever they run, so a second host of a model already
@@ -2670,6 +2734,28 @@ llm:
       price:
         per_million_input_tokens: 0.15
         per_million_output_tokens: 0.47
+
+    # NVIDIA's Nemotron 3.5 Super VL, 120B with 12B active and the strongest US open-weight
+    # model, 26 on the Artificial Analysis Intelligence Index. It reads images, so it is
+    # also somewhere for vlm to fall over to. Together serve NVFP4 weights, which Artificial
+    # Analysis found within 0.1 points of BF16, and cap the context at 262,144 of the
+    # model's million. It thinks unless its template is told not to; thinking is off here.
+    - provider: together
+      model: nvidia/NVIDIA-Nemotron-3.5-Super-VL
+      description: "NVIDIA's Nemotron 3.5 Super VL, the strongest US open-weight model. Reads images, and is cheap and quick."
+      benchmark: { intelligence_index: 26, output_tokens_per_second: 251 }
+      context_window: 262144
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 0.15
+        per_million_cached_input_tokens: 0.02
+        per_million_output_tokens: 0.50
 
     - provider: baseten
       model: zai-org/GLM-5.3
