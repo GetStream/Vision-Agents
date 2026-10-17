@@ -2682,6 +2682,25 @@ llm:
         per_million_cached_input_tokens: 0.006
         per_million_output_tokens: 1.20
 
+    # DeepSeek V4.1 Flash 1017, the October update: shorter answers and stronger agent
+    # benchmarks. Ollama Cloud served it the day it shipped, before Baseten or Together.
+    # Ollama say prompts are never logged or trained on, and require zero retention of
+    # the providers they host with. The price is the peak rate; off-peak is half.
+    - provider: ollama
+      model: deepseek-v4.1-flash:1017
+      description: "DeepSeek V4.1 Flash 1017 on Ollama Cloud, the October update with shorter answers and stronger agent benchmarks."
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+      price:
+        per_million_input_tokens: 0.30
+        per_million_cached_input_tokens: 0.006
+        per_million_output_tokens: 1.20
+
     # The two models the fast tier already runs on, somewhere else. Baseten serves both
     # through the deepseek provider above, so this is the failover for that host being
     # down rather than for the model being wrong.

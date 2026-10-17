@@ -23,7 +23,7 @@ type Unit struct {
 	// Model is an id this host serves. It is only ever sent upstream, never reached.
 	Model string
 	// ThinkingModel is an id this host serves whose weights reason. Empty when the host
-	// serves none.
+	// serves none, or lets none think.
 	ThinkingModel string
 }
 
@@ -65,7 +65,7 @@ func (s *Unit) TestReasoningIsOffUnlessTheModelEntryAsksForIt() {
 
 func (s *Unit) TestAThinkingModelReportsThatItStreamsItsReasoning() {
 	if s.ThinkingModel == "" {
-		s.T().Skip("this host serves no reasoning weights")
+		s.T().Skip("this host serves no reasoning weights, or lets none think")
 	}
 
 	provider, err := s.New(openweights.Options{APIKey: "k", Model: s.ThinkingModel, Thinking: true})

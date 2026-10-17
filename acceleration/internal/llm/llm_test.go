@@ -472,6 +472,18 @@ func (s *LLMSuite) TestCapabilitiesRefuseReasoningFromAModelThatDoesNotReason() 
 	s.Contains(err.Error(), "does not reason")
 }
 
+func (s *LLMSuite) TestCapabilitiesRefuseAToolChoiceTheModelWouldNotHonour() {
+	model := Capabilities{ToolChoices: []string{"auto"}}
+
+	err := model.Validate(ResponseParams{ToolChoice: "required"})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), `"required" is not one of auto`)
+	s.NoError(model.Validate(ResponseParams{ToolChoice: "auto"}))
+	s.NoError(model.Validate(ResponseParams{}))
+	s.NoError(Capabilities{}.Validate(ResponseParams{ToolChoice: "required"}), "a model that lists none honours them all")
+}
+
 func (s *LLMSuite) TestCapabilitiesRefuseAConversationAndAPreviousResponseTogether() {
 	err := Capabilities{}.Validate(ResponseParams{
 		Conversation:       "conv_1",
