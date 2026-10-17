@@ -177,35 +177,43 @@ func (s *Stream) Lead(enough func(text string) bool) string {
 	}
 }
 
-// TrimLead drops the first n bytes of the answer's text, which Lead returned, from the
-// deltas still to come and from the response they settle into. It runs before the first Next.
-func (s *Stream) TrimLead(n int) {
-	for i := 0; n > 0 && i < len(s.writer.pending); i++ {
-		delta, ok := s.writer.pending[i].(OutputTextDelta)
-		if !ok {
-			continue
-		}
-		cut := min(n, len(delta.Delta))
-		delta.Delta = delta.Delta[cut:]
-		s.writer.pending[i] = delta
-		n -= cut
+// Cut drops bytes from to to of the answer's text, which Lead returned, from the deltas still
+// to come and from the response they settle into. It runs before the first Next, and leaves
+// what text remains on the first text delta.
+func (s *Stream) Cut(from, to int) {
+	if to <= from {
+		return
 	}
-	kept := s.writer.pending[:0]
-	for _, event := range s.writer.pending {
-		if delta, ok := event.(OutputTextDelta); ok && delta.Delta == "" {
-			continue
-		}
-		kept = append(kept, event)
-	}
-	s.writer.pending = kept
 	var text strings.Builder
-	for _, event := range kept {
+	first := -1
+	for i, event := range s.writer.pending {
 		if delta, ok := event.(OutputTextDelta); ok {
 			text.WriteString(delta.Delta)
+			if first < 0 {
+				first = i
+			}
 		}
 	}
+	whole := text.String()
+	if first < 0 || to > len(whole) {
+		return
+	}
+	kept := whole[:from] + whole[to:]
+	events := s.writer.pending[:0]
+	for i, event := range s.writer.pending {
+		delta, ok := event.(OutputTextDelta)
+		if !ok {
+			events = append(events, event)
+			continue
+		}
+		if i == first && kept != "" {
+			delta.Delta = kept
+			events = append(events, delta)
+		}
+	}
+	s.writer.pending = events
 	s.writer.text.Reset()
-	s.writer.text.WriteString(text.String())
+	s.writer.text.WriteString(kept)
 }
 
 // Current is the event Next advanced to.

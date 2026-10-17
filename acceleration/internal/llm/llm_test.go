@@ -549,7 +549,7 @@ func (s *LLMSuite) TestALeadingTagIsTrimmedFromTheDeltasAndTheResponse() {
 
 	lead := stream.Lead(func(text string) bool { return len(text) >= len("[respond]") })
 	s.Equal("[respond] Sure", lead)
-	stream.TrimLead(len("[respond] "))
+	stream.Cut(0, len("[respond] "))
 
 	var spoken string
 	for _, event := range s.drain(stream) {

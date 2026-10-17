@@ -8,8 +8,8 @@ import (
 // model reads the whole conversation anyway, so it says what the caller's words call for
 // in the same breath as answering them, and the tag it opens with is the ruling a flow
 // controller would otherwise have been asked for.
-const UnifiedNote = `Before anything else, open your reply with exactly one of these tags, which is
-never spoken, saying what the caller's last words call for:
+const UnifiedNote = `Before anything else, even a direction such as [short pause], open your reply with exactly
+one of these tags, which is never spoken, saying what the caller's last words call for:
 [respond] a complete thought meant for you: then answer it, or call the tool it needs.
 [clarify] meant for you, but you cannot tell what they want: then ask one short question.
 [wait] they have probably not finished: the words stop mid-sentence, or end on a PIN, member
@@ -36,48 +36,73 @@ var unifiedTags = map[string]Disposition{
 	"ignore":  Ignore,
 }
 
-// UnifiedLead reports whether enough of a reply's opening has arrived to read its tag.
+// unifiedGroups is how many bracketed groups at the opening of a reply are looked through for
+// the tag: a performing voice's directions, such as [short pause], often come first.
+const unifiedGroups = 3
+
+// UnifiedLead reports whether enough of a reply's opening has arrived to read its tag: either
+// the tag itself, words, or as many bracketed groups as are looked through.
 func UnifiedLead(text string) bool {
-	trimmed := strings.TrimLeft(text, " \t\r\n")
-	if trimmed == "" {
-		return false
+	rest := text
+	for range unifiedGroups {
+		rest = strings.TrimLeft(rest, " \t\r\n")
+		if rest == "" {
+			return false
+		}
+		if rest[0] != '[' {
+			return true
+		}
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			return len(rest) > 24
+		}
+		if _, known := unifiedTags[strings.ToLower(strings.TrimSpace(rest[1:end]))]; known {
+			return true
+		}
+		rest = rest[end+1:]
 	}
-	if trimmed[0] != '[' {
-		return true
-	}
-	return strings.Contains(trimmed, "]") || len(trimmed) > 16
+	return true
 }
 
-// ParseUnified reads the tag a unified reply opened with. It returns the ruling and how many
-// bytes of the text the tag and the space after it take up. A reply that opened without a
-// tag is a reply, so it rules Respond and trims nothing.
-func ParseUnified(text string) (Disposition, int) {
-	trimmed := strings.TrimLeft(text, " \t\r\n")
-	lead := len(text) - len(trimmed)
-	if !strings.HasPrefix(trimmed, "[") {
-		return Respond, 0
+// ParseUnified reads the tag a unified reply opened with, looking past the bracketed
+// directions ahead of it. It returns the ruling and the span of text the tag and the space
+// after it take up. A reply with no tag is a reply, so it rules Respond with an empty span.
+func ParseUnified(text string) (Disposition, int, int) {
+	at := 0
+	for range unifiedGroups {
+		group := at
+		for at < len(text) && strings.ContainsRune(" \t\r\n", rune(text[at])) {
+			at++
+		}
+		if at >= len(text) || text[at] != '[' {
+			return Respond, 0, 0
+		}
+		end := strings.Index(text[at:], "]")
+		if end < 0 {
+			return Respond, 0, 0
+		}
+		end += at
+		if disposition, known := unifiedTags[strings.ToLower(strings.TrimSpace(text[at+1:end]))]; known {
+			stop := end + 1
+			for stop < len(text) && strings.ContainsRune(" \t\r\n", rune(text[stop])) {
+				stop++
+			}
+			if group > 0 {
+				// The space ahead of the tag is kept to separate the direction before it
+				// from the words after.
+				return disposition, at, stop
+			}
+			return disposition, 0, stop
+		}
+		at = end + 1
 	}
-	end := strings.Index(trimmed, "]")
-	if end < 0 {
-		return Respond, 0
-	}
-	name := strings.ToLower(strings.TrimSpace(trimmed[1:end]))
-	disposition, known := unifiedTags[name]
-	if !known {
-		return Respond, 0
-	}
-	rest := trimmed[end+1:]
-	after := len(rest) - len(strings.TrimLeft(rest, " \t\r\n"))
-	return disposition, lead + end + 1 + after
+	return Respond, 0, 0
 }
 
-// StripUnifiedTag removes a ruling tag from the front of text, for a reply asked without the
-// protocol that wrote one anyway.
+// StripUnifiedTag removes a ruling tag from the opening of text.
 func StripUnifiedTag(text string) string {
-	if _, n := ParseUnified(text); n > 0 {
-		return text[n:]
-	}
-	return text
+	_, from, to := ParseUnified(text)
+	return text[:from] + text[to:]
 }
 
 // Rule reports a ruling that was not asked of the flow controller, so it reaches the agent

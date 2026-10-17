@@ -252,8 +252,8 @@ func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
 		return
 	}
 	lead := stream.Lead(harness.UnifiedLead)
-	disposition, tag := harness.ParseUnified(lead)
-	stream.TrimLead(tag)
+	disposition, from, to := harness.ParseUnified(lead)
+	stream.Cut(from, to)
 	if spec.ctx.Err() != nil {
 		return
 	}

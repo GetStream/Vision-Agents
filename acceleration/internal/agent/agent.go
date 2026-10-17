@@ -1994,9 +1994,8 @@ func (a *Agent) pump(turnID string, stream *llm.Stream) {
 	defer stream.Close()
 
 	if a.options.UnifiedReplies {
-		if _, tag := harness.ParseUnified(stream.Lead(harness.UnifiedLead)); tag > 0 {
-			stream.TrimLead(tag)
-		}
+		_, from, to := harness.ParseUnified(stream.Lead(harness.UnifiedLead))
+		stream.Cut(from, to)
 	}
 	a.mu.Lock()
 	replies := a.replies
