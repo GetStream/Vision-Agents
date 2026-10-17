@@ -23,15 +23,14 @@ func TestOllamaIntegrationSuite(t *testing.T) {
 func (s *OllamaIntegrationSuite) TestThinkingIsOffSoTheAnswerArrivesFirst() {
 	// DeepSeek V4.1 Flash thinks by default on Ollama. With a small budget, thinking left
 	// on spends all of it and the answer never appears.
-	complete, events := s.Ask(llm.ResponseParams{
+	// Ollama reports no reasoning tokens and streams thinking where openaicompat does not
+	// look, so the budget is the only witness.
+	complete, _ := s.Ask(llm.ResponseParams{
 		Input:           []llm.Message{{Role: llm.User, Content: "Say hello in five words."}},
 		MaxOutputTokens: 64,
 	})
 
+	s.Equal(llm.StatusCompleted, complete.Status, "the answer finished inside a budget thinking would have spent")
 	s.NotEmpty(complete.OutputText)
-	s.Zero(complete.Usage.OutputTokensDetails.ReasoningTokens, "reasoning_effort none really does disable thinking")
-	for _, event := range events {
-		_, thinking := event.(llm.ReasoningTextDelta)
-		s.False(thinking, "a non-thinking request must not stream reasoning")
-	}
+	s.Less(complete.Usage.OutputTokens, int64(32), "five words with no thinking ahead of them")
 }
