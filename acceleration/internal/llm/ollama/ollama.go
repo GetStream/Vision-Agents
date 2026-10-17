@@ -3,7 +3,9 @@
 // Ollama spells its own model ids, as in deepseek-v4.1-flash:1017, and switches thinking
 // with reasoning_effort rather than the chat template arguments other hosts read. It
 // streams thinking as "reasoning", which openaicompat does not read, so a model entry
-// that asks to think is refused rather than answered with its reasoning dropped.
+// that asks to think is refused rather than answered with its reasoning dropped. It
+// answers tool_choice "required" as auto, so a request that depends on a forced call is
+// refused and goes to a host that honours it.
 package ollama
 
 import (
@@ -54,6 +56,7 @@ func New(options openweights.Options) (*openaicompat.LLM, error) {
 		Model:         options.Model,
 		APIKey:        options.APIKey,
 		BaseURL:       options.BaseURL,
+		Capabilities:  llm.Capabilities{ToolChoices: []string{"auto"}},
 		RequestFields: requestFields,
 		Logger:        options.Logger,
 	})
