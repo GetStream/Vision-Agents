@@ -3052,7 +3052,25 @@ func (s *AgentSuite) TestAPromiseToCheckThatCalledNothingIsKept() {
 	kept := s.model.requests()[1]
 	s.True(strings.HasPrefix(kept.ID, toolPrefix))
 	s.Contains(kept.Instructions, keepPromise)
-	s.Equal("required", kept.ToolChoice, "the chase must call a tool, not talk")
+	s.Empty(kept.ToolChoice, "a hold phrase may come before what the call needs is known")
+}
+
+func (s *AgentSuite) TestAClaimThatSomethingIsDoneWithNoCallMustCallATool() {
+	// Chased up with a note alone, Gemma told a Voicebench caller "You're all set!" and then
+	// "Is there anything else?", and the booking was never made.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Order twelve, you're all set."}
+	s.model.then = []string{}
+	s.model.callsOn = 2
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the claimed action was never made")
+	s.Equal("required", s.model.requests()[1].ToolChoice)
 }
 
 func (s *AgentSuite) TestAGoAheadAnsweredWithAQuestionIsChasedUp() {

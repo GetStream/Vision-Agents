@@ -2244,9 +2244,11 @@ func (a *Agent) finish(response llm.Response) {
 		backed := toolRanSinceCaller(history)
 		switch {
 		case owesACall(said, backed):
-			a.keepPromise(response.ID, keepPromise)
+			// A hold phrase can come before the caller has given what the call needs, and
+			// a forced call is then made with blanks; a claim that it is done cannot.
+			a.keepPromise(response.ID, keepPromise, !backed && claimsDone(said))
 		case !backed && wentAhead(history):
-			a.keepPromise(response.ID, actOnGoAhead)
+			a.keepPromise(response.ID, actOnGoAhead, true)
 		}
 	}
 	a.respondQueued()
@@ -2259,7 +2261,7 @@ func (a *Agent) finish(response llm.Response) {
 // Voicebench, and the caller waited on a lookup, or left with a booking, that was never
 // made. It is asked once per thing the caller said, so a model that still calls nothing is
 // left to the caller's next words.
-func (a *Agent) keepPromise(promised, note string) {
+func (a *Agent) keepPromise(promised, note string, mustCall bool) {
 	a.mu.Lock()
 	if a.promiseChased || a.harness == nil || a.generating || a.interrupting ||
 		a.recoveringVoice != nil || a.converse.Listening() {
@@ -2287,7 +2289,7 @@ func (a *Agent) keepPromise(promised, note string) {
 		Note:         note,
 		// Told in a note alone, Gemma met it with "Is there anything else?" and the
 		// booking it had announced was never made.
-		MustCall: true,
+		MustCall: mustCall,
 		Asked:    asked,
 	}, ""); err != nil {
 		a.fail(err, "llm")
@@ -2321,15 +2323,10 @@ var goAheads = []string{"go ahead", "please do", "book it", "do it", "proceed", 
 // true: a last sentence that asks the caller to wait on a lookup, or, when no tool has run
 // since the caller last spoke (backed), that something has been done.
 func owesACall(said string, backed bool) bool {
-	lower := strings.ToLower(said)
-	if !backed {
-		for _, claim := range doneClaims {
-			if strings.Contains(lower, claim) {
-				return true
-			}
-		}
+	if !backed && claimsDone(said) {
+		return true
 	}
-	last := strings.TrimRight(lower, " .…!\n")
+	last := strings.TrimRight(strings.ToLower(said), " .…!\n")
 	if last == "" || strings.HasSuffix(last, "?") {
 		return false
 	}
@@ -2344,6 +2341,12 @@ func owesACall(said string, backed bool) bool {
 		}
 	}
 	return false
+}
+
+// claimsDone reports whether a reply told the caller something has been done.
+func claimsDone(said string) bool {
+	lower := strings.ToLower(said)
+	return slices.ContainsFunc(doneClaims, func(claim string) bool { return strings.Contains(lower, claim) })
 }
 
 // doneClaims are what a reply telling the caller something has been done says.

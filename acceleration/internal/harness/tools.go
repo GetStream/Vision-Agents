@@ -180,7 +180,8 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"it, first call the tool that lists them. " +
 	"When you read details back or confirm a change, say each value whole, exactly as you " +
 	"pass it to the tool, and never right after a number word: say ending in 9821, not last " +
-	"four 9821."
+	"four 9821. When the caller spells a name letter by letter, use their spelling, not " +
+	"what the name sounded like."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
@@ -313,6 +314,7 @@ func requiredOnly(parameters map[string]any) string {
 	if len(required) == 0 || len(properties) <= len(required) {
 		return ""
 	}
-	return "Only " + strings.Join(required, ", ") + " are needed to call it; never ask the " +
-		"caller for the others."
+	return "Only " + strings.Join(required, ", ") + " are needed to call it; ask for the " +
+		"others only if your instructions say to collect or verify them, and pass every one " +
+		"the caller gave."
 }

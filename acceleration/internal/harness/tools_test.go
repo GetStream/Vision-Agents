@@ -251,7 +251,8 @@ func (s *ToolsSuite) TestAToolWithOptionalArgumentsNamesTheOnesItNeeds() {
 	}}}
 
 	requests := tools.Requests()
-	s.Equal("Book the table. Only time, name are needed to call it; never ask the caller for the others.",
+	s.Equal("Book the table. Only time, name are needed to call it; ask for the others only if "+
+		"your instructions say to collect or verify them, and pass every one the caller gave.",
 		requests[0].Description)
 	s.Equal("Check for an outage.", requests[1].Description, "a tool with nothing optional says nothing more")
 }
