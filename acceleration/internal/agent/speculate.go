@@ -85,7 +85,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		turn: harness.Turn{
 			ID:           ready.ID,
 			Instructions: a.instructions(),
-			History:      append(a.replayLocked(), a.userTurnLocked(ready.Text, nil)),
+			History:      append(a.replayLocked(), a.userTurnLocked(unifiedText(ready.Text, unified), nil)),
 			Note:         note,
 		},
 		startedAt: time.Now(),
@@ -266,4 +266,13 @@ func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
 		Floor:       harness.Continue,
 		TookMs:      took,
 	})
+}
+
+// unifiedText is the caller's words as a unified reply is asked about them, with the reminder
+// to rule on them first.
+func unifiedText(text string, unified bool) string {
+	if !unified {
+		return text
+	}
+	return text + "\n\n" + harness.UnifiedReminder
 }

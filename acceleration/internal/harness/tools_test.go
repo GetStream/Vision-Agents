@@ -88,8 +88,10 @@ func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
 }
 
 func (s *ToolsSuite) TestAGoAheadIsActedOnWithoutAskingForOptionalDetails() {
-	s.Contains(testTools().Prompt(), "Once told to go ahead, call it with what you have and ask for nothing more first.")
-	s.Contains(testTools().TextPrompt(), "Once told to go ahead, call it with what you have and ask for nothing more first.")
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "A yes or go-ahead after a read-back means call the tool now with what "+
+			"you have, without asking for anything optional again.")
+	}
 }
 
 func (s *ToolsSuite) TestAReadBackThatWaitsForAgreementEndsTheTurn() {
