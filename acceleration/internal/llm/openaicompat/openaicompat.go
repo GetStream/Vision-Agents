@@ -85,6 +85,10 @@ type Options struct {
 	// as text, as vLLM does with Gemma 4, so a call written as text is still made and never
 	// spoken.
 	ToolCallText bool
+	// Prefill opens every reply with these words, which the model continues rather than
+	// repeats, such as an empty thinking block for a model that cannot be told not to
+	// think. It needs a vLLM-style server that takes continue_final_message.
+	Prefill string
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -491,6 +495,9 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 	if len(pendingImages) > 0 {
 		messages = append(messages, openai.UserMessage(pendingImages))
 	}
+	if l.options.Prefill != "" {
+		messages = append(messages, openai.AssistantMessage(l.options.Prefill))
+	}
 	params := openai.ChatCompletionNewParams{
 		Model:    l.options.Model,
 		Messages: messages,
@@ -631,11 +638,14 @@ func messageText(message llm.Message) string {
 
 // requestOptions applies the request fields outside the OpenAI schema.
 func (l *LLM) requestOptions(request llm.ResponseParams) []option.RequestOption {
-	if l.options.RequestFields == nil {
-		return nil
+	fields := map[string]any{}
+	if l.options.RequestFields != nil {
+		fields = l.options.RequestFields(request, l.options.Capabilities.Effort(request))
 	}
-
-	fields := l.options.RequestFields(request, l.options.Capabilities.Effort(request))
+	if l.options.Prefill != "" {
+		fields["continue_final_message"] = true
+		fields["add_generation_prompt"] = false
+	}
 	options := make([]option.RequestOption, 0, len(fields))
 	for key, value := range fields {
 		options = append(options, option.WithJSONSet(key, value))

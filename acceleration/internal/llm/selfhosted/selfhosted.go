@@ -35,6 +35,8 @@ type Deployment struct {
 	// Fields are sent on every request, for a model whose template needs them whatever
 	// the request says.
 	Fields map[string]any
+	// Prefill opens every reply, for a model whose template has no switch for thinking.
+	Prefill string
 }
 
 // Deployments are keyed by provider name.
@@ -42,6 +44,11 @@ var Deployments = map[string]Deployment{
 	"liquid": {
 		Provider: "liquid", BaseURLEnvVar: "LFM_BASE_URL", ModelID: "qvm0plxq",
 		Temperature: 0.1,
+		// LFM2.5 thinks before every reply, which costs half a second before the first
+		// word. A closed thinking block skips it, and enable_thinking tells the server's
+		// reasoning parser that what follows is the answer.
+		Prefill: "<think>\n</think>\n",
+		Fields:  map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
 	},
 	"qwen-baseten": {
 		Provider: "qwen-baseten", BaseURLEnvVar: "QWEN_BASE_URL", ModelID: "qjjnx4lq",
@@ -95,7 +102,7 @@ func (d Deployment) New(options openweights.Options) (*openaicompat.LLM, error) 
 	}
 	thinking := openweights.RequestFields(options.Model, options.Thinking)
 	capabilities := openweights.Capabilities(options.Model, options.Thinking, options.ReasoningEffort)
-	if d.Fields != nil {
+	if d.Fields != nil && d.Prefill == "" {
 		capabilities.StreamsReasoning = true
 	}
 	return openaicompat.New(openaicompat.Options{
@@ -104,6 +111,7 @@ func (d Deployment) New(options openweights.Options) (*openaicompat.LLM, error) 
 		APIKey:       options.APIKey,
 		BaseURL:      options.BaseURL,
 		Capabilities: capabilities,
+		Prefill:      d.Prefill,
 		RequestFields: func(params llm.ResponseParams, effort string) map[string]any {
 			fields := map[string]any{}
 			if thinking != nil {

@@ -785,6 +785,22 @@ func (s *OpenAICompatSuite) TestAProvidersOwnRequestFieldsReachIt() {
 	s.Equal(false, args["thinking"])
 }
 
+func (s *OpenAICompatSuite) TestAPrefillOpensTheReplyForTheModelToContinue() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{Prefill: "<think>\n</think>\n"})
+
+	s.ask(provider, hello())
+
+	messages, ok := s.requests[0]["messages"].([]any)
+	s.Require().True(ok)
+	last, ok := messages[len(messages)-1].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("assistant", last["role"])
+	s.Equal("<think>\n</think>\n", last["content"])
+	s.Equal(true, s.requests[0]["continue_final_message"], "the model continues the prefill rather than answering after it")
+	s.Equal(false, s.requests[0]["add_generation_prompt"])
+}
+
 func (s *OpenAICompatSuite) TestTheReasoningEffortIsResolvedBeforeItIsSent() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	var sent string
