@@ -17,7 +17,7 @@ model_metadata:
     max_tokens: 64
 
 base_image:
-  image: vllm/vllm-openai:v0.31.0-cu129
+  image: vllm/vllm-openai:v0.31.0
 
 docker_server:
   # The card's tool-call recipe on one H100, text only, with MTP for decode speed.

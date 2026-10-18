@@ -19,7 +19,7 @@ model_metadata:
     max_tokens: 64
 
 base_image:
-  image: vllm/vllm-openai:v0.31.0-cu129
+  image: vllm/vllm-openai:v0.31.0
 
 docker_server:
   # The card's BF16 recipe, on four H100s rather than two B200s: 247 GB of weights need

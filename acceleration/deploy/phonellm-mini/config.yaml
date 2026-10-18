@@ -15,7 +15,7 @@ model_metadata:
     max_tokens: 16
 
 base_image:
-  image: vllm/vllm-openai:v0.31.0-cu129
+  image: vllm/vllm-openai:v0.31.0
 
 docker_server:
   # The card's recipe. The checkpoint carries FP8 KV scales, so bfloat16 KV is asked for

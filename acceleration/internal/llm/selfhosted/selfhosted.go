@@ -40,11 +40,11 @@ type Deployment struct {
 // Deployments are keyed by provider name.
 var Deployments = map[string]Deployment{
 	"liquid": {
-		Provider: "liquid", BaseURLEnvVar: "LFM_BASE_URL", ModelID: "qz49p2pw",
+		Provider: "liquid", BaseURLEnvVar: "LFM_BASE_URL", ModelID: "qvm0plxq",
 		Temperature: 0.1,
 	},
 	"qwen-baseten": {
-		Provider: "qwen-baseten", BaseURLEnvVar: "QWEN_BASE_URL", ModelID: "qjjnx5lq",
+		Provider: "qwen-baseten", BaseURLEnvVar: "QWEN_BASE_URL", ModelID: "qjjnx4lq",
 		Temperature: 0.2,
 	},
 	"nemotron-bolt": {
@@ -52,13 +52,13 @@ var Deployments = map[string]Deployment{
 		Temperature: 0.2,
 	},
 	"phonellm-mini": {
-		Provider: "phonellm-mini", BaseURLEnvVar: "PHONELLM_MINI_BASE_URL", ModelID: "qrp0dr93",
+		Provider: "phonellm-mini", BaseURLEnvVar: "PHONELLM_MINI_BASE_URL", ModelID: "qz49pvpw",
 		Temperature: 0,
 	},
 	// Max is trained to write one sentence of reasoning before each reply, and its
 	// reasoning parser reads the mode from the request, so both switches go on every one.
 	"phonellm-max": {
-		Provider: "phonellm-max", BaseURLEnvVar: "PHONELLM_MAX_BASE_URL", ModelID: "31lxyngq",
+		Provider: "phonellm-max", BaseURLEnvVar: "PHONELLM_MAX_BASE_URL", ModelID: "qrp0dk93",
 		Temperature: 0,
 		Fields: map[string]any{"chat_template_kwargs": map[string]any{
 			"enable_thinking":           true,

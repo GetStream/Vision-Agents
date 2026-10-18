@@ -16,7 +16,7 @@ model_metadata:
     max_tokens: 64
 
 base_image:
-  image: vllm/vllm-openai:v0.31.0-cu129
+  image: vllm/vllm-openai:v0.31.0
 
 docker_server:
   start_command: >
