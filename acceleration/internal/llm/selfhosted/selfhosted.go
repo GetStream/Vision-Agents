@@ -55,7 +55,7 @@ var Deployments = map[string]Deployment{
 		Prefill: "<think>\n</think>\n",
 		// Left to itself it thinks for a second or two before a reply; a sentence or two
 		// keeps what thinking buys at a fraction of the wait.
-		Fields: map[string]any{"thinking_token_budget": 48},
+		Fields: map[string]any{"thinking_token_budget": 96},
 	},
 	"qwen-baseten": {
 		Provider: "qwen-baseten", BaseURLEnvVar: "QWEN_BASE_URL", ModelID: "qjjnx4lq",

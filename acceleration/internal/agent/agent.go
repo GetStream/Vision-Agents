@@ -2219,7 +2219,7 @@ func (a *Agent) finish(response llm.Response) {
 	// Taken before resetTurn forgets them: a skill tag that named a tool is a call this
 	// turn made, and has to be on the history the result answers.
 	asked := a.harness.TakeAsked()
-	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	calls := withSpokenNumbers(append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...))
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
