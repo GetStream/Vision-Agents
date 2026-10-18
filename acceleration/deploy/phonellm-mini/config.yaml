@@ -1,0 +1,68 @@
+model_name: phonellm-mini-alpha-2-fp8
+description: >
+  Pipecat PhoneLLM Mini Alpha 2 (Nemotron 3 Nano 30B-A3B fine-tune, FP8, thinking off),
+  served by vLLM's OpenAI-compatible server for the router's phonellm provider.
+model_metadata:
+  repo_id: pipecat-ai/phonellm-mini-alpha-2-fp8
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: phonellm-mini-alpha-2
+    messages:
+      - role: user
+        content: "Hi"
+    stream: true
+    max_tokens: 16
+
+base_image:
+  image: vllm/vllm-openai:v0.31.0-cu129
+
+docker_server:
+  # The card's recipe. The checkpoint carries FP8 KV scales, so bfloat16 KV is asked for
+  # explicitly: FP8 KV cost Alpha 1 half a PhoneBench point. No reasoning parser: Mini's
+  # template keeps thinking off, and with a parser a request that omits enable_thinking has
+  # its tool calls filed under reasoning.
+  start_command: >
+    vllm serve /models/phonellm-mini
+    --served-model-name phonellm-mini-alpha-2
+    --host 0.0.0.0 --port 8000
+    --trust-remote-code
+    --max-model-len 32768
+    --gpu-memory-utilization 0.90
+    --max-num-seqs 32
+    --kv-cache-dtype bfloat16
+    --enable-prefix-caching
+    --async-scheduling
+    --mamba-ssm-cache-dtype float32
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
+
+environment_variables:
+  VLLM_LOGGING_LEVEL: WARNING
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+
+weights:
+  - source: "hf://pipecat-ai/phonellm-mini-alpha-2-fp8@main"
+    mount_location: "/models/phonellm-mini"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+
+secrets:
+  hf_access_token: null
+
+resources:
+  # ~33 GB of FP8 weights fit one H100 with room for a 32K cache.
+  accelerator: H100
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 16
+  health_checks:
+    restart_check_delay_seconds: 1800
+    restart_threshold_seconds: 1200
+    stop_traffic_threshold_seconds: 120

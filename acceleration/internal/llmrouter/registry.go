@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/parasail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/phala"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/sailresearch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/selfhosted"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/siliconflow"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/together"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/venice"
@@ -133,6 +134,9 @@ func DefaultRegistry() *Registry {
 		together.ProviderName:     together.New,
 		venice.ProviderName:       venice.New,
 		wafer.ProviderName:        wafer.New,
+	}
+	for name, build := range selfhosted.Builders() {
+		hosts[name] = build
 	}
 	for name, build := range hosts {
 		registry.Register(name, func(spec routing.Spec) (Provider, error) {

@@ -3,6 +3,8 @@ package session
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -453,7 +455,7 @@ func (s *Spec) Normalize() error {
 		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, ""
 	}
 	if s.ControllerTarget == "" && !s.Native() {
-		s.ControllerTarget = s.internalTarget(defaultControllerTarget)
+		s.ControllerTarget = s.controllerTarget()
 	}
 	if s.SearchTarget == "" {
 		s.SearchTarget = defaultSearchTarget
@@ -604,6 +606,18 @@ func (s Spec) internalTarget(asked string) string {
 		return s.LLMTarget
 	}
 	return asked
+}
+
+// controllerFollowsLLMEnvVar, when true, runs the flow controller on the conversation's own
+// model rather than llm-flow, so a model under evaluation also makes the overlap rulings.
+const controllerFollowsLLMEnvVar = "ROUTER_CONTROLLER_FOLLOWS_LLM"
+
+// controllerTarget is the model the flow controller runs on when the caller names none.
+func (s Spec) controllerTarget() string {
+	if follows, _ := strconv.ParseBool(os.Getenv(controllerFollowsLLMEnvVar)); follows && s.LLMTarget != "" {
+		return s.LLMTarget
+	}
+	return s.internalTarget(defaultControllerTarget)
 }
 
 // mocked reports whether a target names one of the load-test models.

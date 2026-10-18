@@ -1,0 +1,75 @@
+model_name: nemotron-3.5-bolt-74b-a9b
+description: >
+  NVIDIA Nemotron 3.5 Bolt 74B-A9B (BF16, thinking off, vision off), served by vLLM's
+  OpenAI-compatible server for the router's nemotron provider.
+model_metadata:
+  repo_id: nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-BF16
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B
+    messages:
+      - role: user
+        content: "Hi"
+    chat_template_kwargs:
+      enable_thinking: false
+    stream: true
+    max_tokens: 16
+
+# The card asks for a vLLM newer than v0.31 (a nightly), with the V2 model runner.
+base_image:
+  image: vllm/vllm-openai:nightly-39983a5e7a5a575a7829f5d5ada50a33d9337ec1
+
+docker_server:
+  # The card's BF16 recipe with vision turned off and a 32K context. 150 GB of weights need
+  # TP4 on 80 GB cards. The 24GB IQ2 build needs b12x kernels, which are Blackwell-only.
+  start_command: >
+    vllm serve /models/bolt
+    --served-model-name nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B
+    --host 0.0.0.0 --port 8000
+    --trust-remote-code
+    --load-format auto
+    --tensor-parallel-size 4
+    --max-model-len 32768
+    --max-num-seqs 32
+    --gpu-memory-utilization 0.90
+    --enable-chunked-prefill
+    --enable-prefix-caching
+    --attention-backend FLASHINFER
+    --mamba-backend flashinfer
+    --mamba-cache-mode align
+    --limit-mm-per-prompt '{"image":0,"video":0}'
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --reasoning-parser-plugin /models/bolt/ultra_v3_reasoning_parser.py
+    --reasoning-parser ultra_v3
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
+
+environment_variables:
+  VLLM_LOGGING_LEVEL: WARNING
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+  VLLM_USE_V2_MODEL_RUNNER: "1"
+
+weights:
+  - source: "hf://nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-BF16@main"
+    mount_location: "/models/bolt"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+
+secrets:
+  hf_access_token: null
+
+resources:
+  accelerator: H100:4
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 16
+  health_checks:
+    restart_check_delay_seconds: 1800
+    restart_threshold_seconds: 1100
+    stop_traffic_threshold_seconds: 120

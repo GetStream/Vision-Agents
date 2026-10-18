@@ -1,0 +1,67 @@
+model_name: qwen3.6-35b-a3b
+description: >
+  Qwen 3.6 35B-A3B (FP8, text only, thinking off), served by vLLM's OpenAI-compatible
+  server for the router's qwen-selfhosted provider.
+model_metadata:
+  repo_id: Qwen/Qwen3.6-35B-A3B-FP8
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: Qwen/Qwen3.6-35B-A3B
+    messages:
+      - role: user
+        content: "Hi"
+    chat_template_kwargs:
+      enable_thinking: false
+    stream: true
+    max_tokens: 64
+
+base_image:
+  image: vllm/vllm-openai:v0.31.0-cu129
+
+docker_server:
+  # The card's tool-call recipe on one H100, text only, with MTP for decode speed.
+  start_command: >
+    vllm serve /models/qwen
+    --served-model-name Qwen/Qwen3.6-35B-A3B
+    --host 0.0.0.0 --port 8000
+    --max-model-len 32768
+    --max-num-seqs 32
+    --gpu-memory-utilization 0.90
+    --enable-prefix-caching
+    --async-scheduling
+    --language-model-only
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --reasoning-parser qwen3
+    --default-chat-template-kwargs '{"enable_thinking": false}'
+    --speculative-config '{"method":"qwen3_next_mtp","num_speculative_tokens":2}'
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
+
+environment_variables:
+  VLLM_LOGGING_LEVEL: WARNING
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+
+weights:
+  - source: "hf://Qwen/Qwen3.6-35B-A3B-FP8@main"
+    mount_location: "/models/qwen"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+
+secrets:
+  hf_access_token: null
+
+resources:
+  accelerator: H100
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 16
+  health_checks:
+    restart_check_delay_seconds: 1800
+    restart_threshold_seconds: 1200
+    stop_traffic_threshold_seconds: 120

@@ -1,0 +1,63 @@
+model_name: lfm2.5-24b-a2b
+description: >
+  Liquid LFM2.5 24B-A2B (FP8), served by vLLM's OpenAI-compatible server for the router's
+  liquid provider. It always reasons before answering; the qwen3 reasoning parser keeps the
+  thought out of the reply.
+model_metadata:
+  repo_id: LiquidAI/LFM2.5-24B-A2B-FP8
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: LiquidAI/LFM2.5-24B-A2B
+    messages:
+      - role: user
+        content: "Hi"
+    stream: true
+    max_tokens: 64
+
+base_image:
+  image: vllm/vllm-openai:v0.31.0-cu129
+
+docker_server:
+  start_command: >
+    vllm serve /models/lfm
+    --served-model-name LiquidAI/LFM2.5-24B-A2B
+    --host 0.0.0.0 --port 8000
+    --trust-remote-code
+    --max-model-len 32768
+    --max-num-seqs 32
+    --gpu-memory-utilization 0.90
+    --enable-prefix-caching
+    --async-scheduling
+    --enable-auto-tool-choice
+    --tool-call-parser lfm2
+    --reasoning-parser qwen3
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
+
+environment_variables:
+  VLLM_LOGGING_LEVEL: WARNING
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+
+weights:
+  - source: "hf://LiquidAI/LFM2.5-24B-A2B-FP8@main"
+    mount_location: "/models/lfm"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+
+secrets:
+  hf_access_token: null
+
+resources:
+  accelerator: H100
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 16
+  health_checks:
+    restart_check_delay_seconds: 1800
+    restart_threshold_seconds: 1200
+    stop_traffic_threshold_seconds: 120

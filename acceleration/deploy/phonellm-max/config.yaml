@@ -1,0 +1,73 @@
+model_name: phonellm-max-alpha-2
+description: >
+  Pipecat PhoneLLM Max Alpha 2 (Nemotron 3.5 Super VL language backbone, 124B-A12B, BF16,
+  microthinking on), served by vLLM's OpenAI-compatible server for the router's phonellm
+  provider.
+model_metadata:
+  repo_id: pipecat-ai/phonellm-max-alpha-2
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: phonellm-max-alpha-2
+    messages:
+      - role: user
+        content: "Hi"
+    chat_template_kwargs:
+      enable_thinking: true
+      truncate_history_thinking: false
+    stream: true
+    max_tokens: 64
+
+base_image:
+  image: vllm/vllm-openai:v0.31.0-cu129
+
+docker_server:
+  # The card's BF16 recipe, on four H100s rather than two B200s: 247 GB of weights need
+  # TP4 on 80 GB cards. The NVFP4 build needs Blackwell, which this account does not have.
+  # The reasoning parser reads the mode from each request, so the provider always sends
+  # enable_thinking and truncate_history_thinking.
+  start_command: >
+    vllm serve /models/phonellm-max
+    --served-model-name phonellm-max-alpha-2
+    --host 0.0.0.0 --port 8000
+    --tensor-parallel-size 4
+    --dtype bfloat16
+    --max-model-len 32768
+    --gpu-memory-utilization 0.90
+    --max-num-seqs 32
+    --kv-cache-dtype fp8
+    --enable-prefix-caching
+    --async-scheduling
+    --mamba-ssm-cache-dtype float32
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --reasoning-parser nemotron_v3
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
+
+environment_variables:
+  VLLM_LOGGING_LEVEL: WARNING
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+
+weights:
+  - source: "hf://pipecat-ai/phonellm-max-alpha-2@main"
+    mount_location: "/models/phonellm-max"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+
+secrets:
+  hf_access_token: null
+
+resources:
+  accelerator: H100:4
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 16
+  health_checks:
+    restart_check_delay_seconds: 1800
+    restart_threshold_seconds: 1100
+    stop_traffic_threshold_seconds: 120

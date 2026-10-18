@@ -2289,6 +2289,64 @@ llm:
         per_million_input_tokens: 0.24
         per_million_output_tokens: 1.20
 
+    # Approach 6: the alternatives to Gemma, each on its own Baseten deployment (deploy/),
+    # one H100 for the small ones and four for Bolt and PhoneLLM Max. Priced like Gemma, as
+    # an estimate of GPU minutes rather than a published rate.
+    - provider: liquid
+      model: LiquidAI/LFM2.5-24B-A2B
+      description: "Liquid LFM2.5 24B-A2B on our own H100. Always thinks briefly before answering."
+      context_window: 32768
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.24
+        per_million_output_tokens: 1.20
+
+    - provider: qwen-baseten
+      model: Qwen/Qwen3.6-35B-A3B
+      description: "Qwen 3.6 35B-A3B on our own H100, thinking off."
+      context_window: 32768
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.24
+        per_million_output_tokens: 1.20
+
+    - provider: nemotron-bolt
+      model: nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B
+      description: "NVIDIA Nemotron 3.5 Bolt 74B-A9B on four of our own H100s, thinking off."
+      context_window: 32768
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.96
+        per_million_output_tokens: 4.80
+
+    - provider: phonellm-mini
+      model: phonellm-mini-alpha-2
+      description: "Pipecat PhoneLLM Mini Alpha 2 on our own H100, thinking off."
+      context_window: 32768
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.24
+        per_million_output_tokens: 1.20
+
+    - provider: phonellm-max
+      model: phonellm-max-alpha-2
+      description: "Pipecat PhoneLLM Max Alpha 2 on four of our own H100s, with its one-sentence microthinking."
+      context_window: 32768
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.96
+        per_million_output_tokens: 4.80
+
     # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
     # stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: cerebras
