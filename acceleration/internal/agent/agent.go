@@ -385,6 +385,9 @@ type Agent struct {
 	// promiseChased is set once a reply that promised to check and called nothing has been
 	// asked for the call (keepPromise), since the caller last spoke.
 	promiseChased bool
+	// callerTurns counts the turns the caller has started, so a chase put off for a moment
+	// is dropped once they have said something new.
+	callerTurns int
 	// chaseForced is set once a chase that still called nothing has been chased again with
 	// the call required, since the caller last spoke.
 	chaseForced bool
@@ -1691,6 +1694,7 @@ func (a *Agent) respondTurn(
 	a.toolRounds = 0
 	a.promiseChased = false
 	a.chaseForced = false
+	a.callerTurns++
 	a.stepChased = ""
 	a.toolReply = false
 	a.asked = asked
@@ -2206,9 +2210,15 @@ func (a *Agent) withhold(sentence string) bool {
 	return false
 }
 
+// spokenLower lowercases a reply for matching with straight apostrophes: Qwen writes
+// "I’ll reschedule".
+func spokenLower(said string) string {
+	return strings.ReplaceAll(strings.ToLower(said), "’", "'")
+}
+
 // promisesStep reports whether a sentence tells the caller a lookup is under way.
 func promisesStep(sentence string) bool {
-	lower := strings.ToLower(sentence)
+	lower := spokenLower(sentence)
 	return slices.ContainsFunc(holdWords, func(hold string) bool { return strings.Contains(lower, hold) }) ||
 		slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(lower, promise) }) ||
 		slices.ContainsFunc(stepWords, func(step string) bool { return strings.Contains(lower, step) })
@@ -2237,7 +2247,7 @@ var directionTags = regexp.MustCompile(`\[[^\]]*\]`)
 // unsaid cuts a reply's text where a withheld claim begins, so the history holds what the
 // caller heard.
 func unsaid(said string) string {
-	lower := strings.ToLower(said)
+	lower := spokenLower(said)
 	cut := len(said)
 	for _, claim := range doneClaims {
 		if i := strings.Index(lower, claim); i >= 0 && i < cut {
@@ -2469,10 +2479,36 @@ func (a *Agent) finish(response llm.Response) {
 // made. It is asked once per thing the caller said, so a model that still calls nothing is
 // left to the caller's next words.
 func (a *Agent) keepPromise(promised, note string, mustCall bool) {
+	a.keepPromiseAfter(promised, note, mustCall, 0)
+}
+
+// chaseRetries is how often a chase that could not start is tried again, chaseRetry apart.
+// With a television on in the room the caller is always being heard, and a promise that is
+// only chased into silence was never kept.
+const (
+	chaseRetries = 4
+	chaseRetry   = 1500 * time.Millisecond
+)
+
+func (a *Agent) keepPromiseAfter(promised, note string, mustCall bool, tries int) {
 	a.mu.Lock()
-	if a.promiseChased || a.harness == nil || a.generating || a.interrupting ||
-		a.recoveringVoice != nil || a.converse.Listening() {
+	if a.promiseChased || a.harness == nil || a.closed {
 		a.mu.Unlock()
+		return
+	}
+	if a.generating || a.interrupting || a.recoveringVoice != nil || a.converse.Listening() {
+		caller := a.callerTurns
+		a.mu.Unlock()
+		if tries < chaseRetries {
+			time.AfterFunc(chaseRetry, func() {
+				a.mu.Lock()
+				same := a.callerTurns == caller
+				a.mu.Unlock()
+				if same {
+					a.keepPromiseAfter(promised, note, mustCall, tries+1)
+				}
+			})
+		}
 		return
 	}
 	a.promiseChased = true
@@ -2591,7 +2627,7 @@ func owesACall(said string, backed bool) bool {
 	if !backed && claimsDone(said) {
 		return true
 	}
-	last := strings.TrimRight(strings.ToLower(said), " .…!\n")
+	last := strings.TrimRight(spokenLower(said), " .…!\n")
 	if last == "" || strings.HasSuffix(last, "?") {
 		return false
 	}
@@ -2621,7 +2657,7 @@ var actionPromises = []string{
 
 // claimsDone reports whether a reply told the caller something has been done.
 func claimsDone(said string) bool {
-	lower := strings.ToLower(said)
+	lower := spokenLower(said)
 	return slices.ContainsFunc(doneClaims, func(claim string) bool { return strings.Contains(lower, claim) })
 }
 
@@ -2651,7 +2687,7 @@ func backsClaim(history []llm.Message, said string) bool {
 
 // claimsChange reports whether said claims more than a lookup.
 func claimsChange(said string) bool {
-	lower := strings.ToLower(said)
+	lower := spokenLower(said)
 	return slices.ContainsFunc(doneClaims, func(claim string) bool {
 		return strings.Contains(lower, claim) && !slices.Contains(lookedClaims, claim)
 	})
