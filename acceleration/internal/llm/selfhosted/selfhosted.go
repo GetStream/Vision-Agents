@@ -66,7 +66,7 @@ var Deployments = map[string]Deployment{
 	},
 	"nemotron-bolt": {
 		Provider: "nemotron-bolt", BaseURLEnvVar: "BOLT_BASE_URL", ModelID: "wdlnomk3",
-		Temperature: 0.2,
+		Temperature: 0,
 	},
 	"phonellm-mini": {
 		Provider: "phonellm-mini", BaseURLEnvVar: "PHONELLM_MINI_BASE_URL", ModelID: "qz49pvpw",
