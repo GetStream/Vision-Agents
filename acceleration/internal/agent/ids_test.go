@@ -54,6 +54,21 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 	assert.True(t, failedResult(unfoundIDResult("ticket_id", "840", nil)))
 }
 
+func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
+	for arguments, misshapen := range map[string]bool{
+		`{"pin":"4471","last4":"9821","address":"14 Cedar Lane"}`: false,
+		`{"pin":"4471","last4":"98214"}`:                          true,
+		`{"last4":"98t1"}`:                                        true,
+		`{"last_four":"129821"}`:                                  true,
+		`{"pin":"4471"}`:                                          false,
+		`{"last4":""}`:                                            false,
+	} {
+		_, _, got := misshapenLastFour(llm.ToolCall{Name: "verify_account", Arguments: arguments})
+		assert.Equal(t, misshapen, got, arguments)
+	}
+	assert.True(t, failedResult(misshapenResult("last4", "98214")))
+}
+
 func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 	for arguments, stand := range map[string]bool{
 		`{"name":"Caller","party_size":3}`: true,

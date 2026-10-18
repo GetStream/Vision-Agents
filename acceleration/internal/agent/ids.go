@@ -99,6 +99,42 @@ func placeholderResult(name string) string {
 		"again with it.", name)
 }
 
+// misshapenLastFour reports a "last four" argument that is not four digits. The transcriber
+// ran "nine eight two one, fourteen Cedar Lane" together as "982114 Cedar Lane", and
+// PhoneLLM Mini sent verify_account a last4 of 98214 and of 129821.
+func misshapenLastFour(call llm.ToolCall) (key, value string, misshapen bool) {
+	var arguments map[string]any
+	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
+		return "", "", false
+	}
+	for name, raw := range arguments {
+		text, ok := raw.(string)
+		if !ok || text == "" || !slices.Contains(lastFourKeys, strings.ToLower(name)) {
+			continue
+		}
+		digits := strings.Map(func(r rune) rune {
+			if unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, text)
+		if len(digits) != 4 || len(digits) != len(strings.TrimSpace(text)) {
+			return name, text, true
+		}
+	}
+	return "", "", false
+}
+
+var lastFourKeys = []string{"last4", "last_4", "last_four", "lastfour"}
+
+// misshapenResult is what a call with a misshapen last four is answered with.
+func misshapenResult(key, value string) string {
+	return fmt.Sprintf(didNotWork+"%s takes exactly four digits, and %q is not four digits. When what "+
+		"you heard runs into the next number (\"982114 Cedar Lane\"), the first four are the last "+
+		"four and the rest begins the address (14 Cedar Lane). Otherwise read back what you heard "+
+		"and ask for the four digits.", key, value)
+}
+
 func toolNames(tools harness.Tools) []string {
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
