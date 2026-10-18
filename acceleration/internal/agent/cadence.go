@@ -2,6 +2,8 @@ package agent
 
 import (
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +112,25 @@ type heldTranscript struct {
 	carried    string
 	generation int64
 	heldAt     time.Time
+}
+
+// cadenceGapEnvVar overrides how long unfinished words hold still before they are put. A
+// transcriber whose finals come from a voice activity detector rather than a model of
+// the turn already ends every pause it trusts, so the gap only has to catch the ones it
+// does not, and at 350 ms it answers a caller drawing breath mid-sentence.
+const cadenceGapEnvVar = "ROUTER_CADENCE_GAP_MS"
+
+func cadenceGapFromEnv(logger *slog.Logger) time.Duration {
+	raw := os.Getenv(cadenceGapEnvVar)
+	if raw == "" {
+		return 0
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms <= 0 {
+		logger.Warn("ignoring an unreadable cadence gap", "env", cadenceGapEnvVar, "value", raw)
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence {
