@@ -470,6 +470,9 @@ type Agent struct {
 	// withheldFrom is the sentence the withholding began at, for cutting the history at
 	// what the caller heard.
 	withheldFrom string
+	// narrated says a sentence of this reply spoke of the caller rather than to them, so it
+	// and everything after it went unsaid without the chase a withheld claim gets.
+	narrated bool
 	// promised says a sentence of this reply, said before any tool answered, told the caller
 	// a step was under way. A direction the model writes after it ([short pause], [checks
 	// outage map]) is the wait acted out, and what follows it a guess at the step's result.
@@ -2183,7 +2186,13 @@ func (a *Agent) say(turnID, delta string) {
 // Thursday": once a step is promised, a direction and everything after it is held back
 // the same way, and the chase makes the call the promise was for.
 func (a *Agent) withhold(sentence string) bool {
-	if a.withheld {
+	if a.withheld || a.narrated {
+		return true
+	}
+	if narrates(sentence) {
+		a.narrated = true
+		a.withheldFrom = sentence
+		a.logger.Debug("holding back a reply that talks about the caller", "sentence", sentence)
 		return true
 	}
 	if len(a.availableTools().Tools) == 0 || a.delegating() {
@@ -2209,6 +2218,17 @@ func (a *Agent) withhold(sentence string) bool {
 	a.promised = true
 	return false
 }
+
+// narrates reports whether a sentence speaks of the caller in the third person, which a
+// reply to them never does. Nemotron wrote its reasoning into the reply ("The caller said
+// yes after I offered two times. This is ambiguous.") and once read out the system's note
+// to it ("The caller is listening, not reading: …").
+func narrates(sentence string) bool {
+	lower := strings.TrimSpace(spokenLower(directionTags.ReplaceAllString(sentence, "")))
+	return slices.ContainsFunc(narrations, func(opening string) bool { return strings.HasPrefix(lower, opening) })
+}
+
+var narrations = []string{"the caller ", "the caller's ", "the user ", "the user's ", "caller said", "user said"}
 
 // spokenLower lowercases a reply for matching with straight apostrophes: Qwen writes
 // "I’ll reschedule".
@@ -2339,8 +2359,8 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
-	withheld := a.withheld
-	if withheld {
+	withheld, narrated := a.withheld, a.narrated
+	if withheld || narrated {
 		said = heardOf(said, a.withheldFrom)
 	}
 	a.resetTurn()
@@ -2424,6 +2444,9 @@ func (a *Agent) finish(response llm.Response) {
 		a.promiseChased = false
 		a.mu.Unlock()
 		a.keepPromise(response.ID, forcedNote, false)
+	}
+	if narrated && said == "" && len(calls) == 0 && !forced {
+		a.keepPromise(response.ID, speakToTheCaller, false)
 	}
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
@@ -2550,6 +2573,10 @@ const keepPromise = "You just told the caller you were checking, or that somethi
 // actOnGoAhead is the note a reply that met a go-ahead with no call is chased up with.
 const actOnGoAhead = "The caller just told you to go ahead. Call the tool that does what they " +
 	"agreed to now, with what you have, without asking for anything optional first."
+
+// speakToTheCaller is the note a reply that only talked about the caller is asked again with.
+const speakToTheCaller = "Your last reply described the caller instead of speaking to them, and " +
+	"they heard none of it. Answer them now, speaking to them directly."
 
 // callTheStep is the note a reply that described a tool's step instead of calling it is
 // chased up with.
@@ -3249,6 +3276,7 @@ func (a *Agent) resetTurn() {
 	a.openTurn = ""
 	a.withheld = false
 	a.withheldFrom = ""
+	a.narrated = false
 	a.promised = false
 	a.mu.Lock()
 	a.saying = ""

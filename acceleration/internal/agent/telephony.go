@@ -181,15 +181,20 @@ const didNotWork = "That did not work: "
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
 // failed may be tried again, since what failed may not fail twice.
+//
+// A call that changes something is matched across the whole call: Nemotron booked a table,
+// heard "Yes, please go ahead" and booked it again, and the second booking failing for the
+// table the first had taken was told to the caller as the booking not going through.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && sameArguments(other.Arguments, call.Arguments)
 	}
-	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
-		if history[i].Role != llm.ToolResult || strings.HasPrefix(history[i].Content, didNotWork) {
+	changes := !readsOnly(call.Name)
+	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
+		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) {
 			continue
 		}
-		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
+		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == history[i].ToolCallID && same(asked)
 			}) {

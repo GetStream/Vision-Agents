@@ -177,11 +177,13 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"in the same reply. " +
 	"Never fill an argument with a name, number or detail the caller has not given (no " +
 	"\"John Doe\"): ask for it. When there is a tool that verifies the caller, call it before " +
-	"any other. " +
+	"any other, except to escalate or log a callback for a caller who will not or cannot be " +
+	"verified: do that with what you have. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
-	"to them in the same reply, digit by digit for an ID or number. " +
+	"to them in the same reply, digit by digit for an ID or number, opening with \"Let me " +
+	"check that\" when you call the tool in that reply. " +
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
 	"it, with no hold phrase and no call, until they agree. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +

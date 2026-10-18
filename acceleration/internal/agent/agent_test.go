@@ -3151,6 +3151,35 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 }
 
+func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
+	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Alvarez","time":"7:30"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "book it for Alvarez at 7:30"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booking}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Alvarez","time":"7:30"}`},
+		{Role: llm.User, Content: "yes, please go ahead"},
+	}
+	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
+	earlier, repeated := answeredSinceCaller(history, again)
+	s.True(repeated)
+	s.Contains(earlier, "Alvarez")
+
+	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments})
+	s.False(repeated, "a lookup is free to run again once the caller has spoken")
+
+	history[2].Content = `{"error":"no table at 7:30"}`
+	_, repeated = answeredSinceCaller(history, again)
+	s.False(repeated, "a booking that failed may be tried again")
+}
+
+func (s *AgentSuite) TestASentenceAboutTheCallerIsNotSaidToThem() {
+	s.True(narrates("The caller said yes after I offered two times."))
+	s.True(narrates("The caller is listening, not reading: tell them the part that answers them."))
+	s.True(narrates("[respond] The user wants a table."))
+	s.False(narrates("The callback number I have is 512 555 0142."))
+	s.False(narrates("Your table is booked."))
+}
+
 func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	for said, heard := range map[string]string{
 		"One moment, checking... I've checked the outage map and there are no outages.": "One moment, checking...",
