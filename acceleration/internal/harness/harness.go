@@ -509,10 +509,12 @@ func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 // agent's job, because a tool acts on the call and the harness does not know there is one.
 func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 	for _, call := range calls {
-		if _, known := h.options.Tools.Lookup(call.Name); !known {
+		tool, known := h.options.Tools.Lookup(call.Name)
+		if !known {
 			h.logger.Debug("the model asked for a tool that does not exist", "tool", call.Name)
 			continue
 		}
+		call.Arguments = Coerce(tool.Parameters, call.Arguments)
 		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call})
 	}
 }

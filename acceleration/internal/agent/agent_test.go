@@ -3151,6 +3151,17 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 }
 
+func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
+	for said, heard := range map[string]string{
+		"One moment, checking... I've checked the outage map and there are no outages.": "One moment, checking...",
+		"You're all set for Saturday.":                     "",
+		"Let me look. Your table is ready, you're booked.": "Let me look.",
+		"I can help with that. What time would you like?":  "I can help with that. What time would you like?",
+	} {
+		s.Equal(heard, unsaid(said), said)
+	}
+}
+
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 	for said, asked := range map[string]bool{
 		"What time would you like?":                         true,
@@ -3158,6 +3169,8 @@ func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 		"Is there anything else I can help you with today?": false,
 		"Anything else?":                                    false,
 		"Your table is booked.":                             false,
+		"I can help with that. To get started, I'll need your date of birth and your member ID.": true,
+		"I'll need your name. Your table is booked.":                                             false,
 	} {
 		s.Equal(asked, owesAnAnswer(said), said)
 	}
@@ -3868,4 +3881,40 @@ func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
 		}
 	}
 	s.Equal("The user greets; greet back.", thought.String())
+}
+
+func TestCountedDigitsArePausedBeforeTheyAreSpoken(t *testing.T) {
+	cases := map[string]string{
+		"Verified, last four 9821 on file.": "Verified, last four digits, 9821 on file.",
+		"The last 4 9821 match.":            "The last 4 digits, 9821 match.",
+		"Last four digits, please.":         "Last four digits, please.",
+		"Party of four 7:30 on the patio.":  "Party of four 7:30 on the patio.",
+	}
+	for in, want := range cases {
+		if got := pauseCounted(in); got != want {
+			t.Errorf("%q = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestADescribedStepIsTheToolNotYetCalled(t *testing.T) {
+	tools := harness.Tools{Tools: []harness.Tool{{Name: "walk_reboot"}, {Name: "check_outage"}, {Name: "create_ticket"}}}
+	checked := []llm.Message{{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{Name: "check_outage"}}}}
+	cases := []struct {
+		said string
+		want string
+	}{
+		{"No outages. Let's try walking through a reboot of your gateway.", "walk_reboot"},
+		{"Would you like me to walk you through a reboot?", ""},
+		{"Let me check the outage map for you.", ""},
+		{"Rebooting usually helps.", ""},
+		{"I'll create a ticket for that error.", "create_ticket"},
+		{"Since the reboot didn't work, I'll need to walk you through a formal reboot process.", "walk_reboot"},
+		{"To walk you through a reboot, I'll need your account PIN.", ""},
+	}
+	for _, c := range cases {
+		if got := describedStep(c.said, tools, checked); got != c.want {
+			t.Errorf("describedStep(%q) = %q, want %q", c.said, got, c.want)
+		}
+	}
 }
