@@ -74,6 +74,24 @@ func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
 	assert.Contains(t, misshapenResult("last4", "55317", heard), "the last four 5530 followed by the address 17 Oak Road")
 }
 
+func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
+	heard := []llm.Message{{Role: llm.User, Content: "Sorry about that. The name is Alkafor, o k a f o r. Mom, mom, look at this."}}
+	for arguments, misspelled := range map[string]bool{
+		`{"name":"Alkafor","party_size":3}`:  true,
+		`{"name":"Alcophor","party_size":3}`: true,
+		`{"name":"Okafor","party_size":3}`:   false,
+		`{"name":"okafor","party_size":3}`:   false,
+		`{"name":"Chen","party_size":3}`:     false,
+	} {
+		_, _, got := misspelledName(heard, llm.ToolCall{Name: "create_reservation", Arguments: arguments})
+		assert.Equal(t, misspelled, got, arguments)
+	}
+	_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: "Name is Alkafor. PIN 4471."}},
+		llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"Alkafor"}`})
+	assert.False(t, got, "nothing was spelled")
+	assert.Contains(t, misspelledResult("Alkafor", "okafor"), "o k a f o r, so it is Okafor")
+}
+
 func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 	for arguments, stand := range map[string]bool{
 		`{"name":"Caller","party_size":3}`: true,

@@ -305,6 +305,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
 		parts = llm.TextParts(misshapenResult(key, value, a.History()))
+	} else if name, spelled, misspelled := misspelledName(a.History(), requested.Call); misspelled {
+		parts = llm.TextParts(misspelledResult(name, spelled))
 	} else if name, stand := placeholderName(requested.Call); stand {
 		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {

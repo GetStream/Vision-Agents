@@ -92,6 +92,64 @@ func placeholderName(call llm.ToolCall) (string, bool) {
 	return "", false
 }
 
+// misspelledName reports a name argument that is not the name the caller spelled out
+// letter by letter. The caller said "The name is Okafor, o k a f o r" and every model booked
+// the transcriber's "Alkafor" or "Alcophor".
+func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled string, misspelled bool) {
+	var arguments map[string]any
+	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
+		return "", "", false
+	}
+	var spellings []string
+	for _, message := range history {
+		if message.Role != llm.User {
+			continue
+		}
+		for _, match := range spelledOut.FindAllString(message.Content, -1) {
+			spellings = append(spellings, strings.Join(strings.FieldsFunc(match, func(r rune) bool { return !unicode.IsLetter(r) }), ""))
+		}
+	}
+	if len(spellings) == 0 {
+		return "", "", false
+	}
+	for key, value := range arguments {
+		text, ok := value.(string)
+		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
+			continue
+		}
+		for _, word := range strings.Fields(text) {
+			word = alphanumeric(word)
+			for _, spelling := range spellings {
+				spelling = strings.ToLower(spelling)
+				if word != spelling && len(word) >= 3 && closeTo(word, spelling) {
+					return text, spelling, true
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+
+// spelledOut matches three or more single letters read out one at a time: "o k a f o r",
+// "P-A-T-E-L".
+var spelledOut = regexp.MustCompile(`(?i)\b[a-z](?:[\s,.-]+[a-z]\b){2,}`)
+
+// closeTo reports whether two words are near enough to be one name heard two ways: the same
+// first or last two letters, and lengths within three.
+func closeTo(a, b string) bool {
+	if d := len(a) - len(b); d > 3 || d < -3 || len(a) < 2 || len(b) < 2 {
+		return false
+	}
+	return a[len(a)-2:] == b[len(b)-2:] || a[:2] == b[:2]
+}
+
+// misspelledResult is what a call with a misspelled name is answered with.
+func misspelledResult(name, spelled string) string {
+	return fmt.Sprintf(didNotWork+"the caller spelled the name out as %s, so it is %s, not %q. Call "+
+		"again with it.", strings.Join(strings.Split(spelled, ""), " "),
+		strings.ToUpper(spelled[:1])+spelled[1:], name)
+}
+
 var placeholders = []string{"caller", "the caller", "customer", "guest", "user", "john doe", "jane doe", "unknown", "n/a"}
 
 // placeholderResult is what a call with a stand-in name is answered with.
