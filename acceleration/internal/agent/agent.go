@@ -391,6 +391,9 @@ type Agent struct {
 	// chaseForced is set once a chase that still called nothing has been chased again with
 	// the call required, since the caller last spoke.
 	chaseForced bool
+	// narrationAsked is set once a reply that only talked about the caller has been asked
+	// again, since the caller last spoke.
+	narrationAsked bool
 	// stepChased is the tool whose described step was last chased up since the caller
 	// last spoke (describedStep).
 	stepChased string
@@ -1697,6 +1700,7 @@ func (a *Agent) respondTurn(
 	a.toolRounds = 0
 	a.promiseChased = false
 	a.chaseForced = false
+	a.narrationAsked = false
 	a.callerTurns++
 	a.stepChased = ""
 	a.toolReply = false
@@ -2446,7 +2450,18 @@ func (a *Agent) finish(response llm.Response) {
 		a.keepPromise(response.ID, forcedNote, false)
 	}
 	if narrated && said == "" && len(calls) == 0 && !forced {
-		a.keepPromise(response.ID, speakToTheCaller, false)
+		// Nemotron met "Yes, please go ahead" with its reasoning and the caller was left
+		// with nothing. A reply nobody heard is asked again whatever was chased before it,
+		// once per caller turn.
+		a.mu.Lock()
+		again := !a.narrationAsked
+		if again {
+			a.narrationAsked, a.promiseChased = true, false
+		}
+		a.mu.Unlock()
+		if again {
+			a.keepPromise(response.ID, speakToTheCaller, false)
+		}
 	}
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
@@ -2516,12 +2531,15 @@ const (
 func (a *Agent) keepPromiseAfter(promised, note string, mustCall bool, tries int) {
 	a.mu.Lock()
 	if a.promiseChased || a.harness == nil || a.closed {
+		chased := a.promiseChased
 		a.mu.Unlock()
+		a.logger.Debug("not chasing the reply up", "turn", promised, "already_chased", chased)
 		return
 	}
 	if a.generating || a.interrupting || a.recoveringVoice != nil || a.converse.Listening() {
 		caller := a.callerTurns
 		a.mu.Unlock()
+		a.logger.Debug("the chase cannot start yet", "turn", promised, "tries", tries)
 		if tries < chaseRetries {
 			time.AfterFunc(chaseRetry, func() {
 				a.mu.Lock()
