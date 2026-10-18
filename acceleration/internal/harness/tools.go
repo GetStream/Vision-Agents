@@ -186,8 +186,11 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
 	"them to the tool (\"last four 553017 Oak Road\" is last four 5530 at 17 Oak Road), opening with \"One " +
 	"moment, let me check that\" when you call the tool in that reply. " +
-	"When the caller corrects something (\"actually\", \"no, make that\", \"oh wait\"), the " +
-	"later value replaces the earlier one in every argument, \"none\" included. " +
+	"When the caller takes back something they said (\"actually\", \"no, make that\", \"oh " +
+	"wait\"), the later value replaces the earlier one in every argument, \"none\" included. " +
+	"A new value they report for something that changed (\"my new member ID is...\") takes " +
+	"nothing back: the one they had before is still what verifies them, and the new one goes " +
+	"to the tool that records the change. " +
 	"When your instructions say to log or record something when a situation comes up, call " +
 	"its tool in the reply where it comes up, before asking the caller for anything. " +
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
