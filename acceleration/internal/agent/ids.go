@@ -121,12 +121,14 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 	}
 	var digits []string
 	for _, source := range sources {
-		digits = append(digits, strings.Map(func(r rune) rune {
-			if unicode.IsDigit(r) {
-				return r
-			}
-			return -1
-		}, source))
+		for _, group := range numberGroup.FindAllString(source, -1) {
+			digits = append(digits, strings.Map(func(r rune) rune {
+				if unicode.IsDigit(r) {
+					return r
+				}
+				return -1
+			}, group))
+		}
 	}
 	keys := make([]string, 0, len(arguments))
 	for name := range arguments {
@@ -146,6 +148,10 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 }
 
 var digitRun = regexp.MustCompile(`\d+`)
+
+// numberGroup is one number as written, its dashes and brackets included: "512-555-0142".
+// Numbers apart are kept apart, so "4471, last four 9821" holds no 1982.
+var numberGroup = regexp.MustCompile(`\d(?:[\d().-]*\d)?`)
 
 func allDigits(text string) bool {
 	return strings.IndexFunc(text, func(r rune) bool { return !unicode.IsDigit(r) }) < 0

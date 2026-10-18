@@ -71,6 +71,9 @@ func digitsFor(text string) string {
 		end := start
 		for end < len(words) && isNumberWord(words[end]) {
 			end++
+			if end < len(words) && strings.HasSuffix(words[end-1], ",") && (end-start == 1 || startsNumber(words[end])) {
+				break
+			}
 		}
 		if end == start {
 			out = append(out, words[start])
@@ -78,7 +81,8 @@ func digitsFor(text string) string {
 			continue
 		}
 		run := words[start:end]
-		opensName := start == 0 && (end == len(words) || startsUpper(words[end]))
+		opens := start == 0 || strings.HasSuffix(words[start-1], ",")
+		opensName := opens && (end == len(words) || startsUpper(words[end]))
 		if len(run) > 1 || opensName {
 			if digits, ok := runDigits(run); ok {
 				out = append(out, digits)
@@ -94,6 +98,16 @@ func digitsFor(text string) string {
 		return text
 	}
 	return strings.Join(out, " ")
+}
+
+// startsNumber reports a teen or tens word, which after a comma begins a new number: "nine
+// eight two one, fourteen Cedar Lane" is a last four and a house number, not 982114. A
+// lone number word before a comma is a label, as in "last four, nine eight two one".
+func startsNumber(word string) bool {
+	word = strings.ToLower(strings.Trim(word, ",.-"))
+	_, teen := spokenTeens[word]
+	_, ten := spokenTens[word]
+	return teen || ten
 }
 
 func startsUpper(word string) bool {

@@ -21,7 +21,9 @@ func TestSpokenNumbersInArgumentsBecomeDigits(t *testing.T) {
 		"party of one":        "party of one",
 		"Okafor":              "Okafor",
 		"oh":                  "oh",
-		"five one two, five five five, oh one four two": "5125550142",
+		"five one two, five five five, oh one four two":      "5125550142",
+		"last four, nine eight two one, fourteen Cedar Lane": "last four, 9821 14 Cedar Lane",
+		"PIN four four seven one, last four":                 "PIN 4471 last four",
 	} {
 		assert.Equal(t, want, digitsFor(said), said)
 	}
