@@ -1338,6 +1338,41 @@ func (s *ConverseSuite) TestAnUnfinishedThoughtIsPutAgainOnceTheCallerStops() {
 	}
 }
 
+func (s *ConverseSuite) TestWordsThatStopOnANumberAreWaitedOnWhateverTheModelRuled() {
+	ready := s.settle("PIN four four seven one, last four, ninety eight two one", s.quiet())
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActWait}, kinds(actions))
+
+	// Once patience runs out the model's answer stands, without asking the caller to repeat.
+	again := s.held()
+	s.converse.Settled(again, s.quiet())
+	actions = s.converse.Ruled(harness.Decided{
+		CandidateID: again.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Empty(actions[0].Clarify)
+
+	for text, trails := range map[string]bool{
+		"my member ID is ABC one two":    true,
+		"fourteen Cedar Lane, and":       false,
+		"the address is fourteen Cedar,": true,
+		"my PIN is 4471.":                false,
+		"I'd like a table for four.":     false,
+		"Is there an outage?":            false,
+		"last four 9821":                 true,
+		"For sales, press one":           false,
+		"a table for four":               false,
+	} {
+		s.Equal(trails, trailsOff.MatchString(text), text)
+	}
+}
+
 func (s *ConverseSuite) TestACallerWhoGoesQuietOnAnUnfinishedThoughtIsAskedWhatTheyMeant() {
 	// Waiting is a loop only the caller can end, so a thought that never arrives leaves the
 	// agent listening to silence for the rest of the call. It is also as likely to be

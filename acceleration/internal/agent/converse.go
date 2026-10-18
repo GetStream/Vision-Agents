@@ -527,6 +527,14 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	if ruling.Disposition == harness.Respond && c.monologue(ready) {
 		ruling.Disposition = harness.Wait
 	}
+	// PhoneLLM Mini answered "PIN four four seven one, last four, ninety eight two one" with
+	// the address still to come. Words that stop on a number or a comma, with no full stop
+	// after them, are waited on until patience runs out, whatever the model ruled. Only a
+	// transcriber that punctuates says anything by leaving the full stop off.
+	if ruling.Disposition == harness.Respond && strings.ContainsAny(ready.Text, ".,?!") &&
+		trailsOff.MatchString(ready.Text) && c.patient(ready) {
+		ruling.Disposition = harness.Wait
+	}
 
 	clarify, clarified := "", ""
 	if ruling.Disposition == harness.Clarify {
@@ -973,6 +981,13 @@ func settlement(result harness.Result) string {
 
 var (
 	// announcesMonologue is a caller saying every detail is coming before they want an answer.
+	// trailsOff matches words that stop on a comma or partway through a run of digits, as a
+	// PIN or an ID being read out does. One number at the end ("press one", "for four") is
+	// as often the whole answer.
+	trailsOff = regexp.MustCompile(`(?i)(,|\b` + numberToken + `[\s,-]+` + numberToken + `)\s*$`)
+	// numberToken is a number written in digits or said as a word.
+	numberToken = `(\d+|zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|` +
+		`fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)`
 	announcesMonologue = regexp.MustCompile(`(?i)\b(everything|it all|all of it|all the details|every detail)\b.{0,24}\b(up ?front|at once|in one go)\b|\bbear with me\b`)
 	// endsMonologue is a caller handing the turn back: a question, a go-ahead, or done.
 	endsMonologue = regexp.MustCompile(`(?i)\?|\b(that's|that is) (everything|all|it)\b|\bgo ahead\b|\b(can|could|would|will) you\b|\bplease (move|book|change|cancel|reschedule|update|send|check|switch)\b`)
