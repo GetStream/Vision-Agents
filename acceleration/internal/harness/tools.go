@@ -180,7 +180,13 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"it, first call the tool that lists them. " +
 	"When you read details back or confirm a change, say each value whole, exactly as you " +
 	"pass it to the tool. When the caller spells a name letter by letter, use their " +
-	"spelling, not what the name sounded like."
+	"spelling, not what the name sounded like. " +
+	"Call a tool only to do something the caller has asked for, never to greet or to note " +
+	"that nothing has happened yet. A day or part of a day the caller names (Tuesday, " +
+	"morning) is a date and time a tool can take as said: pass it, do not ask which one. " +
+	"A word the caller says to somebody else (Mom, honey) is never their name. When a " +
+	"counted number (the last four) runs on into the next value, take exactly that many " +
+	"digits and the rest belongs to the next value, such as a house number before a street."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
