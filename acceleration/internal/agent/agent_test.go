@@ -3162,6 +3162,21 @@ func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	}
 }
 
+func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
+	looked := []llm.Message{
+		{Role: llm.User, Content: "move my appointment to Tuesday"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_appointment"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"appointments":[{"id":"a1"}]}`},
+	}
+	s.True(backsClaim(looked, "I've checked, you have one on Thursday."))
+	s.False(backsClaim(looked, "Your appointment has been rescheduled to Tuesday."))
+
+	moved := append(looked,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "reschedule_appointment"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"ok":true}`})
+	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday."))
+}
+
 func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
 	said := "Let me verify your account information. I have your PIN as 4471. Is that correct?"
 	s.Equal("Let me verify your account information.", heardOf(said, "[short pause] I have your PIN as 4471."))

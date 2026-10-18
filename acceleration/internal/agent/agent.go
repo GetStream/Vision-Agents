@@ -2190,9 +2190,10 @@ func (a *Agent) withhold(sentence string) bool {
 		return false
 	}
 	a.mu.Lock()
-	backed := toolRanSinceCaller(a.history)
+	backed := backsClaim(a.history, sentence)
+	ran := toolRanSinceCaller(a.history)
 	a.mu.Unlock()
-	if backed {
+	if claimsDone(sentence) && backed || !claimsDone(sentence) && ran {
 		return false
 	}
 	if pause || claimsDone(sentence) {
@@ -2416,14 +2417,14 @@ func (a *Agent) finish(response llm.Response) {
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
-		backed := toolRanSinceCaller(history)
+		backed := backsClaim(history, said)
 		owes := withheld || owesACall(said, backed)
 		if owes && strings.HasPrefix(response.ID, toolPrefix) {
 			// Qwen met the chase with "Let me check for any outages. One moment, please."
 			// and no call, twice over: a chase that still promises is asked once more, with
 			// the call required.
 			a.mu.Lock()
-			again := a.promiseChased && !a.chaseForced && !backed
+			again := a.promiseChased && !a.chaseForced && !changedSinceCaller(history)
 			if again {
 				a.promiseChased, a.chaseForced = false, true
 			}
@@ -2437,7 +2438,7 @@ func (a *Agent) finish(response llm.Response) {
 			// A hold phrase can come before the caller has given what the call needs, and
 			// a forced call is then made with blanks; a claim that it is done cannot.
 			a.keepPromise(response.ID, keepPromise, !backed && claimsDone(said))
-		case !backed && wentAhead(history):
+		case !changedSinceCaller(history) && wentAhead(history):
 			a.keepPromise(response.ID, actOnGoAhead, true)
 		default:
 			// A step is chased even after another promise was: in Voicebench the chase that
@@ -2623,6 +2624,61 @@ var doneClaims = []string{
 	"i'm booking", "i am booking", "i'm dispatching", "i am dispatching",
 	"got you down for", "got you booked", "i've moved", "i've changed", "i've reserved",
 	"has been rescheduled", "has been moved", "is booked", "is all set",
+}
+
+// backsClaim reports whether what a tool has answered since the caller last spoke makes
+// said's claim true: "I've checked" takes any tool, while "you're booked" or "has been
+// rescheduled" takes one that changes something. Qwen said "your appointment has been
+// rescheduled" on the strength of the lookup that found it.
+func backsClaim(history []llm.Message, said string) bool {
+	if claimsChange(said) {
+		return changedSinceCaller(history)
+	}
+	return toolRanSinceCaller(history)
+}
+
+// claimsChange reports whether said claims more than a lookup.
+func claimsChange(said string) bool {
+	lower := strings.ToLower(said)
+	return slices.ContainsFunc(doneClaims, func(claim string) bool {
+		return strings.Contains(lower, claim) && !slices.Contains(lookedClaims, claim)
+	})
+}
+
+// lookedClaims are the done claims a lookup is enough for.
+var lookedClaims = []string{"i've checked", "i have checked", "i've verified"}
+
+// changedSinceCaller reports whether a tool that changes something, rather than one that
+// only reads (lookup_, check_, verify_ and the like), has answered without failing since
+// the caller last spoke.
+func changedSinceCaller(history []llm.Message) bool {
+	names := map[string]string{}
+	for _, message := range history {
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Name
+		}
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		switch history[i].Role {
+		case llm.ToolResult:
+			if !failedResult(history[i].Content) && !readsOnly(names[history[i].ToolCallID]) {
+				return true
+			}
+		case llm.User:
+			return false
+		}
+	}
+	return false
+}
+
+// readVerbs open the names of tools that only read.
+var readVerbs = []string{"lookup", "look_up", "check", "get", "find", "search", "verify", "list", "read", "fetch", "query"}
+
+// readsOnly reports whether a tool's name says it only reads. A name that cannot be found
+// counts as a change, so a claim it backs is let through as before.
+func readsOnly(name string) bool {
+	name = strings.ToLower(name)
+	return name != "" && slices.ContainsFunc(readVerbs, func(verb string) bool { return strings.HasPrefix(name, verb) })
 }
 
 // toolRanSinceCaller reports whether a tool has answered since the caller last spoke, and
