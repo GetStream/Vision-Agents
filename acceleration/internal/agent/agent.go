@@ -394,6 +394,9 @@ type Agent struct {
 	// narrationAsked is set once a reply that only talked about the caller has been asked
 	// again, since the caller last spoke.
 	narrationAsked bool
+	// refusalChased is set once a refusal nothing was logged for has been chased, since the
+	// caller last spoke.
+	refusalChased bool
 	// stepChased is the tool whose described step was last chased up since the caller
 	// last spoke (describedStep).
 	stepChased string
@@ -1701,6 +1704,7 @@ func (a *Agent) respondTurn(
 	a.promiseChased = false
 	a.chaseForced = false
 	a.narrationAsked = false
+	a.refusalChased = false
 	a.callerTurns++
 	a.stepChased = ""
 	a.toolReply = false
@@ -2463,6 +2467,18 @@ func (a *Agent) finish(response llm.Response) {
 			a.keepPromise(response.ID, speakToTheCaller, false)
 		}
 	}
+	if logger := loggingTool(a.availableTools()); logger != "" && said != "" && len(calls) == 0 && !forced &&
+		refuses(said) && !calledInCall(history, logger) {
+		// Told to refuse an oxycodone refill, offer a callback and log an escalation, Nemotron
+		// Bolt and PhoneLLM Mini refused and offered in every run, and never logged.
+		a.mu.Lock()
+		again := !a.refusalChased
+		a.refusalChased = true
+		a.mu.Unlock()
+		if again {
+			a.keepPromise(response.ID, fmt.Sprintf(logTheRefusal, logger), true)
+		}
+	}
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
@@ -2591,6 +2607,47 @@ const keepPromise = "You just told the caller you were checking, or that somethi
 // actOnGoAhead is the note a reply that met a go-ahead with no call is chased up with.
 const actOnGoAhead = "The caller just told you to go ahead. Call the tool that does what they " +
 	"agreed to now, with what you have, without asking for anything optional first."
+
+// logTheRefusal is the note a refusal is chased with when nothing has been logged in the call.
+const logTheRefusal = "You just refused the caller. If your instructions say to log or escalate " +
+	"what you refused, call %s now with the reason, then tell the caller it is logged. If they " +
+	"do not, answer the caller's last words again."
+
+// refuses reports whether said turns the caller down.
+func refuses(said string) bool {
+	lower := spokenLower(said)
+	return slices.ContainsFunc(refusals, func(refusal string) bool { return strings.Contains(lower, refusal) })
+}
+
+var refusals = []string{
+	"i can't refill", "i cannot refill", "i'm not able to", "i am not able to", "i'm unable to",
+	"i am unable to", "i can't skip", "i cannot skip", "i'm not allowed", "i can't do that",
+	"i cannot do that", "i can't send", "i cannot send", "i can't process", "i cannot process",
+}
+
+// loggingTool is the tool that logs or escalates, when there is one: log_escalation.
+func loggingTool(tools harness.Tools) string {
+	for _, tool := range tools.Tools {
+		name := strings.ToLower(tool.Name)
+		if strings.HasPrefix(name, "log_") || strings.Contains(name, "escalat") {
+			return tool.Name
+		}
+	}
+	return ""
+}
+
+// calledInCall reports whether tool has answered without failing anywhere in the call.
+func calledInCall(history []llm.Message, tool string) bool {
+	names := map[string]string{}
+	for _, message := range history {
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Name
+		}
+	}
+	return slices.ContainsFunc(history, func(message llm.Message) bool {
+		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content)
+	})
+}
 
 // speakToTheCaller is the note a reply that only talked about the caller is asked again with.
 const speakToTheCaller = "Your last reply described the caller instead of speaking to them, and " +
