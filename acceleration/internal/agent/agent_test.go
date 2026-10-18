@@ -3195,6 +3195,26 @@ func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
 	}
 }
 
+func (s *AgentSuite) TestOnlyAToolThatAnsweredBacksAClaim() {
+	// LFM2.5 told a Voicebench caller "I've got you down for eight at 8:15" after
+	// create_reservation came back "no table at 8:15".
+	caller := llm.Message{Role: llm.User, Content: "book it"}
+	for _, c := range []struct {
+		result string
+		backed bool
+	}{
+		{`{"reservation_id":"r1"}`, true},
+		{`{"error":"no table at 8:15"}`, false},
+		{didNotWork + "no table at 8:15. Tell the caller, in your own words.", false},
+		{`{"ok":false}`, false},
+		{`{"error":""}`, true},
+	} {
+		history := []llm.Message{caller, {Role: llm.ToolResult, Content: c.result}}
+		s.Equal(c.backed, toolRanSinceCaller(history), c.result)
+	}
+	s.True(owesACall("I've got you down for eight at 8:15.", false))
+}
+
 func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {
 	s.ownsTools("order 12 ships tomorrow")
 	s.join(false)

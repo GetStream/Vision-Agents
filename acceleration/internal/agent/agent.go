@@ -379,6 +379,9 @@ type Agent struct {
 	// toolRounds is how many replies to tool results have been started since the caller
 	// last spoke (maxToolRounds).
 	toolRounds int
+	// heardCaller is set once a turn has come from somebody speaking rather than a typed
+	// instruction; until then replies are offered no tools.
+	heardCaller bool
 	// promiseChased is set once a reply that promised to check and called nothing has been
 	// asked for the call (keepPromise), since the caller last spoke.
 	promiseChased bool
@@ -1679,6 +1682,12 @@ func (a *Agent) respondTurn(
 	a.asked = asked
 	a.sender = sender
 	a.lastParticipant = participant
+	if !listened.at.IsZero() {
+		a.heardCaller = true
+	}
+	// A call opened with a typed instruction ("greet the caller") has nothing to act on
+	// yet, and a model offered tools then logs a summary of the empty call.
+	noTools := !a.options.Text && !a.heardCaller
 	instructions := a.instructions()
 	a.mu.Unlock()
 
@@ -1692,6 +1701,7 @@ func (a *Agent) respondTurn(
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
 		Images:       images,
 		Asked:        asked,
+		NoTools:      noTools,
 	}, text)
 }
 
@@ -2544,19 +2554,40 @@ var doneClaims = []string{
 	"has been cancelled", "has been dispatched", "is on the way",
 	"i'm logging", "i am logging", "i will log", "i'll log", "i'm opening", "i am opening",
 	"i'm booking", "i am booking", "i'm dispatching", "i am dispatching",
+	"got you down for", "got you booked", "i've moved", "i've changed", "i've reserved",
+	"has been rescheduled", "has been moved", "is booked", "is all set",
 }
 
-// toolRanSinceCaller reports whether a tool has answered since the caller last spoke.
+// toolRanSinceCaller reports whether a tool has answered since the caller last spoke, and
+// answered with something other than its failure: "I've got you down for 8:15" after the
+// booking came back "no table at 8:15" is as unbacked as one with no call at all.
 func toolRanSinceCaller(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		switch history[i].Role {
 		case llm.ToolResult:
-			return true
+			if !failedResult(history[i].Content) {
+				return true
+			}
 		case llm.User:
 			return false
 		}
 	}
 	return false
+}
+
+// failedResult reports whether a tool result is the tool failing rather than answering.
+func failedResult(content string) bool {
+	if strings.HasPrefix(content, didNotWork) {
+		return true
+	}
+	var body struct {
+		Error any  `json:"error"`
+		OK    *bool `json:"ok"`
+	}
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	return body.Error != nil && body.Error != "" || body.OK != nil && !*body.OK
 }
 
 // holdWords are what a sentence asking the caller to wait on a lookup says.
