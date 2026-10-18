@@ -183,8 +183,10 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"the tool and end your reply there. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
-	"them to the tool (\"last four 553017 Oak Road\" is last four 5530 at 17 Oak Road), opening with \"Let me " +
-	"check that\" when you call the tool in that reply. " +
+	"them to the tool (\"last four 553017 Oak Road\" is last four 5530 at 17 Oak Road), opening with \"One " +
+	"moment, let me check that\" when you call the tool in that reply. " +
+	"When your instructions say to log or record something when a situation comes up, call " +
+	"its tool in the reply where it comes up, before asking the caller for anything. " +
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
 	"it, with no hold phrase and no call, until they agree. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
