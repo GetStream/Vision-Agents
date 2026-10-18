@@ -3260,6 +3260,7 @@ func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "create_ticket"}}},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"id":"T-1842"}`})
 	s.True(backsClaim(ticketed, "I opened a ticket for you.", tools))
+	s.False(backsClaim(ticketed, "Your technician is dispatched for the morning window.", tools))
 }
 
 func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {

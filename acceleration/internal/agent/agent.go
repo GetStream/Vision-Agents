@@ -2788,7 +2788,8 @@ var doneClaims = []string{
 	"got you down for", "got you booked", "i've moved", "i've changed", "i've reserved",
 	"has been rescheduled", "has been moved", "is booked", "is all set",
 	"i opened", "i booked", "i scheduled", "i rescheduled", "i cancelled", "i canceled",
-	"i dispatched", "i created", "i logged",
+	"i dispatched", "i created", "i logged", "is dispatched", "are dispatched", "has been opened",
+	"has been created", "has been logged",
 }
 
 // backsClaim reports whether what a tool has answered since the caller last spoke makes
@@ -2811,14 +2812,16 @@ func backsClaim(history []llm.Message, said string, tools []string) bool {
 	})
 }
 
-// claimedObjects are the objects of tools ("ticket" in create_ticket) that said names.
+// claimedObjects are the objects of tools ("ticket" in create_ticket) that said names, a
+// word they open counting ("technician" for dispatch_tech).
 func claimedObjects(said string, tools []string) []string {
 	words := strings.FieldsFunc(spokenLower(said), func(r rune) bool { return !unicode.IsLetter(r) })
 	var named []string
 	for _, tool := range tools {
 		parts := strings.Split(strings.ToLower(tool), "_")
 		for _, object := range parts[1:] {
-			if len(object) >= 4 && slices.Contains(words, object) && !slices.Contains(named, object) {
+			said := slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, object) })
+			if len(object) >= 4 && said && !slices.Contains(named, object) {
 				named = append(named, object)
 			}
 		}

@@ -97,7 +97,9 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 		`{"name":"Caller","party_size":3}`: true,
 		`{"name":"John Doe"}`:              true,
 		`{"name":"Okafor"}`:                false,
+		`{"name":"Maria de la Cruz"}`:      false,
 		`{"party_size":3}`:                 false,
+		`{"name":"Carry on with the caller from what is in your instructions."}`: true,
 	} {
 		_, got := placeholderName(llm.ToolCall{Name: "create_reservation", Arguments: arguments})
 		assert.Equal(t, stand, got, arguments)

@@ -77,7 +77,9 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
-// gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe".
+// gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe". A name of more than
+// four words is not one either: PhoneLLM Max booked a table under the note that resumes a
+// turn ("Carry on with the caller from what is in your instructions...").
 func placeholderName(call llm.ToolCall) (string, bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -85,7 +87,10 @@ func placeholderName(call llm.ToolCall) (string, bool) {
 	}
 	for key, value := range arguments {
 		text, ok := value.(string)
-		if ok && (key == "name" || strings.HasSuffix(key, "_name")) && slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) {
+		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
+			continue
+		}
+		if slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4 {
 			return text, true
 		}
 	}
@@ -154,8 +159,8 @@ var placeholders = []string{"caller", "the caller", "customer", "guest", "user",
 
 // placeholderResult is what a call with a stand-in name is answered with.
 func placeholderResult(name string) string {
-	return fmt.Sprintf(didNotWork+"%q is not a name the caller gave. Ask them for their name, and call "+
-		"again with it.", name)
+	return fmt.Sprintf(didNotWork+"%q is not a name the caller gave. Call again with the name they "+
+		"gave, or ask them for it.", name)
 }
 
 // misshapenLastFour reports a "last four" argument that is not four digits. The transcriber
