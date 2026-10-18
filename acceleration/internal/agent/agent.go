@@ -385,6 +385,9 @@ type Agent struct {
 	// promiseChased is set once a reply that promised to check and called nothing has been
 	// asked for the call (keepPromise), since the caller last spoke.
 	promiseChased bool
+	// chaseForced is set once a chase that still called nothing has been chased again with
+	// the call required, since the caller last spoke.
+	chaseForced bool
 	// stepChased is the tool whose described step was last chased up since the caller
 	// last spoke (describedStep).
 	stepChased string
@@ -465,8 +468,9 @@ type Agent struct {
 	// what the caller heard.
 	withheldFrom string
 	// promised says a sentence of this reply, said before any tool answered, told the caller
-	// a step was under way. A pause the model writes after it is the wait acted out, and
-	// what follows the pause a guess at the step's result. Only the model consumer touches it.
+	// a step was under way. A direction the model writes after it ([short pause], [checks
+	// outage map]) is the wait acted out, and what follows it a guess at the step's result.
+	// Only the model consumer touches it.
 	promised bool
 
 	// following serialises the turns the agent takes of its own accord, so two answers
@@ -1686,6 +1690,7 @@ func (a *Agent) respondTurn(
 	a.generating = true
 	a.toolRounds = 0
 	a.promiseChased = false
+	a.chaseForced = false
 	a.stepChased = ""
 	a.toolReply = false
 	a.asked = asked
@@ -2171,8 +2176,8 @@ func (a *Agent) say(turnID, delta string) {
 // result. Unsaid, the chase that follows makes the call and the result answers instead.
 //
 // Qwen wrote "Let me look up your appointments. [short pause] I see you have one on
-// Thursday": once a step is promised, a pause and everything after it is held back the
-// same way, and the chase makes the call the promise was for.
+// Thursday": once a step is promised, a direction and everything after it is held back
+// the same way, and the chase makes the call the promise was for.
 func (a *Agent) withhold(sentence string) bool {
 	if a.withheld {
 		return true
@@ -2180,7 +2185,7 @@ func (a *Agent) withhold(sentence string) bool {
 	if len(a.availableTools().Tools) == 0 || a.delegating() {
 		return false
 	}
-	pause := a.promised && pauseDirection.MatchString(sentence)
+	pause := a.promised && directionTags.MatchString(sentence)
 	if !pause && !claimsDone(sentence) && !promisesStep(sentence) {
 		return false
 	}
@@ -2225,10 +2230,7 @@ func heardOf(said, from string) string {
 	return unsaid(said)
 }
 
-var (
-	directionTags  = regexp.MustCompile(`\[[^\]]*\]`)
-	pauseDirection = regexp.MustCompile(`(?i)\[[^\]]*pause[^\]]*\]`)
-)
+var directionTags = regexp.MustCompile(`\[[^\]]*\]`)
 
 // unsaid cuts a reply's text where a withheld claim begins, so the history holds what the
 // caller heard.
@@ -2415,6 +2417,19 @@ func (a *Agent) finish(response llm.Response) {
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
 		backed := toolRanSinceCaller(history)
+		owes := withheld || owesACall(said, backed)
+		if owes && strings.HasPrefix(response.ID, toolPrefix) {
+			// Qwen met the chase with "Let me check for any outages. One moment, please."
+			// and no call, twice over: a chase that still promises is asked once more, with
+			// the call required.
+			a.mu.Lock()
+			again := a.promiseChased && !a.chaseForced && !backed
+			if again {
+				a.promiseChased, a.chaseForced = false, true
+			}
+			a.mu.Unlock()
+			withheld = withheld || again
+		}
 		switch {
 		case withheld:
 			a.keepPromise(response.ID, keepPromise, true)

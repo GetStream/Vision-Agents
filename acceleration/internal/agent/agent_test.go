@@ -3169,8 +3169,7 @@ func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
 	s.True(promisesStep("Let me verify your account information."))
 	s.True(promisesStep("One moment."))
 	s.False(promisesStep("What time would you like?"))
-	s.True(pauseDirection.MatchString("[short pause] I see you have an appointment on Thursday."))
-	s.False(pauseDirection.MatchString("[warmly] Is that correct?"))
+	s.True(directionTags.MatchString("[checks outage map] I don't see any outages."))
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
