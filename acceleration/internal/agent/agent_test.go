@@ -3244,6 +3244,8 @@ func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
 		{"Checking orders is what I do. Which order is it?", false, false},
 		{"Thank you, Maya. I will reschedule your appointment to Tuesday morning.", true, true},
 		{"I'll book that for you. What name should it be under?", false, false},
+		{"You're verified, Maya. Let me pull up your appointments now.", true, true},
+		{"I have Maya Chen, member ABC123456. Let me verify that now.", false, false},
 		{"Is there anything else I can help you with?", false, false},
 	}
 	for _, c := range cases {

@@ -2686,8 +2686,14 @@ func owesACall(said string, backed bool) bool {
 			return true
 		}
 	}
-	return slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(last, promise) })
+	return slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(last, promise) }) ||
+		slices.ContainsFunc(fetchPromises, func(promise string) bool { return strings.Contains(last, promise) })
 }
+
+// fetchPromises are what a sentence telling the caller a record is about to be pulled says.
+// Nemotron ended "You're verified, Maya. Let me pull up your appointments now." and made no
+// call. "Let me verify" is not one: after a read-back it can come before the caller agrees.
+var fetchPromises = []string{"let me pull", "let me find", "i'll pull", "i will pull", "i'll look", "i will look"}
 
 // actionPromises are what a sentence telling the caller a change is about to be made says.
 // Qwen ended "I will reschedule your appointment to Tuesday morning." and made no call.
