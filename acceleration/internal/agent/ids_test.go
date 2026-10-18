@@ -119,6 +119,12 @@ func TestANumberNobodyGaveIsNotSent(t *testing.T) {
 		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "verify_account", Arguments: arguments})
 		assert.Equal(t, unheard, got, arguments)
 	}
+	refused := append(history,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "verify_account"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: misshapenResult("last4", "19821", nil)})
+	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "verify_account", Arguments: `{"last4":"1982"}`})
+	assert.True(t, got, "a refusal quoting 19821 does not make 1982 heard")
+
 	_, _, heard, _ := unheardNumber(history, llm.ToolCall{Name: "verify_account", Arguments: `{"last4":"1982"}`})
 	assert.Contains(t, unheardResult("last4", "1982", heard), "The numbers the caller said are: ")
 	assert.True(t, failedResult(unheardResult("last4", "1982", heard)))

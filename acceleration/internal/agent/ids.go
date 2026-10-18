@@ -169,7 +169,10 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 				}
 			}
 		case llm.ToolResult:
-			sources = append(sources, message.Content)
+			// A refusal quotes the value refused: "19821" refused let 1982 through.
+			if !failedResult(message.Content) {
+				sources = append(sources, message.Content)
+			}
 		}
 	}
 	var digits []string
