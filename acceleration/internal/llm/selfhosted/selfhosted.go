@@ -39,8 +39,11 @@ type Deployment struct {
 	// Fields are sent on every request, for a model whose template needs them whatever
 	// the request says.
 	Fields map[string]any
+	// Thinks is set for a deployment whose replies think: requests for quickPurposes are
+	// sent with thinking off, and Fields' thinking budget is dropped from them.
+	Thinks bool
 	// Prefill opens the replies to quickPurposes, for a model whose template has no
-	// switch for thinking. The conversation's own replies still think.
+	// switch for thinking.
 	Prefill string
 }
 
@@ -52,11 +55,20 @@ var Deployments = map[string]Deployment{
 		// LFM2.5 thinks before every reply, which costs a quick request its deadline. A
 		// closed thinking block skips it, and enable_thinking tells the server's reasoning
 		// parser that what follows is the answer.
+		Thinks:  true,
 		Prefill: "<think>\n</think>\n",
 	},
+	// Without thinking Qwen 3.6 promises to check and then does not call, and skips the
+	// verification it was told comes first. Left to think it does not stop inside 1,500
+	// tokens, so it is given 128, at the card's thinking-mode temperature.
 	"qwen-baseten": {
 		Provider: "qwen-baseten", BaseURLEnvVar: "QWEN_BASE_URL", ModelID: "qjjnx4lq",
-		Temperature: 0.2,
+		Temperature: 0.6,
+		Thinks:      true,
+		Fields: map[string]any{
+			"chat_template_kwargs":  map[string]any{"enable_thinking": true},
+			"thinking_token_budget": 128,
+		},
 	},
 	"nemotron-bolt": {
 		Provider: "nemotron-bolt", BaseURLEnvVar: "BOLT_BASE_URL", ModelID: "wdlnomk3",
@@ -131,8 +143,9 @@ func (d Deployment) New(options openweights.Options) (*openaicompat.LLM, error) 
 			for key, value := range d.Fields {
 				fields[key] = value
 			}
-			if d.Prefill != "" && quickPurposes[params.Purpose] {
+			if d.Thinks && quickPurposes[params.Purpose] {
 				fields["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+				delete(fields, "thinking_token_budget")
 			}
 			if params.Temperature == nil {
 				fields["temperature"] = d.Temperature
