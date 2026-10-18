@@ -693,6 +693,10 @@ func incomplete(reason string) string {
 func reasoning(extra map[string]respjson.Field) string {
 	field, ok := extra[reasoningField]
 	if !ok {
+		// vLLM 0.31 streams it as "reasoning", PhoneLLM Max's one-sentence thought included.
+		field, ok = extra[replayedReasoningField]
+	}
+	if !ok {
 		return ""
 	}
 

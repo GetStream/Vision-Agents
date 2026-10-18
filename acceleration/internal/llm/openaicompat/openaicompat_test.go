@@ -361,6 +361,21 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 		}
 	}
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
+	s.Equal("The user said hi, so", response.ReasoningText)
+}
+
+func (s *OpenAICompatSuite) TestThinkingStreamedAsReasoningIsThinkingToo() {
+	s.frames = []string{
+		frame([]any{map[string]any{"index": 0, "delta": map[string]any{"reasoning": "Greet them back."}}}, nil),
+		textFrame("Hi! How can I help?"),
+		usageFrame(11, 0, 20, 16, "stop"),
+	}
+	provider := s.provider(Options{Capabilities: llm.Capabilities{StreamsReasoning: true}})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal("Hi! How can I help?", response.OutputText)
+	s.Equal("Greet them back.", response.ReasoningText)
 }
 
 // reasoningOf joins the reasoning a response streamed.
