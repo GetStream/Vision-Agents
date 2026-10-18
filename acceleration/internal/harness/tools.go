@@ -175,6 +175,9 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"correct?\"): make it. Anything you tell " +
 	"them you will do (book, move, call back, escalate, open a ticket) you do with its tool " +
 	"in the same reply. " +
+	"Never fill an argument with a name, number or detail the caller has not given (no " +
+	"\"John Doe\"): ask for it. When there is a tool that verifies the caller, call it before " +
+	"any other. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
