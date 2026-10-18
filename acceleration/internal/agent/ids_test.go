@@ -62,6 +62,8 @@ func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
 		`{"last_four":"129821"}`:                                  true,
 		`{"pin":"4471"}`:                                          false,
 		`{"last4":""}`:                                            false,
+		`{"last4":"9821","address":"98214 Cedar Lane"}`:           true,
+		`{"last4":"9821","address":"1400 Cedar Lane"}`:            false,
 	} {
 		_, _, got := misshapenLastFour(llm.ToolCall{Name: "verify_account", Arguments: arguments})
 		assert.Equal(t, misshapen, got, arguments)

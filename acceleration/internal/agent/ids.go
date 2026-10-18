@@ -122,6 +122,12 @@ func misshapenLastFour(call llm.ToolCall) (key, value string, misshapen bool) {
 		if len(digits) != 4 || len(digits) != len(strings.TrimSpace(text)) {
 			return name, text, true
 		}
+		// Given the split, PhoneLLM Mini sent last4 9821 with the address "98214 Cedar Lane".
+		if address, ok := arguments["address"].(string); ok {
+			if number, _, _ := strings.Cut(strings.TrimSpace(address), " "); len(number) > 4 && strings.HasPrefix(number, digits) {
+				return "address", address, true
+			}
+		}
 	}
 	return "", "", false
 }
@@ -133,6 +139,9 @@ var lastFourKeys = []string{"last4", "last_4", "last_four", "lastfour"}
 // told only the rule, PhoneLLM Mini asked the caller for four digits they had already given.
 func misshapenResult(key, value string, history []llm.Message) string {
 	result := fmt.Sprintf(didNotWork+"%s takes exactly four digits, and %q is not four digits. ", key, value)
+	if !slices.Contains(lastFourKeys, strings.ToLower(key)) {
+		result = fmt.Sprintf(didNotWork+"the address %q still opens with the last four. ", value)
+	}
 	if number, street, ok := runTogether(history); ok {
 		return result + fmt.Sprintf("The caller's %q is the last four %s followed by the address %s %s: "+
 			"call again with those.", number+" "+street, number[:4], number[4:], street)
