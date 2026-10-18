@@ -3162,6 +3162,17 @@ func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	}
 }
 
+func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
+	said := "Let me verify your account information. I have your PIN as 4471. Is that correct?"
+	s.Equal("Let me verify your account information.", heardOf(said, "[short pause] I have your PIN as 4471."))
+	s.Equal("Let me look.", heardOf("Let me look. Your table is ready, you're booked.", ""))
+	s.True(promisesStep("Let me verify your account information."))
+	s.True(promisesStep("One moment."))
+	s.False(promisesStep("What time would you like?"))
+	s.True(pauseDirection.MatchString("[short pause] I see you have an appointment on Thursday."))
+	s.False(pauseDirection.MatchString("[warmly] Is that correct?"))
+}
+
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 	for said, asked := range map[string]bool{
 		"What time would you like?":                         true,

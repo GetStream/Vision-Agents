@@ -58,17 +58,11 @@ var Deployments = map[string]Deployment{
 		Thinks:  true,
 		Prefill: "<think>\n</think>\n",
 	},
-	// Without thinking Qwen 3.6 promises to check and then does not call, and skips the
-	// verification it was told comes first. Left to think it does not stop inside 1,500
-	// tokens, so it is given 128, at the card's thinking-mode temperature.
+	// Qwen 3.6 left to think does not stop inside 1,500 tokens, and cut off by a budget it
+	// carries on thinking in the reply, so it answers without.
 	"qwen-baseten": {
 		Provider: "qwen-baseten", BaseURLEnvVar: "QWEN_BASE_URL", ModelID: "qjjnx4lq",
-		Temperature: 0.6,
-		Thinks:      true,
-		Fields: map[string]any{
-			"chat_template_kwargs":  map[string]any{"enable_thinking": true},
-			"thinking_token_budget": 128,
-		},
+		Temperature: 0.2,
 	},
 	"nemotron-bolt": {
 		Provider: "nemotron-bolt", BaseURLEnvVar: "BOLT_BASE_URL", ModelID: "wdlnomk3",

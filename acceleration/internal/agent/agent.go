@@ -461,6 +461,13 @@ type Agent struct {
 	// behind it, so it and everything after it went unsaid. Only the model consumer
 	// touches it.
 	withheld bool
+	// withheldFrom is the sentence the withholding began at, for cutting the history at
+	// what the caller heard.
+	withheldFrom string
+	// promised says a sentence of this reply, said before any tool answered, told the caller
+	// a step was under way. A pause the model writes after it is the wait acted out, and
+	// what follows the pause a guess at the step's result. Only the model consumer touches it.
+	promised bool
 
 	// following serialises the turns the agent takes of its own accord, so two answers
 	// landing together cannot both decide the agent is free to speak.
@@ -2162,11 +2169,19 @@ func (a *Agent) say(turnID, delta string) {
 // Gemma wrote "One moment, checking... I've checked the outage map and there are no
 // outages" in one breath; chased afterwards, the caller had already heard the invented
 // result. Unsaid, the chase that follows makes the call and the result answers instead.
+//
+// Qwen wrote "Let me look up your appointments. [short pause] I see you have one on
+// Thursday": once a step is promised, a pause and everything after it is held back the
+// same way, and the chase makes the call the promise was for.
 func (a *Agent) withhold(sentence string) bool {
 	if a.withheld {
 		return true
 	}
-	if !claimsDone(sentence) || len(a.availableTools().Tools) == 0 || a.delegating() {
+	if len(a.availableTools().Tools) == 0 || a.delegating() {
+		return false
+	}
+	pause := a.promised && pauseDirection.MatchString(sentence)
+	if !pause && !claimsDone(sentence) && !promisesStep(sentence) {
 		return false
 	}
 	a.mu.Lock()
@@ -2175,10 +2190,45 @@ func (a *Agent) withhold(sentence string) bool {
 	if backed {
 		return false
 	}
-	a.withheld = true
-	a.logger.Debug("holding back a claim no tool has made true", "sentence", sentence)
-	return true
+	if pause || claimsDone(sentence) {
+		a.withheld = true
+		a.withheldFrom = sentence
+		a.logger.Debug("holding back what no tool has made true", "sentence", sentence)
+		return true
+	}
+	a.promised = true
+	return false
 }
+
+// promisesStep reports whether a sentence tells the caller a lookup is under way.
+func promisesStep(sentence string) bool {
+	lower := strings.ToLower(sentence)
+	return slices.ContainsFunc(holdWords, func(hold string) bool { return strings.Contains(lower, hold) }) ||
+		slices.ContainsFunc(stepWords, func(step string) bool { return strings.Contains(lower, step) })
+}
+
+// stepWords are what a sentence starting a step says beyond asking the caller to wait.
+var stepWords = []string{
+	"let me verify", "let me confirm your", "let me pull", "let me find", "i'll check",
+	"i will check", "i'll look", "i'll verify", "i'll pull",
+}
+
+// heardOf cuts a reply's text where withholding began, so the history holds what the
+// caller heard.
+func heardOf(said, from string) string {
+	if from != "" {
+		plain := strings.TrimSpace(directionTags.ReplaceAllString(from, ""))
+		if i := strings.Index(said, plain); plain != "" && i >= 0 {
+			return strings.TrimSpace(said[:i])
+		}
+	}
+	return unsaid(said)
+}
+
+var (
+	directionTags  = regexp.MustCompile(`\[[^\]]*\]`)
+	pauseDirection = regexp.MustCompile(`(?i)\[[^\]]*pause[^\]]*\]`)
+)
 
 // unsaid cuts a reply's text where a withheld claim begins, so the history holds what the
 // caller heard.
@@ -2277,7 +2327,7 @@ func (a *Agent) finish(response llm.Response) {
 	said := strings.TrimSpace(a.spoken.String())
 	withheld := a.withheld
 	if withheld {
-		said = unsaid(said)
+		said = heardOf(said, a.withheldFrom)
 	}
 	a.resetTurn()
 
@@ -2583,7 +2633,7 @@ func failedResult(content string) bool {
 		return true
 	}
 	var body struct {
-		Error any  `json:"error"`
+		Error any   `json:"error"`
 		OK    *bool `json:"ok"`
 	}
 	if json.Unmarshal([]byte(content), &body) != nil {
@@ -3079,6 +3129,8 @@ func (a *Agent) resetTurn() {
 	a.sentences = 0
 	a.openTurn = ""
 	a.withheld = false
+	a.withheldFrom = ""
+	a.promised = false
 	a.mu.Lock()
 	a.saying = ""
 	a.mu.Unlock()
