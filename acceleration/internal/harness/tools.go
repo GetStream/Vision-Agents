@@ -177,8 +177,9 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"in the same reply. " +
 	"Never fill an argument with a name, number or detail the caller has not given (no " +
 	"\"John Doe\"): ask for it. When there is a tool that verifies the caller, call it before " +
-	"any other, except to escalate or log a callback for a caller who will not or cannot be " +
-	"verified: do that with what you have. " +
+	"any tool that reads or changes the caller's records. A tool whose arguments need nothing " +
+	"about the caller (logging an escalation or a callback with a reason) does not wait for " +
+	"verification: a caller who will not be verified is exactly who it is for. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
