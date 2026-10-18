@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -72,6 +73,30 @@ func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
 
 	heard := []llm.Message{{Role: llm.User, Content: "PIN 4471. Last four. 553017 Oak Road. Is there an outage?"}}
 	assert.Contains(t, misshapenResult("last4", "55317", heard), "the last four 5530 followed by the address 17 Oak Road")
+}
+
+func TestAHandedOutIDLeftOutIsAskedFor(t *testing.T) {
+	tools := harness.Tools{Tools: []harness.Tool{
+		{Name: "create_ticket"},
+		{Name: "dispatch_tech", Parameters: map[string]any{"properties": map[string]any{
+			"window": map[string]any{"type": "string"}, "ticket_id": map[string]any{"type": "string"},
+		}}},
+	}}
+	dispatch := llm.ToolCall{Name: "dispatch_tech", Arguments: `{"window":"am"}`}
+	_, _, missing := missingID(nil, dispatch, tools)
+	assert.False(t, missing, "no ticket has been opened yet")
+
+	ticketed := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "create_ticket"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"id":"T-1842","address":"14 Cedar Lane"}`},
+	}
+	key, known, missing := missingID(ticketed, dispatch, tools)
+	assert.True(t, missing)
+	assert.Equal(t, "ticket_id", key)
+	assert.Equal(t, []string{"T-1842 (id)"}, known)
+
+	_, _, missing = missingID(ticketed, llm.ToolCall{Name: "dispatch_tech", Arguments: `{"window":"am","ticket_id":"T-1842"}`}, tools)
+	assert.False(t, missing)
 }
 
 func TestANumberNobodyGaveIsNotSent(t *testing.T) {

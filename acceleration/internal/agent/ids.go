@@ -76,6 +76,59 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	return "", "", nil, false
 }
 
+// missingID reports a handed-out ID the tool takes but the call left out, once a tool that
+// makes or finds that thing has returned one. PhoneLLM Max dispatched a technician with no
+// ticket_id right after create_ticket returned T-1842, and the tool ran with none.
+func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (key string, known []string, missing bool) {
+	var arguments map[string]any
+	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
+		return "", nil, false
+	}
+	names := toolNames(tools)
+	var properties map[string]any
+	for _, tool := range tools.Tools {
+		if tool.Name == call.Name {
+			properties, _ = tool.Parameters["properties"].(map[string]any)
+		}
+	}
+	keys := make([]string, 0, len(properties))
+	for name := range properties {
+		keys = append(keys, name)
+	}
+	slices.Sort(keys)
+	called := map[string]string{}
+	for _, message := range history {
+		for _, made := range message.ToolCalls {
+			called[made.ID] = made.Name
+		}
+	}
+	for _, name := range keys {
+		if _, given := arguments[name]; given || !handedOut(name, names) {
+			continue
+		}
+		entity := "_" + strings.TrimSuffix(name, "_id")
+		var ids []string
+		for _, message := range history {
+			if message.Role != llm.ToolResult || !strings.Contains(called[message.ToolCallID], entity) {
+				continue
+			}
+			var result any
+			if json.Unmarshal([]byte(message.Content), &result) != nil {
+				continue
+			}
+			walkIDs(result, "", func(at, id string) {
+				if entry := fmt.Sprintf("%s (%s)", id, at); (at == "id" || at == name) && !slices.Contains(ids, entry) {
+					ids = append(ids, entry)
+				}
+			})
+		}
+		if len(ids) > 0 {
+			return name, ids, true
+		}
+	}
+	return "", nil, false
+}
+
 // placeholderName reports a name argument filled with a stand-in for one the caller never
 // gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe". A name of more than
 // four words is not one either: PhoneLLM Max booked a table under the note that resumes a
