@@ -196,6 +196,9 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"to the tool that records the change. " +
 	"When your instructions say to log or record something when a situation comes up, call " +
 	"its tool in the reply where it comes up, before asking the caller for anything. " +
+	"Once a tool that books or changes something succeeds, the next thing the caller hears " +
+	"is that it is done, in the words your instructions give for it. Ask for a detail neither " +
+	"your instructions nor the tool require (a phone number, notes) at most once, after that. " +
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
 	"it, with no hold phrase and no call, until they agree. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
