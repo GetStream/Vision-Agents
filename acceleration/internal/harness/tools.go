@@ -169,6 +169,10 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"booking, opening a ticket) unless you call the tool in that same reply; if you have " +
 	"not called that tool, call it now. Never tell the caller what a tool would find (an " +
 	"outage, a free slot, a record) without its result in this conversation: call it first. " +
+	"When a check comes back with what the caller asked for and you have what the next tool " +
+	"needs, call it in that reply rather than asking whether to go ahead; anything you tell " +
+	"them you will do (book, move, call back, escalate, open a ticket) you do with its tool " +
+	"in the same reply. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
