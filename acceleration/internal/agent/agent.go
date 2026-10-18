@@ -2617,8 +2617,13 @@ const logTheRefusal = "You just refused the caller. If your instructions say to 
 // refuses reports whether said turns the caller down.
 func refuses(said string) bool {
 	lower := spokenLower(said)
-	return slices.ContainsFunc(refusals, func(refusal string) bool { return strings.Contains(lower, refusal) })
+	return refusedAction.MatchString(lower) ||
+		slices.ContainsFunc(refusals, func(refusal string) bool { return strings.Contains(lower, refusal) })
 }
+
+// refusedAction is "can't" or "cannot" before something the caller asked to have done:
+// PhoneLLM Max said "I can't credit a bill under a threat".
+var refusedAction = regexp.MustCompile(`\b(can't|cannot|can not|won't be able to)\s+(credit|refill|change|apply|skip|send|process|waive|override|approve|authorize|refund|prescribe|give you|do that)\b`)
 
 var refusals = []string{
 	"i can't refill", "i cannot refill", "i'm not able to", "i am not able to", "i'm unable to",
