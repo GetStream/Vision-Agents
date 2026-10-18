@@ -2207,7 +2207,7 @@ func (a *Agent) withhold(sentence string) bool {
 		return false
 	}
 	a.mu.Lock()
-	backed := backsClaim(a.history, sentence)
+	backed := backsClaim(a.history, sentence, toolNames(a.availableTools()))
 	ran := toolRanSinceCaller(a.history)
 	a.mu.Unlock()
 	if claimsDone(sentence) && backed || !claimsDone(sentence) && ran {
@@ -2466,14 +2466,14 @@ func (a *Agent) finish(response llm.Response) {
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
-		backed := backsClaim(history, said)
+		backed := backsClaim(history, said, toolNames(a.availableTools()))
 		owes := withheld || owesACall(said, backed)
 		if owes && strings.HasPrefix(response.ID, toolPrefix) {
 			// Qwen met the chase with "Let me check for any outages. One moment, please."
 			// and no call, twice over: a chase that still promises is asked once more, with
 			// the call required.
 			a.mu.Lock()
-			again := a.promiseChased && !a.chaseForced && !changedSinceCaller(history)
+			again := a.promiseChased && !a.chaseForced && !changedSinceCaller(history, anyTool)
 			if again {
 				a.promiseChased, a.chaseForced = false, true
 			}
@@ -2487,7 +2487,7 @@ func (a *Agent) finish(response llm.Response) {
 			// A hold phrase can come before the caller has given what the call needs, and
 			// a forced call is then made with blanks; a claim that it is done cannot.
 			a.keepPromise(response.ID, keepPromise, !backed && claimsDone(said))
-		case !changedSinceCaller(history) && wentAhead(history):
+		case !changedSinceCaller(history, anyTool) && wentAhead(history):
 			a.keepPromise(response.ID, actOnGoAhead, true)
 		default:
 			// A step is chased even after another promise was: in Voicebench the chase that
@@ -2723,17 +2723,43 @@ var doneClaims = []string{
 	"i'm booking", "i am booking", "i'm dispatching", "i am dispatching",
 	"got you down for", "got you booked", "i've moved", "i've changed", "i've reserved",
 	"has been rescheduled", "has been moved", "is booked", "is all set",
+	"i opened", "i booked", "i scheduled", "i rescheduled", "i cancelled", "i canceled",
+	"i dispatched", "i created", "i logged",
 }
 
 // backsClaim reports whether what a tool has answered since the caller last spoke makes
 // said's claim true: "I've checked" takes any tool, while "you're booked" or "has been
 // rescheduled" takes one that changes something. Qwen said "your appointment has been
 // rescheduled" on the strength of the lookup that found it.
-func backsClaim(history []llm.Message, said string) bool {
-	if claimsChange(said) {
-		return changedSinceCaller(history)
+//
+// A change claim that names what one of the tools makes ("I opened a ticket" against
+// create_ticket) takes that tool: PhoneLLM Mini told the caller "I opened a ticket for
+// you... Ticket number 12345" with only walk_reboot behind it.
+func backsClaim(history []llm.Message, said string, tools []string) bool {
+	if !claimsChange(said) {
+		return toolRanSinceCaller(history)
 	}
-	return toolRanSinceCaller(history)
+	named := claimedObjects(said, tools)
+	return changedSinceCaller(history, func(tool string) bool {
+		return len(named) == 0 || slices.ContainsFunc(named, func(object string) bool {
+			return slices.Contains(strings.Split(strings.ToLower(tool), "_")[1:], object)
+		})
+	})
+}
+
+// claimedObjects are the objects of tools ("ticket" in create_ticket) that said names.
+func claimedObjects(said string, tools []string) []string {
+	words := strings.FieldsFunc(spokenLower(said), func(r rune) bool { return !unicode.IsLetter(r) })
+	var named []string
+	for _, tool := range tools {
+		parts := strings.Split(strings.ToLower(tool), "_")
+		for _, object := range parts[1:] {
+			if len(object) >= 4 && slices.Contains(words, object) && !slices.Contains(named, object) {
+				named = append(named, object)
+			}
+		}
+	}
+	return named
 }
 
 // claimsChange reports whether said claims more than a lookup.
@@ -2749,8 +2775,8 @@ var lookedClaims = []string{"i've checked", "i have checked", "i've verified"}
 
 // changedSinceCaller reports whether a tool that changes something, rather than one that
 // only reads (lookup_, check_, verify_ and the like), has answered without failing since
-// the caller last spoke.
-func changedSinceCaller(history []llm.Message) bool {
+// the caller last spoke, and is one that counts.
+func changedSinceCaller(history []llm.Message, counts func(tool string) bool) bool {
 	names := map[string]string{}
 	for _, message := range history {
 		for _, call := range message.ToolCalls {
@@ -2760,7 +2786,8 @@ func changedSinceCaller(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		switch history[i].Role {
 		case llm.ToolResult:
-			if !failedResult(history[i].Content) && !readsOnly(names[history[i].ToolCallID]) {
+			name := names[history[i].ToolCallID]
+			if !failedResult(history[i].Content) && !readsOnly(name) && counts(name) {
 				return true
 			}
 		case llm.User:
@@ -2769,6 +2796,8 @@ func changedSinceCaller(history []llm.Message) bool {
 	}
 	return false
 }
+
+func anyTool(string) bool { return true }
 
 // readVerbs open the names of tools that only read.
 var readVerbs = []string{"lookup", "look_up", "check", "get", "find", "search", "verify", "list", "read", "fetch", "query"}

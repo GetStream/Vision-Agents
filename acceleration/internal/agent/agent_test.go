@@ -3218,13 +3218,29 @@ func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_appointment"}}},
 		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"appointments":[{"id":"a1"}]}`},
 	}
-	s.True(backsClaim(looked, "I've checked, you have one on Thursday."))
-	s.False(backsClaim(looked, "Your appointment has been rescheduled to Tuesday."))
+	s.True(backsClaim(looked, "I've checked, you have one on Thursday.", nil))
+	s.False(backsClaim(looked, "Your appointment has been rescheduled to Tuesday.", nil))
 
 	moved := append(looked,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "reschedule_appointment"}}},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"ok":true}`})
-	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday."))
+	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday.", nil))
+}
+
+func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
+	tools := []string{"verify_account", "walk_reboot", "create_ticket", "dispatch_tech"}
+	rebooted := []llm.Message{
+		{Role: llm.User, Content: "please keep going"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "walk_reboot"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
+	}
+	s.False(backsClaim(rebooted, "Since the Internet was still down, I opened a ticket for you.", tools))
+	s.True(backsClaim(rebooted, "You're all set, the gateway is back.", tools))
+
+	ticketed := append(rebooted,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "create_ticket"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"id":"T-1842"}`})
+	s.True(backsClaim(ticketed, "I opened a ticket for you.", tools))
 }
 
 func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
