@@ -23,6 +23,10 @@ const apiKeyEnvVar = "BASETEN_API_KEY"
 // at zero.
 const flowPurpose = "flow"
 
+// quickPurposes are the requests with a deadline too short to think in: a flow ruling and
+// a line composed for a pause, which is dropped after three seconds.
+var quickPurposes = map[string]bool{flowPurpose: true, "compose": true}
+
 // Deployment is one model on its own Baseten endpoint.
 type Deployment struct {
 	Provider      string
@@ -35,7 +39,7 @@ type Deployment struct {
 	// Fields are sent on every request, for a model whose template needs them whatever
 	// the request says.
 	Fields map[string]any
-	// Prefill opens the flow controller's replies, for a model whose template has no
+	// Prefill opens the replies to quickPurposes, for a model whose template has no
 	// switch for thinking. The conversation's own replies still think.
 	Prefill string
 }
@@ -45,7 +49,7 @@ var Deployments = map[string]Deployment{
 	"liquid": {
 		Provider: "liquid", BaseURLEnvVar: "LFM_BASE_URL", ModelID: "qvm0plxq",
 		Temperature: 0.1,
-		// LFM2.5 thinks before every reply, which costs a flow ruling its time limit. A
+		// LFM2.5 thinks before every reply, which costs a quick request its deadline. A
 		// closed thinking block skips it, and enable_thinking tells the server's reasoning
 		// parser that what follows is the answer.
 		Prefill: "<think>\n</think>\n",
@@ -112,7 +116,7 @@ func (d Deployment) New(options openweights.Options) (*openaicompat.LLM, error) 
 		BaseURL:      options.BaseURL,
 		Capabilities: capabilities,
 		Prefill: func(params llm.ResponseParams) string {
-			if params.Purpose != flowPurpose {
+			if !quickPurposes[params.Purpose] {
 				return ""
 			}
 			return d.Prefill
@@ -127,7 +131,7 @@ func (d Deployment) New(options openweights.Options) (*openaicompat.LLM, error) 
 			for key, value := range d.Fields {
 				fields[key] = value
 			}
-			if d.Prefill != "" && params.Purpose == flowPurpose {
+			if d.Prefill != "" && quickPurposes[params.Purpose] {
 				fields["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
 			}
 			if params.Temperature == nil {
