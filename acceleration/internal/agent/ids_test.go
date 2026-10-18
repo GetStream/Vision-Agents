@@ -32,6 +32,9 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 	assert.True(t, unfound)
 	_, _, _, unfound = unfoundID(history[:5], call(`{"ticket_id":"840"}`), tools)
 	assert.True(t, unfound, "a ticket the caller's error code stands in for was never opened")
+	key, value, known, unfound = unfoundID(history[:5], call(`{"ticket_id":"","window":"am"}`), tools)
+	assert.True(t, unfound, "no ticket at all is not a ticket")
+	assert.Contains(t, unfoundIDResult(key, value, known), "ticket_id is empty")
 
 	for _, arguments := range []string{
 		`{"appointment_id":"a1"}`,

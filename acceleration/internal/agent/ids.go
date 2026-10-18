@@ -47,8 +47,11 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	for _, name := range keys {
 		text, ok := arguments[name].(string)
 		wanted := alphanumeric(text)
-		if !ok || !handedOut(name, tools) || wanted == "" {
+		if !ok || !handedOut(name, tools) {
 			continue
+		}
+		if wanted == "" {
+			return name, text, collectIDs(results), true
 		}
 		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
 			continue
@@ -104,6 +107,18 @@ func toolNames(tools harness.Tools) []string {
 	return names
 }
 
+func collectIDs(results []any) []string {
+	var ids []string
+	for _, result := range results {
+		walkIDs(result, "", func(at, id string) {
+			if entry := fmt.Sprintf("%s (%s)", id, at); !slices.Contains(ids, entry) {
+				ids = append(ids, entry)
+			}
+		})
+	}
+	return ids
+}
+
 // entityOf is what an ID argument names: "appointment" for "appointment_id".
 func entityOf(key string) string {
 	return strings.ReplaceAll(strings.TrimSuffix(key, "_id"), "_", " ")
@@ -155,6 +170,9 @@ func alphanumeric(text string) string {
 // with didNotWork so that it backs no claim.
 func unfoundIDResult(key, value string, known []string) string {
 	result := fmt.Sprintf(didNotWork+"no tool has given you %q as a %s, and the caller did not say it. ", value, key)
+	if strings.TrimSpace(value) == "" {
+		result = fmt.Sprintf(didNotWork+"%s is empty. ", key)
+	}
 	if len(known) > 0 {
 		result += "The IDs your tools have returned are: " + strings.Join(known, ", ") + ". "
 	}
