@@ -2613,14 +2613,25 @@ func (a *Agent) preSpeech(calls []llm.ToolCall) string {
 	return ""
 }
 
+// fillerQuiet is how long the line has to have been quiet before a step taken on a result
+// is announced. Audio is published as it plays, so a shorter gap is the last reply still
+// being heard.
+const fillerQuiet = 300 * time.Millisecond
+
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run. Only a result that earns a reply of its own is worth
 // promising: anything else leaves a promise to check as the last thing the caller heard.
 // A turn reading a result has already been promised, and a filler there only queues behind
-// the last one.
+// the last one, unless that has finished playing: the next step (the outage check after
+// the account is verified) is otherwise run in silence.
 func (a *Agent) fillsPause(completionID string, calls []llm.ToolCall) bool {
 	if strings.HasPrefix(completionID, toolPrefix) {
-		return false
+		a.mu.Lock()
+		playing := a.utterances > 0 || time.Since(a.lastSpokeAt) < fillerQuiet
+		a.mu.Unlock()
+		if playing {
+			return false
+		}
 	}
 	return slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
 		return a.followsTool(harness.ToolRequested{TurnID: completionID, Call: call})
