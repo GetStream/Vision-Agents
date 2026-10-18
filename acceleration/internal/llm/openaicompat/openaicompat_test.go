@@ -787,7 +787,7 @@ func (s *OpenAICompatSuite) TestAProvidersOwnRequestFieldsReachIt() {
 
 func (s *OpenAICompatSuite) TestAPrefillOpensTheReplyForTheModelToContinue() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
-	provider := s.provider(Options{Prefill: "<think>\n</think>\n"})
+	provider := s.provider(Options{Prefill: func(llm.ResponseParams) string { return "<think>\n</think>\n" }})
 
 	s.ask(provider, hello())
 

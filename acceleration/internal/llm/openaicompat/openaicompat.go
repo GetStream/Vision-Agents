@@ -87,8 +87,9 @@ type Options struct {
 	ToolCallText bool
 	// Prefill opens every reply with these words, which the model continues rather than
 	// repeats, such as an empty thinking block for a model that cannot be told not to
-	// think. It needs a vLLM-style server that takes continue_final_message.
-	Prefill string
+	// think. It needs a vLLM-style server that takes continue_final_message. It is asked
+	// per request, and empty is none.
+	Prefill func(llm.ResponseParams) string
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -495,8 +496,8 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 	if len(pendingImages) > 0 {
 		messages = append(messages, openai.UserMessage(pendingImages))
 	}
-	if l.options.Prefill != "" {
-		messages = append(messages, openai.AssistantMessage(l.options.Prefill))
+	if prefill := l.prefill(request); prefill != "" {
+		messages = append(messages, openai.AssistantMessage(prefill))
 	}
 	params := openai.ChatCompletionNewParams{
 		Model:    l.options.Model,
@@ -636,13 +637,21 @@ func messageText(message llm.Message) string {
 	return llm.TextOf(message.Parts)
 }
 
+// prefill is what this request's reply opens with, or empty for none.
+func (l *LLM) prefill(request llm.ResponseParams) string {
+	if l.options.Prefill == nil {
+		return ""
+	}
+	return l.options.Prefill(request)
+}
+
 // requestOptions applies the request fields outside the OpenAI schema.
 func (l *LLM) requestOptions(request llm.ResponseParams) []option.RequestOption {
 	fields := map[string]any{}
 	if l.options.RequestFields != nil {
 		fields = l.options.RequestFields(request, l.options.Capabilities.Effort(request))
 	}
-	if l.options.Prefill != "" {
+	if l.prefill(request) != "" {
 		fields["continue_final_message"] = true
 		fields["add_generation_prompt"] = false
 	}
