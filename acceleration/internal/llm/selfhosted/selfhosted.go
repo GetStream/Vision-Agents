@@ -45,6 +45,8 @@ type Deployment struct {
 	// Prefill opens the replies to quickPurposes, for a model whose template has no
 	// switch for thinking.
 	Prefill string
+	// ReplayReasoning sends each earlier reply's thinking back with it.
+	ReplayReasoning bool
 }
 
 // Deployments are keyed by provider name.
@@ -74,9 +76,10 @@ var Deployments = map[string]Deployment{
 	},
 	// Max is trained to write one sentence of reasoning before each reply, and its
 	// reasoning parser reads the mode from the request, so both switches go on every one.
+	// It was trained on conversations whose earlier replies kept their reasoning.
 	"phonellm-max": {
 		Provider: "phonellm-max", BaseURLEnvVar: "PHONELLM_MAX_BASE_URL", ModelID: "qrp0dk93",
-		Temperature: 0,
+		Temperature: 0, ReplayReasoning: true,
 		Fields: map[string]any{"chat_template_kwargs": map[string]any{
 			"enable_thinking":           true,
 			"truncate_history_thinking": false,
@@ -116,11 +119,12 @@ func (d Deployment) New(options openweights.Options) (*openaicompat.LLM, error) 
 		capabilities.StreamsReasoning = true
 	}
 	return openaicompat.New(openaicompat.Options{
-		Provider:     d.Provider,
-		Model:        options.Model,
-		APIKey:       options.APIKey,
-		BaseURL:      options.BaseURL,
-		Capabilities: capabilities,
+		Provider:        d.Provider,
+		Model:           options.Model,
+		APIKey:          options.APIKey,
+		BaseURL:         options.BaseURL,
+		Capabilities:    capabilities,
+		ReplayReasoning: d.ReplayReasoning,
 		Prefill: func(params llm.ResponseParams) string {
 			if !quickPurposes[params.Purpose] {
 				return ""

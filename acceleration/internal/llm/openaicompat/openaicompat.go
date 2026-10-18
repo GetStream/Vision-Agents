@@ -47,6 +47,9 @@ const defaultTimeout = 2 * time.Minute
 // schema, so it arrives as an extra field rather than on the delta struct.
 const reasoningField = "reasoning_content"
 
+// replayedReasoningField is where vLLM's chat templates read an earlier turn's thinking.
+const replayedReasoningField = "reasoning"
+
 // A signing provider nests its signature under extra_content, keyed by vendor. Gemini is
 // the one that does, and it refuses a replayed call that comes back without it.
 const (
@@ -85,6 +88,9 @@ type Options struct {
 	// as text, as vLLM does with Gemma 4, so a call written as text is still made and never
 	// spoken.
 	ToolCallText bool
+	// ReplayReasoning sends each earlier assistant turn's thinking back with it, for a model
+	// trained on conversations that kept it, such as PhoneLLM Max.
+	ReplayReasoning bool
 	// Prefill opens every reply with these words, which the model continues rather than
 	// repeats, such as an empty thinking block for a model that cannot be told not to
 	// think. It needs a vLLM-style server that takes continue_final_message. It is asked
@@ -481,7 +487,11 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		case llm.System:
 			messages = append(messages, openai.SystemMessage(messageText(message)))
 		case llm.Assistant:
-			messages = append(messages, assistantMessage(message, l.options.UnsignedCall))
+			assistant := assistantMessage(message, l.options.UnsignedCall)
+			if l.options.ReplayReasoning && message.Reasoning != "" && assistant.OfAssistant != nil {
+				assistant.OfAssistant.SetExtraFields(map[string]any{replayedReasoningField: message.Reasoning})
+			}
+			messages = append(messages, assistant)
 		case llm.ToolResult:
 			messages = append(messages, openai.ToolMessage(messageText(message), message.ToolCallID))
 			if message.HasImage() {

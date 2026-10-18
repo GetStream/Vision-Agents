@@ -1113,6 +1113,21 @@ func (s *OpenAICompatSuite) TestAnUnsignedToolCallIsReplayedWithoutAnEmptySignat
 	s.NotContains(call, "extra_content")
 }
 
+func (s *OpenAICompatSuite) TestEarlierThinkingIsSentBackOnlyToAProviderThatReplaysIt() {
+	input := []llm.Message{
+		{Role: llm.User, Content: "my internet is down"},
+		{Role: llm.Assistant, Content: "I can help with that.", Reasoning: "Unverified; ask for the PIN."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}, Reasoning: "Look it up."},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "found"},
+	}
+	for replay, want := range map[bool][]any{true: {"Unverified; ask for the PIN.", "Look it up."}, false: {nil, nil}} {
+		s.frames = []string{textFrame("done"), usageFrame(30, 0, 4, 0, "stop")}
+		s.ask(s.provider(Options{ReplayReasoning: replay}), llm.ResponseParams{Input: input})
+		sent := s.sentMessages(len(s.requests) - 1)
+		s.Equal(want, []any{sent[1]["reasoning"], sent[2]["reasoning"]}, "replay=%v", replay)
+	}
+}
+
 func (s *OpenAICompatSuite) TestCallsAnotherModelMadeAreSignedForAProviderThatRefusesThemUnsigned() {
 	provider := s.provider(Options{UnsignedCall: "skip"})
 	s.frames = []string{textFrame("done"), usageFrame(30, 0, 4, 0, "stop")}

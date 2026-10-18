@@ -67,6 +67,9 @@ type Message struct {
 	// has to be replayed with them, because the provider rejects a tool result that
 	// answers nothing.
 	ToolCalls []ToolCall
+	// Reasoning is what an assistant turn thought before it answered, for a provider that
+	// is sent it again with the turn.
+	Reasoning string
 	// ToolCallID names the call a ToolResult message answers.
 	ToolCallID string
 }

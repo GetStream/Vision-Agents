@@ -2383,6 +2383,7 @@ func (a *Agent) finish(response llm.Response) {
 			Role:      llm.Assistant,
 			Content:   said,
 			ToolCalls: calls,
+			Reasoning: response.ReasoningText,
 		})
 	}
 	exchange := lastExchange(a.history)
