@@ -2610,8 +2610,8 @@ const actOnGoAhead = "The caller just told you to go ahead. Call the tool that d
 	"agreed to now, with what you have, without asking for anything optional first."
 
 // logTheRefusal is the note a refusal is chased with when nothing has been logged in the call.
-const logTheRefusal = "You just refused the caller. If your instructions say to log or escalate " +
-	"what you refused, call %s now with the reason, then tell the caller it is logged. If they " +
+const logTheRefusal = "You just refused the caller. If your instructions say to log, escalate " +
+	"or hand off what you refused, call %s now with the reason, then tell the caller. If they " +
 	"do not, answer the caller's last words again."
 
 // refuses reports whether said turns the caller down.
@@ -2624,18 +2624,24 @@ var refusals = []string{
 	"i can't refill", "i cannot refill", "i'm not able to", "i am not able to", "i'm unable to",
 	"i am unable to", "i can't skip", "i cannot skip", "i'm not allowed", "i can't do that",
 	"i cannot do that", "i can't send", "i cannot send", "i can't process", "i cannot process",
+	"can't change your", "cannot change your", "can't apply", "cannot apply", "isn't eligible",
+	"is not eligible", "aren't eligible", "are not eligible",
 }
 
-// loggingTool is the tool that logs or escalates, when there is one: log_escalation.
+// loggingTool is the tool that logs, escalates or hands the call off, when there is one:
+// log_escalation, or create_transfer_summary, which no model called for a caller who
+// threatened to cancel after being refused a credit.
 func loggingTool(tools harness.Tools) string {
 	for _, tool := range tools.Tools {
 		name := strings.ToLower(tool.Name)
-		if strings.HasPrefix(name, "log_") || strings.Contains(name, "escalat") {
+		if strings.HasPrefix(name, "log_") || slices.ContainsFunc(handOffs, func(word string) bool { return strings.Contains(name, word) }) {
 			return tool.Name
 		}
 	}
 	return ""
 }
+
+var handOffs = []string{"escalat", "transfer_summary", "handoff", "hand_off"}
 
 // calledInCall reports whether tool has answered without failing anywhere in the call.
 func calledInCall(history []llm.Message, tool string) bool {

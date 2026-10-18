@@ -3234,6 +3234,8 @@ func (s *AgentSuite) TestARefusalIsChasedToTheToolThatLogsIt() {
 	tools := harness.Tools{Tools: []harness.Tool{{Name: "verify_identity"}, {Name: "log_escalation"}}}
 	s.Equal("log_escalation", loggingTool(tools))
 	s.Empty(loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "create_reservation"}}}))
+	s.Equal("create_transfer_summary", loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "apply_credit"}, {Name: "create_transfer_summary"}}}))
+	s.True(refuses("I still can't change your plan under a threat, but I can look into a credit."))
 
 	logged := []llm.Message{
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "log_escalation"}}},
