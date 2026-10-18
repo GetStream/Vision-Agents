@@ -205,6 +205,35 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	return "", false
 }
 
+// refusedBefore returns the answer of an identical call the tool already refused on this
+// call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Nemotron
+// sent verify_account the PIN it had misheard three times over and was refused each time;
+// only what the caller says next can change the answer.
+func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		result := history[i]
+		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) || !failedResult(result.Content) {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
+				return asked.ID == result.ToolCallID && asked.Name == call.Name && sameArguments(asked.Arguments, call.Arguments)
+			}) {
+				return result.Content, true
+			}
+		}
+	}
+	return "", false
+}
+
+// alreadyRefused opens the answer to a call repeated after the tool refused it.
+// It opens with didNotWork so that it backs no claim.
+const alreadyRefused = didNotWork + "you already made this exact call with these values and it was refused: "
+
+// tryOtherValues closes it.
+const tryOtherValues = ". Do not call it again with the same values. Read them back to the caller, " +
+	"digit by digit, and ask which one is wrong."
+
 // sameArguments compares two calls' arguments as JSON, so spacing and key order do not count.
 func sameArguments(a, b string) bool {
 	var left, right any
@@ -270,6 +299,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	var err error
 	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
+	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
+		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
 		said, files, err = a.runCode(ctx, requested.Call)

@@ -3172,6 +3172,27 @@ func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
 	s.False(repeated, "a booking that failed may be tried again")
 }
 
+func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
+	verify := llm.ToolCall{ID: "c1", Name: "verify_account", Arguments: `{"pin":"1044"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "PIN four four seven one"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{verify}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":false}`},
+		{Role: llm.User, Content: "I said four four seven one"},
+	}
+	refused, again := refusedBefore(history, llm.ToolCall{ID: "c2", Name: "verify_account", Arguments: `{"pin": "1044"}`})
+	s.True(again)
+	s.Equal(`{"ok":false}`, refused)
+	s.True(failedResult(alreadyRefused + refused + tryOtherValues))
+
+	_, again = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "verify_account", Arguments: `{"pin":"4471"}`})
+	s.False(again, "new values are worth trying")
+
+	history[2].Content = didNotWork + "timeout"
+	_, again = refusedBefore(history, llm.ToolCall{ID: "c4", Name: "verify_account", Arguments: `{"pin":"1044"}`})
+	s.False(again, "a call that could not be made may be tried again")
+}
+
 func (s *AgentSuite) TestASentenceAboutTheCallerIsNotSaidToThem() {
 	s.True(narrates("The caller said yes after I offered two times."))
 	s.True(narrates("The caller is listening, not reading: tell them the part that answers them."))
