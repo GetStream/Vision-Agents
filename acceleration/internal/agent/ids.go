@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -127,12 +128,34 @@ func misshapenLastFour(call llm.ToolCall) (key, value string, misshapen bool) {
 
 var lastFourKeys = []string{"last4", "last_4", "last_four", "lastfour"}
 
-// misshapenResult is what a call with a misshapen last four is answered with.
-func misshapenResult(key, value string) string {
-	return fmt.Sprintf(didNotWork+"%s takes exactly four digits, and %q is not four digits. When what "+
-		"you heard runs into the next number (\"982114 Cedar Lane\"), the first four are the last "+
-		"four and the rest begins the address (14 Cedar Lane). Otherwise read back what you heard "+
-		"and ask for the four digits.", key, value)
+// misshapenResult is what a call with a misshapen last four is answered with. When the
+// caller's words hold a number run into the street after it, it spells out the split:
+// told only the rule, PhoneLLM Mini asked the caller for four digits they had already given.
+func misshapenResult(key, value string, history []llm.Message) string {
+	result := fmt.Sprintf(didNotWork+"%s takes exactly four digits, and %q is not four digits. ", key, value)
+	if number, street, ok := runTogether(history); ok {
+		return result + fmt.Sprintf("The caller's %q is the last four %s followed by the address %s %s: "+
+			"call again with those.", number+" "+street, number[:4], number[4:], street)
+	}
+	return result + "When what you heard runs into the next number (\"553017 Oak Road\"), the first " +
+		"four are the last four and the rest begins the address (17 Oak Road). Otherwise read back " +
+		"what you heard and ask for the four digits."
+}
+
+var runOn = regexp.MustCompile(`\b(\d{5,8})\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)`)
+
+// runTogether finds, in what the caller said last, a number of five to eight digits
+// followed by a capitalised street.
+func runTogether(history []llm.Message) (number, street string, ok bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != llm.User {
+			continue
+		}
+		if match := runOn.FindStringSubmatch(history[i].Content); match != nil {
+			return match[1], match[2], true
+		}
+	}
+	return "", "", false
 }
 
 func toolNames(tools harness.Tools) []string {

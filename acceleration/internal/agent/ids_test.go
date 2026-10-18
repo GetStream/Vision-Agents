@@ -66,7 +66,10 @@ func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
 		_, _, got := misshapenLastFour(llm.ToolCall{Name: "verify_account", Arguments: arguments})
 		assert.Equal(t, misshapen, got, arguments)
 	}
-	assert.True(t, failedResult(misshapenResult("last4", "98214")))
+	assert.True(t, failedResult(misshapenResult("last4", "98214", nil)))
+
+	heard := []llm.Message{{Role: llm.User, Content: "PIN 4471. Last four. 553017 Oak Road. Is there an outage?"}}
+	assert.Contains(t, misshapenResult("last4", "55317", heard), "the last four 5530 followed by the address 17 Oak Road")
 }
 
 func TestAStandInNameIsNotBookedUnder(t *testing.T) {
