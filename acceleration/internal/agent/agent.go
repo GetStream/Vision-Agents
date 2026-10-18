@@ -772,17 +772,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender)
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached, asked, sender)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender)
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil, asked, sender)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1510,6 +1510,8 @@ type heard struct {
 	revisedAt    time.Time
 	sttLatencyMs float64
 	confidence   float64
+	// typed is a turn written rather than spoken, such as the instruction opening a call.
+	typed bool
 }
 
 func participantName(participant stt.Participant) string {
@@ -1682,7 +1684,7 @@ func (a *Agent) respondTurn(
 	a.asked = asked
 	a.sender = sender
 	a.lastParticipant = participant
-	if !listened.at.IsZero() {
+	if !listened.typed {
 		a.heardCaller = true
 	}
 	// A call opened with a typed instruction ("greet the caller") has nothing to act on
