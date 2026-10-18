@@ -301,6 +301,10 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
+	} else if key, value, known, unfound := unfoundID(a.History(), requested.Call, toolNames(a.availableTools())); unfound {
+		parts = llm.TextParts(unfoundIDResult(key, value, known))
+	} else if name, stand := placeholderName(requested.Call); stand {
+		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
 		said, files, err = a.runCode(ctx, requested.Call)
