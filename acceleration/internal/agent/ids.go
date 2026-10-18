@@ -97,6 +97,70 @@ func placeholderName(call llm.ToolCall) (string, bool) {
 	return "", false
 }
 
+// unheardNumber reports an argument of four or more digits that neither the caller nor a
+// tool ever gave. PhoneLLM Max verified with a last four of 1982 for "nine eight two one",
+// and booked a phone of 512550142 for "five one two, five five five, oh one four two".
+func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string, heard []string, unheard bool) {
+	var arguments map[string]any
+	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
+		return "", "", nil, false
+	}
+	var sources []string
+	for _, message := range history {
+		switch message.Role {
+		case llm.User:
+			sources = append(sources, message.Content, digitsFor(message.Content))
+			for _, number := range digitRun.FindAllString(digitsFor(message.Content), -1) {
+				if len(number) >= 3 && !slices.Contains(heard, number) {
+					heard = append(heard, number)
+				}
+			}
+		case llm.ToolResult:
+			sources = append(sources, message.Content)
+		}
+	}
+	var digits []string
+	for _, source := range sources {
+		digits = append(digits, strings.Map(func(r rune) rune {
+			if unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, source))
+	}
+	keys := make([]string, 0, len(arguments))
+	for name := range arguments {
+		keys = append(keys, name)
+	}
+	slices.Sort(keys)
+	for _, name := range keys {
+		text, ok := arguments[name].(string)
+		if !ok || len(text) < 4 || !allDigits(text) {
+			continue
+		}
+		if !slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+			return name, text, heard, true
+		}
+	}
+	return "", "", nil, false
+}
+
+var digitRun = regexp.MustCompile(`\d+`)
+
+func allDigits(text string) bool {
+	return strings.IndexFunc(text, func(r rune) bool { return !unicode.IsDigit(r) }) < 0
+}
+
+// unheardResult is what a call with a number nobody gave is answered with.
+func unheardResult(key, value string, heard []string) string {
+	result := fmt.Sprintf(didNotWork+"the caller never said %q, and no tool returned it, so it cannot be "+
+		"the %s. ", value, key)
+	if len(heard) > 0 {
+		result += "The numbers the caller said are: " + strings.Join(heard, ", ") + ". "
+	}
+	return result + "Call again with the one they gave, digit for digit, or read back what you heard and ask."
+}
+
 // misspelledName reports a name argument that is not the name the caller spelled out
 // letter by letter. The caller said "The name is Okafor, o k a f o r" and every model booked
 // the transcriber's "Alkafor" or "Alcophor".

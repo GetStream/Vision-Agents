@@ -74,6 +74,31 @@ func TestALastFourThatIsNotFourDigitsIsNotSent(t *testing.T) {
 	assert.Contains(t, misshapenResult("last4", "55317", heard), "the last four 5530 followed by the address 17 Oak Road")
 }
 
+func TestANumberNobodyGaveIsNotSent(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.User, Content: "PIN four four seven one, last four, nine eight two one, fourteen Cedar Lane."},
+		{Role: llm.User, Content: "Phone is five one two, five five five, oh one four two."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "create_ticket"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"id":"1842"}`},
+	}
+	for arguments, unheard := range map[string]bool{
+		`{"pin":"4471","last4":"9821","address":"14 Cedar Lane"}`: false,
+		`{"pin":"4471","last4":"1982"}`:                           true,
+		`{"phone":"5125550142"}`:                                  false,
+		`{"phone":"512550142"}`:                                   true,
+		`{"phone":"512-555-0142"}`:                                false,
+		`{"ticket_id":"1842"}`:                                    false,
+		`{"dob":"1987-03-04"}`:                                    false,
+		`{"window":"am","amount":"50"}`:                           false,
+	} {
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "verify_account", Arguments: arguments})
+		assert.Equal(t, unheard, got, arguments)
+	}
+	_, _, heard, _ := unheardNumber(history, llm.ToolCall{Name: "verify_account", Arguments: `{"last4":"1982"}`})
+	assert.Contains(t, unheardResult("last4", "1982", heard), "The numbers the caller said are: ")
+	assert.True(t, failedResult(unheardResult("last4", "1982", heard)))
+}
+
 func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 	heard := []llm.Message{{Role: llm.User, Content: "Sorry about that. The name is Alkafor, o k a f o r. Mom, mom, look at this."}}
 	for arguments, misspelled := range map[string]bool{
