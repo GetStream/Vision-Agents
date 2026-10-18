@@ -2210,6 +2210,7 @@ func (a *Agent) withhold(sentence string) bool {
 func promisesStep(sentence string) bool {
 	lower := strings.ToLower(sentence)
 	return slices.ContainsFunc(holdWords, func(hold string) bool { return strings.Contains(lower, hold) }) ||
+		slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(lower, promise) }) ||
 		slices.ContainsFunc(stepWords, func(step string) bool { return strings.Contains(lower, step) })
 }
 
@@ -2604,7 +2605,18 @@ func owesACall(said string, backed bool) bool {
 			return true
 		}
 	}
-	return false
+	return slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(last, promise) })
+}
+
+// actionPromises are what a sentence telling the caller a change is about to be made says.
+// Qwen ended "I will reschedule your appointment to Tuesday morning." and made no call.
+var actionPromises = []string{
+	"i'll book", "i will book", "i'll reschedule", "i will reschedule", "i'll move", "i will move",
+	"i'll update", "i will update", "i'll change", "i will change", "i'll cancel", "i will cancel",
+	"i'll go ahead", "i will go ahead", "i'll open", "i will open", "i'll create", "i will create",
+	"i'll dispatch", "i will dispatch", "i'll schedule", "i will schedule", "i'll reserve",
+	"let me book", "let me reschedule", "let me move", "let me update", "let me change",
+	"let me cancel", "let me open", "let me create", "let me schedule", "let me reserve",
 }
 
 // claimsDone reports whether a reply told the caller something has been done.
