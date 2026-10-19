@@ -622,6 +622,17 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A phone on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` now lets the agent look through the
+phone's camera. The call's frames are sampled twice a second through its video filter and the last
+four seconds kept; when the agent's `vision` skill asks for what the camera showed
+(`get_video_frames`), the call's `AgentSession` answers with the frames taken at or before the
+moment the question was taken, newest last, at most eight, as the router's Python video workers
+do. With nothing from the last five seconds it says so as the answer, so the agent asks the person
+to show it again. The Swift assistant example has a camera button in voice mode, with a preview
+of what Juno sees.
+
 ### A tool can show the model pictures
 
 A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
@@ -2154,6 +2165,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A phone's tools work on the call of a person's saved conversation. Every tool call there needed a typed question's request id, which a spoken question and the vision skill's request for camera frames never have, so on a call each was refused with `session: tool call has no durable command binding` and the agent said the tool did not work. A request id is now needed only in a conversation held in writing, as taking the results already was.
 - A chat that starts voice hands its skills over on the call. A session opened on a call is given the default subagent (`llm-thinking`) when its config names none, and one that started in writing was not when voice started, so its call had nothing to run `think`, `recall`, `explain` or `vision` on: a tool's pictures ended as `skill "vision" is not available`. Starting voice now gives it the same default.
 - A tool's pictures reach the `vision` skill on a model that checks a conversation's tool calls. The vision task was handed the conversation with the call that took the picture still open, which OpenAI refused (`400 No tool output found for function call`), so the agent said the analysis did not work. The open call is now answered as still running before the conversation is handed over.
 

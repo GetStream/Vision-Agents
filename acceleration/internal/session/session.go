@@ -1531,7 +1531,10 @@ func (s *Session) askTool(call ToolCall) error {
 	if call.TurnID != "" && s.persisted != nil {
 		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
 	}
-	if s.persisted != nil && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
+	// Only a conversation held in writing is asked by command. On a call a question is spoken,
+	// with no request id, and the vision skill's request for frames belongs to no turn: their
+	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.
+	if s.persisted != nil && s.spec.Text && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
 		return errors.New("session: tool call has no durable command binding")
 	}
 	s.mu.Lock()
