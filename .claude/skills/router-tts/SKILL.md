@@ -199,6 +199,29 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
   frame and on `Speech` (`tts.Voiced`). A provider that cannot say leaves it out rather than
   echo the voice asked for.
 
+## Only ElevenLabs records
+
+- A recording is built by `ttsrouter.DefaultRecorderRegistry` (`ttsrouter/recordings.go`), which
+  has ElevenLabs alone. Every other vendor in `router.yaml` (Cartesia, Inworld, Breeze, Speechify,
+  Gemini, Fish, s2pro) only streams. Any ElevenLabs model is offered as a recorder, but only
+  `eleven_v4` is verified (staging, 2026-10-19: an inline recording returned audio); the other
+  five in `router.yaml` (`eleven_flash_v2_5`, `eleven_v4_turbo`, `eleven_multilingual_v2`,
+  `eleven_v3_conversational`, `eleven_v3`) are `unverified`. On the same day a recording on
+  `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2` failed with
+  `no factory registered`.
+- `Recordings.Check` runs before a recording is accepted (`recordSpeech` in `api/recordings.go`).
+  When no candidate's vendor has a recorder, such as a pinned `cartesia/sonic-preview` or a
+  shortcut or priority list made only of vendors that stream, the request is a 400 that names
+  them and the models that record. One recorder among the candidates is enough: `tts-quality`
+  is served by ElevenLabs, because `Select` passes over a candidate with no factory without
+  counting it against the model. A voice asked only in a streaming vendor's overwrites is still
+  refused once routed (`Router.voiced`), as a failed job.
+- `GET /v1/tts/routes` and `/v1/tts/routes/{target}` say per candidate whether a recording can
+  use it (`can_record`, from the recorder registry). The list and its health stay the live
+  router's. STT and STS leave the field out.
+- A new recorder is one `Register` in `DefaultRecorderRegistry`; the check and `can_record`
+  follow from it.
+
 ## Adding an option
 
 1. A field on `options.TTS`, with `Merge` and a `Term` plus a line in `Terms()` if it is

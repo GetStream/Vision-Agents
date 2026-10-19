@@ -231,6 +231,16 @@ func (s *TTSRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	}
 }
 
+func (s *TTSRouterSuite) TestAVendorWithNoRecorderStillSpeaksLive() {
+	// Probed on da97ee28: served by cartesia/sonic-preview.
+	var built []routing.Spec
+	session, err := s.newStubbedRouter(&built).Start(s.ctx, Request{CustomerID: "acme", Target: "cartesia/sonic-preview"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("cartesia/sonic-preview", session.Provider()+"/"+session.Model())
+}
+
 func (s *TTSRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
 	s.False(DefaultRegistry().Has("mock"),
 		"a deployment that did not ask for mocks should fail to build one rather than route to it")

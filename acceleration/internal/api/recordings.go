@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -180,6 +182,16 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		return nil, invalidRequest(err.Error())
 	}
 
+	recording := ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: request.Body.Text}
+	// A model that only streams is the caller's to change, so it is refused now rather
+	// than as a failed job.
+	if err := s.streams.Speech.Check(ctx, recording); err != nil {
+		if errors.Is(err, routing.ErrRequest) {
+			return nil, invalidRequest(err.Error())
+		}
+		return nil, err
+	}
+
 	job := store.Recording{
 		CustomerID: customerID,
 		Modality:   string(Tts),
@@ -194,7 +206,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
-		audio, provider, failure := s.streams.Speech.Record(ctx, ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: job.Text})
+		audio, provider, failure := s.streams.Speech.Record(ctx, recording)
 		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs, Voice: audio.Voice})
 		return &recordSpeechResponse{Body: speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
@@ -202,12 +214,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		return nil, err
 	}
 
-	go s.record(job, ttsrouter.Recording{
-		CustomerID: customerID,
-		Tags:       tags,
-		Options:    held,
-		Text:       request.Body.Text,
-	})
+	go s.record(job, recording)
 
 	return &recordSpeechResponse{Body: speechOf(job)}, nil
 }

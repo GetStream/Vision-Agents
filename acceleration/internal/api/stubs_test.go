@@ -702,7 +702,8 @@ func stsrouterStub() (*stsrouter.Router, error) {
 		Providers: []routing.ProviderConfig{{
 			Provider: "stub", Model: "stub-sts", Languages: []string{"en"}, Realtime: true,
 		}},
-		Aliases: map[string]routing.Alias{"sts-fast": {RequireRealtime: true}},
+		// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
+		Aliases: map[string]routing.Alias{"sts-fast": {Title: "Fast", RequireRealtime: true}},
 	}
 	registry := stsrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (sts.STS, error) {

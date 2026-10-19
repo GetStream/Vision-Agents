@@ -685,6 +685,8 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	// Reached by name only: no shortcut asks for Latin.
 	heard := routableConfig()
+	// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
+	heard.Aliases["en-low-latency"] = routing.Alias{Title: "Low latency", Languages: []string{"en"}, RequireRealtime: true}
 	heard.Providers = append(heard.Providers, routing.ProviderConfig{
 		Provider: "refusing", Model: refusingModel, Languages: []string{"la"}, Realtime: true,
 	})

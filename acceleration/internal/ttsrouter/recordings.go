@@ -2,10 +2,13 @@ package ttsrouter
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 )
@@ -84,13 +87,9 @@ type Recording struct {
 	Text string
 }
 
-// Record selects a voice and speaks the whole text, falling back to the next candidate
-// when one fails to start.
-func (r *Recordings) Record(
-	ctx context.Context,
-	recording Recording,
-) (tts.Recorded, routing.ProviderConfig, error) {
-	request := routing.Request{
+// request is what a recording asks the router for.
+func (recording Recording) request() routing.Request {
+	return routing.Request{
 		CustomerID:    recording.CustomerID,
 		Tags:          recording.Tags,
 		Target:        recording.Options.Target,
@@ -102,6 +101,44 @@ func (r *Recordings) Record(
 		DataPolicy:    recording.Options.DataPolicy,
 		TTS:           recording.Options,
 	}
+}
+
+// Records reports whether a vendor's models can record here. Most vendors only stream.
+func (r *Recordings) Records(provider string) bool { return r.Builds(provider) }
+
+// Check refuses a recording that no candidate can record: a model of a vendor that only
+// streams, or a shortcut or priority list made only of them. It names the models that
+// can. One candidate that records is enough, since Record passes over the rest.
+func (r *Recordings) Check(ctx context.Context, recording Recording) error {
+	candidates, err := r.Candidates(ctx, recording.request())
+	if err != nil {
+		// Record refuses it in the words it always has.
+		return nil
+	}
+	var streamed []string
+	for _, candidate := range candidates {
+		if r.Records(candidate.Config.Provider) {
+			return nil
+		}
+		streamed = append(streamed, candidate.Config.Name())
+	}
+	var recorders []string
+	for _, provider := range r.Config().Providers {
+		if r.Records(provider.Provider) {
+			recorders = append(recorders, provider.Name())
+		}
+	}
+	return routing.Refused(stack.Wrap(fmt.Errorf("routing: %s can only stream speech, not record it; models that record: %s",
+		strings.Join(streamed, ", "), strings.Join(recorders, ", "))))
+}
+
+// Record selects a voice and speaks the whole text, falling back to the next candidate
+// when one fails to start.
+func (r *Recordings) Record(
+	ctx context.Context,
+	recording Recording,
+) (tts.Recorded, routing.ProviderConfig, error) {
+	request := recording.request()
 
 	provider, config, err := r.Select(ctx, request)
 	if err != nil {

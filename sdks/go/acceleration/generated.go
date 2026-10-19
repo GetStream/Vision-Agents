@@ -3412,9 +3412,11 @@ type CampaignRequest struct {
 
 // Candidate defines model for Candidate.
 type Candidate struct {
-	Health   ProviderHealth `json:"health"`
-	Model    string         `json:"model"`
-	Provider string         `json:"provider"`
+	// CanRecord Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.
+	CanRecord *bool          `json:"can_record,omitempty"`
+	Health    ProviderHealth `json:"health"`
+	Model     string         `json:"model"`
+	Provider  string         `json:"provider"`
 }
 
 // ChannelAccount One line the app answers on: the number people write to and where its provider delivers. The credentials are write-only, so they are never shown here.
