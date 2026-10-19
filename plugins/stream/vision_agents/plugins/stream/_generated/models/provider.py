@@ -35,6 +35,10 @@ class Provider:
             deployment wrote none.
         price (ProviderPrice | Unset): What this deployment is billed for the model, in US dollars. A rate is absent
             when the model is not billed by that unit.
+        supports (list[str] | Unset): The options this model can be asked for, as the terms a request's options turn on:
+            keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does
+            not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes
+            none. Example: ['keyterms', 'diarize'].
         usage_share (float | Unset): This model's share of the modality's requests over the last seven days, across
             every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment
             keeps no statistics.
@@ -49,6 +53,7 @@ class Provider:
     benchmark: ProviderBenchmark | Unset = UNSET
     description: str | Unset = UNSET
     price: ProviderPrice | Unset = UNSET
+    supports: list[str] | Unset = UNSET
     usage_share: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -75,6 +80,10 @@ class Provider:
         if not isinstance(self.price, Unset):
             price = self.price.to_dict()
 
+        supports: list[str] | Unset = UNSET
+        if not isinstance(self.supports, Unset):
+            supports = self.supports
+
         usage_share = self.usage_share
 
         field_dict: dict[str, Any] = {}
@@ -95,6 +104,8 @@ class Provider:
             field_dict["description"] = description
         if price is not UNSET:
             field_dict["price"] = price
+        if supports is not UNSET:
+            field_dict["supports"] = supports
         if usage_share is not UNSET:
             field_dict["usage_share"] = usage_share
 
@@ -135,6 +146,8 @@ class Provider:
         else:
             price = ProviderPrice.from_dict(_price)
 
+        supports = cast(list[str], d.pop("supports", UNSET))
+
         usage_share = d.pop("usage_share", UNSET)
 
         provider = cls(
@@ -147,6 +160,7 @@ class Provider:
             benchmark=benchmark,
             description=description,
             price=price,
+            supports=supports,
             usage_share=usage_share,
         )
 

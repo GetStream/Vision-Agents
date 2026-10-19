@@ -285,6 +285,20 @@ func (s *STSRouterSuite) TestFastConversationalLandsOnGemini38Live() {
 	s.Equal("gemini-3.8-live", built[0].Model, "the conversation nobody picked a model for gets the one the pin names")
 }
 
+func (s *STSRouterSuite) TestSemanticTurnsOnAModelWithoutThemAreRefusedNamingTheModel() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "gemini/gemini-3.8-live",
+		Options:    options.STS{TurnDetection: options.TurnSemantic},
+	})
+
+	s.ErrorContains(err, "routing: gemini/gemini-3.8-live does not take semantic_turns")
+	s.Empty(built)
+}
+
 func (s *STSRouterSuite) TestSemanticTurnsRouteOnlyToAModelThatReadsTheWords() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)
