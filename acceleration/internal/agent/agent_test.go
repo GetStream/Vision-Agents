@@ -1184,6 +1184,21 @@ func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {
 		"leaving must not read as arriving again")
 }
 
+func (s *AgentSuite) TestSomebodyLeavingClosesTheirTranscriptionSession() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "the audio never arrived")
+
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(s.agent.listeners) == 0
+	}, "a participant who left still has an open transcription session")
+}
+
 func (s *AgentSuite) TestParticipantAudioIsTranscribed() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}

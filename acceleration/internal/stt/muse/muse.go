@@ -452,6 +452,12 @@ func (s *STT) fillGap() error {
 	if behind < fillAfter {
 		return nil
 	}
+	// A peer that stopped reading would hold writeMu, and so Close, for as long as it
+	// stays silent: bound the write by how long Close waits for the server anyway.
+	if err := s.conn.SetWriteDeadline(time.Now().Add(s.options.FlushTimeout)); err != nil {
+		return stack.Wrap(err)
+	}
+	defer func() { _ = s.conn.SetWriteDeadline(time.Time{}) }()
 	return s.writeAudio(make([]byte, 2*int(behind/samplePeriod)))
 }
 

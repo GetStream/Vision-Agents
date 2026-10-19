@@ -265,16 +265,47 @@ func (s *MuseSocketSuite) TestASilentGapIsFilledWithSilence() {
 
 	// A call carries audio only while someone speaks, and the server hangs up on a
 	// session whose audio falls behind the clock.
+	type upstreamed struct {
+		audio [][]byte
+		lead  time.Duration
+	}
+	arrived := make(chan upstreamed, 1)
+	go func() {
+		audio, _, lead := s.upstream(provider, conn)
+		arrived <- upstreamed{audio, lead}
+	}()
 	s.speak(provider, voice(100*time.Millisecond))
 	time.Sleep(time.Second)
 	s.Require().NoError(provider.Close())
-
-	audio, _ := s.upstream(conn)
+	upstream := <-arrived
+	audio := upstream.audio
 	s.Require().NotEmpty(audio)
 	s.Equal(stt.PcmData{Samples: voice(100 * time.Millisecond), SampleRate: stt.SampleRate, Channels: 1}.Bytes(),
 		audio[0], "the caller's audio goes up first and unchanged")
 	s.GreaterOrEqual(silence(audio[1:]), 600*time.Millisecond,
 		"a second of nobody speaking should be made up with silence, less what the audio may lag by")
+	s.LessOrEqual(upstream.lead, 100*time.Millisecond+fillTick,
+		"the audio must not run ahead of the clock by more than what the caller sent")
+}
+
+func (s *MuseSocketSuite) TestACallerCanSpeakAgainAfterTheGapWasFilled() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{FlushTimeout: 300 * time.Millisecond})
+	s.setup(conn)
+
+	s.speak(provider, voice(100*time.Millisecond))
+	time.Sleep(400 * time.Millisecond)
+
+	// The caller keeps up with the clock from here on, so the filler writes no more and
+	// the deadline of its last write must not outlive it.
+	chunk := 20 * time.Millisecond
+	begin := time.Now()
+	for i := range 40 {
+		time.Sleep(time.Until(begin.Add(time.Duration(i) * chunk)))
+		s.speak(provider, voice(chunk))
+	}
+	s.Require().NoError(provider.Close())
 }
 
 func (s *MuseSocketSuite) TestAudioThatKeepsUpWithTheClockIsNotPadded() {
@@ -291,7 +322,7 @@ func (s *MuseSocketSuite) TestAudioThatKeepsUpWithTheClockIsNotPadded() {
 	}
 	s.Require().NoError(provider.Close())
 
-	audio, _ := s.upstream(conn)
+	audio, _, _ := s.upstream(provider, conn)
 	s.Len(audio, 50, "only the caller's own audio should go up")
 	s.Zero(silence(audio))
 }
@@ -307,7 +338,7 @@ func (s *MuseSocketSuite) TestNoSilenceFollowsTheEndOfTheAudio() {
 	s.speak(provider, voice(100*time.Millisecond))
 	s.Require().NoError(provider.Close())
 
-	_, afterEnd := s.upstream(conn)
+	_, afterEnd, _ := s.upstream(provider, conn)
 	s.Empty(afterEnd, "nothing should follow the end of the audio stream")
 }
 
@@ -333,21 +364,50 @@ func (s *MuseSocketSuite) TestTheFillerStopsWhenTheServerHangsUp() {
 	}
 }
 
+func (s *MuseSocketSuite) TestClosingDoesNotWaitForeverOnAServerThatStoppedReading() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{FlushTimeout: 300 * time.Millisecond})
+	s.setup(conn)
+	// The server never reads, as with a stalled peer or a half-open connection. Ten
+	// minutes of audio owed is more than any socket buffer holds, so the filler's write
+	// blocks.
+	provider.writeMu.Lock()
+	provider.clockStart = time.Now().Add(-10 * time.Minute)
+	provider.writeMu.Unlock()
+	time.Sleep(time.Second)
+
+	closed := make(chan struct{})
+	go func() {
+		_ = provider.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		s.FailNow("Close hung behind a filler writing to a server that stopped reading")
+	}
+}
+
 // upstream reads everything the provider sent after the setup frame until the connection
-// ends, split into the audio before the end of the stream and any frame after it.
-func (s *MuseSocketSuite) upstream(conn *websocket.Conn) (audio [][]byte, afterEnd [][]byte) {
+// ends, split into the audio before the end of the stream and any frame after it. The lead
+// is the most the audio received so far ran ahead of the time since the provider started.
+func (s *MuseSocketSuite) upstream(provider *STT, conn *websocket.Conn) (audio [][]byte, afterEnd [][]byte, lead time.Duration) {
 	ended := false
+	var received time.Duration
 	for {
 		s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
 		messageType, raw, err := conn.ReadMessage()
 		if err != nil {
-			return audio, afterEnd
+			return audio, afterEnd, lead
 		}
 		switch {
 		case ended:
 			afterEnd = append(afterEnd, raw)
 		case messageType == websocket.BinaryMessage:
 			audio = append(audio, raw)
+			received += time.Duration(len(raw)/2) * samplePeriod
+			lead = max(lead, received-time.Since(provider.clockStart))
 		case strings.Contains(string(raw), controlTypeEndStream):
 			ended = true
 		}

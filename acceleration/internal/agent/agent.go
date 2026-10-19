@@ -1165,6 +1165,14 @@ func (a *Agent) consumeRoster(roster Roster) {
 			continue
 		}
 		a.unbind(attendance.Participant)
+		a.mu.Lock()
+		listener := a.listeners[attendance.Participant.ID]
+		a.mu.Unlock()
+		if listener != nil {
+			// A provider that fills silence never cuts an idle session, so a departed
+			// participant's would stay open until the agent closes.
+			a.dropListener(attendance.Participant.ID, listener)
+		}
 		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
 		a.emitter.Send(ParticipantLeft{
 			Participant: attendance.Participant,
