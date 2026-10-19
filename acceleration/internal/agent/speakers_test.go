@@ -53,7 +53,7 @@ func (s *AgentSuite) TestOnceASecondPersonSpeaksEachNewTurnNamesWhoSaidIt() {
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "bob was never answered")
 	s.quiet()
 	s.says(alice, "and me")
-	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "alice was never answered again")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 3 }, "alice was never answered again")
 
 	requests := s.model.requests()
 	s.Equal("be brief", requests[0].Instructions, "one person so far, so nothing is said about several")
