@@ -106,6 +106,26 @@ func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
 	s.Equal(300000, value(value(again.Config.SandboxOptions).TimeoutMs))
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresItsSandboxSnapshotAndRegion() {
+	result := s.sync(map[string]any{
+		"name": "analyst", "hash": "v1", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"snapshot": "daytona-vm-small", "region": "eu"},
+	})
+
+	options := value(result.Config.SandboxOptions)
+	s.Equal("daytona-vm-small", value(options.Snapshot))
+	s.Equal("eu", value(options.Region))
+}
+
+func (s *SyncSuite) TestASyncNamingASnapshotThatIsNotTheProvidersOwnIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "analyst", "hash": "v1", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"snapshot": "windows-small"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "snapshot")
+}
+
 func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
 	result := s.sync(map[string]any{
 		"name": "concierge", "hash": "v1",

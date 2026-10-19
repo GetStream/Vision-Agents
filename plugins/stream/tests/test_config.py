@@ -628,6 +628,22 @@ class TestSyncAgent:
         assert options["allowed_domains"] == ["api.example.com"]
         assert options["network_allow_list"] == ["10.0.0.0/8"]
 
+    async def test_a_declaration_says_where_its_sandbox_runs(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nsandbox: daytona\nsandbox_options:\n"
+            "  snapshot: daytona-medium\n  region: us\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        options = router.configs[result.config.id]["sandbox_options"]
+        assert options["snapshot"] == "daytona-medium"
+        assert options["region"] == "us"
+
     async def test_the_mcp_servers_named_by_url_are_sent(
         self, router: Router, support_dir
     ):

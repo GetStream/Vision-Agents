@@ -7400,7 +7400,7 @@ impl ::std::convert::TryFrom<::std::string::String> for Sandbox {
         value.parse()
     }
 }
-///How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+///How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxOptions {
@@ -7425,12 +7425,136 @@ pub struct SandboxOptions {
     ///CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub network_allow_list: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub region: ::std::option::Option<SandboxOptionsRegion>,
     ///Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub setup: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub snapshot: ::std::option::Option<SandboxOptionsSnapshot>,
     ///How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub timeout_ms: ::std::option::Option<i64>,
+}
+///Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SandboxOptionsRegion {
+    #[serde(rename = "us")]
+    Us,
+    #[serde(rename = "eu")]
+    Eu,
+}
+impl ::std::fmt::Display for SandboxOptionsRegion {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Us => f.write_str("us"),
+            Self::Eu => f.write_str("eu"),
+        }
+    }
+}
+impl ::std::str::FromStr for SandboxOptionsRegion {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "us" => Ok(Self::Us),
+            "eu" => Ok(Self::Eu),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SandboxOptionsRegion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SandboxOptionsRegion {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SandboxOptionsSnapshot {
+    #[serde(rename = "daytona-small")]
+    DaytonaSmall,
+    #[serde(rename = "daytona-medium")]
+    DaytonaMedium,
+    #[serde(rename = "daytona-large")]
+    DaytonaLarge,
+    #[serde(rename = "daytona-vm-small")]
+    DaytonaVmSmall,
+    #[serde(rename = "daytona-vm-medium")]
+    DaytonaVmMedium,
+    #[serde(rename = "daytona-vm-large")]
+    DaytonaVmLarge,
+}
+impl ::std::fmt::Display for SandboxOptionsSnapshot {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::DaytonaSmall => f.write_str("daytona-small"),
+            Self::DaytonaMedium => f.write_str("daytona-medium"),
+            Self::DaytonaLarge => f.write_str("daytona-large"),
+            Self::DaytonaVmSmall => f.write_str("daytona-vm-small"),
+            Self::DaytonaVmMedium => f.write_str("daytona-vm-medium"),
+            Self::DaytonaVmLarge => f.write_str("daytona-vm-large"),
+        }
+    }
+}
+impl ::std::str::FromStr for SandboxOptionsSnapshot {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "daytona-small" => Ok(Self::DaytonaSmall),
+            "daytona-medium" => Ok(Self::DaytonaMedium),
+            "daytona-large" => Ok(Self::DaytonaLarge),
+            "daytona-vm-small" => Ok(Self::DaytonaVmSmall),
+            "daytona-vm-medium" => Ok(Self::DaytonaVmMedium),
+            "daytona-vm-large" => Ok(Self::DaytonaVmLarge),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SandboxOptionsSnapshot {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SandboxOptionsSnapshot {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`SayRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

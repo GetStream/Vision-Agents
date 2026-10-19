@@ -6921,7 +6921,7 @@ export type components = {
          * @enum {string}
          */
         readonly Sandbox: "daytona";
-        /** @description How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run. */
+        /** @description How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run. */
         readonly SandboxOptions: {
             /** @description Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list. */
             readonly allowed_domains?: readonly string[];
@@ -6946,8 +6946,18 @@ export type components = {
             readonly network?: boolean;
             /** @description CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains. */
             readonly network_allow_list?: readonly string[];
+            /**
+             * @description Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+             * @enum {string}
+             */
+            readonly region?: "us" | "eu";
             /** @description Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it. */
             readonly setup?: readonly string[];
+            /**
+             * @description One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
+             * @enum {string}
+             */
+            readonly snapshot?: "daytona-small" | "daytona-medium" | "daytona-large" | "daytona-vm-small" | "daytona-vm-medium" | "daytona-vm-large";
             /**
              * Format: int64
              * @description How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.

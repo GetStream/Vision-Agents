@@ -826,6 +826,28 @@ public sealed class AgentTests : IDisposable
             synced["sandbox_options"]!.ToJsonString());
     }
 
+    [Fact]
+    public async Task SyncSendsTheSandboxSnapshotAndRegion()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router,
+            "sandbox: daytona\nsandbox_options:\n  snapshot: daytona-large\n  region: eu\n");
+
+        Assert.Equal("""{"region":"eu","snapshot":"daytona-large"}""", synced["sandbox_options"]!.ToJsonString());
+    }
+
+    [Fact]
+    public async Task SyncLeavesAnEmptySandboxSnapshotAndRegionOut()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router,
+            "sandbox: daytona\nsandbox_options:\n  snapshot: ''\n  region: ' '\n  network: true\n");
+
+        Assert.Equal("""{"network":true}""", synced["sandbox_options"]!.ToJsonString());
+    }
+
     private async Task<JsonNode> SyncDeclaringAsync(TestRouter router, string declaration)
     {
         var root = Path.Combine(_workspace, "agents", "jean");

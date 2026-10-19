@@ -2122,7 +2122,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "SandboxOptions" => {
-          properties: %w[allowed_domains cpu disk_gb image memory_gb network network_allow_list setup timeout_ms].freeze,
+          properties: %w[allowed_domains cpu disk_gb image memory_gb network network_allow_list region setup snapshot timeout_ms].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SayRequest" => {

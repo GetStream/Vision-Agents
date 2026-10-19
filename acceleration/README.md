@@ -872,6 +872,14 @@ names the only places it may go, with or without `network`. These need no image 
 Daytona organizations on tiers 1 and 2 cannot set either list per sandbox and refuse to create
 one that does; blocking everything, the default, works on every tier.
 
+`snapshot` names one of Daytona's own Python sandboxes in place of an image: `daytona-small`
+(1 vCPU, 1 GiB memory, 3 GiB disk), `daytona-medium` (2, 4, 8), `daytona-large` (4, 8, 10), or
+the Linux VM of each size, `daytona-vm-small`, `-medium` and `-large`. Nothing is built, so a
+snapshot takes no `image`, `setup`, `cpu`, `memory_gb` or `disk_gb`. Only these default names
+are accepted: a team's own snapshots are not, nor `daytona-gpu`, which waits for GPU capacity
+rather than failing, nor the Windows ones, which have no shell for skill files. `region` is `us`
+or `eu`, built or not; left out, the sandbox runs in `DAYTONA_TARGET`, else Daytona's default.
+
 `run_code` takes `files` as well as `code`: paths the program writes that the person should
 get, at most four of up to 20 MiB each. On a persistent text conversation each file is
 uploaded to the channel as the agent, `task_settled` lists them (`name`, `mime_type`, `url`,

@@ -306,6 +306,11 @@ final readonly class Declaration
                 $options['timeout_ms'] = (int) round($seconds * 1000);
             } elseif ($key === 'image') {
                 $options[$key] = self::scalar($name, $each);
+            } elseif ($key === 'snapshot' || $key === 'region') {
+                $choice = trim(self::scalar($name, $each));
+                if ($choice !== '') {
+                    $options[$key] = $choice;
+                }
             } else {
                 throw new ConfigurationException("\"{$name}\" is not something agent.yaml declares");
             }

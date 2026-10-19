@@ -12,6 +12,8 @@ from pathlib import Path
 import yaml
 from vision_agents.core.harness import Skill
 
+from ._generated.models import SandboxOptionsRegion, SandboxOptionsSnapshot
+
 AGENT_FILE = "agent.yaml"
 AGENT_STAMP = ".agent_sync"
 INSTRUCTIONS_FILE = "instructions.md"
@@ -107,6 +109,11 @@ class SandboxSettings:
     """Domains code may reach. Set, nothing else is reachable, network on or not."""
     network_allow_list: list[str] = field(default_factory=list)
     """CIDR ranges code may reach. Set, nothing else is reachable, network on or not."""
+    snapshot: str = ""
+    """The provider's own sandbox at a size of its own, such as daytona-large, in place of
+    image, setup and the sizes. Empty is the provider's default."""
+    region: str = ""
+    """Where the sandbox runs, us or eu. Empty is the provider's default."""
 
 
 @dataclass
@@ -814,13 +821,29 @@ def _sandbox_options(path: Path, value: object) -> SandboxSettings:
         "network",
         "allowed_domains",
         "network_allow_list",
+        "snapshot",
+        "region",
     }
     if extra:
         raise ValueError(f"{path} unknown sandbox_options setting: {sorted(extra)[0]}")
     network = value.get("network", False)
     if not isinstance(network, bool):
         raise ValueError(f"{path} sandbox_options.network must be true or false")
+    snapshot = _word(value.get("snapshot"))
+    if snapshot and snapshot not in set(SandboxOptionsSnapshot):
+        raise ValueError(
+            f"{path} sandbox_options.snapshot is one of "
+            + ", ".join(sorted(SandboxOptionsSnapshot))
+        )
+    region = _word(value.get("region"))
+    if region and region not in set(SandboxOptionsRegion):
+        raise ValueError(
+            f"{path} sandbox_options.region is one of "
+            + ", ".join(sorted(SandboxOptionsRegion))
+        )
     options = SandboxSettings(
+        snapshot=snapshot,
+        region=region,
         image=_word(value.get("image")),
         setup=_terms(path, "sandbox_options.setup", value.get("setup")),
         network=network,

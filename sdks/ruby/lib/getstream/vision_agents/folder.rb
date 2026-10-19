@@ -144,7 +144,9 @@ module GetStream
       SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors sandbox_options]).freeze
       SANDBOX_LISTS = %w[setup allowed_domains network_allow_list].freeze
       SANDBOX_SIZES = %w[cpu memory_gb disk_gb].freeze
-      SANDBOX_KEYS = (SANDBOX_LISTS + SANDBOX_SIZES + %w[image timeout network]).freeze
+      # Settings the router takes only from a fixed list, so one left empty is not sent.
+      SANDBOX_CHOICES = %w[snapshot region].freeze
+      SANDBOX_KEYS = (SANDBOX_LISTS + SANDBOX_SIZES + SANDBOX_CHOICES + %w[image timeout network]).freeze
       GREETING_KEYS = %w[text mode].freeze
       VIDEO_KEYS = %w[source max_frames].freeze
       DISPATCH_KEYS = %w[incoming_call text].freeze
@@ -326,9 +328,9 @@ module GetStream
 
             [key, setting]
           when "timeout" then ["timeout_ms", sandbox_timeout(setting, file)]
-          else [key, setting.to_s]
+          else [key, setting.to_s.strip]
           end
-        end
+        end.reject { |key, setting| SANDBOX_CHOICES.include?(key) && setting.empty? }
       end
 
       def self.sandbox_timeout(value, file)

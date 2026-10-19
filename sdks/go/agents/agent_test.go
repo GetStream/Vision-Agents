@@ -467,6 +467,47 @@ sandbox_options:
 	}
 }
 
+func TestSyncSendsTheSandboxSnapshotAndRegion(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "analyst")
+	write(t, root, "agent.yaml", `sandbox: daytona
+sandbox_options:
+  snapshot: daytona-large
+  region: eu
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].SandboxOptions
+	if options == nil || options.Snapshot == nil || *options.Snapshot != acceleration.SandboxSnapshotDaytonaLarge ||
+		options.Region == nil || *options.Region != acceleration.SandboxRegionEu {
+		t.Errorf("the sandbox's snapshot and region went as %+v", options)
+	}
+}
+
+func TestSyncLeavesTheSandboxSnapshotAndRegionToTheRouter(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "analyst")
+	write(t, root, "agent.yaml", "sandbox: daytona\nsandbox_options:\n  network: true\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].SandboxOptions
+	if options == nil || options.Snapshot != nil || options.Region != nil {
+		t.Errorf("an empty snapshot or region went as %+v, which the router refuses", options)
+	}
+}
+
 func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `channels:

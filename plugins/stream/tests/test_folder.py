@@ -778,6 +778,19 @@ class TestFolder:
             network_allow_list=["10.0.0.0/8"],
         )
 
+    def test_a_declaration_names_its_sandbox_snapshot_and_region(self, tmp_path: Path):
+        root = tmp_path / "analyst"
+        write(
+            root,
+            "agent.yaml",
+            "name: analyst\nsandbox: daytona\nsandbox_options:\n"
+            "  snapshot: daytona-large\n  region: eu\n",
+        )
+
+        options = load(root).settings.sandbox_options
+
+        assert options == SandboxSettings(snapshot="daytona-large", region="eu")
+
     def test_a_declaration_without_sandbox_options_has_none(self, tmp_path: Path):
         root = tmp_path / "analyst"
         write(root, "agent.yaml", "name: analyst\nsandbox: daytona\n")
@@ -792,6 +805,8 @@ class TestFolder:
             "  memory: 4\n",
             "  cpu: two\n",
             "  network: maybe\n",
+            "  snapshot: my-team-snapshot\n",
+            "  region: asia\n",
         ],
     )
     def test_sandbox_options_nobody_can_honour_are_refused(

@@ -75,7 +75,7 @@ func New(o Options) (*Sandbox, error) {
 	if o.RunTimeout <= 0 {
 		o.RunTimeout = defaultRunTimeout
 	}
-	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, HTTPClient: o.HTTPClient})
+	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Config.Region, HTTPClient: o.HTTPClient})
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -165,8 +165,8 @@ func quoted(word string) string {
 	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 }
 
-// params are what the sandbox is created from: Daytona's own Python sandbox, or an image
-// built from the config's base and setup.
+// params are what the sandbox is created from: Daytona's own Python sandbox, at the size of
+// the config's snapshot, or an image built from the config's base and setup.
 func (s *Sandbox) params() any {
 	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated()}
 	if domains := s.config.AllowedDomains; len(domains) > 0 {
@@ -178,7 +178,7 @@ func (s *Sandbox) params() any {
 		base.NetworkAllowList = &joined
 	}
 	if !s.config.Built() {
-		return types.SnapshotParams{SandboxBaseParams: base}
+		return types.SnapshotParams{SandboxBaseParams: base, Snapshot: s.config.Snapshot}
 	}
 	version := pythonVersion
 	image := sdk.DebianSlim(&version)

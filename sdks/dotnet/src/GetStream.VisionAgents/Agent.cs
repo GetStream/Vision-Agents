@@ -814,6 +814,8 @@ public sealed class Agent : IAsyncDisposable
                 Network = options.Network,
                 AllowedDomains = options.AllowedDomains is { } domains ? [.. domains] : null,
                 NetworkAllowList = options.NetworkAllowList is { } cidrs ? [.. cidrs] : null,
+                Snapshot = VisionAgentsClient.Blank(options.Snapshot),
+                Region = VisionAgentsClient.Blank(options.Region),
             }
             : null;
         // Deprecated for connectors, but still what the router reads until plugins are removed.

@@ -8302,7 +8302,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+    /// How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SandboxOptions
@@ -8351,10 +8351,26 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? NetworkAllowList { get; set; } = default!;
 
         /// <summary>
+        /// Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+        /// <br/>
+        /// <br/>One of `us`, `eu`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
+
+        /// <summary>
         /// Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("setup")]
         public System.Collections.Generic.List<string>? Setup { get; set; } = default!;
+
+        /// <summary>
+        /// One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
+        /// <br/>
+        /// <br/>One of `daytona-small`, `daytona-medium`, `daytona-large`, `daytona-vm-small`, `daytona-vm-medium`, `daytona-vm-large`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("snapshot")]
+        public string? Snapshot { get; set; } = default!;
 
         /// <summary>
         /// How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.

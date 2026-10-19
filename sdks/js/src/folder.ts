@@ -948,7 +948,11 @@ const SANDBOX_TIMEOUT_MS = 30 * 60_000;
  *   memory_gb: 4
  *   network: true
  *   allowed_domains: [api.example.com]
+ *   region: eu
  * ```
+ *
+ * `snapshot` (such as `daytona-large`) is the provider's own sandbox at a size of its own,
+ * in place of `image`, `setup` and the sizes.
  */
 function sandboxOptions(lines: string[], inline: string, where: string): Schemas["SandboxOptions"] {
   if (scalar(inline) !== undefined) {
@@ -998,6 +1002,10 @@ function sandboxOptions(lines: string[], inline: string, where: string): Schemas
     }
     if (key === "image") {
       options.image = given;
+    } else if (key === "snapshot") {
+      options.snapshot = given as NonNullable<Schemas["SandboxOptions"]["snapshot"]>;
+    } else if (key === "region") {
+      options.region = given as NonNullable<Schemas["SandboxOptions"]["region"]>;
     } else if (key === "network") {
       if (given !== "true" && given !== "false") {
         throw new ConfigurationError(`${where}: ${name} must be true or false`);

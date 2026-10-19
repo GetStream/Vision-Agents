@@ -727,6 +727,14 @@ describe("Agent", () => {
         });
       });
 
+      it("sends the sandbox's snapshot and region", async () => {
+        const body = await synced(
+          "name: jean\nsandbox: daytona\nsandbox_options:\n  snapshot: daytona-large\n  region: eu\n",
+        );
+
+        assert.deepEqual(body["sandbox_options"], { snapshot: "daytona-large", region: "eu" });
+      });
+
       it("sends the same body as before for an agent.yaml that names neither", async () => {
         const body = await synced("name: jean\nllm: llm-fast\nplugins:\n  - weather\n");
 
