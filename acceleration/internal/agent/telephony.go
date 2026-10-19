@@ -305,6 +305,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if key, known, missing := missingID(a.History(), requested.Call, a.availableTools()); missing {
 		parts = llm.TextParts(unfoundIDResult(key, "", known))
+	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
+		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
 	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
 		parts = llm.TextParts(misshapenResult(key, value, a.History()))
 	} else if key, value, heard, unheard := unheardNumber(a.History(), requested.Call); unheard {

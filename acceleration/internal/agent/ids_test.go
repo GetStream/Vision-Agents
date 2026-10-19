@@ -151,6 +151,23 @@ func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 	assert.Contains(t, misspelledResult("Alkafor", "okafor"), "o k a f o r, so it is Okafor")
 }
 
+func TestAnArgumentTheToolAsksForIsNotSentEmpty(t *testing.T) {
+	tools := harness.Tools{Tools: []harness.Tool{
+		{Name: "verify_account", Description: "Verify the account with PIN, last four of the card or account, and service address."},
+		{Name: "verify_identity", Description: "Verify a patient with name, DOB, and member ID or phone."},
+	}}
+	key, empty := emptyNamed(llm.ToolCall{Name: "verify_account", Arguments: `{"address":"","last4":"9821","pin":"4471"}`}, tools)
+	assert.True(t, empty)
+	assert.Equal(t, "address", key)
+	_, empty = emptyNamed(llm.ToolCall{Name: "verify_account", Arguments: `{"address":"14 Cedar Lane","last4":"9821","pin":"4471"}`}, tools)
+	assert.False(t, empty)
+	_, empty = emptyNamed(llm.ToolCall{Name: "verify_identity", Arguments: `{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456","phone":""}`}, tools)
+	assert.False(t, empty, "phone is the alternative to the member ID")
+	_, empty = emptyNamed(llm.ToolCall{Name: "verify_identity", Arguments: `{"name":"Maya Chen","dob":"1987-03-04","member_id":"","phone":"5125550142"}`}, tools)
+	assert.False(t, empty, "the member ID is the alternative to the phone")
+	assert.True(t, failedResult(emptyResult("verify_account", "address")))
+}
+
 func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 	for arguments, stand := range map[string]bool{
 		`{"name":"Caller","party_size":3}`: true,

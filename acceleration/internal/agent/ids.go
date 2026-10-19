@@ -129,6 +129,51 @@ func missingID(history []llm.Message, call llm.ToolCall, tools harness.Tools) (k
 	return "", nil, false
 }
 
+// emptyNamed reports a string argument sent empty that the tool's description asks for.
+// MiniMax verified "with PIN, last four of the card or account, and service address" with
+// the address empty, before the caller had finished reading it out. One the description
+// offers as an alternative ("member ID or phone") may be left empty.
+func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
+	var arguments map[string]any
+	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
+		return "", false
+	}
+	var description string
+	for _, tool := range tools.Tools {
+		if tool.Name == call.Name {
+			description = " " + strings.ToLower(strings.Join(strings.FieldsFunc(tool.Description, func(r rune) bool {
+				return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+			}), " ")) + " "
+		}
+	}
+	keys := make([]string, 0, len(arguments))
+	for key := range arguments {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		if text, ok := arguments[key].(string); !ok || strings.TrimSpace(text) != "" {
+			continue
+		}
+		before, after, named := strings.Cut(description, " "+strings.ReplaceAll(key, "_", " ")+" ")
+		if !named {
+			continue
+		}
+		words := strings.Fields(before)
+		if len(words) > 0 && words[len(words)-1] == "or" || strings.HasPrefix(after, "or ") {
+			continue
+		}
+		return key, true
+	}
+	return "", false
+}
+
+// emptyResult is what a call with a named argument left empty is answered with.
+func emptyResult(tool, key string) string {
+	return fmt.Sprintf(didNotWork+"%s needs %s, and it was empty. If the caller has not given it yet, ask "+
+		"them for it; if they have, call again with what they said.", tool, strings.ReplaceAll(key, "_", " "))
+}
+
 // placeholderName reports a name argument filled with a stand-in for one the caller never
 // gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe". A name of more than
 // four words is not one either: PhoneLLM Max booked a table under the note that resumes a
