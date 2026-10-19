@@ -292,6 +292,43 @@ func (s *quietSTT) Close() error {
 	return nil
 }
 
+// refusingSTT turns the account away on its first audio, as ElevenLabs answers an account
+// that has not accepted its terms (probed 2026-10-19): one fatal error, then every write
+// fails on the socket the vendor closed.
+type refusingSTT struct {
+	emitter *stt.Emitter
+	refused bool
+}
+
+// refusingModel is new each run: health is kept in a Redis that other runs share, and one
+// fatal error marks the model unavailable for everyone reading it.
+var refusingModel = fmt.Sprintf("refusing-%d", time.Now().UnixNano())
+
+// termsRefusal is ElevenLabs' own words for an account that has not accepted its terms.
+const termsRefusal = "You have not accepted the terms required to use this feature."
+
+func (s *refusingSTT) Start(context.Context) error { return nil }
+func (s *refusingSTT) Events() <-chan stt.Event    { return s.emitter.Events() }
+func (s *refusingSTT) Provider() string            { return "refusing" }
+func (s *refusingSTT) Model() string               { return refusingModel }
+
+func (s *refusingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	if s.refused {
+		return errors.New("refusing: write audio: websocket: close sent")
+	}
+	s.refused = true
+	s.emitter.Send(stt.Error{
+		Provider: "refusing", Model: refusingModel, Err: errors.New(termsRefusal),
+		Context: "unaccepted_terms", Fatal: true,
+	})
+	return nil
+}
+
+func (s *refusingSTT) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
 // recordingTTS keeps what it was asked to say.
 type recordingTTS struct {
 	emitter *tts.Emitter

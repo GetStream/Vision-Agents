@@ -31,7 +31,8 @@ type Health struct {
 	Errors   int64
 	// LatencyMsAvg is the mean latency over the current window.
 	LatencyMsAvg float64
-	// Available is false once the error rate crosses the configured threshold.
+	// Available is false once the error rate crosses the configured threshold, and for one
+	// window after a fatal failure.
 	Available bool
 }
 
@@ -166,6 +167,8 @@ type Usage struct {
 	// time it ran is not a latency. Whatever it generated before it was cut off was spent all
 	// the same, and is added to what the customer has used.
 	Cancelled bool
+	// Fatal marks a failure the provider gives every caller, such as an account it refuses.
+	Fatal bool
 }
 
 // spent reports whether the request used anything at all.
@@ -221,6 +224,12 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 			c.shard.B().Hincrby().Key(customerKey).Field("errors").Increment(1).Build(),
 		)
 	}
+	if usage.Fatal {
+		// A time rather than a count: the key's expiry moves with every request, so a count
+		// would hold a provider that keeps being asked unavailable for good.
+		commands = append(commands, c.shard.B().Hset().Key(healthKey).FieldValue().
+			FieldValue("fatal_at_ms", strconv.FormatInt(time.Now().UnixMilli(), 10)).Build())
+	}
 	if len(commands) == 0 {
 		return nil
 	}
@@ -248,6 +257,11 @@ func (c *Client) Health(ctx context.Context, modality, provider, model string) (
 		health.LatencyMsAvg = parseFloat(entries["latency_ms_total"]) / float64(health.Requests)
 	}
 	health.Available = health.ErrorRate() < c.options.MaxErrorRate
+	// A fatal failure is one every caller would get, so no number of successes outweighs it.
+	if fatalAt := parseInt(entries["fatal_at_ms"]); fatalAt > 0 &&
+		time.Since(time.UnixMilli(fatalAt)) < c.options.Window {
+		health.Available = false
+	}
 
 	return health, nil
 }

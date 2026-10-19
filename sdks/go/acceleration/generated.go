@@ -5777,7 +5777,7 @@ type ProviderBenchmark struct {
 
 // ProviderHealth defines model for ProviderHealth.
 type ProviderHealth struct {
-	// Available False once the error rate crosses the configured threshold.
+	// Available False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
 	Available    bool    `json:"available"`
 	ErrorRate    float64 `json:"error_rate"`
 	Errors       int64   `json:"errors"`

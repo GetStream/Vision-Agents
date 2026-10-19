@@ -2186,7 +2186,7 @@ func (*ProviderBenchmark) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 
 // ProviderHealth is the ProviderHealth schema.
 type ProviderHealth struct {
-	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold."`
+	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses."`
 	ErrorRate    float64 `json:"error_rate"`
 	Errors       int64   `json:"errors"`
 	LatencyMsAvg float64 `json:"latency_ms_avg"`

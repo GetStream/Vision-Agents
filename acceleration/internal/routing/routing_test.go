@@ -16,7 +16,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // stubProvider stands in for a real provider so routing decisions can be tested without
@@ -1061,7 +1060,7 @@ func (s *RoutingSuite) capturingStats(router *Router[*stubProvider]) *Recorder {
 	router.recorder.Close()
 	done := make(chan struct{})
 	close(done)
-	recorder := &Recorder{live: &live.Client{}, queue: make(chan store.Request, 16), done: done}
+	recorder := &Recorder{live: &live.Client{}, queue: make(chan queued, 16), done: done}
 	router.recorder = recorder
 	return recorder
 }
@@ -1095,7 +1094,7 @@ func (s *RoutingSuite) TestAProviderThatFailsToBuildIsStillCountedAgainstItsHeal
 
 	s.Require().NoError(err)
 	s.Require().Len(stats.queue, 1)
-	recorded := <-stats.queue
+	recorded := (<-stats.queue).request
 	s.Equal("build_failed", recorded.ErrorCode)
 	s.Equal("en", recorded.Model)
 }

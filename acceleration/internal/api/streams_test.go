@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -60,6 +61,58 @@ func (s *StreamsSuite) TestAudioSentUpComesBackTranscribed() {
 	s.Equal("a call costs a penny", transcript["text"])
 	s.Equal(true, transcript["final"])
 	s.Equal("en", transcript["language"])
+}
+
+func (s *StreamsSuite) TestAVendorThatRefusesTheAccountSaysSoOnce() {
+	listening := s.refused()
+
+	silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+	for range 20 {
+		s.Require().NoError(listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()))
+	}
+	// Frames are read in order, so by the time the close is answered every frame of audio
+	// before it has been handled.
+	s.Require().NoError(listening.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")))
+	s.Require().NoError(listening.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	var repeated int
+	for {
+		_, payload, err := listening.ReadMessage()
+		if err != nil {
+			break
+		}
+		var decoded frame
+		if json.Unmarshal(payload, &decoded) == nil && decoded["type"] == "error" {
+			repeated++
+		}
+	}
+	s.Zero(repeated, "audio sent after the refusal is not answered with an error per frame")
+}
+
+func (s *StreamsSuite) TestAModelThatRefusedTheAccountIsListedUnavailable() {
+	// The turns it served before the refusal, which an error rate would weigh it against.
+	for range 3 {
+		s.Require().NoError(s.live.RecordRequest(context.Background(), live.Usage{
+			Modality: "stt", CustomerID: s.customerID(), Provider: "refusing", Model: refusingModel,
+			LatencyMs: 150, AudioMs: 1000, Success: true,
+		}))
+	}
+	s.Require().NoError(s.refused().Close())
+
+	s.Require().Eventually(func() bool {
+		var providers []Provider
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/stt/providers", nil, &providers))
+		for _, provider := range providers {
+			if provider.Model == refusingModel {
+				return !provider.Health.Available
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	var recorded store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&recorded).
+		Where("model = ? AND NOT success", refusingModel).Limit(1).Scan(context.Background()))
+	s.Equal(termsRefusal, recorded.ErrorMessage, "the row says why")
 }
 
 func (s *StreamsSuite) TestATargetInTheOptionBlockIsEnoughToRoute() {
@@ -411,6 +464,21 @@ func (s *StreamsSuite) TestToolsAModelWillNeverCallAreRefused() {
 	refused := s.nextConversationFrame(conversation)
 	s.Equal("error", refused["type"])
 	s.Contains(refused["error"], "tools")
+}
+
+// refused opens a socket on the model that refuses the account, speaks into it and returns
+// it once the refusal has come back.
+func (s *StreamsSuite) refused() *websocket.Conn {
+	listening := s.start("/v1/stt/stream", frame{"target": "refusing/" + refusingModel})
+	s.Require().Equal("started", s.nextFrame(listening)["type"])
+	silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+	s.Require().NoError(listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()))
+
+	refused := s.nextFrame(listening)
+	s.Require().Equal("error", refused["type"])
+	s.Equal(termsRefusal, refused["error"])
+	s.Equal(true, refused["fatal"])
+	return listening
 }
 
 // start opens a modality socket and sends its start frame.
