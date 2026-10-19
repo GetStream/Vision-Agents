@@ -229,6 +229,62 @@ func (s *SchedulerSuite) TestARecurringTaskSkipsOccurrencesOlderThanAnHour() {
 	s.Contains(states, store.ScheduledTaskRunDelivered)
 }
 
+// holdDeliverer holds its first delivery for hold, and delivers the rest.
+type holdDeliverer struct {
+	mu    sync.Mutex
+	calls []store.ClaimedScheduledTask
+	hold  time.Duration
+}
+
+func (d *holdDeliverer) deliver(_ context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls = append(d.calls, claimed)
+	if len(d.calls) == 1 {
+		return "", "", &Postponed{Until: time.Now().Add(d.hold)}
+	}
+	return "conversation", claimed.Task.SessionID, nil
+}
+
+func (s *SchedulerSuite) TestAHeldTaskIsDeliveredWhenTheHoldEnds() {
+	deliver := &holdDeliverer{hold: 300 * time.Millisecond}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Require().Len(deliver.calls, 2, "held once, then delivered")
+	s.Equal(deliver.calls[0].Run.ID, deliver.calls[1].Run.ID, "the same run, so the same command id")
+	s.Equal(0, s.read(task).ConsecutiveFailures, "a hold is not a failure")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
+	s.Equal(2, runs[0].Attempts)
+	s.Require().NotNil(runs[0].PostponedUntil, "the hold is on the run")
+}
+
+func (s *SchedulerSuite) TestAHeldOccurrenceIsCountedFromTheHoldAndNotFromWhenItCameDue() {
+	now := time.Now().UTC().Truncate(time.Second)
+	scheduler := NewScheduler(s.db, nil, slog.New(slog.DiscardHandler))
+	scheduler.now = func() time.Time { return now }
+	schedule, err := FromStored(now.Add(-48*time.Hour), "UTC", "FREQ=DAILY", time.Time{})
+	s.Require().NoError(err)
+
+	heldUntil := now.Add(-5 * time.Minute)
+	claim := store.ClaimedScheduledTask{
+		Task: store.ScheduledTask{RRule: "FREQ=DAILY"},
+		Run:  store.ScheduledTaskRun{ScheduledFor: now.Add(-25 * time.Hour), PostponedUntil: &heldUntil},
+	}
+	s.Nil(scheduler.missed(claim, schedule),
+		"held overnight and out for five minutes is delivered, not missed")
+
+	claim.Run.PostponedUntil = nil
+	s.NotNil(scheduler.missed(claim, schedule),
+		"a day old with no hold is missed")
+}
+
 func (s *SchedulerSuite) TestTwoWorkersDeliverAnOccurrenceOnce() {
 	deliver := &deliverer{delay: 150 * time.Millisecond}
 	due := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)

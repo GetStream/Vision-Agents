@@ -2,6 +2,7 @@ package scheduling
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -47,6 +48,19 @@ var DeliveryRetries = []time.Duration{30 * time.Second, 2 * time.Minute, 10 * ti
 // landed (conversation, call, ...) and the session it landed in. An error is
 // a failed attempt; the occurrence counts failed when the retries run out.
 type DeliverFunc func(ctx context.Context, claimed store.ClaimedScheduledTask) (deliveredTo string, sessionID string, err error)
+
+// Postponed is a delivery held rather than failed: the occurrence is not
+// attempted now and is tried again at Until, under the claim that holds it
+// still. Quiet hours holding a task to the morning is the one there is. It
+// counts against nothing: the run stays running, and when the task is
+// claimed again the occurrence's age is counted from the hold's end.
+type Postponed struct {
+	Until time.Time
+}
+
+func (p *Postponed) Error() string {
+	return "held until " + p.Until.Format("2006-01-02 15:04 MST")
+}
 
 // Scheduler runs the scheduled tasks that come due, on every router: each
 // occurrence is claimed by one worker, delivered once, and the task advanced
@@ -207,7 +221,10 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 	stopRenewing := s.renewing(claim)
 	deliveredTo, sessionID, failure := s.deliverWithRetries(claim)
 	stopRenewing()
+	var held *Postponed
 	switch {
+	case failure != nil && errors.As(failure, &held):
+		s.postpone(claim, held.Until)
 	case failure == nil:
 		next, state := s.after(schedule, claim.Run.ScheduledFor, false, 0)
 		s.finish(claim, store.ScheduledTaskOutcome{
@@ -230,9 +247,14 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 // missed is the outcome for an occurrence too old to deliver, or nil for one
 // still worth delivering. Each skipped occurrence of a repeating task is
 // finished as missed in turn, so the latest due one is delivered and the
-// history shows the gap.
+// history shows the gap. A held occurrence's age is counted from the hold's
+// end: held overnight is delivered in the morning, not missed.
 func (s *Scheduler) missed(claim store.ClaimedScheduledTask, schedule *Schedule) *store.ScheduledTaskOutcome {
-	age := s.now().Sub(claim.Run.ScheduledFor)
+	due := claim.Run.ScheduledFor
+	if claim.Run.PostponedUntil != nil && claim.Run.PostponedUntil.After(due) {
+		due = *claim.Run.PostponedUntil
+	}
+	age := s.now().Sub(due)
 	task := claim.Task
 	switch {
 	case task.RRule == "" && age > oneShotGrace:
@@ -251,12 +273,15 @@ func (s *Scheduler) missed(claim store.ClaimedScheduledTask, schedule *Schedule)
 }
 
 // deliverWithRetries delivers once, then again after each wait, until one
-// attempt lands or the waits run out.
+// attempt lands or the waits run out. A held delivery is not retried: the
+// hold says when it is worth trying again, and that is longer than any wait
+// here.
 func (s *Scheduler) deliverWithRetries(claim store.ClaimedScheduledTask) (string, string, error) {
 	deliveredTo, sessionID, err := s.deliver(s.ctx, claim)
 	for _, wait := range s.retries {
-		if err == nil {
-			return deliveredTo, sessionID, nil
+		var held *Postponed
+		if err == nil || errors.As(err, &held) {
+			return deliveredTo, sessionID, err
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -268,6 +293,25 @@ func (s *Scheduler) deliverWithRetries(claim store.ClaimedScheduledTask) (string
 		deliveredTo, sessionID, err = s.deliver(s.ctx, claim)
 	}
 	return deliveredTo, sessionID, err
+}
+
+// postpone holds a claimed task until until, under the claim that delivered
+// nothing yet: the run stays running and the lease becomes the hold, so the
+// occurrence is taken up again when the hold ends. A claim fenced meanwhile
+// is reported and left: the change that fenced it decides instead.
+func (s *Scheduler) postpone(claim store.ClaimedScheduledTask, until time.Time) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 15*time.Second)
+	defer cancel()
+	held, err := s.store.PostponeScheduledTask(ctx, claim.Task.CustomerID, claim.Task.ID, claim.Run.ID, claim.ClaimID, until)
+	log := s.logger.With("task", claim.Task.ID, "run", claim.Run.ID, "customer", claim.Task.CustomerID)
+	switch {
+	case err != nil:
+		log.Error("could not hold a scheduled task", "error", err)
+	case !held:
+		log.Info("a scheduled task changed under its run; the hold was left alone")
+	default:
+		log.Info("a scheduled task is held", "until", until)
+	}
 }
 
 // renewing extends the claim while the run is in progress, stopping when the
