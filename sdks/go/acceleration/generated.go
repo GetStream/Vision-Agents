@@ -5720,6 +5720,11 @@ type Provider struct {
 	Provider string `json:"provider"`
 	Realtime bool   `json:"realtime"`
 
+	// Supports The options this model can be asked for, as the option names: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
+	//
+	// Example: ["keyterms","diarize"]
+	Supports *[]string `json:"supports,omitempty"`
+
 	// Tier What the model optimises for.
 	Tier Tier `json:"tier"`
 

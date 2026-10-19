@@ -6663,6 +6663,14 @@ export type components = {
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
+            /**
+             * @description The options this model can be asked for, as the option names: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
+             * @example [
+             *       "keyterms",
+             *       "diarize"
+             *     ]
+             */
+            readonly supports?: readonly string[];
             readonly tier: components["schemas"]["Tier"];
             /**
              * Format: double

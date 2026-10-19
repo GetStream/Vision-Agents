@@ -2141,6 +2141,10 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A request that names one model and asks it for an option it does not take is refused naming that model: `routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms`. It read `routing: no provider can express keyterms`, as if the router had looked beyond the model the caller chose. This is the `/v1/stt/stream`, `/v1/tts/stream` and `/v1/sts/stream` `error` frame and every other refusal of a term; a shortcut keeps the old message (AI-1419).
+- `GET /v1/{modality}/providers` lists each model's `supports`: the options it can be asked for, such as `keyterms` and `diarize`, and left out when it takes none. Which models take keyterms was only in the router's config (AI-1419).
+- The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (AI-1419).
+
 - A Knowledge source whose `<source>#<n>` id reached 64 bytes is indexed: a URL subscribed with `POST /v1/agents/knowledge/urls`, or a document posted to `POST /v1/agents/knowledge` whose `source` is that long. Its passage ids were `<source>#<n>`, and turbopuffer refuses an id of 64 bytes or more (`id string should be less than 64 bytes`), so such a page failed to index. A passage id that would not fit is now a hash of the whole source and the index (`<sha256, base64url>#<n>`); every id that fitted stays the same, so a base filled before needs no re-index (#1010, AI-1408).
 
 - Voicebench reply timing no longer reuses an answer to a later caller turn for earlier turns, and detects quiet speech on the isolated agent track. Methodology v10 separates missing post-caller replies from agent speech that already started while the caller was talking. Native-target diagnostics follow the explicitly selected router instead of a stale environment URL.
