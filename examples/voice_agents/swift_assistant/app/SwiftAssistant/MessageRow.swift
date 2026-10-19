@@ -7,6 +7,8 @@ import VisionAgentsCore
 /// and then its answer.
 struct MessageRow: View {
     let message: ChatMessage
+    /// The photos the person sent with it from this phone, shown in place of Chat's copies.
+    let photos: [UIImage]
     let reasoning: LiveReasoning
     let approver: AIToolApprover
 
@@ -17,8 +19,9 @@ struct MessageRow: View {
     /// is told the reply is being written, so it is told that until the text has reached it.
     @State private var writing: Bool
 
-    init(message: ChatMessage, reasoning: LiveReasoning, approver: AIToolApprover) {
+    init(message: ChatMessage, photos: [UIImage] = [], reasoning: LiveReasoning, approver: AIToolApprover) {
         self.message = message
+        self.photos = photos
         self.reasoning = reasoning
         self.approver = approver
         _writing = State(initialValue: message.isGenerating)
@@ -54,20 +57,39 @@ struct MessageRow: View {
             }
         } else {
             VStack(alignment: .trailing, spacing: 6) {
-                ForEach(message.imageAttachments, id: \.id) { image in
-                    AsyncImage(url: image.imageURL) { loaded in
-                        loaded.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.secondary.opacity(0.15)
+                if photos.isEmpty {
+                    ForEach(message.imageAttachments, id: \.id) { image in
+                        AsyncImage(url: image.imageURL) { loaded in
+                            loaded.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.secondary.opacity(0.15)
+                        }
+                        .frame(width: 180, height: 180)
+                        .clipShape(.rect(cornerRadius: 14))
                     }
-                    .frame(width: 180, height: 180)
-                    .clipShape(.rect(cornerRadius: 14))
+                } else {
+                    SentPhotos(photos: photos)
                 }
                 if !message.text.isEmpty {
                     PersonBubble(text: message.text)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+}
+
+/// Photos the person sent from this phone, shown from it.
+struct SentPhotos: View {
+    let photos: [UIImage]
+
+    var body: some View {
+        ForEach(photos.indices, id: \.self) { index in
+            Image(uiImage: photos[index])
+                .resizable()
+                .scaledToFill()
+                .frame(width: 180, height: 180)
+                .clipShape(.rect(cornerRadius: 14))
         }
     }
 }

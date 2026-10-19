@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -55,6 +56,15 @@ type store struct {
 	held   *held
 	// limited are the path suffixes RateLimit answers 429 to.
 	limited map[string]bool
+	// uploads are the files stored on channels, in the order they came.
+	uploads []Upload
+}
+
+// Upload is one file stored on a channel: which endpoint took it ("image" or "file"), its
+// name, who it was uploaded as, as the JSON the client sent, and what was in it.
+type Upload struct {
+	Endpoint, Name, User string
+	Data                 []byte
 }
 
 // held is one request Hold keeps waiting: the path it ends in, a channel closed once it
@@ -509,6 +519,26 @@ func (db *store) messagesIn(id string) []map[string]any {
 	return messages
 }
 
+// Uploads are the files stored on channels so far, in the order they came.
+func (s *Server) Uploads() []Upload {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Clone(s.db.uploads)
+}
+
+// upload stores a channel file and answers where Chat's CDN would serve it.
+func (db *store) upload(w http.ResponseWriter, r *http.Request) {
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	data, _ := io.ReadAll(file)
+	stored := Upload{Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename), User: r.FormValue("user"), Data: data}
+	db.uploads = append(db.uploads, stored)
+	_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + stored.Endpoint + "/" + stored.Name})
+}
+
 func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	db.wait(r.URL.Path)
 	db.mu.Lock()
@@ -522,6 +552,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 9, "message": "Too many requests", "StatusCode": http.StatusTooManyRequests})
 			return
 		}
+	}
+	if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/image") || strings.HasSuffix(r.URL.Path, "/file")) {
+		db.upload(w, r)
+		return
 	}
 	var raw []byte
 	if r.Body != nil {
