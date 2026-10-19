@@ -493,6 +493,48 @@ func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
 	}
 }
 
+func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `scheduling:
+  enabled: true
+  max_tasks_per_user: 10
+  default_timezone: America/New_York
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	declared := router.syncs[0].Scheduling
+	if declared == nil || declared.Enabled == nil || !*declared.Enabled ||
+		declared.MaxTasksPerUser == nil || *declared.MaxTasksPerUser != 10 ||
+		declared.DefaultTimezone == nil || *declared.DefaultTimezone != "America/New_York" {
+		t.Errorf("the scheduling went as %+v", declared)
+	}
+}
+
+// A file saying nothing about scheduling leaves the stored setting alone.
+func TestSyncSendsNoSchedulingWhenTheFileNamesNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "llm: llm-fast\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].Scheduling != nil {
+		t.Errorf("the scheduling went as %+v", router.syncs[0].Scheduling)
+	}
+}
+
 // A file saying nothing about channels leaves the agent reachable in Stream Chat alone.
 func TestSyncSendsNoChannelsWhenTheFileNamesNone(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
