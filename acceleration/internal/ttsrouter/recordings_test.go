@@ -170,3 +170,18 @@ func (s *RecordingsSuite) TestAStabilityOrSimilarityOutsideZeroToOneIsRefusedBef
 		})
 	}
 }
+
+func (s *RecordingsSuite) TestARecordingWithAVoiceOnlyForAVendorWithNoRecorderIsRefused() {
+	// On b1e563f98 ElevenLabs v4 recorded this in its default voice: only ElevenLabs records.
+	_, _, err := s.newRecordings().Record(s.ctx, Recording{
+		CustomerID: "acme",
+		Options: options.TTS{Target: "tts-quality", Overwrites: map[string]json.RawMessage{
+			"cartesia": json.RawMessage(`{"voice_id":"db6b0ed5-cartesia"}`),
+		}},
+		Text: "hello",
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "a recording nothing here can speak in that voice is the caller's to change")
+	s.ErrorContains(err, "cartesia/sonic-preview has no factory registered here")
+	s.Empty(s.built, "ElevenLabs was never built without the voice")
+}
