@@ -77,6 +77,13 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		note = strings.Join(parts, "\n\n")
 	}
 	stale := a.takeSpeculationsLocked()
+	said := a.userTurnLocked(ready.Participant, unifiedText(ready.Text, unified))
+	instructions := a.instructions()
+	if said.Speaker != "" && len(a.speakers) == 1 {
+		// The second person's first turn: the reply is written as the turn will be answered,
+		// told about them, without counting them before the ruling says it is answered.
+		instructions = joinNotes(instructions, severalSpeakers)
+	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	spec := &speculation{
 		ready:   ready,
@@ -84,8 +91,8 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		history: len(a.history),
 		turn: harness.Turn{
 			ID:           ready.ID,
-			Instructions: a.instructions(),
-			History:      append(a.replayLocked(), a.userTurnLocked(unifiedText(ready.Text, unified), nil)),
+			Instructions: instructions,
+			History:      append(a.replayLocked(), named(said)),
 			Note:         note,
 		},
 		startedAt: time.Now(),
@@ -173,7 +180,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 		spec.drop()
 		return false
 	}
-	a.history = append(a.history, a.userTurnLocked(ready.Text, nil))
+	a.keepTurnLocked(ready.Participant, ready.Text)
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0

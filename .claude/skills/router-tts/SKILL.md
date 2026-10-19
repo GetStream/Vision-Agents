@@ -187,6 +187,17 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
   it (Flash v2.5, Multilingual v2): the v3 and v4 models, the batch `eleven_v3` included,
   refuse it as an overwrite error, so `tts-quality` refuses it and `en-low-latency` is
   spoken by Flash.
+- A `voice_id` in any vendor's block is the voice spoken: `startCandidate` hands it to the
+  factory as the spec's voice, so Cartesia, whose factory reads no block, speaks it too. A
+  voice asked only that way, with no top-level `voice`, narrows the candidates to the vendors
+  that named one before anything is tried (`Router.voiced`): any other vendor would be handed
+  no voice and speak its default, which nobody can hear is wrong (ElevenLabs' default is
+  "Spuds Oxley - Grandpa", `elevenlabs.DefaultVoiceID`). None of them a candidate, or none
+  with a factory (a recording asked in a Cartesia voice), is refused as `routing.ErrRequest`.
+  A top-level voice goes to every candidate, so nothing is left out for it.
+- The voice that spoke, the provider's default included, is `voice` on the socket's `started`
+  frame and on `Speech` (`tts.Voiced`). A provider that cannot say leaves it out rather than
+  echo the voice asked for.
 
 ## Adding an option
 

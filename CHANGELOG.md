@@ -622,6 +622,13 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### `stream.STT` takes `keyterms`
+
+`stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,
+such as names and member IDs, at most 100. They went only through the untyped `options` dict
+before; `keyterms` overrides one given there. A model that takes no keyterms refuses them,
+and `start()` raises that (AI-1422).
+
 ### A person can send photos in a conversation kept in Stream Chat
 
 A question with a `request_id` may now carry `images`, on `POST /v1/agents/sessions/{id}/responses`
@@ -634,6 +641,17 @@ not kept in Chat; when the conversation is reopened, history says the photos wer
 sending them again. A retry with the same id, text and images is the same question; different
 images under the same id are a 409. Videos still take no request id. The Swift SDK now sends a
 request id with every question, images or not.
+
+### The reply model is told who is speaking once a second person talks
+
+A hosted voice agent on a call with several people now sends each new turn to the model as
+`<name>: <words>` once a second participant has had a turn answered, and adds one line to the
+instructions saying several people are talking and that a reply never opens with a name. The
+name is the participant's display name, else their user id. Turns from before the second person
+spoke stay as they were, words typed into the session are the caller's and never count as a
+second person, and with one person on the call nothing changes. A speech-to-speech model taking
+over the call reads the same names in place of `Caller`. The session history, the timeline and
+the flow controller keep the words as said. Python LLM plugins follow (AI-1420).
 
 ### A session can join a Stream call that already exists
 
@@ -2139,12 +2157,22 @@ Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` 
 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
+- `GET /v1/{modality}/providers` lists each model's `supports`: the options it can be asked for, such as `keyterms` and `diarize`, and left out when it takes none. Which models take keyterms was only in the router's config (#1014, AI-1419).
+
 ## Bug Fixes
 
+- A voice asked of one vendor only, as `overwrites.<vendor>.voice_id` with no top-level `voice`, is spoken by that vendor or not at all. On a shortcut that reaches several vendors, such as `tts-quality`, another vendor served it with no voice, so in its default (ElevenLabs' is "Spuds Oxley - Grandpa"). Only the named vendor's models are tried now, and if they fail the error names them; a recording asked in a voice for a vendor with no recorder (any but ElevenLabs) is refused as the caller's mistake. With no top-level `voice`, `overwrites.cartesia.voice_id` is now spoken by Cartesia, which never read it. A request that asks for no voice, or for one at the top level, routes as before; STS is unchanged. The voice that spoke is reported, the provider's default included: `voice` on the `/v1/tts/stream` `started` frame and on a speech job (`Speech.voice`) (AI-1411).
+
+- A request that names one model and asks it for an option it does not take is refused naming that model: `routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms`. It read `routing: no provider can express keyterms`, as if the router had looked beyond the model the caller chose. This is the `/v1/stt/stream`, `/v1/tts/stream` and `/v1/sts/stream` `error` frame and every other refusal of a term; a shortcut keeps the old message (#1014, AI-1419).
+- The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (#1014, AI-1419).
+- A live transcription whose vendor fails for good mid-call, such as ElevenLabs refusing an account that has not accepted its terms (`unaccepted_terms`), reports it once: `/v1/stt/stream` sent one more `error` frame per frame of audio after it (779 in one call). The stat row keeps the vendor's reason as its `error_message`, and the model is unavailable in `GET /v1/stt/providers` and ranked last for the next five minutes, however many turns it served before (AI-1417).
+
+- `stream.STT.start()` raises the router's refusal as a `RouterError`, such as a model that takes no keyterms or has no API key. It sent the start frame and returned at once, so a refusal arrived only as an `STTErrorEvent`, and an agent nobody subscribed to errors on got no `started`, no error and no transcripts. `start()` now waits for the router's `started` or `error` frame, at most 10 seconds (`asyncio.TimeoutError` after that). An error after `started` is still an `STTErrorEvent`, and the sockets opened later for other participants work as before (AI-1422).
 - A Knowledge source whose `<source>#<n>` id reached 64 bytes is indexed: a URL subscribed with `POST /v1/agents/knowledge/urls`, or a document posted to `POST /v1/agents/knowledge` whose `source` is that long. Its passage ids were `<source>#<n>`, and turbopuffer refuses an id of 64 bytes or more (`id string should be less than 64 bytes`), so such a page failed to index. A passage id that would not fit is now a hash of the whole source and the index (`<sha256, base64url>#<n>`); every id that fitted stays the same, so a base filled before needs no re-index (#1010, AI-1408).
 
 - Voicebench reply timing no longer reuses an answer to a later caller turn for earlier turns, and detects quiet speech on the isolated agent track. Methodology v10 separates missing post-caller replies from agent speech that already started while the caller was talking. Native-target diagnostics follow the explicitly selected router instead of a stale environment URL.
 
+- A Muse STT session survives a caller who stops talking. Muse closes a session whose audio falls behind the clock (`1008 Ingress below real-time`, about 16s after the audio stops), and a Stream call carries audio only while someone speaks, so a muted or quiet listener lost their transcription mid-call. The router now sends silence for the time no audio came, once the audio is 200ms behind, which also lets Muse settle a turn the caller ended by going quiet. Audio that keeps up with the clock goes up as before (AI-1418).
 - A chat that opened before its person connected an account uses the account once they have. A session binding with no connection chosen waits for a login; asked for the account after the person connected it outside the chat, from their app with a consent its backend began, it began a second consent and showed another `connector_authorization` card. It now opens on the caller's one connected connection, as a session opening then would have, with no second consent. With two connected, it still asks.
 - `stream.STT` credits each transcript to the participant whose audio it is of. It sent every participant's audio over one router socket and credited each transcript to whoever sent the last frame, so a line still arriving when the next person started talking went to them. Each participant now has a socket of their own: the one `start` opens goes to whoever speaks first, and the others open on a participant's first frame. A socket the router refuses for a later participant is reported once as an `STTErrorEvent` and that participant's audio is dropped; one participant still uses exactly one socket (AI-1403).
 - A Python `Agent` built by hand, without `AgentLauncher`, loads its components' models when it joins: the multi-speaker filter's Silero VAD, a local STT such as `fast_whisper`, a local turn detector or processor. It loaded none, so once two people spoke on the call the first frame failed with `warmup() must be called before process_audio()` and the agent took no more audio for the rest of the call, though the join had succeeded. A model that fails to load now fails the join before the agent enters the call. An agent from `AgentLauncher` keeps the models the launcher loaded, and `Agent.warmup(cache)` loads them ahead of the join (AI-1402).

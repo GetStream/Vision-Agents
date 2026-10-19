@@ -6663,6 +6663,14 @@ export type components = {
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
+            /**
+             * @description The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
+             * @example [
+             *       "keyterms",
+             *       "diarize"
+             *     ]
+             */
+            readonly supports?: readonly string[];
             readonly tier: components["schemas"]["Tier"];
             /**
              * Format: double
@@ -6718,7 +6726,7 @@ export type components = {
             readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
-            /** @description False once the error rate crosses the configured threshold. */
+            /** @description False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
             readonly available: boolean;
             /** Format: double */
             readonly error_rate: number;
@@ -7511,6 +7519,8 @@ export type components = {
             readonly updated_at: string;
             /** @description Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead. */
             readonly url?: string;
+            /** @description The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say. */
+            readonly voice?: string;
         };
         readonly SpeechRequest: {
             /** @description A URL the finished job is POSTed to, so a caller does not have to poll. */

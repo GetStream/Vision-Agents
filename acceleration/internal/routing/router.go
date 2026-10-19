@@ -431,7 +431,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
-	candidates, err = serving(candidates, request.Terms)
+	candidates, err = serving(candidates, request.Terms, request.Target)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -445,6 +445,10 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	}
 	untried(candidates, request.Failed)
 	candidates = r.vouched(ctx, request, candidates)
+	candidates, err = r.voiced(request, candidates)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
 
 	var failures, refusals []error
 	// overwritten is the vendor whose candidate refused its overwrite block. An overwrite
@@ -605,12 +609,20 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	var zero P
 
 	voiceCtx := ctx
-	if r.voiceOverwritten(request, candidate.Config.Provider) {
+	overwritten := r.overwriteVoice(request, candidate.Config.Provider)
+	if overwritten != "" {
 		voiceCtx = context.WithValue(ctx, voiceOverwritten{}, true)
 	}
 	voice, err := r.voice(voiceCtx, request, candidate.Config.Provider)
 	if err != nil {
 		return zero, err
+	}
+	// With no top-level voice, a TTS overwrite is the voice spoken: a factory that reads no
+	// overwrites, as Cartesia's does not, would otherwise speak its own default. A top-level
+	// voice stays what is handed over, as it always was, and no other modality reads a
+	// voice_id, so STS is left to its factories.
+	if overwritten != "" && request.Voice == "" && r.modality == TTS {
+		voice = overwritten
 	}
 
 	spec := Spec{
@@ -670,13 +682,57 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	return provider, nil
 }
 
-// voiceOverwritten reports that this provider's overwrites name a voice_id, which is
-// spoken in place of the request's voice.
-func (r *Router[P]) voiceOverwritten(request Request, provider string) bool {
+// overwriteVoice is the voice_id this provider's overwrites name, which is spoken in place
+// of the request's voice. Empty when they name none.
+func (r *Router[P]) overwriteVoice(request Request, provider string) string {
 	var named struct {
 		VoiceID string `json:"voice_id"`
 	}
-	return json.Unmarshal(r.overwrites(request, provider), &named) == nil && named.VoiceID != ""
+	if json.Unmarshal(r.overwrites(request, provider), &named) != nil {
+		return ""
+	}
+	return named.VoiceID
+}
+
+// voiced leaves out the candidates that would speak in their own default voice when the
+// caller asked for one. A voice named only in overwrites is one vendor's: any other vendor
+// is handed no voice and answers in its default, and nothing in the audio says that is
+// wrong. A voice at the top level is handed to every candidate, so nothing is left out.
+// Only TTS: no STS vendor reads a voice_id, so there it routes as it always did.
+// When none of the named vendors can be built, the request is refused as the caller's,
+// rather than spoken by a vendor nobody asked a voice of.
+func (r *Router[P]) voiced(request Request, candidates []Candidate) ([]Candidate, error) {
+	if request.Voice != "" || r.modality != TTS {
+		return candidates, nil
+	}
+	var named []string
+	for provider := range r.overwriteBlocks(request) {
+		if r.overwriteVoice(request, provider) != "" {
+			named = append(named, provider)
+		}
+	}
+	if len(named) == 0 {
+		return candidates, nil
+	}
+	slices.Sort(named)
+
+	voiced := slices.DeleteFunc(slices.Clone(candidates), func(candidate Candidate) bool {
+		return !slices.Contains(named, candidate.Config.Provider)
+	})
+	var unbuilt []string
+	for _, candidate := range voiced {
+		if r.registry.Has(candidate.Config.Provider) {
+			return voiced, nil
+		}
+		unbuilt = append(unbuilt, candidate.Config.Name())
+	}
+	why := "no candidate for this request is"
+	if len(unbuilt) > 0 {
+		why = strings.Join(unbuilt, ", ") + " has no factory registered here, and no other candidate is"
+	}
+	return nil, Refused(stack.Wrap(fmt.Errorf(
+		"routing: a voice was asked for only in overwrites.%s, and %s %s; another vendor would speak in its own default voice, so none is tried",
+		strings.Join(named, ", overwrites."), why, strings.Join(named, " or "))))
 }
 
 // vouched leaves out the candidates the voice may not be handed to, see VoiceVetter. A
@@ -689,7 +745,7 @@ func (r *Router[P]) vouched(ctx context.Context, request Request, candidates []C
 	var asked []string
 	for _, candidate := range candidates {
 		provider := candidate.Config.Provider
-		if !slices.Contains(asked, provider) && !r.voiceOverwritten(request, provider) {
+		if !slices.Contains(asked, provider) && r.overwriteVoice(request, provider) == "" {
 			asked = append(asked, provider)
 		}
 	}
@@ -704,13 +760,18 @@ func (r *Router[P]) vouched(ctx context.Context, request Request, candidates []C
 // block, and a vendor that transcribes and speaks would otherwise be handed the settings
 // meant for its other half.
 func (r *Router[P]) overwrites(request Request, provider string) json.RawMessage {
+	return r.overwriteBlocks(request)[provider]
+}
+
+// overwriteBlocks is every vendor's block out of this router's modality's options.
+func (r *Router[P]) overwriteBlocks(request Request) map[string]json.RawMessage {
 	switch r.modality {
 	case STT:
-		return request.STT.Overwrites[provider]
+		return request.STT.Overwrites
 	case TTS:
-		return request.TTS.Overwrites[provider]
+		return request.TTS.Overwrites
 	case STS:
-		return request.STS.Overwrites[provider]
+		return request.STS.Overwrites
 	default:
 		return nil
 	}
@@ -753,8 +814,10 @@ func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.He
 //
 // A request asking for something none of them can do fails here rather than being served
 // by a provider that ignores the term: a transcript that was quietly not diarized is
-// worse than one that was refused, because nothing about it says so.
-func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) {
+// worse than one that was refused, because nothing about it says so. A target that named
+// the one model refused is named back, since "no provider" reads as if the router had
+// looked elsewhere when the caller ruled everywhere else out.
+func serving(candidates []Candidate, terms []options.Term, target string) ([]Candidate, error) {
 	if len(terms) == 0 {
 		return candidates, nil
 	}
@@ -781,6 +844,9 @@ func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) 
 	}
 	if len(unserved) == 0 {
 		unserved = []string{"that combination of terms"}
+	}
+	if len(candidates) == 1 && candidates[0].Config.Name() == target {
+		return nil, stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", ")))
 	}
 	return nil, stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", ")))
 }

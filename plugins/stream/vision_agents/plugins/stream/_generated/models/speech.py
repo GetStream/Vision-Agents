@@ -33,6 +33,8 @@ class Speech:
         provider (str | Unset):
         url (str | Unset): Where the finished audio is, on a deployment that stores it. Empty means the audio came back
             inline instead.
+        voice (str | Unset): The voice it was spoken in, as the provider knows it, which is the provider's default when
+            none was asked for. Absent when the provider cannot say.
     """
 
     created_at: datetime.datetime
@@ -48,6 +50,7 @@ class Speech:
     model: str | Unset = UNSET
     provider: str | Unset = UNSET
     url: str | Unset = UNSET
+    voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +82,8 @@ class Speech:
 
         url = self.url
 
+        voice = self.voice
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -107,6 +112,8 @@ class Speech:
             field_dict["provider"] = provider
         if url is not UNSET:
             field_dict["url"] = url
+        if voice is not UNSET:
+            field_dict["voice"] = voice
 
         return field_dict
 
@@ -144,6 +151,8 @@ class Speech:
 
         url = d.pop("url", UNSET)
 
+        voice = d.pop("voice", UNSET)
+
         speech = cls(
             created_at=created_at,
             id=id,
@@ -158,6 +167,7 @@ class Speech:
             model=model,
             provider=provider,
             url=url,
+            voice=voice,
         )
 
         speech.additional_properties = d

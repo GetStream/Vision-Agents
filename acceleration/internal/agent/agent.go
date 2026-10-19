@@ -344,6 +344,10 @@ type Agent struct {
 	// that cannot tell one voice from another, which leaves it saying nothing rather
 	// than guessing.
 	voices map[string]string
+	// speakers are the people, by personOf, who have had a turn answered. Once there are
+	// two, every new turn names who said it, because the model cannot tell them apart
+	// otherwise. Turns typed with RespondTo are the caller's and are never counted.
+	speakers map[string]struct{}
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -557,6 +561,7 @@ func New(options Options) (*Agent, error) {
 		prompt:           options.Instructions,
 		listeners:        map[string]*sttrouter.Session{},
 		voices:           map[string]string{},
+		speakers:         map[string]struct{}{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
@@ -728,7 +733,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
-	caller := stt.Participant{ID: "caller"}
+	caller := stt.Participant{ID: typedCaller}
 	sender, _ := routing.CallerFrom(ctx)
 	// Typed into a call, the words are what the caller said as much as anything transcribed,
 	// and the transcript, the review and the logs all take a caller's line from Heard. A text
@@ -862,7 +867,10 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		return "", errors.New("agent: not joined")
 	}
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
-	history := append([]llm.Message(nil), a.history...)
+	history := make([]llm.Message, len(a.history))
+	for i, message := range a.history {
+		history[i] = named(message)
+	}
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()
@@ -1165,6 +1173,20 @@ func (a *Agent) consumeRoster(roster Roster) {
 			continue
 		}
 		a.unbind(attendance.Participant)
+		a.mu.Lock()
+		listener := a.listeners[attendance.Participant.ID]
+		a.mu.Unlock()
+		if listener != nil {
+			// A provider that fills silence never cuts an idle session, so a departed
+			// participant's would stay open until the agent closes.
+			// Closing waits on the final transcript, so it must not hold up the next roster event.
+			a.forgetListener(attendance.Participant.ID, listener)
+			a.running.Add(1)
+			go func() {
+				defer a.running.Done()
+				a.closeListener(listener)
+			}()
+		}
 		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
 		a.emitter.Send(ParticipantLeft{
 			Participant: attendance.Participant,
@@ -1214,6 +1236,12 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 // handed every later chunk and the agent is deaf to the participant for the rest of the
 // call rather than for a moment.
 func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
+	a.forgetListener(participantID, session)
+	a.closeListener(session)
+}
+
+// forgetListener takes a session out of use without closing it.
+func (a *Agent) forgetListener(participantID string, session *sttrouter.Session) {
 	a.mu.Lock()
 	// Only when it is still the one in use: a replacement may already have been opened,
 	// and retiring that would put us back where we started.
@@ -1225,9 +1253,11 @@ func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
 	// afresh rather than held to names it never chose.
 	delete(a.voices, participantID)
 	a.mu.Unlock()
+}
 
-	// Closing releases the provider's socket and ends the stream of events this was
-	// reading. Doing it twice is safe, which is what lets Close race with this.
+// closeListener releases the provider's socket and ends the stream of events this was
+// reading. Doing it twice is safe, which is what lets Close race with this.
+func (a *Agent) closeListener(session *sttrouter.Session) {
 	if err := session.Close(); err != nil {
 		a.logger.Debug("closing a dropped transcriber failed", "error", err)
 	}
@@ -1667,7 +1697,7 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
-	a.history = append(a.history, a.userTurnLocked(text, images))
+	a.keepTurnLocked(participant, text)
 	history := a.replayLocked()
 
 	a.speakingTurn = turnID
@@ -1695,16 +1725,71 @@ func (a *Agent) respondTurn(
 	}, text)
 }
 
-func (a *Agent) userTurnLocked(text string, images []llm.ImagePart) llm.Message {
-	return llm.Message{Role: llm.User, Content: text}
+// typedCaller is the participant RespondTo answers as. Typed words are the caller's own,
+// so they never count as a second person in the call.
+const typedCaller = "caller"
+
+// severalSpeakers is what the model is told once a second person has spoken. Their names
+// come ahead of their words, and a reply is spoken, so one that opened on a name the way
+// their turns do would be heard saying it.
+const severalSpeakers = "Several people are talking in this call. Each of their messages starts with " +
+	"the name of who said it, then a colon. Never start your reply with such a label."
+
+// userTurnLocked is a participant's words as a turn of the conversation. It names who
+// said them once somebody else in the call has had a turn answered too.
+func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
+	turn := llm.Message{Role: llm.User, Content: text}
+	_, known := a.speakers[personOf(participant)]
+	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
+		turn.Speaker = speakerLabel(participant)
+	}
+	return turn
+}
+
+// keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
+	a.history = append(a.history, a.userTurnLocked(participant, text))
+	if participant.ID != typedCaller {
+		a.speakers[personOf(participant)] = struct{}{}
+	}
+}
+
+// personOf is who a participant is. A person who rejoins gets a new ID but keeps their
+// user, so the user, when there is one, is what is counted.
+func personOf(participant stt.Participant) string {
+	if participant.UserID != "" {
+		return participant.UserID
+	}
+	return participant.ID
+}
+
+// speakerLabel is a participant's name as it goes ahead of their words. A line break or a
+// colon in a display name could pass for the start of another person's line, so they go.
+func speakerLabel(participant stt.Participant) string {
+	label := strings.Join(strings.Fields(strings.ReplaceAll(participantName(participant), ":", "")), " ")
+	if label == "" {
+		return participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID})
+	}
+	return label
 }
 
 func (a *Agent) replayLocked() []llm.Message {
 	replay := append([]llm.Message(nil), a.history...)
+	for i, message := range replay {
+		replay[i] = named(message)
+	}
 	if a.options.Text {
 		return replay
 	}
 	return spokenResults(replay)
+}
+
+// named is a turn as the model reads it: who said it ahead of the words, when it says.
+func named(message llm.Message) llm.Message {
+	if message.Speaker != "" {
+		message.Content = message.Speaker + ": " + message.Content
+	}
+	return message
 }
 
 func joinNotes(notes ...string) string {
@@ -1837,6 +1922,9 @@ func (a *Agent) instructions() string {
 	// about who the agent is.
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
+	}
+	if len(a.speakers) > 1 {
+		parts = append(parts, severalSpeakers)
 	}
 	return strings.Join(parts, "\n\n")
 }

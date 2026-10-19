@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -248,6 +249,12 @@ func (s *Server) streamSTT(
 	if err := held.Validate(); err != nil {
 		return err
 	}
+	// The cap a session is held to, counted the same way. Deepgram takes whatever it is
+	// sent, and the providers that do refuse a long list each word it differently.
+	if keyterms := stt.CleanKeyterms(held.Keyterms); len(keyterms) > stt.MaxKeyterms {
+		return stack.Wrap(fmt.Errorf("stt: at most %d keyterms may be named, and this asks for %d",
+			stt.MaxKeyterms, len(keyterms)))
+	}
 
 	session, err := s.streams.STT.Start(ctx, sttrouter.Request{
 		CustomerID:    request.CustomerID,
@@ -341,12 +348,17 @@ func (s *Server) streamTTS(
 	}
 	defer session.Close()
 
-	out.frame(frame{
+	started := frame{
 		"type":      "started",
 		"provider":  session.Provider(),
 		"model":     session.Model(),
 		"streaming": session.Streaming(),
-	})
+	}
+	// The voice speaking, its default included, so a caller can see one it did not ask for.
+	if voice := session.Voice(); voice != "" {
+		started["voice"] = voice
+	}
+	out.frame(started)
 
 	var writing sync.WaitGroup
 	writing.Add(1)

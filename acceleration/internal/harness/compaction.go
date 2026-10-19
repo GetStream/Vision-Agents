@@ -106,6 +106,10 @@ func compactionPrompt(history []llm.Message) string {
 	for _, message := range history {
 		transcript.WriteString(string(message.Role))
 		transcript.WriteString(": ")
+		if message.Speaker != "" {
+			transcript.WriteString(message.Speaker)
+			transcript.WriteString(": ")
+		}
 		transcript.WriteString(message.Content)
 		transcript.WriteString("\n")
 	}
