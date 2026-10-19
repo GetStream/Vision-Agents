@@ -622,6 +622,24 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A sandbox can be one of Daytona's own sizes, in the US or Europe
+
+`sandbox_options` takes `snapshot` and `region`, on an agent config or in `agent.yaml`:
+
+```yaml
+sandbox: daytona
+sandbox_options:
+  snapshot: daytona-large   # 4 vCPU, 8 GiB memory, 10 GiB disk, nothing to build
+  region: eu                # or us
+```
+
+`snapshot` is one of Daytona's default snapshots: `daytona-small`, `daytona-medium`,
+`daytona-large`, or the Linux VM of each size, `daytona-vm-small`, `-medium` and `-large`. A
+snapshot is built and sized already, so the router refuses one given with `image`, `setup`,
+`cpu`, `memory_gb` or `disk_gb`, and any other snapshot name. `region` works with a built
+sandbox too; left out, Daytona's default region is used. Every server SDK reads both from
+`agent.yaml`.
+
 ### `stream.STT` takes `keyterms`
 
 `stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,

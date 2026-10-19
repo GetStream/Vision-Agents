@@ -404,6 +404,8 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "sandbox_options:\n  timeout: 2h\n",
         "sandbox_options:\n  cpu: two\n",
         "sandbox_options:\n  network: maybe\n",
+        "sandbox_options:\n  snapshot: my-team-snapshot\n",
+        "sandbox_options:\n  region: asia\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);

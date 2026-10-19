@@ -84,7 +84,23 @@ type Config struct {
 	// NetworkAllowList are the CIDR ranges code in the sandbox may reach, narrowing
 	// Network the same way. Daytona takes one allow list or the other, never both.
 	NetworkAllowList []string `json:"network_allow_list,omitempty"`
+	// Snapshot is one of Snapshots, the provider's own sandbox at a size of its own. It is
+	// built and sized already, so it takes no Image, Setup or sizes. Empty is the default.
+	Snapshot string `json:"snapshot,omitempty"`
+	// Region is one of Regions, where the sandbox runs. Empty is the provider's default.
+	Region string `json:"region,omitempty"`
 }
+
+// Snapshots are the provider's own sandboxes a config may name, from the smallest. Each runs
+// Python: the GPU and Windows ones are left out, since a GPU sandbox waits for capacity
+// rather than failing and a Windows one has no shell to run setup or write files with.
+var Snapshots = []string{
+	"daytona-small", "daytona-medium", "daytona-large",
+	"daytona-vm-small", "daytona-vm-medium", "daytona-vm-large",
+}
+
+// Regions are where a sandbox may run: the United States or Europe.
+var Regions = []string{"us", "eu"}
 
 // Isolated reports whether code in the sandbox may reach nothing outside it.
 func (c Config) Isolated() bool {

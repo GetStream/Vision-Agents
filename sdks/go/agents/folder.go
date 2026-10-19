@@ -385,6 +385,12 @@ type SandboxSettings struct {
 	// sandbox may reach once either is set, network on or not.
 	AllowedDomains   []string `yaml:"allowed_domains"`
 	NetworkAllowList []string `yaml:"network_allow_list"`
+	// Snapshot is one of the provider's own sandboxes, at a size of its own: daytona-small,
+	// daytona-medium, daytona-large, daytona-vm-small, daytona-vm-medium or daytona-vm-large.
+	// It is built and sized already, so it takes no Image, Setup or sizes.
+	Snapshot string `yaml:"snapshot"`
+	// Region is where the sandbox runs, us or eu. Empty is the provider's default.
+	Region string `yaml:"region"`
 
 	timeout time.Duration
 }

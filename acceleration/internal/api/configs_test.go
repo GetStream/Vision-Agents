@@ -333,6 +333,65 @@ func (s *ConfigsSuite) TestAnAllowedDomainWithACommaIsRefused() {
 	s.Contains(failure, "allowed_domains")
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersItsSandboxSnapshotAndRegion() {
+	created := s.createConfig(map[string]any{"name": "analyst", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"snapshot": "daytona-medium", "region": "eu"}})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	options := value(read.SandboxOptions)
+	s.Equal("daytona-medium", value(options.Snapshot))
+	s.Equal("eu", value(options.Region))
+}
+
+func (s *ConfigsSuite) TestASnapshotThatIsNotTheProvidersOwnIsRefused() {
+	created := s.createConfig(map[string]any{"name": "analyst", "sandbox": "daytona"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"snapshot": "my-team-snapshot"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "snapshot")
+}
+
+func (s *ConfigsSuite) TestASnapshotWithASetupIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "analyst", "sandbox": "daytona", "sandbox_options": map[string]any{
+			"snapshot": "daytona-large", "setup": []string{"pip install numpy"},
+		}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "built and sized already")
+}
+
+func (s *ConfigsSuite) TestASnapshotWithASizeIsRefused() {
+	created := s.createConfig(map[string]any{"name": "analyst", "sandbox": "daytona"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"snapshot": "daytona-small", "memory_gb": 8}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "built and sized already")
+}
+
+func (s *ConfigsSuite) TestARegionOtherThanUSOrEUIsRefused() {
+	created := s.createConfig(map[string]any{"name": "analyst", "sandbox": "daytona"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"region": "asia"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "region")
+}
+
+func (s *ConfigsSuite) TestABuiltSandboxMayNameARegion() {
+	created := s.createConfig(map[string]any{"name": "artist", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"setup": []string{"pip install numpy"}, "region": "us"}})
+
+	s.Equal("us", value(value(created.SandboxOptions).Region))
+}
+
 func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
 	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
 		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},

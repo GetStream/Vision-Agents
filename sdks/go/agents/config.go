@@ -283,6 +283,14 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk, Network: &options.Network,
 			AllowedDomains: &options.AllowedDomains, NetworkAllowList: &options.NetworkAllowList,
 		}
+		if options.Snapshot != "" {
+			snapshot := acceleration.SandboxOptionsSnapshot(options.Snapshot)
+			body.SandboxOptions.Snapshot = &snapshot
+		}
+		if options.Region != "" {
+			region := acceleration.SandboxOptionsRegion(options.Region)
+			body.SandboxOptions.Region = &region
+		}
 	}
 	body.Plugins = pluginEntries(settings.Plugins)
 	if len(settings.PluginEvents) > 0 {

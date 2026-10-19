@@ -6,6 +6,8 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from typing_extensions import Self
 
+from ..models.sandbox_options_region import SandboxOptionsRegion
+from ..models.sandbox_options_snapshot import SandboxOptionsSnapshot
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="SandboxOptions")
@@ -13,8 +15,8 @@ T = TypeVar("T", bound="SandboxOptions")
 
 @_attrs_define
 class SandboxOptions:
-    """How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it
-    for the provider's own Python sandbox, no network and a 30 second run.
+    """How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a
+    sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 
         Attributes:
             allowed_domains (list[str] | Unset): Domains code in the sandbox may reach, such as api.example.com. Set,
@@ -28,8 +30,14 @@ class SandboxOptions:
                 outbound connection is blocked unless allowed_domains or network_allow_list names where it may go.
             network_allow_list (list[str] | Unset): CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set,
                 nothing else is reachable, even with network on. Not with allowed_domains.
+            region (SandboxOptionsRegion | Unset): Where the sandbox runs: us for the United States, eu for Europe. Empty is
+                the provider's default.
             setup (list[str] | Unset): Shell commands run once on top of the image when it is built, such as installing
                 packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
+            snapshot (SandboxOptionsSnapshot | Unset): One of the provider's own Python sandboxes, at its own size: daytona-
+                small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual
+                machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized
+                already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
             timeout_ms (int | Unset): How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is
                 still bounded by the deadline of the skill it was written for.
     """
@@ -41,7 +49,9 @@ class SandboxOptions:
     memory_gb: int | Unset = UNSET
     network: bool | Unset = UNSET
     network_allow_list: list[str] | Unset = UNSET
+    region: SandboxOptionsRegion | Unset = UNSET
     setup: list[str] | Unset = UNSET
+    snapshot: SandboxOptionsSnapshot | Unset = UNSET
     timeout_ms: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,9 +73,17 @@ class SandboxOptions:
         if not isinstance(self.network_allow_list, Unset):
             network_allow_list = self.network_allow_list
 
+        region: str | Unset = UNSET
+        if not isinstance(self.region, Unset):
+            region = self.region.value
+
         setup: list[str] | Unset = UNSET
         if not isinstance(self.setup, Unset):
             setup = self.setup
+
+        snapshot: str | Unset = UNSET
+        if not isinstance(self.snapshot, Unset):
+            snapshot = self.snapshot.value
 
         timeout_ms = self.timeout_ms
 
@@ -86,8 +104,12 @@ class SandboxOptions:
             field_dict["network"] = network
         if network_allow_list is not UNSET:
             field_dict["network_allow_list"] = network_allow_list
+        if region is not UNSET:
+            field_dict["region"] = region
         if setup is not UNSET:
             field_dict["setup"] = setup
+        if snapshot is not UNSET:
+            field_dict["snapshot"] = snapshot
         if timeout_ms is not UNSET:
             field_dict["timeout_ms"] = timeout_ms
 
@@ -110,7 +132,21 @@ class SandboxOptions:
 
         network_allow_list = cast(list[str], d.pop("network_allow_list", UNSET))
 
+        _region = d.pop("region", UNSET)
+        region: SandboxOptionsRegion | Unset
+        if isinstance(_region, Unset):
+            region = UNSET
+        else:
+            region = SandboxOptionsRegion(_region)
+
         setup = cast(list[str], d.pop("setup", UNSET))
+
+        _snapshot = d.pop("snapshot", UNSET)
+        snapshot: SandboxOptionsSnapshot | Unset
+        if isinstance(_snapshot, Unset):
+            snapshot = UNSET
+        else:
+            snapshot = SandboxOptionsSnapshot(_snapshot)
 
         timeout_ms = d.pop("timeout_ms", UNSET)
 
@@ -122,7 +158,9 @@ class SandboxOptions:
             memory_gb=memory_gb,
             network=network,
             network_allow_list=network_allow_list,
+            region=region,
             setup=setup,
+            snapshot=snapshot,
             timeout_ms=timeout_ms,
         )
 

@@ -317,6 +317,8 @@ from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .sandbox import Sandbox
 from .sandbox_options import SandboxOptions
+from .sandbox_options_region import SandboxOptionsRegion
+from .sandbox_options_snapshot import SandboxOptionsSnapshot
 from .say_request import SayRequest
 from .search_answer import SearchAnswer
 from .search_depth import SearchDepth
@@ -764,6 +766,8 @@ __all__ = (
     "RouterConfigRequest",
     "Sandbox",
     "SandboxOptions",
+    "SandboxOptionsRegion",
+    "SandboxOptionsSnapshot",
     "SayRequest",
     "SearchAnswer",
     "SearchDepth",

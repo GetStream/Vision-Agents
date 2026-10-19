@@ -344,6 +344,53 @@ func (s *DaytonaSuite) TestASandboxReachesOnlyTheRangesItsAllowListNames() {
 	s.NotContains(created, "domainAllowList")
 }
 
+func (s *DaytonaSuite) TestASandboxStartsFromTheSnapshotItNames() {
+	box := s.configured(Options{Config: sandbox.Config{Snapshot: "daytona-large"}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal("daytona-large", created["snapshot"])
+	s.NotContains(created, "buildInfo", "a snapshot is built already")
+	s.NotContains(created, "cpu", "a snapshot is sized already")
+}
+
+func (s *DaytonaSuite) TestWithoutASnapshotDaytonaPicksItsDefault() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.NotContains(s.platform.requests()[0], "snapshot")
+}
+
+func (s *DaytonaSuite) TestASandboxRunsInTheRegionItNames() {
+	box := s.configured(Options{Config: sandbox.Config{Region: "eu"}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("eu", s.platform.requests()[0]["target"])
+}
+
+func (s *DaytonaSuite) TestABuiltSandboxRunsInTheRegionItNames() {
+	box := s.configured(Options{Config: sandbox.Config{Setup: []string{"pip install numpy"}, Region: "us"}})
+
+	_, err := box.Run(s.ctx, "import numpy", nil)
+
+	s.Require().NoError(err)
+	s.Equal("us", s.platform.requests()[0]["target"])
+}
+
+func (s *DaytonaSuite) TestWithoutARegionDaytonaPicksItsDefault() {
+	s.T().Setenv("DAYTONA_TARGET", "")
+	box := s.configured(Options{})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.NotContains(s.platform.requests()[0], "target")
+}
+
 func (s *DaytonaSuite) TestASetupIsBuiltOnTheImageItNames() {
 	box := s.configured(Options{Config: sandbox.Config{
 		Image: "python:3.13-slim-bookworm",

@@ -687,6 +687,22 @@ fn sandbox_options(value: &Yaml) -> std::result::Result<Option<types::SandboxOpt
         let name = format!("sandbox_options.{key}");
         match key.as_str() {
             "image" => options.image = Some(scalar(value).ok_or(format!("{name} is a string"))?),
+            "snapshot" => {
+                options.snapshot = match scalar(value).map(|text| text.trim().to_string()) {
+                    Some(text) if !text.is_empty() => Some(text.parse().map_err(|_| {
+                        format!("{name} is one of daytona-small, daytona-medium, daytona-large, daytona-vm-small, daytona-vm-medium or daytona-vm-large")
+                    })?),
+                    _ => None,
+                }
+            }
+            "region" => {
+                options.region = match scalar(value).map(|text| text.trim().to_string()) {
+                    Some(text) if !text.is_empty() => {
+                        Some(text.parse().map_err(|_| format!("{name} is us or eu"))?)
+                    }
+                    _ => None,
+                }
+            }
             "setup" => options.setup = Some(strings(value, &name)?),
             "allowed_domains" => options.allowed_domains = Some(strings(value, &name)?),
             "network_allow_list" => options.network_allow_list = Some(strings(value, &name)?),
@@ -718,7 +734,7 @@ fn sandbox_options(value: &Yaml) -> std::result::Result<Option<types::SandboxOpt
             }
             _ => {
                 return Err(format!(
-                    "{key:?} is not a sandbox_options setting; image, setup, timeout, cpu, memory_gb, disk_gb, network, allowed_domains and network_allow_list are"
+                    "{key:?} is not a sandbox_options setting; image, setup, timeout, cpu, memory_gb, disk_gb, network, allowed_domains, network_allow_list, snapshot and region are"
                 ));
             }
         }

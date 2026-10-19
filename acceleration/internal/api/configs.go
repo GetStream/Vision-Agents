@@ -961,6 +961,18 @@ func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
 	if len(value(options.AllowedDomains)) > 0 && len(value(options.NetworkAllowList)) > 0 {
 		return "sandbox_options takes allowed_domains or network_allow_list, not both", false
 	}
+	if snapshot := value(options.Snapshot); snapshot != "" {
+		if !slices.Contains(sandbox.Snapshots, snapshot) {
+			return fmt.Sprintf("sandbox_options.snapshot is one of %s", strings.Join(sandbox.Snapshots, ", ")), false
+		}
+		if strings.TrimSpace(value(options.Image)) != "" || len(value(options.Setup)) > 0 ||
+			value(options.Cpu) > 0 || value(options.MemoryGb) > 0 || value(options.DiskGb) > 0 {
+			return "sandbox_options.snapshot is built and sized already, so it takes no image, setup, cpu, memory_gb or disk_gb", false
+		}
+	}
+	if region := value(options.Region); region != "" && !slices.Contains(sandbox.Regions, region) {
+		return fmt.Sprintf("sandbox_options.region is one of %s", strings.Join(sandbox.Regions, ", ")), false
+	}
 	return "", true
 }
 
@@ -979,6 +991,8 @@ func sandboxConfigOf(options *SandboxOptions) sandbox.Config {
 		Network:          value(options.Network),
 		AllowedDomains:   value(options.AllowedDomains),
 		NetworkAllowList: value(options.NetworkAllowList),
+		Snapshot:         value(options.Snapshot),
+		Region:           value(options.Region),
 	}
 }
 
@@ -986,7 +1000,8 @@ func sandboxConfigOf(options *SandboxOptions) sandbox.Config {
 // provider's own.
 func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 	if config.Image == "" && len(config.Setup) == 0 && config.TimeoutMs == 0 &&
-		config.CPU == 0 && config.MemoryGB == 0 && config.DiskGB == 0 && config.Isolated() {
+		config.CPU == 0 && config.MemoryGB == 0 && config.DiskGB == 0 && config.Isolated() &&
+		config.Snapshot == "" && config.Region == "" {
 		return nil
 	}
 	setup := append([]string{}, config.Setup...)
@@ -1002,6 +1017,8 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 		Network:          &config.Network,
 		AllowedDomains:   &domains,
 		NetworkAllowList: &cidrs,
+		Snapshot:         optional(config.Snapshot),
+		Region:           optional(config.Region),
 	}
 }
 

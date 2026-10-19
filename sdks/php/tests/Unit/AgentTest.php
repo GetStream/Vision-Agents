@@ -354,6 +354,40 @@ final class AgentTest extends TestCase
         );
     }
 
+    public function testSyncSendsTheSandboxSnapshotAndRegion(): void
+    {
+        $this->folder();
+        file_put_contents(
+            $this->dir . '/agent.yaml',
+            "name: jean\nsandbox: daytona\nsandbox_options:\n  snapshot: daytona-large\n  region: eu\n  network: true\n",
+        );
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertEquals(
+            ['network' => true, 'region' => 'eu', 'snapshot' => 'daytona-large'],
+            $this->router->to('POST', '/v1/agents/sync')[0]->json()['sandbox_options'],
+        );
+    }
+
+    public function testSyncLeavesAnEmptySandboxSnapshotAndRegionOut(): void
+    {
+        $this->folder();
+        file_put_contents(
+            $this->dir . '/agent.yaml',
+            "name: jean\nsandbox: daytona\nsandbox_options:\n  snapshot:\n  region: ''\n  network: true\n",
+        );
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertEquals(
+            ['network' => true],
+            $this->router->to('POST', '/v1/agents/sync')[0]->json()['sandbox_options'],
+        );
+    }
+
     public function testSyncLeavesOutWhatAgentYamlSaysNothingAbout(): void
     {
         $this->folder();

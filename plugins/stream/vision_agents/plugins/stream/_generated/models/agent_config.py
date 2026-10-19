@@ -70,9 +70,9 @@ class AgentConfig:
         sandbox (Sandbox | Unset): Where the agent may run code it writes. A text agent runs it itself; a voice agent
             hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works
             everything out in its head.
-        sandbox_options (SandboxOptions | Unset): How the sandbox is built, what it may reach and how long code may run
-            in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second
-            run.
+        sandbox_options (SandboxOptions | Unset): How the sandbox is built, where it runs, what it may reach and how
+            long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its
+            default region, no network and a 30 second run.
         search (str | Unset):
         skills (list[str] | Unset):
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.

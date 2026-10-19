@@ -447,6 +447,33 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
+  def test_sync_sends_the_sandbox_snapshot_and_region
+    root = folder
+    File.write(File.join(root, "agent.yaml"),
+               "name: jean\nsandbox: daytona\nsandbox_options:\n  snapshot: daytona-large\n  region: eu\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "snapshot" => "daytona-large", "region" => "eu" },
+                 @router.last(:post, "/v1/agents/sync").json["sandbox_options"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_sync_leaves_an_empty_sandbox_snapshot_and_region_out
+    root = folder
+    File.write(File.join(root, "agent.yaml"),
+               "name: jean\nsandbox: daytona\nsandbox_options:\n  snapshot:\n  region: ''\n  network: true\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "network" => true }, @router.last(:post, "/v1/agents/sync").json["sandbox_options"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
   def test_sync_sends_the_files_a_skill_folder_brings
     root = folder
     FileUtils.mkdir_p(File.join(root, "skills/pdf/reference"))

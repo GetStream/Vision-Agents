@@ -9,9 +9,9 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * How the sandbox is built, what it may reach and how long code may run in it. Only meaningful
- * with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second
- * run.
+ * How the sandbox is built, where it runs, what it may reach and how long code may run in it.
+ * Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default
+ * region, no network and a 30 second run.
  */
 final readonly class SandboxOptions
 {
@@ -32,9 +32,13 @@ final readonly class SandboxOptions
         // CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with ne...
         /** @var list<string>|null */
         public ?array $networkAllowList = null,
+        // Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+        public ?string $region = null,
         // Shell commands run once on top of the image when it is built, such as installing packages. The provider kee...
         /** @var list<string>|null */
         public ?array $setup = null,
+        // One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk...
+        public ?string $snapshot = null,
         // How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the de...
         public ?int $timeoutMs = null,
     ) {
@@ -53,7 +57,9 @@ final readonly class SandboxOptions
             memoryGb: array_key_exists('memory_gb', $data) && $data['memory_gb'] !== null ? Json::int($data, 'memory_gb') : null,
             network: array_key_exists('network', $data) && $data['network'] !== null ? Json::bool($data, 'network') : null,
             networkAllowList: array_key_exists('network_allow_list', $data) && $data['network_allow_list'] !== null ? Json::strings($data, 'network_allow_list') : null,
+            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             setup: array_key_exists('setup', $data) && $data['setup'] !== null ? Json::strings($data, 'setup') : null,
+            snapshot: array_key_exists('snapshot', $data) && $data['snapshot'] !== null ? Json::string($data, 'snapshot') : null,
             timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
         );
     }
@@ -87,8 +93,14 @@ final readonly class SandboxOptions
         if ($this->networkAllowList !== null) {
             $out['network_allow_list'] = $this->networkAllowList;
         }
+        if ($this->region !== null) {
+            $out['region'] = $this->region;
+        }
         if ($this->setup !== null) {
             $out['setup'] = $this->setup;
+        }
+        if ($this->snapshot !== null) {
+            $out['snapshot'] = $this->snapshot;
         }
         if ($this->timeoutMs !== null) {
             $out['timeout_ms'] = $this->timeoutMs;

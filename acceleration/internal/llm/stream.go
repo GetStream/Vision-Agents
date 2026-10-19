@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,7 +73,7 @@ type StreamOptions struct {
 // NewStream returns the stream a provider produces by advancing the given puller.
 func NewStream(options StreamOptions, puller Puller) *Stream {
 	if options.ResponseID == "" {
-		options.ResponseID = fmt.Sprintf("resp-%d", time.Now().UnixNano())
+		options.ResponseID = "resp-" + rand.Text()
 	}
 
 	stream := &Stream{puller: puller}

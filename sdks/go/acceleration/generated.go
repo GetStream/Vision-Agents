@@ -1674,6 +1674,54 @@ func (e Sandbox) Valid() bool {
 	}
 }
 
+// Defines values for SandboxOptionsRegion.
+const (
+	SandboxRegionEu SandboxOptionsRegion = "eu"
+	SandboxRegionUs SandboxOptionsRegion = "us"
+)
+
+// Valid indicates whether the value is a known member of the SandboxOptionsRegion enum.
+func (e SandboxOptionsRegion) Valid() bool {
+	switch e {
+	case SandboxRegionEu:
+		return true
+	case SandboxRegionUs:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SandboxOptionsSnapshot.
+const (
+	SandboxSnapshotDaytonaLarge    SandboxOptionsSnapshot = "daytona-large"
+	SandboxSnapshotDaytonaMedium   SandboxOptionsSnapshot = "daytona-medium"
+	SandboxSnapshotDaytonaSmall    SandboxOptionsSnapshot = "daytona-small"
+	SandboxSnapshotDaytonaVmLarge  SandboxOptionsSnapshot = "daytona-vm-large"
+	SandboxSnapshotDaytonaVmMedium SandboxOptionsSnapshot = "daytona-vm-medium"
+	SandboxSnapshotDaytonaVmSmall  SandboxOptionsSnapshot = "daytona-vm-small"
+)
+
+// Valid indicates whether the value is a known member of the SandboxOptionsSnapshot enum.
+func (e SandboxOptionsSnapshot) Valid() bool {
+	switch e {
+	case SandboxSnapshotDaytonaLarge:
+		return true
+	case SandboxSnapshotDaytonaMedium:
+		return true
+	case SandboxSnapshotDaytonaSmall:
+		return true
+	case SandboxSnapshotDaytonaVmLarge:
+		return true
+	case SandboxSnapshotDaytonaVmMedium:
+		return true
+	case SandboxSnapshotDaytonaVmSmall:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchDepth.
 const (
 	Deep     SearchDepth = "deep"
@@ -2525,7 +2573,7 @@ type AgentConfig struct {
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+	// SandboxOptions How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
@@ -2591,7 +2639,7 @@ type AgentConfigPatch struct {
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+	// SandboxOptions How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
@@ -2665,7 +2713,7 @@ type AgentConfigRequest struct {
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+	// SandboxOptions How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
@@ -6006,7 +6054,7 @@ type RouterConfigRequest struct {
 // Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 type Sandbox string
 
-// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+// SandboxOptions How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 type SandboxOptions struct {
 	// AllowedDomains Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list.
 	AllowedDomains *[]string `json:"allowed_domains,omitempty"`
@@ -6029,12 +6077,24 @@ type SandboxOptions struct {
 	// NetworkAllowList CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
 	NetworkAllowList *[]string `json:"network_allow_list,omitempty"`
 
+	// Region Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+	Region *SandboxOptionsRegion `json:"region,omitempty"`
+
 	// Setup Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
 	Setup *[]string `json:"setup,omitempty"`
+
+	// Snapshot One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
+	Snapshot *SandboxOptionsSnapshot `json:"snapshot,omitempty"`
 
 	// TimeoutMs How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 }
+
+// SandboxOptionsRegion Where the sandbox runs: us for the United States, eu for Europe. Empty is the provider's default.
+type SandboxOptionsRegion string
+
+// SandboxOptionsSnapshot One of the provider's own Python sandboxes, at its own size: daytona-small (1 CPU, 1 GiB memory, 3 GiB disk), daytona-medium (2, 4, 8), daytona-large (4, 8, 10), or a virtual machine of the same sizes, daytona-vm-small, daytona-vm-medium or daytona-vm-large. It is built and sized already, so not with image, setup, cpu, memory_gb or disk_gb. Empty is the provider's default.
+type SandboxOptionsSnapshot string
 
 // SayRequest defines model for SayRequest.
 type SayRequest struct {
@@ -7054,7 +7114,7 @@ type SyncAgentRequest struct {
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
+	// SandboxOptions How the sandbox is built, where it runs, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox in its default region, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 

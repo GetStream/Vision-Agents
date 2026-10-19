@@ -39,6 +39,8 @@ from ._generated.models import (
     McpServer,
     PluginWithOptions,
     SandboxOptions,
+    SandboxOptionsRegion,
+    SandboxOptionsSnapshot,
     SimulationDeclaration,
     SimulationDeclarationMode,
     SimulationDeclarationTags,
@@ -419,6 +421,10 @@ async def _declare_settings(
             allowed_domains=options.allowed_domains,
             network_allow_list=options.network_allow_list,
         )
+        if options.snapshot:
+            body.sandbox_options.snapshot = SandboxOptionsSnapshot(options.snapshot)
+        if options.region:
+            body.sandbox_options.region = SandboxOptionsRegion(options.region)
     if settings.tags:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)

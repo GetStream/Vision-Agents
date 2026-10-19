@@ -112,6 +112,12 @@ public sealed record SandboxDeclaration
 
     /// <summary>CIDR ranges code in the sandbox may reach. Set, nothing else is reachable.</summary>
     public IReadOnlyList<string>? NetworkAllowList { get; init; }
+
+    /// <summary>The provider's own sandbox at a size of its own, such as daytona-large, in place of the image, setup and sizes.</summary>
+    public string? Snapshot { get; init; }
+
+    /// <summary>Where the sandbox runs, us or eu. Empty is the provider's default.</summary>
+    public string? Region { get; init; }
 }
 
 /// <summary>
@@ -638,6 +644,8 @@ public sealed class Folder
             Network = written.Network,
             AllowedDomains = written.AllowedDomains,
             NetworkAllowList = written.NetworkAllowList,
+            Snapshot = written.Snapshot?.Trim(),
+            Region = written.Region?.Trim(),
         };
     }
 
@@ -1186,6 +1194,8 @@ public sealed class Folder
         [YamlMember(Alias = "network")] public bool? Network { get; set; }
         [YamlMember(Alias = "allowed_domains")] public List<string>? AllowedDomains { get; set; }
         [YamlMember(Alias = "network_allow_list")] public List<string>? NetworkAllowList { get; set; }
+        [YamlMember(Alias = "snapshot")] public string? Snapshot { get; set; }
+        [YamlMember(Alias = "region")] public string? Region { get; set; }
     }
 
     private sealed class WrittenSimulation
