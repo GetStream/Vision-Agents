@@ -331,10 +331,12 @@ func misspelledResult(name, spelled string) string {
 var placeholders = []string{"caller", "the caller", "customer", "guest", "user", "john doe", "jane doe", "unknown", "n/a"}
 
 // notNames are words no name holds. Flux heard "Last name is Alvarez" as "Let Last name is
-// Alvarez", and MiniMax booked "Let Alvarez". Words that are also names (Will, May, Rose)
-// are left out.
+// Alvarez", and MiniMax booked "Let Alvarez"; it heard a barge-in's "wait, wait" as "Wing
+// Wait" and booked that before the caller gave a name. Words that are also names (Will,
+// May, Rose) are left out.
 var notNames = []string{"let", "let's", "lets", "is", "my", "the", "name", "last", "first", "yes",
-	"okay", "ok", "um", "uh", "hi", "hello", "please", "thanks", "it's", "its", "under", "this", "that"}
+	"okay", "ok", "um", "uh", "hi", "hello", "please", "thanks", "it's", "its", "under", "this", "that",
+	"wait", "sorry", "actually", "hold", "hang"}
 
 // notAName reports a name with a word in it that no name holds.
 func notAName(text string) bool {
