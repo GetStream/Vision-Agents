@@ -7,7 +7,8 @@ joining the call, so the conversation can be spoken. It depends on Stream Chat (
 Stream Video (1.34.0), and needs minSdk 24 and compileSdk 37, which is what Stream's SDKs require.
 
 It ships no views. Show a conversation with Stream Chat's AI components,
-`io.getstream:stream-chat-android-ai-compose`, which the app adds itself.
+`io.getstream:stream-chat-android-ai-compose`, which the app adds itself;
+[`examples/voice_agents/android_demo`](../../examples/voice_agents/android_demo) does.
 
 Stream Chat 7.15.0 is published to Stream's Maven repository rather than Maven Central:
 
