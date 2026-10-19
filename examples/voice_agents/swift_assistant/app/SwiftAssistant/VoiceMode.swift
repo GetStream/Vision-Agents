@@ -1,5 +1,6 @@
 import StreamChatAI
 import StreamVideo
+import StreamVideoSwiftUI
 import StreamWebRTC
 import SwiftUI
 import VisionAgentsCore
@@ -10,6 +11,9 @@ import VisionAgentsCore
 /// said so far, and what is said on the call is written into the same channel: the chat shows
 /// it once voice mode is closed. The chat's socket stays open the whole time and is what runs
 /// this phone's tools, so the call is followed with a second, tool-less session of its own.
+///
+/// The camera button shows Juno what the phone is pointing at: the call's session answers its
+/// vision skill's requests to look with what the camera showed, and the preview is that view.
 struct VoiceMode: View {
     let chat: AgentChat
 
@@ -32,6 +36,10 @@ struct VoiceMode: View {
                 .accessibilityLabel("Back to chat")
             }
             .padding(.horizontal)
+
+            if let call = voice?.call, voice?.isCameraEnabled == true {
+                CameraPreview(state: call.state)
+            }
 
             AgentPresence(voice: voice, isStarting: voice == nil && failure == nil)
 
@@ -84,13 +92,43 @@ struct VoiceMode: View {
     }
 }
 
-/// Mute, and back to the chat.
+/// What the camera shows, which is what Juno sees when it looks.
+private struct CameraPreview: View {
+    @ObservedObject var state: CallState
+
+    var body: some View {
+        GeometryReader { proxy in
+            if let track = state.localParticipant?.track {
+                VideoRendererView(id: "juno-camera", size: proxy.size) { $0.add(track: track) }
+            }
+        }
+        .background(.secondary.opacity(0.15))
+        .clipShape(.rect(cornerRadius: 20))
+        .frame(height: 260)
+        .padding(.horizontal)
+        .accessibilityLabel("What Juno sees")
+    }
+}
+
+/// The camera, mute, and back to the chat.
 private struct CallControls: View {
     let voice: VoiceSession
     let onHangUp: () -> Void
 
     var body: some View {
         HStack(spacing: 24) {
+            Button {
+                Task { await voice.setCameraEnabled(!voice.isCameraEnabled) }
+            } label: {
+                Image(systemName: voice.isCameraEnabled ? "video.fill" : "video.slash.fill")
+                    .font(.title2)
+                    .frame(width: 64, height: 64)
+            }
+            .buttonStyle(.bordered)
+            .clipShape(.circle)
+            .disabled(voice.call == nil)
+            .accessibilityLabel(voice.isCameraEnabled ? "Stop showing Juno" : "Show Juno the camera")
+
             Button {
                 Task { await voice.setMuted(!voice.isMuted) }
             } label: {
