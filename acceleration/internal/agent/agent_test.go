@@ -135,6 +135,8 @@ type stubSTT struct {
 	// holdClose, if set, is waited on by Close, as a provider that flushes a final transcript
 	// before it lets go of its socket.
 	holdClose <-chan struct{}
+	// closes counts the times it was closed.
+	closes atomic.Int64
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
@@ -170,6 +172,7 @@ func (s *stubSTT) Close() error {
 	if hold != nil {
 		<-hold
 	}
+	s.closes.Add(1)
 	s.emitter.Close()
 	return nil
 }
@@ -699,6 +702,9 @@ type AgentSuite struct {
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
+	// holdOpen, if set, is waited on by each transcription session the agent opens, as a
+	// provider still dialling.
+	holdOpen chan struct{}
 	// replacement is the voice opened after the first, for a test whose agent loses one.
 	replacement *stubTTS
 	// subagent is the second model, present only when a test asks for delegation.
@@ -765,6 +771,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edgeFactory = nil
+	s.holdOpen = nil
 	s.remembers = nil
 	s.incognito = false
 	s.knows = nil
@@ -905,6 +912,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
 		s.opened.Add(1)
+		if s.holdOpen != nil {
+			<-s.holdOpen
+		}
 		return s.ears, nil
 	})
 	transcriber, err := sttrouter.New(sttrouter.Options{
@@ -1022,6 +1032,21 @@ func (s *AgentSuite) speak(participant stt.Participant) {
 		Participant: participant,
 		Audio:       audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1},
 	}
+}
+
+// setClock sets the time the agent reads.
+func (s *AgentSuite) setClock(at time.Time) {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	s.agent.now = func() time.Time { return at }
+}
+
+// listening reports whether the agent has a transcription session for a participant.
+func (s *AgentSuite) listening(participantID string) bool {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	_, ok := s.agent.listeners[participantID]
+	return ok
 }
 
 // says makes the transcriber report a settled turn.
@@ -1235,6 +1260,94 @@ func (s *AgentSuite) TestASlowTranscriberToCloseDoesNotDelayTheNextArrival() {
 	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 },
 		"a departed participant's session closing held up the next arrival")
 	close(release)
+}
+
+func (s *AgentSuite) TestAudioFromSomebodyWhoLeftOpensNoTranscriptionSession() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+
+	s.speak(alice)
+	bob := stt.Participant{ID: "bob"}
+	s.speak(bob)
+
+	// Frames are handled in the order they come, so once bob has a session alice's frame
+	// has been dealt with.
+	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
+	s.EqualValues(1, s.opened.Load(), "a session was opened for a participant who left")
+	s.Zero(countOf[Error](s.reported()), "audio from a participant who left was reported as a failure")
+}
+
+func (s *AgentSuite) TestSomebodyStillTalkingAfterALeaveIsTranscribedAgain() {
+	s.join(true)
+	left := time.Now()
+	s.setClock(left)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+
+	// The agent was held up for a minute, say opening somebody else's session, before the
+	// audio that trailed the leave reached it.
+	trailed := left.Add(time.Minute)
+	s.setClock(trailed)
+	bob := stt.Participant{ID: "bob"}
+	s.speak(alice)
+	s.speak(bob)
+	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
+
+	s.setClock(trailed.Add(999 * time.Millisecond))
+	s.speak(alice)
+	carol := stt.Participant{ID: "carol"}
+	s.speak(carol)
+	s.eventually(func() bool { return s.listening(carol.ID) }, "carol's audio never arrived")
+	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
+
+	s.setClock(trailed.Add(time.Second))
+	s.speak(alice)
+
+	s.eventually(func() bool { return s.listening(alice.ID) },
+		"a participant still talking after a leave is never transcribed again")
+}
+
+func (s *AgentSuite) TestSomebodyLeavingWhileTheirSessionOpensHasItClosed() {
+	s.join(true)
+	release := make(chan struct{})
+	s.holdOpen = release
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "no session was asked for")
+
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+	close(release)
+
+	s.eventually(func() bool { return s.ears.closes.Load() == 1 },
+		"the session opened for a participant who left was never closed")
+	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
+	s.Empty(s.ears.transcribed(), "a participant who left was transcribed")
+}
+
+func (s *AgentSuite) TestSomebodyWhoComesBackIsTranscribedAgain() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 2 },
+		"the return was never reported")
+
+	s.speak(alice)
+
+	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 },
+		"a participant who came back is not transcribed")
 }
 
 func (s *AgentSuite) TestParticipantAudioIsTranscribed() {
@@ -2447,6 +2560,89 @@ func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
 		return s.opened.Load() == 2
 	}, "the dead transcriber was kept, so nothing this participant says is heard again")
 }
+
+func (s *AgentSuite) TestAnAgentPinnedToABatchTranscriberIsRefusedOnceWhenItJoins() {
+	// On 6d4d0d4a the agent joined and every inbound frame opened a transcriber that was
+	// refused: 100 frames gave 100 "stt" errors (rev1-probes/agent_head_probe.go.txt).
+	agent, built := s.buildTranscribing("stub/batch", nil)
+
+	err := agent.Join(s.ctx)
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+	s.EqualError(err, "agent: start stt: routing: stub/batch is a batch model for recordings, not live calls; "+
+		"for a live call name stub/stub-model")
+	s.Zero(built.Load(), "nothing was built, so no vendor was dialled")
+	s.False(s.edge.joined, "the call was never joined, so no frame is heard and refused")
+}
+
+func (s *AgentSuite) TestAnAgentWhoseLiveTranscriberFailsToStartTriesAgainOnEachFrame() {
+	// On d1654d42 each frame opened a transcriber, and each failure was one "stt" error.
+	agent, built := s.buildTranscribing("stub/stub-model", errors.New("stub: connect failed"))
+	s.Require().NoError(agent.Join(s.ctx))
+	events := collect(agent)
+	s.T().Cleanup(func() { <-events.done })
+	s.T().Cleanup(func() { _ = agent.Close() })
+
+	for range 3 {
+		s.speak(stt.Participant{ID: "alice"})
+	}
+
+	failed := func() int {
+		count := 0
+		for _, event := range events.seen() {
+			if failure, ok := event.(Error); ok && failure.Context == "stt" {
+				count++
+			}
+		}
+		return count
+	}
+	s.eventually(func() bool { return failed() == 3 }, "a failed start was not tried again on the next frame")
+	s.EqualValues(3, built.Load())
+}
+
+// buildTranscribing builds an agent whose transcriber is pinned to target, over a config
+// that also declares the batch model stub/batch. A start error fails every session opened.
+func (s *AgentSuite) buildTranscribing(target string, start error) (*Agent, *atomic.Int64) {
+	s.edge = newLoopbackEdge()
+	s.model = newStubLLM()
+	s.flow = newStubLLM()
+	s.voice = newStubTTS(true)
+	logger := slog.New(slog.DiscardHandler)
+
+	config := stubConfig()
+	config.Providers = append(config.Providers, routing.ProviderConfig{Provider: "stub", Model: "batch", Languages: []string{"en"}})
+	var built atomic.Int64
+	transcription := sttrouter.NewRegistry()
+	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
+		built.Add(1)
+		return &unstartableSTT{stubSTT: newStubSTT(), err: start}, nil
+	})
+	transcriber, err := sttrouter.New(sttrouter.Options{Config: config, Registry: transcription, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(transcriber.Close)
+	speech := ttsrouter.NewRegistry()
+	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaker, err := ttsrouter.New(ttsrouter.Options{Config: stubConfig(), Registry: speech, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(speaker.Close)
+
+	agent, err := New(Options{
+		Edge: s.edge, Instructions: "be brief", CustomerID: "acme",
+		LLM: s.reasoner(logger), LLMTarget: "en-low-latency",
+		STT: transcriber, STTTarget: target,
+		TTS: speaker, TTSTarget: "en-low-latency", Logger: logger,
+	})
+	s.Require().NoError(err)
+	return agent, &built
+}
+
+// unstartableSTT is a transcriber whose Start fails with err, when it is set.
+type unstartableSTT struct {
+	*stubSTT
+	err error
+}
+
+func (u *unstartableSTT) Start(context.Context) error { return u.err }
 
 func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {
 	// A murmur is meant to overlap. Treating the caller carrying on as barge-in would

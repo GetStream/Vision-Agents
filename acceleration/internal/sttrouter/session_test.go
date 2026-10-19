@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,6 +123,35 @@ func (s *SessionSuite) TestAudioAfterAFatalErrorIsDropped() {
 		s.NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}),
 			"the caller was told once; every frame after it would say the same again")
 	}
+}
+
+func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAFatalError() {
+	provider := &countingSTT{emitter: stt.NewEmitter(128)}
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	session := newSession(provider, routing.ProviderConfig{Provider: "counting", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder)
+	defer session.Close()
+	// Revisions nobody reads fill the session's buffer, so the fatal error is held until the
+	// caller reads that far.
+	for range cap(session.events) {
+		provider.emitter.Send(stt.Transcript{Text: "hel", Mode: stt.ModeReplacement})
+	}
+	provider.emitter.Send(refused())
+
+	s.Require().Eventually(func() bool {
+		before := provider.heard.Load()
+		err := session.ProcessAudio(frame(), stt.Participant{ID: "caller"})
+		return err == nil && provider.heard.Load() == before
+	}, 3*time.Second, 5*time.Millisecond, "audio still reaches a provider whose fatal error is on its way to the caller")
+
+	for range cap(session.events) {
+		<-session.Events()
+	}
+	s.IsType(stt.Error{}, <-session.Events())
+	heard := provider.heard.Load()
+	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
+	s.Equal(heard, provider.heard.Load(), "a caller told of the fatal error still reached the provider")
 }
 
 func (s *SessionSuite) TestAudioAfterAnErrorTheProviderOutlivesStillFails() {
@@ -260,6 +290,24 @@ func (r *refusingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
 	default:
 		return errors.New("refusing: write audio: websocket: close sent")
 	}
+	return nil
+}
+
+// countingSTT counts the audio it is sent and emits only what the test sends through its
+// emitter.
+type countingSTT struct {
+	emitter *stt.Emitter
+	heard   atomic.Int64
+}
+
+func (c *countingSTT) Start(context.Context) error { return nil }
+func (c *countingSTT) Events() <-chan stt.Event    { return c.emitter.Events() }
+func (c *countingSTT) Close() error                { c.emitter.Close(); return nil }
+func (c *countingSTT) Provider() string            { return "counting" }
+func (c *countingSTT) Model() string               { return "live" }
+
+func (c *countingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	c.heard.Add(1)
 	return nil
 }
 

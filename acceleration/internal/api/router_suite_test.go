@@ -683,13 +683,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	hearing.Register("refusing", func(routing.Spec) (stt.STT, error) {
 		return &refusingSTT{emitter: stt.NewEmitter(64)}, nil
 	})
+	hearing.Register("batch", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
 	// Reached by name only: no shortcut asks for Latin.
 	heard := routableConfig()
 	// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
 	heard.Aliases["en-low-latency"] = routing.Alias{Title: "Low latency", Languages: []string{"en"}, RequireRealtime: true}
 	heard.Providers = append(heard.Providers, routing.ProviderConfig{
 		Provider: "refusing", Model: refusingModel, Languages: []string{"la"}, Realtime: true,
-	})
+	}, routing.ProviderConfig{Provider: "batch", Model: batchModel, Languages: []string{"la"}})
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
