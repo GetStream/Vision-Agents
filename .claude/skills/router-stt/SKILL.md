@@ -20,6 +20,9 @@ to `en-recorded`). One that names no language (`stt-fast`, `stt-accurate`) goes 
 recording's language hints: none or all English, `en-recorded`; any other, `multilingual-recorded`.
 A recording pinned to a `realtime: true` model (`deepgram/flux-general-en`) is refused before any
 vendor is asked, naming the recorded shortcuts (`ModalityConfig.Recorded`).
+The other way round, a live session pinned to a `realtime: false` model (`deepgram/nova-3`), or a
+priority list holding only such models, is refused before any vendor is dialled, naming the
+vendor's live models and the live shortcuts (`ModalityConfig.Live`).
 
 ## The top five, and what each calls the same thing
 

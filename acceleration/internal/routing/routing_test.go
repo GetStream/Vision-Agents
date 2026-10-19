@@ -228,6 +228,27 @@ func (s *RoutingSuite) TestARecordingToALiveShortcutInAConfigWithNoRecordedOneAs
 	s.EqualError(err, "routing: en-low-latency is a shortcut for live calls; name a batch model for a recording")
 }
 
+func (s *RoutingSuite) TestALiveCallPinnedToABatchModelIsRefusedAndToALiveOneOrAShortcutIsNot() {
+	config := s.config()
+
+	err := config.Live("batchy/offline-en")
+	s.Require().ErrorIs(err, ErrRequest, "the caller's to change")
+	s.EqualError(err, "routing: batchy/offline-en is a batch model for recordings, not live calls; for a live call name a live model")
+	s.NoError(config.Live("quick/en"))
+	s.NoError(config.Live("en-high-accuracy"), "a shortcut keeps to its own half")
+	s.NoError(config.Live("nobody/unknown"), "routing refuses it in its own words")
+}
+
+func (s *RoutingSuite) TestALiveCallPinnedToABatchModelIsToldTheVendorsLiveModelsAndTheLiveShortcuts() {
+	config := s.config()
+	config.Providers = append(config.Providers, ProviderConfig{Provider: "quick", Model: "offline", Languages: []string{"en"}})
+	config.Aliases["en-low-latency"] = Alias{Title: "Fast", Languages: []string{"en"}, RequireRealtime: true}
+	config.Aliases["en-recorded"] = Alias{Title: "Recorded", Languages: []string{"en"}, RequireRecorded: true}
+
+	s.EqualError(config.Live("quick/offline"),
+		"routing: quick/offline is a batch model for recordings, not live calls; for a live call name quick/en or quick/multi or en-low-latency")
+}
+
 func (s *RoutingSuite) TestARecordingPinnedToALiveOnlyModelIsRefusedAndToABatchOneIsNot() {
 	config := s.config()
 	config.Aliases["en-recorded"] = Alias{Languages: []string{"en"}, RequireRecorded: true}

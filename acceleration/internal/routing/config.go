@@ -487,6 +487,34 @@ func (c ModalityConfig) recordedAdvice() string {
 	return "send a recording to " + strings.Join(recorded, " or ") + ", or name a batch model"
 }
 
+// Live refuses a live session pinned to a batch-only model, which the vendor's streaming
+// endpoint would turn away only once dialled. It names the vendor's live models and the
+// live shortcuts offered. A shortcut keeps to the live half by its own requirements, so
+// any other target passes.
+func (c ModalityConfig) Live(target string) error {
+	provider, ok := c.Provider(target)
+	if !ok || provider.Realtime {
+		return nil
+	}
+	var live []string
+	for _, candidate := range c.Providers {
+		if candidate.Provider == provider.Provider && candidate.Realtime {
+			live = append(live, candidate.Name())
+		}
+	}
+	for _, name := range c.Offered() {
+		if c.Aliases[name].RequireRealtime {
+			live = append(live, name)
+		}
+	}
+	advice := "name a live model"
+	if len(live) > 0 {
+		advice = "name " + strings.Join(live, " or ")
+	}
+	return Refused(stack.Wrap(fmt.Errorf("routing: %s is a batch model for recordings, not live calls; for a live call %s",
+		target, advice)))
+}
+
 // Meets reports whether any model here could serve a request asking for that data policy.
 // A policy nothing meets is worth refusing when it is written down, since every request
 // made under it afterwards would be refused anyway.

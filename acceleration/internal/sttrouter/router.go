@@ -7,6 +7,7 @@ package sttrouter
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -86,6 +87,9 @@ func New(options Options) (*Router, error) {
 // one fails to start.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	request.Options = routeDefaults(request.Target, request.Options)
+	if err := r.pinnedLive(request); err != nil {
+		return nil, err
+	}
 	core := routing.Request{
 		CustomerID:    request.CustomerID,
 		AgentID:       request.AgentID,
@@ -105,6 +109,25 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		return nil, err
 	}
 	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+}
+
+// pinnedLive refuses a session pinned only to batch models before any vendor is dialled:
+// a single provider/model, or a priority list holding nothing else. A list with one live
+// entry passes, and Realtime keeps it to that half.
+func (r *Router) pinnedLive(request Request) error {
+	pinned := request.Options.Providers
+	if len(pinned) == 0 {
+		pinned = []string{request.Target}
+	}
+	var refusals []error
+	for _, target := range pinned {
+		err := r.Config().Live(target)
+		if err == nil {
+			return nil
+		}
+		refusals = append(refusals, err)
+	}
+	return errors.Join(refusals...)
 }
 
 // eagerRoutes are the shortcuts for a live conversation, where a reply started on a guess
