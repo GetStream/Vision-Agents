@@ -89,7 +89,7 @@ caller cannot tell the difference from the audio, and the whole point of routing
 did not have to know which vendor answered. So options become `Terms()`, and only models whose
 `supports:` lists every term asked for are candidates.
 
-Today the batch entry `elevenlabs/eleven_v3` declares `[stability, similarity, format]`, which is the recorded path; it declares no `speed`, so a recording that asks for one is refused. `cartesia/sonic-preview` declares `[format]` for its recordings; its live factory refuses a format as `routing.ErrRequest`, since a live voice streams raw audio. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
+Today the batch entry `elevenlabs/eleven_v3` declares `[stability, similarity, format]`, which is the recorded path; it declares no `speed`, so a recording that asks for one is refused. `cartesia/sonic-3.6` is its batch entry (`realtime: false`, `[format]`), the one a priority list asked for a recording reaches, and `en-recorded` still prefers `eleven_v3`; the live `cartesia/sonic-preview` also declares `[format]`; its live factory refuses a format as `routing.ErrRequest`, since a live voice streams raw audio. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
 declare `[speed, stability, similarity]`, sent as `voice_settings` when each context opens (stability 0.5,
 similarity 0.8 when not asked); a speed outside 0.7–1.2 or a stability or similarity outside
 0–1 is refused when the provider is built. The dialogue models (v3 conversational, v4, v4
