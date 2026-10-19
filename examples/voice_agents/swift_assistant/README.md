@@ -3,7 +3,7 @@
 Juno, a personal assistant in the shape of the Grok and Meta AI apps: conversations kept in a
 sidebar, a chat that shows its thinking and its steps, a voice mode you switch into and back
 out of, tools that run on the phone for the things only the phone knows, and the person's own
-Gmail, connected from a button in the composer.
+Gmail, connected from a button at the top of the chat.
 
 ```
 agent.yaml           what runs the agent: models, voice, search, greeting
@@ -58,12 +58,12 @@ log says so.
 
 ## Gmail
 
-The envelope beside the message box connects the person's Gmail. The backend starts the
-router's consent for their own Gmail connection, with `return_url` set to the app's own scheme,
-`io.getstream.visionagents.swiftassistant:/gmail` (the router takes one only in reverse domain
-form, RFC 8252 section 7.1); the app opens the launch page in a web authentication sheet with
-the handoff token in its fragment, the person answers Google, and the router stores the grant
-and sends the sheet back to the app. The Google credential stays sealed in the router.
+The envelope at the top right of a conversation connects the person's Gmail. The backend starts
+the router's consent for their own Gmail connection, with `return_url` set to the app's own
+scheme, `io.getstream.visionagents.swiftassistant:/gmail` (the router takes one only in reverse
+domain form, RFC 8252 section 7.1); the app opens the launch page in a web authentication sheet
+with the handoff token in its fragment, the person answers Google, and the router stores the
+grant and sends the sheet back to the app. The Google credential stays sealed in the router.
 
 The agent binds `gmail` as each person's own (`connectors:` in `agent.yaml`). Google's Gmail MCP
 server searches, reads, labels and drafts, but cannot send, so sending is `send_email`, a tool
@@ -120,6 +120,6 @@ Without the client, the button says so: the router answers that it has no OAuth 
 - **Connecting Gmail from the chat.** When the agent reaches for Gmail before it is connected,
   the router writes a `connector_authorization` card on the reply, which `StreamChatAI` does not
   render, since it reads only `ai_` attachments. The instructions send the person to the
-  composer's button instead.
+  Gmail button instead.
 - **Memory across conversations** needs `MEM0_API_KEY` on the router and a `memory` on the
   session, which `SessionOptions` has no field for.

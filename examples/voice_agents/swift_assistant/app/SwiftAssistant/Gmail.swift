@@ -132,8 +132,8 @@ final class GmailAccount {
     }
 }
 
-/// The composer's Gmail button: connects Gmail, and once it is, says so and offers to
-/// disconnect it.
+/// The Gmail button at the top right of a conversation: connects Gmail, and once it is, says
+/// so and offers to disconnect it.
 struct GmailButton: View {
     let gmail: GmailAccount
 
@@ -163,8 +163,6 @@ struct GmailButton: View {
                 .accessibilityLabel("Connect Gmail")
             }
         }
-        .font(.title3)
-        .frame(width: 36, height: 36)
         .task { await gmail.refresh() }
         .alert(
             "Gmail",
