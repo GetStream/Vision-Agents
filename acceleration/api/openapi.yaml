@@ -1547,6 +1547,9 @@ components:
       type: object
     Candidate:
       properties:
+        can_record:
+          description: 'Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.'
+          type: boolean
         health:
           $ref: '#/components/schemas/ProviderHealth'
         model:

@@ -2008,6 +2008,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CampaignState {
 ///`Candidate`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Candidate {
+    ///Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub can_record: ::std::option::Option<bool>,
     pub health: ProviderHealth,
     pub model: ::std::string::String,
     pub provider: ::std::string::String,

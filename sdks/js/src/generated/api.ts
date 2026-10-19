@@ -4602,6 +4602,8 @@ export type components = {
             };
         };
         readonly Candidate: {
+            /** @description Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them. */
+            readonly can_record?: boolean;
             readonly health: components["schemas"]["ProviderHealth"];
             readonly model: string;
             readonly provider: string;

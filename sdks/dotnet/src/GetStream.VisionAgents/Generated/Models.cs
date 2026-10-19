@@ -2315,6 +2315,12 @@ namespace GetStream.VisionAgents.Models
     public partial class Candidate
     {
 
+        /// <summary>
+        /// Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("can_record")]
+        public bool? CanRecord { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("health")]
         public ProviderHealth Health { get; set; } = new ProviderHealth();
 
