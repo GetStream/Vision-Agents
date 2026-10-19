@@ -68,6 +68,10 @@ class Router:
         # started_after is how long the router takes to answer a start frame, as a provider
         # that is slow to open does.
         self.started_after = 0.0
+        # silent makes the router read a start frame and answer nothing, as a stuck provider does.
+        self.silent = False
+        # start_seen is set when a start frame reaches the router.
+        self.start_seen = asyncio.Event()
         # hanging_up makes the router close the socket on a start frame without a word.
         self.hanging_up = False
         # answering holds every handshake while it is clear, as a slow router does.
@@ -143,6 +147,9 @@ class Router:
         async for message in socket:
             if message.type == WSMsgType.TEXT:
                 opened.start = json.loads(message.data)
+                self.start_seen.set()
+                if self.silent:
+                    continue
                 if self.refusing_start:
                     await socket.send_json(
                         {"type": "error", "error": self.refusing_start}
@@ -243,6 +250,20 @@ class TestSTT:
 
         with pytest.raises(RouterError):
             await transcriber.start()
+
+    async def test_a_start_cancelled_while_waiting_closes_its_socket(
+        self, router: Router
+    ):
+        router.silent = True
+        transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
+        starting = asyncio.create_task(transcriber.start())
+        await asyncio.wait_for(router.start_seen.wait(), SETTLE)
+
+        starting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+
+        await asyncio.wait_for(router.opened[0].closed.wait(), SETTLE)
 
     async def test_a_socket_refused_for_a_new_participant_is_reported_once(
         self, router: Router, stt: stream.STT
