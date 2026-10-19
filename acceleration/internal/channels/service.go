@@ -186,6 +186,96 @@ func (s *Service) Link(ctx context.Context, customerID, configID, userID string)
 	return link, nil
 }
 
+// Notice is a message sent to one end user on a channel, first, rather than
+// as an answer: who it is for, on which agent's line, and what it says.
+type Notice struct {
+	CustomerID string
+	ConfigID   string
+	Kind       Kind
+	UserID     string
+	Text       string
+}
+
+// whatsappWindow is how long after somebody last wrote WhatsApp lets a line
+// write first. Outside it only a pre-approved template may open, which this
+// router does not send, so the write is refused and the caller falls back.
+const whatsappWindow = 24 * time.Hour
+
+// Notify sends text to one end user on a channel they already talk to the
+// agent on, over the line that agent answers on there.
+//
+// Everything that keeps an answer from going out keeps a first message from
+// going out, and for the same reasons: the gate refuses a number that opted
+// out, a sandboxed app counts the message against its day, and WhatsApp is
+// written only inside the day after the person last wrote, because outside
+// it Meta wants a template this router does not send. A refusal is an error
+// like any other, which is what a caller with another channel falls back on.
+func (s *Service) Notify(ctx context.Context, notice Notice) error {
+	if !notice.Kind.Valid() {
+		return stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
+	}
+	if notice.Text == "" {
+		return stack.Wrap(errors.New("channels: there is nothing to send"))
+	}
+	identity, err := s.store.ChannelIdentityByUser(ctx, notice.CustomerID, notice.ConfigID,
+		string(notice.Kind), notice.UserID)
+	if errors.Is(err, store.ErrUnknownChannelIdentity) {
+		return stack.Wrap(fmt.Errorf("channels: %s has never written on %s", notice.UserID, notice.Kind))
+	}
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	config, err := s.store.AgentConfig(ctx, notice.CustomerID, notice.ConfigID)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	number := config.Channels.Lines()[string(notice.Kind)]
+	if number == "" {
+		return stack.Wrap(fmt.Errorf("channels: the agent answers on no %s line", notice.Kind))
+	}
+	account, err := s.store.ChannelAccount(ctx, notice.CustomerID, string(notice.Kind), number)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("channels: the %s line %s is not connected: %w", notice.Kind, number, err))
+	}
+	line, err := Open(s.secrets, account)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	if err := s.gate.Allow(ctx, notice.CustomerID, string(notice.Kind), identity.Address); err != nil {
+		return err
+	}
+	if notice.Kind == WhatsApp {
+		last, err := s.store.LastChannelMessageAt(ctx, account.ID, identity.Address)
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		switch {
+		case last.IsZero():
+			return stack.Wrap(fmt.Errorf("channels: %s has never written on WhatsApp, "+
+				"so there is no window to write first in", identity.Address))
+		case time.Since(last) > whatsappWindow:
+			return stack.Wrap(fmt.Errorf("channels: %s last wrote over a day ago, "+
+				"outside WhatsApp's window for writing first", identity.Address))
+		}
+	}
+	thread := identity.Address
+	if notice.Kind == IMessage {
+		thread = identity.Thread
+		if thread == "" {
+			return stack.Wrap(fmt.Errorf("channels: there is no iMessage chat with %s to write to", identity.Address))
+		}
+	}
+	provider, ok := For(notice.Kind, s.transport)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
+	}
+	if err := provider.Send(ctx, line, thread, Reply{Text: notice.Text}); err != nil {
+		return stack.Wrap(err)
+	}
+	s.gate.Sent(ctx, notice.CustomerID)
+	return nil
+}
+
 // Open reads back the credentials a line was stored with. The customer is bound into the
 // sealing, so ciphertext moved to another app's row does not open.
 func Open(secrets *auth.Sealer, stored store.ChannelAccount) (Account, error) {
