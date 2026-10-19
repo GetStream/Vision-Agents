@@ -187,6 +187,25 @@ func (s *StreamsSuite) TestWhatIsSentToBeSpokenReachesTheVoice() {
 	}, settleFor, 10*time.Millisecond)
 }
 
+func (s *StreamsSuite) TestTheStartedFrameNamesTheVoiceSpeaking() {
+	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency", "voice": "library-voice"})
+
+	started := s.nextFrame(speaking)
+	s.Equal("started", started["type"])
+	s.Equal("library-voice", started["voice"])
+}
+
+// The name order matters: tests run alphabetically and every TTS socket in the suite shares
+// one stub voice, so this one must sort after TestSpeechComesBackAsAudioThatDescribesItself,
+// or its still-open socket reads the audio that test sends.
+func (s *StreamsSuite) TestTheStartedFrameOfAVoiceAskedForNoneNamesNone() {
+	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
+
+	started := s.nextFrame(speaking)
+	s.Equal("started", started["type"])
+	s.NotContains(started, "voice")
+}
+
 func (s *StreamsSuite) TestSpeechComesBackAsAudioThatDescribesItself() {
 	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
 	s.Equal("started", s.nextFrame(speaking)["type"])

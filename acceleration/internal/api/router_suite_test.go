@@ -768,7 +768,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 
 	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
 	speaking := ttsrouter.NewRegistry()
-	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaking.Register("stub", func(spec routing.Spec) (tts.TTS, error) { return s.voice.opened(spec.Voice), nil })
 	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
 	ttsConfig := s.ttsConfig
 	if len(ttsConfig.Providers) == 0 {

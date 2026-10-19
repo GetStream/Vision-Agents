@@ -743,6 +743,8 @@ type AgentSuite struct {
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
+	// voiceName is the voice the agent is configured to speak in.
+	voiceName string
 	// records is where turns are counted, and live where they are kept, when a test gives
 	// the agent a database and a Redis.
 	records *store.Store
@@ -781,6 +783,7 @@ func (s *AgentSuite) SetupTest() {
 	s.speculates = false
 	s.unified = false
 	s.performing = ""
+	s.voiceName = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -992,6 +995,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		STTTarget:          "en-low-latency",
 		TTS:                speaker,
 		TTSTarget:          "en-low-latency",
+		Voice:              s.voiceName,
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
@@ -3302,6 +3306,26 @@ func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
 
 	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 },
 		"the reply was not spoken in the voice that replaced the lost one")
+}
+
+func (s *AgentSuite) TestAnAgentWithNoVoiceOpensItsVoiceWithNone() {
+	s.join(true)
+
+	s.Empty(s.voiceAsked.Voice, "the provider's default, which is what no voice has always meant")
+}
+
+func (s *AgentSuite) TestTheVoiceThatReplacesALostOneSpeaksInTheAgentsVoice() {
+	s.voiceName = "library-voice"
+	s.join(false)
+	s.Equal("library-voice", s.voiceAsked.Voice)
+	s.replacement = newStubTTS(false)
+	lost := s.agent.voice()
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+	s.eventually(func() bool { return s.agent.voice() != lost }, "the lost voice was never replaced")
+
+	s.Equal("library-voice", s.voiceAsked.Voice, "the replacement is not opened in its provider's default")
 }
 
 func (s *AgentSuite) TestReturnedWorkWaitsForTheReplacementVoice() {

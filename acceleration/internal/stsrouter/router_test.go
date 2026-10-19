@@ -285,6 +285,46 @@ func (s *STSRouterSuite) TestFastConversationalLandsOnGemini38Live() {
 	s.Equal("gemini-3.8-live", built[0].Model, "the conversation nobody picked a model for gets the one the pin names")
 }
 
+func (s *STSRouterSuite) TestAVoiceIdInAnOverwriteDoesNotNarrowTheShortcutAsOnBase() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// Probed on b1e563f98: sts-fast with only this overwrite was served by gemini/gemini-3.8-live
+	// with no voice. No STS vendor reads a voice_id, so there is no voice to keep from a default.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "sts-fast",
+		Options: options.STS{Overwrites: map[string]json.RawMessage{
+			"openai": json.RawMessage(`{"voice_id":"ow-voice"}`),
+		}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("gemini/gemini-3.8-live", session.Provider()+"/"+session.Model())
+	s.Require().Len(built, 1)
+	s.Empty(built[0].Voice, "the overwrite is not the spec's voice for STS")
+}
+
+func (s *STSRouterSuite) TestAVoiceIdInTheServingVendorsOverwriteIsNotHandedToItAsTheVoice() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "sts-fast",
+		Options: options.STS{Overwrites: map[string]json.RawMessage{
+			"gemini": json.RawMessage(`{"voice_id":"ow-voice"}`),
+		}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("gemini", session.Provider())
+	s.Require().Len(built, 1)
+	s.Empty(built[0].Voice, "no STS factory reads a voice_id, so the spec carries none, as on base")
+}
+
 func (s *STSRouterSuite) TestSemanticTurnsOnAModelWithoutThemAreRefusedNamingTheModel() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)

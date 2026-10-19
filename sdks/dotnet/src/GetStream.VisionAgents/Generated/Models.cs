@@ -9938,6 +9938,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string? Url { get; set; } = default!;
 
+        /// <summary>
+        /// The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voice")]
+        public string? Voice { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]

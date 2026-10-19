@@ -939,6 +939,130 @@ func (s *TTSRouterSuite) TestAStyleOverwriteOnTheQualityShortcutIsRefusedRatherT
 		"cartesia never reads the elevenlabs block, so serving with it would drop the style in silence")
 }
 
+// onlyCartesiasVoice asks a voice of Cartesia alone, on a request that names no other.
+var onlyCartesiasVoice = map[string]json.RawMessage{"cartesia": json.RawMessage(`{"voice_id":"` + cartesiaVoice + `"}`)}
+
+// newStubbedRouterWithDownVendor is newStubbedRouter where one vendor fails to start.
+func (s *TTSRouterSuite) newStubbedRouterWithDownVendor(built *[]routing.Spec, down string) *Router {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	registry := routing.NewRegistry[tts.TTS]()
+	for _, provider := range config[routing.TTS].Providers {
+		registry.Register(provider.Provider, func(spec routing.Spec) (tts.TTS, error) {
+			*built = append(*built, spec)
+			if provider.Provider == down {
+				return nil, errors.New(down + " is down")
+			}
+			return newStubTTS(), nil
+		})
+	}
+
+	router, err := New(Options{Config: config[routing.TTS], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+func (s *TTSRouterSuite) TestAVoiceAskedOnlyOfOneVendorIsSpokenByThatVendorInThatVoice() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// On b1e563f98 ElevenLabs v4 served this with no voice, so in its default.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options:    options.TTS{Overwrites: onlyCartesiasVoice},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("cartesia", session.Provider())
+	s.Require().Len(built, 1)
+	s.Equal(cartesiaVoice, built[0].Voice, "Cartesia's factory reads no overwrites, so the voice comes as the spec's")
+}
+
+func (s *TTSRouterSuite) TestAVoiceAskedOfAVendorThatFailsIsNotSpokenByAnotherInItsDefault() {
+	var built []routing.Spec
+	router := s.newStubbedRouterWithDownVendor(&built, "cartesia")
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options:    options.TTS{Overwrites: onlyCartesiasVoice},
+	})
+
+	s.Require().Error(err)
+	s.ErrorContains(err, "cartesia/sonic-preview: cartesia is down")
+	s.Require().Len(built, 1, "no other vendor was started without the voice")
+	s.Equal("sonic-preview", built[0].Model)
+}
+
+func (s *TTSRouterSuite) TestAVoiceAskedOfAVendorTheTargetDoesNotReachIsRefused() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options:    options.TTS{Providers: []string{"elevenlabs"}, Overwrites: onlyCartesiasVoice},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller can fix it, and no model's health pays for it")
+	s.ErrorContains(err, "a voice was asked for only in overwrites.cartesia, and no candidate for this request is cartesia")
+	s.Empty(built)
+}
+
+func (s *TTSRouterSuite) TestWithNoVoiceAskedTheQualityShortcutSpeaksInElevenLabsDefaultAsBefore() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// Probed on b1e563f98: elevenlabs/eleven_v4, built with no voice.
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "tts-quality"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("elevenlabs/eleven_v4", session.Provider()+"/"+session.Model())
+	s.Require().Len(built, 1)
+	s.Empty(built[0].Voice)
+}
+
+func (s *TTSRouterSuite) TestATopLevelVoiceIsStillTheOneCartesiaIsBuiltWithBesideItsOwnVoiceId() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// Probed on b1e563f98: built with top-voice, which Cartesia's factory reads from the spec.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "top-voice",
+		Options:    options.TTS{Providers: []string{"cartesia"}, Overwrites: onlyCartesiasVoice},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("cartesia", session.Provider())
+	s.Require().Len(built, 1)
+	s.Equal("top-voice", built[0].Voice, "a top-level voice is not replaced by an overwrite, as on base")
+}
+
+func (s *TTSRouterSuite) TestAVoiceAtTheTopLevelStillGoesToEveryVendorBesideAnOverwrite() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// Probed on b1e563f98: elevenlabs/eleven_v4, built with library-voice.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Voice:      "library-voice",
+		Options:    options.TTS{Overwrites: onlyCartesiasVoice},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("elevenlabs/eleven_v4", session.Provider()+"/"+session.Model())
+	s.Require().Len(built, 1)
+	s.Equal("library-voice", built[0].Voice)
+}
+
 func (s *TTSRouterSuite) TestStartRequiresACustomer() {
 	_, err := s.newRouter().Start(s.ctx, Request{Target: "en-low-latency"})
 	s.ErrorContains(err, "customer id is required")

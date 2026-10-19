@@ -118,8 +118,8 @@ func (r *Recorder) Provider() string { return ProviderName }
 func (r *Recorder) Model() string { return r.options.Model }
 
 // Voice is the speaker of a recording that names none. It makes the recorder a tts.Voiced
-// like the live voices, so a caller can ask which voice a built recorder will use; nothing
-// in production does yet.
+// like the live voices, so a caller can ask which voice a built recorder will use; the
+// recording router reads it to report the voice that spoke.
 func (r *Recorder) Voice() string { return r.options.VoiceID }
 
 // Record speaks the text and returns the file.
