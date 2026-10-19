@@ -237,8 +237,8 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 		if message.Role != llm.User {
 			continue
 		}
-		for _, match := range spelledOut.FindAllString(message.Content, -1) {
-			spellings = append(spellings, strings.Join(strings.FieldsFunc(match, func(r rune) bool { return !unicode.IsLetter(r) }), ""))
+		for _, match := range spelledOut.FindAllStringSubmatch(message.Content, -1) {
+			spellings = append(spellings, strings.Join(strings.FieldsFunc(match[1], func(r rune) bool { return !unicode.IsLetter(r) }), ""))
 		}
 	}
 	if len(spellings) == 0 {
@@ -263,8 +263,9 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 }
 
 // spelledOut matches three or more single letters read out one at a time: "o k a f o r",
-// "P-A-T-E-L".
-var spelledOut = regexp.MustCompile(`(?i)\b[a-z](?:[\s,.-]+[a-z]\b){2,}`)
+// "P-A-T-E-L". The first letter starts a word: in "that's a l v a r e z" the s ends one, and
+// read as a spelled letter it made Alvarez "Salvarez".
+var spelledOut = regexp.MustCompile(`(?i)(?:^|[^\p{L}'’])([a-z](?:[\s,.-]+[a-z]\b){2,})`)
 
 // closeTo reports whether two words are near enough to be one name heard two ways: the same
 // first or last two letters, and lengths within three.

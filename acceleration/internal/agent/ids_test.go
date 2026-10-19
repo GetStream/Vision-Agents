@@ -145,6 +145,9 @@ func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 	_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: "Name is Alkafor. PIN 4471."}},
 		llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"Alkafor"}`})
 	assert.False(t, got, "nothing was spelled")
+	_, _, got = misspelledName([]llm.Message{{Role: llm.User, Content: "The name for the booking is Alvarez, that's a l v a r e z, Will be six people."}},
+		llm.ToolCall{Name: "create_reservation", Arguments: `{"name":"Alvarez"}`})
+	assert.False(t, got, "the s of that's is not a spelled letter")
 	assert.Contains(t, misspelledResult("Alkafor", "okafor"), "o k a f o r, so it is Okafor")
 }
 
