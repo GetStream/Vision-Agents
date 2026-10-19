@@ -25,11 +25,12 @@ class SpeechRequest:
         callback (str | Unset): A URL the finished job is POSTed to, so a caller does not have to poll.
         config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
             that one field of it.
-        inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The
-            202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database
-            is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8
-            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs. Default:
-            False.
+        inline (bool | Unset): Speak this short text synchronously and return the audio, base64, in the 202 response,
+            storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000
+            characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A
+            model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202,
+            with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required.
+            Default false keeps the stored, asynchronous job. Default: False.
         options (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.

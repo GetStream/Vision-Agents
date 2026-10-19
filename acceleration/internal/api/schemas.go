@@ -292,7 +292,7 @@ type CreateSessionRequest struct {
 	UserId            *string                    `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
 	UserName          *string                    `json:"user_name,omitempty" default:"Vision Agent"`
 	Video             *SessionVideo              `json:"video,omitempty"`
-	Voice             *string                    `json:"voice,omitempty" doc:"Provider-specific voice id."`
+	Voice             *string                    `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
 }
 
 func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

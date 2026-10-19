@@ -67,7 +67,7 @@ func main() {
 	flag.StringVar(&options.llmTarget, "llm", "llm-fast", "llm provider/model or shortcut")
 	flag.StringVar(&options.sttTarget, "stt", "en-low-latency", "stt provider/model or shortcut")
 	flag.StringVar(&options.ttsTarget, "tts", "en-low-latency", "tts provider/model or shortcut")
-	flag.StringVar(&options.voice, "voice", "", "provider-specific voice id")
+	flag.StringVar(&options.voice, "voice", "", "a provider's own voice id; custom: voices are not available in this tool")
 	flag.StringVar(&options.language, "language", "", "language hint, e.g. es")
 	flag.StringVar(&options.instructions, "instructions",
 		"You are a helpful voice assistant. Keep your answers to one or two sentences.",

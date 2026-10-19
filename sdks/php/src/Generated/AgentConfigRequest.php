@@ -66,7 +66,7 @@ final readonly class AgentConfigRequest
         // Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match pattern...
         /** @var list<string>|null */
         public ?array $visibleTools = null,
-        // Provider-specific voice id.
+        // The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you ga...
         public ?string $voice = null,
     ) {
     }

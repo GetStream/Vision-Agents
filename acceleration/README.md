@@ -925,11 +925,14 @@ so it answers later than the socket voices. `fish/s2-pro` reads a bracket out as
 
 ### A voice described rather than chosen
 
-Every other provider takes a voice id. Breeze takes prose: "a warm, thoughtful young woman
-with a calm, reflective delivery" designs a voice with no reference audio at all, and the
-same field alongside a reference clip steers delivery while the clip keeps the identity. So
+Every other provider takes a voice id, or one of your own voices written `custom:<name>`,
+which is resolved per provider (one that was never given it is skipped). Breeze takes
+prose: "a warm, thoughtful young woman with a calm, reflective delivery" designs a voice
+with no reference audio at all, and the same field alongside a reference clip steers
+delivery while the clip keeps the identity. So
 `-voice` means something different depending on who is listening, and a voice id from
-another provider is meaningless here rather than merely wrong.
+another provider is meaningless here rather than merely wrong. A `custom:` voice never
+lands on Breeze, which has no cloner (below).
 
 That is also why `breeze` registers no cloner in `internal/tts/voices`, the same as
 `s2pro`: a customer's own voice is a clip plus a transcript per request, not something
