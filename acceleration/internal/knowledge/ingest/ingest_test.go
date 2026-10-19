@@ -172,6 +172,10 @@ func (s *DocumentsSuite) TestALongSourceIsKeyedByAHashOfAllOfIt() {
 		"a stored base is only found again while the hash stays the same")
 	s.Equal(push+" > One", written[0].Source, "a reader still sees the url")
 
+	// This hash holds "_", so a swap to the standard base64 alphabet would rename it.
+	s.Equal("O8s6_kKeTdYIiCnGTGI3FmEHc4qQOCDEGXmMSqqkZlU#0",
+		IDs("https://getstream.io/moderation/docs/node/content-moderation/before-message-send/", 0, 1)[0])
+
 	// Two urls with the same first 60 bytes, as two pages of one docs section have.
 	shared := "https://getstream.io/moderation/docs/node/content-moderation/"
 	s.NotEqual(IDs(shared+"before-message-send/", 0, 1), IDs(shared+"custom-actions/", 0, 1))
