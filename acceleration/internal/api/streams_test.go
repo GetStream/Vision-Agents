@@ -499,14 +499,15 @@ func (s *StreamsSuite) TestAVoiceThatCannotStartSaysWhyInTheCloseFrameToo() {
 	s.Equal(refused["error"], closed.Text)
 }
 
-func (s *StreamsSuite) TestAnUnreadableFrameEndsTheVoiceSocketNormally() {
-	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
-	s.Equal("started", s.nextFrame(speaking)["type"])
+func (s *StreamsSuite) TestAnUnreadableFrameEndsTheModelSocketNormally() {
+	// A model rather than a voice: closing a voice's session closes the suite's one stub voice.
+	answering := s.start("/v1/llm/stream", frame{"target": "echo/echo-model"})
+	s.Equal("started", s.nextFrame(answering)["type"])
 
-	s.Require().NoError(speaking.WriteMessage(websocket.TextMessage, []byte("not json")))
+	s.Require().NoError(answering.WriteMessage(websocket.TextMessage, []byte("not json")))
 
-	s.Equal("closed", s.nextFrame(speaking)["type"])
-	closed := s.closedWith(speaking)
+	s.Equal("closed", s.nextFrame(answering)["type"])
+	closed := s.closedWith(answering)
 	s.Equal(websocket.CloseNormalClosure, closed.Code)
 	s.Empty(closed.Text)
 }
