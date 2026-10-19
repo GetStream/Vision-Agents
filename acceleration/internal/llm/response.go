@@ -37,6 +37,8 @@ type Response struct {
 	// OutputText is the whole answer, reasoning excluded, so a caller that ignored the
 	// deltas still has the reply.
 	OutputText string
+	// ReasoningText is the whole of the model's thinking.
+	ReasoningText string
 	// ToolCalls are the assembled calls the model asked for, in the order it asked. A
 	// response may carry both these and text: a model told to keep the caller company
 	// while it acts will say something and call a tool in the same breath.
