@@ -105,7 +105,10 @@ class Accelerated(OmniLLM):
             model: The model that answers.
             stt: The model that transcribes.
             tts: The model that speaks.
-            voice: A provider-specific voice id.
+            voice: A provider's own voice id, or one of your voices by id or by name.
+                Prefix it with `custom:` to mean only yours: a name that is not one of
+                yours is then refused instead of passed to the provider's library.
+                A native (sts) agent takes the vendor's own voice name instead.
             config: The name of a stored agent config to start from, as passed to
                 `define_agent`. Everything else here overrides what it says. The name is
                 looked up on joining, so an agent can be built before the config exists.

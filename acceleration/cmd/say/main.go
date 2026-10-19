@@ -36,7 +36,7 @@ const synthesisTimeout = 2 * time.Minute
 
 func main() {
 	target := flag.String("target", "en-low-latency", "provider/model or capability shortcut")
-	voice := flag.String("voice", "", "provider-specific voice id")
+	voice := flag.String("voice", "", "a provider's own voice id; custom: voices are not available in this tool")
 	customerID := flag.String("customer", "demo", "customer the usage is billed to")
 	language := flag.String("language", "", "language hint, e.g. es")
 	text := flag.String("text", "", "say this and exit, instead of reading stdin")

@@ -622,6 +622,19 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
+
+`await router.tts.recording(text, inline=True)` speaks a short text while the request waits and
+returns the audio in the answer, storing neither a job nor the audio: the cheap way to check
+that synthesis works on an app. It takes at most 16000 characters and 90 seconds, and with a
+`callback` it raises `ValueError`, since the router refuses that pair. Without `inline` the
+request is the same as before. The `voice` of a session, an agent config and a session update,
+and of `stream.TTS`, `Accelerated` and `define_agent`, is now documented the way
+`TtsOptions.voice` is: a provider's own voice id, or one of your voices, with `custom:` to mean
+only yours, so a typo is refused instead of passed to the provider's library. A native (sts)
+session takes the vendor's own voice name instead. The `POST /v1/tts/recordings` docs now
+describe `inline` (AI-1414).
+
 ### `stream.STT` takes `keyterms`
 
 `stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,
@@ -2161,7 +2174,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
-- An agent opens no transcription session for a participant who has left the call. Their audio and their departure come apart, so a last frame handled after the leave, or one whose session was still opening, opened a vendor socket that stayed open until the agent closed. A participant who comes back with the same session id is transcribed again (AI-1433).
+- An agent opens no transcription session for a participant who has left the call. Their audio and their departure come apart, so a last frame handled after the leave, or one whose session was still opening, opened a vendor socket that stayed open until the agent closed. A participant who comes back with the same session id is transcribed again, and so is one whose audio still comes a second after the first frame dropped, in case the SFU reported a leave for somebody who stayed (AI-1433).
+- `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
 - `GET /v1/agents/voices/library` lists every Cartesia voice. It stopped at the first 1,000 (ten pages of 100), and Cartesia had 1,049 on 2026-10-19. `provider=fish` now says Fish voices cannot be browsed through the router yet and to name one by its Fish model id, rather than `fish publishes no voice library`. A provider that will not list voices for the router's key (a 401 or 403) is reported as `the inworld key cannot list voices (http 403)` rather than as a refused voice (AI-1413).
 - A recording on a model that only streams, such as `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2`, is refused when it is sent, with a 400 that names the models that record: `routing: cartesia/sonic-preview can only stream speech, not record it; models that record: elevenlabs/...`. It was accepted and failed with `no factory registered`, in the job or in the inline answer. Only ElevenLabs records; a shortcut that reaches it, such as `tts-quality`, is served by it as before, and so is a priority list with it in. `GET /v1/tts/routes` and `/v1/tts/routes/{target}` now say per candidate whether a recording can use it (`Candidate.can_record`); STT and STS leave it out (AI-1412).
 
