@@ -4000,7 +4000,7 @@ func (s *AgentSuite) TestAToolIsNotRunBeforeTheStepItsDescriptionNeeds() {
 	s.Empty(unmetPrerequisite(tools[3], tools, append(verified, result("walk_reboot", `{"ok": false, "error_code": "840"}`)...)),
 		"a reboot that failed is the one a dispatch needs")
 	s.Empty(unmetPrerequisite(tools[4], tools, nil))
-	s.Equal("verify_account", stepNamed(append(result("create_ticket", fmt.Sprintf(runFirst, "create_ticket", "verify_account", "verify_account"))), tools))
+	s.Equal("verify_account", stepNamed(result("create_ticket", fmt.Sprintf(runFirst, "create_ticket", "verify_account", "verify_account")), tools))
 }
 
 func (s *AgentSuite) TestAGoAheadToWorkAlreadyDoneHasNothingToDo() {
