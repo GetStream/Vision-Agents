@@ -74,15 +74,15 @@ type ScheduledTask struct {
 	RRule      string     `bun:"rrule,nullzero"`
 	UntilDate  *time.Time `bun:"until_date"`
 	// NextRunAt is the next occurrence as an instant. Nil when there is none.
-	NextRunAt  *time.Time     `bun:"next_run_at"`
-	State      string         `bun:"state,notnull"`
-	Channels   []string       `bun:"channels,type:jsonb,notnull"`
+	NextRunAt *time.Time `bun:"next_run_at"`
+	State     string     `bun:"state,notnull"`
+	Channels  []string   `bun:"channels,type:jsonb,notnull"`
 	// QuietHours is the span of the user's local day an occurrence is held
 	// through rather than delivered into. Nil is no hold.
 	QuietHours *ScheduledTaskQuietHours `bun:"quiet_hours,type:jsonb"`
-	Custom     map[string]any `bun:"custom,type:jsonb,nullzero"`
-	LeaseUntil *time.Time     `bun:"lease_until"`
-	ClaimID    string         `bun:"claim_id,notnull"`
+	Custom     map[string]any           `bun:"custom,type:jsonb,nullzero"`
+	LeaseUntil *time.Time               `bun:"lease_until"`
+	ClaimID    string                   `bun:"claim_id,notnull"`
 	// ConsecutiveFailures is how many occurrences in a row failed to deliver.
 	ConsecutiveFailures int       `bun:"consecutive_failures,notnull"`
 	CreatedBy           string    `bun:"created_by,notnull"`

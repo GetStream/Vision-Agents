@@ -837,24 +837,24 @@ type UpdateScheduledTaskRequest struct {
 
 // ScheduledTask is a scheduled task as the API renders it.
 type ScheduledTask struct {
-	Id                  string                `json:"id"`
-	UserId              string                `json:"user_id"`
-	ConfigId            string                `json:"config_id"`
-	SessionId           string                `json:"session_id" doc:"The conversation the task follows up in. Empty until its first occurrence opens one."`
-	Title               string                `json:"title"`
-	Instructions        string                `json:"instructions"`
-	Schedule            ScheduledTaskSchedule `json:"schedule"`
-	DeliverTo           []string              `json:"deliver_to" nullable:"false" doc:"Where an occurrence is delivered, in order, the first that lands."`
+	Id                  string                   `json:"id"`
+	UserId              string                   `json:"user_id"`
+	ConfigId            string                   `json:"config_id"`
+	SessionId           string                   `json:"session_id" doc:"The conversation the task follows up in. Empty until its first occurrence opens one."`
+	Title               string                   `json:"title"`
+	Instructions        string                   `json:"instructions"`
+	Schedule            ScheduledTaskSchedule    `json:"schedule"`
+	DeliverTo           []string                 `json:"deliver_to" nullable:"false" doc:"Where an occurrence is delivered, in order, the first that lands."`
 	QuietHours          *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"The part of the user's day an occurrence that comes due in is held through. Absent is no hold."`
-	State               string                `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it)." enum:"active,paused,completed,failed"`
-	NextRunAt           *string               `json:"next_run_at" doc:"The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none."`
-	Upcoming            []string              `json:"upcoming" nullable:"false" doc:"Up to the next five occurrences, RFC 3339 with the task zone's offset."`
-	LastRunAt           *string               `json:"last_run_at" doc:"When a run last finished, in UTC. Null when none has."`
-	ConsecutiveFailures int                   `json:"consecutive_failures"`
-	CreatedBy           string                `json:"created_by" doc:"agent when the model made it in a conversation, api when a backend did." enum:"agent,api"`
-	Custom              map[string]any        `json:"custom,omitempty"`
-	CreatedAt           time.Time             `json:"created_at"`
-	UpdatedAt           time.Time             `json:"updated_at"`
+	State               string                   `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it)." enum:"active,paused,completed,failed"`
+	NextRunAt           *string                  `json:"next_run_at" doc:"The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none."`
+	Upcoming            []string                 `json:"upcoming" nullable:"false" doc:"Up to the next five occurrences, RFC 3339 with the task zone's offset."`
+	LastRunAt           *string                  `json:"last_run_at" doc:"When a run last finished, in UTC. Null when none has."`
+	ConsecutiveFailures int                      `json:"consecutive_failures"`
+	CreatedBy           string                   `json:"created_by" doc:"agent when the model made it in a conversation, api when a backend did." enum:"agent,api"`
+	Custom              map[string]any           `json:"custom,omitempty"`
+	CreatedAt           time.Time                `json:"created_at"`
+	UpdatedAt           time.Time                `json:"updated_at"`
 }
 
 // ScheduledTaskRun is one occurrence of a task, as the API renders it.
