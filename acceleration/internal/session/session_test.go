@@ -1803,6 +1803,18 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.Require().ErrorContains(err, "memory is unavailable")
 }
 
+func (s *SessionSuite) TestAChatThatStartsVoiceIsGivenAThinkingModelItCanRoute() {
+	// A call started from a chat hands the hard parts over, and looks at a tool's pictures,
+	// as a call opened as one does.
+	s.thinks = true
+	s.manages()
+	created := s.writes(Spec{})
+
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
+
+	s.Equal(defaultSubagentTarget, created.Spec().SubagentTarget)
+}
+
 func (s *SessionSuite) TestTextSessionHasNoSubagent() {
 	s.thinks = true
 	s.manages()
