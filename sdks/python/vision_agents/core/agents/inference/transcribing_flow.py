@@ -369,6 +369,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                                 completed=True,
                                 replace=True,  # Replace any partial transcripts
                                 original=event,
+                                participant=participant,
                             )
 
                     else:
@@ -402,11 +403,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                         # This may happen when the utterance is short (e.g. "Hello")
                         # and the user stopped speaking, but the STT is slow, and we
                         # haven't received any transcripts yet.
-                        self._llm_turn = LLMTurn(
-                            transcript=transcript,
-                            participant=event.participant,
-                            events=self.events,
-                        )
+                        self._llm_turn = self._user_turn(transcript, event.participant)
                         self._llm_turn.confirm()
                     elif event.eager and transcript:
                         # It's an eager turn, which me means we can send the transcript
@@ -416,11 +413,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                             await self._llm_turn.cancel()
 
                         # Start a new LLM turn
-                        self._llm_turn = LLMTurn(
-                            transcript=transcript,
-                            participant=event.participant,
-                            events=self.events,
-                        )
+                        self._llm_turn = self._user_turn(transcript, event.participant)
                         logger.info(
                             '🤖 Starting eager LLM turn for transcript "%s"', transcript
                         )
@@ -451,11 +444,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                     # Store the confirmed state because the turn will be reset here.
                     confirmed = llm_turn and llm_turn.confirmed
                     # Start a new turn for the final transcript.
-                    llm_turn = LLMTurn(
-                        transcript=transcript,
-                        participant=event.participant,
-                        events=self.events,
-                    )
+                    llm_turn = self._user_turn(transcript, event.participant)
                     logger.info(
                         '🤖 Starting non-eager LLM turn for transcript "%s"', transcript
                     )
@@ -576,3 +565,12 @@ class TranscribingInferenceFlow(InferenceFlow):
                 if item.final:
                     self.events.send(AgentTurnEndedEvent())
                     speaking = False
+
+    def _user_turn(self, transcript: str, participant: Participant) -> LLMTurn:
+        """A turn answering what ``participant`` said, named once somebody else has spoken."""
+        return LLMTurn(
+            transcript=transcript,
+            participant=participant,
+            events=self.events,
+            speaker=self._conversation.speaker_label(participant),
+        )

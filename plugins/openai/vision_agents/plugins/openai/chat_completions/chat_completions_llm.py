@@ -283,7 +283,9 @@ class ChatCompletionsLLM(LLM):
             for message in self._conversation.messages:
                 if not message.content:
                     continue
-                messages.append({"role": message.role, "content": message.content})
+                messages.append(
+                    {"role": message.role, "content": message.named_content}
+                )
         return messages
 
     def _reset_think_filter(self) -> None:

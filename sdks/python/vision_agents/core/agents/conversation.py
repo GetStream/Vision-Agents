@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from vision_agents.core.edge.types import Participant
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,10 +19,37 @@ class Message:
     role: Optional[str] = None
     user_id: Optional[str] = None
     id: Optional[str] = None
+    # Who said it, ahead of the words the model reads. Set once a second person has spoken.
+    speaker: Optional[str] = None
 
     def __post_init__(self):
         self.id = self.id or str(uuid.uuid4())
         self.timestamp = datetime.datetime.now()
+
+    @property
+    def named_content(self) -> str:
+        """The content as the model reads it: who said it ahead of the words, when known."""
+        return named(self.speaker, self.content)
+
+
+def named(speaker: Optional[str], text: str) -> str:
+    """``text`` with ``speaker`` ahead of it, as the router's agent writes a turn."""
+    return f"{speaker}: {text}" if speaker else text
+
+
+def _person(participant: Participant) -> str:
+    """Who a participant is: a person who rejoins gets a new id but keeps their user."""
+    return participant.user_id or participant.id
+
+
+def _speaker_label(participant: Participant) -> str:
+    """A participant's name as it goes ahead of their words.
+
+    A line break or a colon in a display name could pass for the start of another
+    person's line, so they go.
+    """
+    label = " ".join(participant.name.replace(":", "").split())
+    return label or participant.user_id or participant.id
 
 
 class ContentBuffer:
@@ -75,6 +104,18 @@ class Conversation(ABC):
         self.messages = [m for m in messages]
         self._message_states: Dict[str, MessageState] = {}
         self._lock = asyncio.Lock()  # One lock to rule them all
+        # The people, by _person, whose words are in the conversation.
+        self._speakers: set[str] = set()
+
+    def speaker_label(self, participant: Participant) -> Optional[str]:
+        """The name to put ahead of ``participant``'s words, or None.
+
+        None while nobody else has spoken, so a conversation with one person reads
+        exactly as it did before names were added.
+        """
+        if not self._speakers - {_person(participant)}:
+            return None
+        return _speaker_label(participant)
 
     async def send_message(
         self,
@@ -128,6 +169,7 @@ class Conversation(ABC):
         completed: bool = True,
         replace: bool = False,
         original: Any = None,
+        participant: Optional[Participant] = None,
     ) -> Message:
         """Add or update a message. Handles streaming, non-streaming, everything.
 
@@ -140,6 +182,8 @@ class Conversation(ABC):
             completed: If True, finalizes the message. If False, keeps it as "generating".
             replace: If True, replaces all content. If False, appends/merges with deltas.
             original: Original event/object for metadata
+            participant: Who said a user message. A new message from a participant
+                is counted as theirs and named once somebody else has spoken.
 
         Returns:
             The Message object (newly created or updated)
@@ -170,6 +214,9 @@ class Conversation(ABC):
                     content="",
                     original=original,
                 )
+                if participant is not None:
+                    message.speaker = self.speaker_label(participant)
+                    self._speakers.add(_person(participant))
                 self.messages.append(message)
                 state = MessageState(message_id)
                 self._message_states[message_id] = state

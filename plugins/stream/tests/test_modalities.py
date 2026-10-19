@@ -1,10 +1,14 @@
 import asyncio
+import json
 import os
 import urllib.request
 
 import pytest
+from aiohttp import WSMsgType, web
+from aiohttp.test_utils import TestServer
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import ImageContent
 from vision_agents.plugins import stream
 from vision_agents.plugins.stream._backend import CUSTOMER_ENV, URL_ENV
@@ -168,6 +172,87 @@ class TestLLM:
             InMemoryConversation(instructions="", messages=[message])
         )
         assert model._messages("Describe this")[0]["content"] == "Describe this"
+
+    @pytest.mark.parametrize("image", [False, True])
+    async def test_the_router_is_told_who_spoke_once_two_people_have(
+        self, model: stream.LLM, conversation: InMemoryConversation, image: bool
+    ) -> None:
+        ada = Participant(original=None, user_id="ada", id="ada-1", name="Ada")
+        bob = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+        await conversation.upsert_message(
+            role="user", user_id="ada", content="Hi", participant=ada
+        )
+        await conversation.upsert_message(
+            role="user", user_id="bob", content="Hello", participant=bob
+        )
+
+        messages = model._messages(
+            "Bob: Hello",
+            images=[ImageContent(url="https://example.com/a.png")] if image else None,
+        )
+
+        assert messages[0]["content"] == "Hi"
+        if image:
+            assert messages[1]["content"][0] == {"type": "text", "text": "Bob: Hello"}
+        else:
+            assert messages[1]["content"] == "Bob: Hello"
+
+    async def test_a_turn_already_written_down_is_not_written_again_when_answered(
+        self, conversation: InMemoryConversation
+    ) -> None:
+        responded: list[dict[str, object]] = []
+
+        async def llm_stream(request: web.Request) -> web.WebSocketResponse:
+            socket = web.WebSocketResponse()
+            await socket.prepare(request)
+            async for message in socket:
+                if message.type != WSMsgType.TEXT:
+                    continue
+                frame = json.loads(message.data)
+                if frame["type"] == "respond":
+                    responded.append(frame)
+                    await socket.send_json({"type": "complete", "text": "ok"})
+            return socket
+
+        app = web.Application()
+        app.router.add_get("/v1/llm/stream", llm_stream)
+        ada = Participant(original=None, user_id="ada", id="ada-1", name="Ada")
+        bob = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+        await conversation.upsert_message(
+            role="user", user_id="ada", content="Hi", participant=ada
+        )
+        await conversation.upsert_message(
+            role="user", user_id="bob", content="Hello", participant=bob
+        )
+        async with TestServer(app) as server:
+            model = stream.LLM(
+                target="vlm",
+                url=str(server.make_url("")).rstrip("/"),
+                customer_id="test",
+            )
+            model.set_conversation(conversation)
+            async with model:
+                async for _ in model.simple_response(
+                    "Bob: Hello",
+                    participant=bob,
+                    images=[ImageContent(url="https://example.com/a.png")],
+                ):
+                    pass
+
+        assert len(conversation.messages) == 2
+        assert responded[0]["messages"] == [
+            {"role": "user", "content": "Hi"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Bob: Hello"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/a.png"},
+                    },
+                ],
+            },
+        ]
 
     def test_ordered_content_preserves_interleaving(self):
         model = stream.LLM(target="vlm", url=LOCAL_ROUTER, customer_id="test")

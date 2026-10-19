@@ -29,6 +29,7 @@ class Participant:
     original: Any  # Original participant object received from the connectivty provider
     user_id: str  # A user id (doesn't have to be unique)
     id: str  # A unique id of the participant during the call
+    name: str = ""  # The display name in the call, when the edge knows it
 
 
 class TrackType(enum.IntEnum):
