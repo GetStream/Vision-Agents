@@ -791,6 +791,35 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	require.Equal(t, 2, count)
 }
 
+func TestAFollowUpIsDuplicateSafeAcrossRestart(t *testing.T) {
+	db, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	first, err := c.BeginFollowUp("st_0123456789abcdef0123456789abcdef", "the task is due")
+	require.NoError(t, err)
+	require.False(t, first.Duplicate)
+	c.Observe(agent.ResponseDelta{Text: "done"})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	// A worker that died after the reply reached Stream is replaced by one that
+	// delivers again under the same id: the rebuilt ledger refuses the copy.
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	replay, err := c.BeginFollowUp("st_0123456789abcdef0123456789abcdef", "the task is due")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, first.AssistantMessageID, replay.AssistantMessageID)
+	db.mu.Lock()
+	require.Len(t, db.order, 1, "only the reply was ever written")
+	db.mu.Unlock()
+}
+
 func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 	_, client := newChat(t)
 	service := NewForChat(client)

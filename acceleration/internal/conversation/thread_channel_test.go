@@ -106,7 +106,7 @@ func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsFiles() {
 	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
 	s.Require().NoError(err)
 	graph := sandbox.Attachment{Name: "graph.png", MIME: "image/png", URL: "https://cdn.fake/image/graph.png", Size: 3}
-	_, err = c.BeginFollowUp("draw the build graph")
+	_, err = c.BeginFollowUp("follow-up-"+uuid.NewString(), "draw the build graph")
 	s.Require().NoError(err)
 
 	c.Observe(agent.Delegated{TaskID: "task-1", Skill: "render"})
@@ -126,7 +126,7 @@ func (s *ThreadChannelSuite) TestAReplyThatIsOnlyFilesIsHandedOver() {
 	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
 	s.Require().NoError(err)
 	graph := sandbox.Attachment{Name: "graph.png", MIME: "image/png", URL: "https://cdn.fake/image/graph.png", Size: 3}
-	_, err = c.BeginFollowUp("draw the build graph")
+	_, err = c.BeginFollowUp("follow-up-"+uuid.NewString(), "draw the build graph")
 	s.Require().NoError(err)
 
 	c.Observe(agent.Delegated{TaskID: "task-1", Skill: "render"})
@@ -322,7 +322,7 @@ func (s *ThreadChannelSuite) person(user, text string) {
 
 // answer has the conversation answer told with reply, as Session.FollowUp leads it to.
 func (s *ThreadChannelSuite) answer(c *conversation.Conversation, told, reply string) {
-	_, err := c.BeginFollowUp(told)
+	_, err := c.BeginFollowUp("follow-up-"+uuid.NewString(), told)
 	s.Require().NoError(err)
 	c.Observe(agent.ResponseDelta{Text: reply})
 	c.Observe(agent.Responded{})

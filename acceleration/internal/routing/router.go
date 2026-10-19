@@ -226,6 +226,21 @@ func CallerFrom(ctx context.Context) (Caller, bool) {
 	return caller, ok
 }
 
+type scheduledTurnKey struct{}
+
+// WithScheduledTurn marks what ctx carries as a turn a scheduled task fired:
+// nobody asked for it just now, so the work is the customer's and is never
+// counted against an end user's day.
+func WithScheduledTurn(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scheduledTurnKey{}, true)
+}
+
+// ScheduledTurn says whether what ctx carries was fired by a scheduled task.
+func ScheduledTurn(ctx context.Context) bool {
+	scheduled, _ := ctx.Value(scheduledTurnKey{}).(bool)
+	return scheduled
+}
+
 // Request is what a caller wants served.
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.

@@ -602,16 +602,21 @@ func (s *Session) chose(name, connectionID string) {
 }
 
 // FollowUp answers text the way RespondCommand does with no message of the end user's
-// shown for it: the model is told text, and the conversation shows only the reply.
-func (s *Session) FollowUp(ctx context.Context, text string) error {
+// shown for it: the model is told text, and the conversation shows only the reply. The
+// id is the caller's own, so a follow-up delivered twice is started once: when the
+// conversation already holds it, nothing more is done.
+func (s *Session) FollowUp(ctx context.Context, id, text string) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
 		return stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
-	receipt, err := s.persisted.BeginFollowUp(text)
+	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
 		return stack.Wrap(err)
+	}
+	if receipt.Duplicate {
+		return nil
 	}
 	if !s.spec.Text {
 		s.typeInto(text)

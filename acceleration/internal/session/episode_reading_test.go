@@ -328,7 +328,7 @@ func (s *EpisodeReadingSuite) textSession(thread string, cards bool, text string
 	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), spec)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
-	s.Require().NoError(created.FollowUp(s.ctx, text))
+	s.Require().NoError(created.FollowUp(s.ctx, "follow-up-"+uuid.NewString(), text))
 	return s.replyTo(text)
 }
 

@@ -90,17 +90,27 @@ func (c *Conversation) connected(state string) (string, bool) {
 
 // BeginFollowUp records a reply nobody wrote a message for, such as the one that carries on
 // once the login a reply asked for is made. text is what the model is told instead, which
-// the conversation never shows.
-func (c *Conversation) BeginFollowUp(text string) (CommandReceipt, error) {
+// the conversation never shows. The id is the caller's own, chosen so that a follow-up
+// delivered twice (a worker that died mid-delivery and was replaced) is answered Duplicate
+// and started once: the ledger holds it in this process, and after a restart commandsIn
+// rebuilds it from the reply Stream holds.
+func (c *Conversation) BeginFollowUp(id, text string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
+	if !validCommandID.MatchString(id) {
+		return CommandReceipt{}, stack.Wrap(errors.New("invalid follow-up ID"))
+	}
+	if previous, ok := c.data.Commands[id]; ok {
+		receipt := previous.CommandReceipt
+		receipt.Duplicate = true
+		return receipt, nil
+	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
 		return CommandReceipt{}, stack.Wrap(errors.New("a response is already running"))
 	}
-	id := uuid.NewString()
 	now := time.Now().UTC()
 	question := ""
 	if c.data.Current != nil {
