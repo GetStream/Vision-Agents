@@ -100,17 +100,21 @@ func (s *StreamsSuite) TestMoreKeytermsThanASessionMayNameAreRefusedAtTheStart()
 	s.Equal("closed", s.nextFrame(listening)["type"])
 }
 
-func (s *StreamsSuite) TestAsManyKeytermsAsASessionMayNameStillStart() {
+func (s *StreamsSuite) TestAsManyKeytermsAsASessionMayNameGetPastTheCap() {
 	keyterms := make([]string, stt.MaxKeyterms)
 	for i := range keyterms {
 		keyterms[i] = fmt.Sprintf("term %d", i)
 	}
 	// A blank one is dropped before counting, as a session's are.
 	keyterms = append(keyterms, "   ")
+	// A target nothing serves gets past the cap and no further, so no session is opened on
+	// the suite's one transcriber.
 	listening := s.start("/v1/stt/stream", frame{
-		"target": "stub/stub-model", "stt": frame{"keyterms": keyterms}})
+		"target": "nobody/nothing", "stt": frame{"keyterms": keyterms}})
 
-	s.Equal("started", s.nextFrame(listening)["type"])
+	refused := s.nextFrame(listening)
+	s.Equal("error", refused["type"])
+	s.Equal(`routing: unknown target "nobody/nothing"`, refused["error"])
 }
 
 func (s *StreamsSuite) TestWhatIsSentToBeSpokenReachesTheVoice() {
