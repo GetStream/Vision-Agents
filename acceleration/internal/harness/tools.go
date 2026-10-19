@@ -182,6 +182,8 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"verification: a caller who will not be verified is exactly who it is for. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
+	"Every reply that calls a tool says in a few words what it is checking or doing first " +
+	"(\"Let me check the outage map\"), straight after another tool's result too. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
 	"them to the tool (\"last four 553017 Oak Road\" is read back as \"last four digits, 5530, at 17 Oak " +
