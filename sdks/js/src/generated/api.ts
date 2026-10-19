@@ -1723,7 +1723,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Schedule a task for a user
-         * @description Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+         * @description Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
          */
         readonly post: operations["createScheduledTask"];
         readonly delete?: never;
@@ -1755,7 +1755,7 @@ export type paths = {
         readonly head?: never;
         /**
          * Change a scheduled task
-         * @description A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+         * @description A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
          */
         readonly patch: operations["updateScheduledTask"];
         readonly trace?: never;
@@ -5540,6 +5540,8 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: unknown;
             };
+            /** @description Where an occurrence is delivered, in order, the first that lands: conversation, sms, whatsapp, imessage or phone. The agent's reply is written in its conversation either way; a channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the conversation alone. */
+            readonly deliver_to?: readonly string[] | null;
             /**
              * @description The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409.
              * @example booking-4821-reminder
@@ -5547,6 +5549,8 @@ export type components = {
             readonly id?: string;
             /** @description What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read. */
             readonly instructions: string;
+            /** @description The part of the user's day an occurrence that comes due in is held through, until it ends, on every channel. */
+            readonly quiet_hours?: components["schemas"]["ScheduledTaskQuietHours"];
             /** @description When it runs. */
             readonly schedule: components["schemas"]["ScheduledTaskSchedule"];
             /** @description The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session. */
@@ -7149,12 +7153,16 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: unknown;
             };
+            /** @description Where an occurrence is delivered, in order, the first that lands. */
+            readonly deliver_to: readonly string[];
             readonly id: string;
             readonly instructions: string;
             /** @description When a run last finished, in UTC. Null when none has. */
             readonly last_run_at: string | null;
             /** @description The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none. */
             readonly next_run_at: string | null;
+            /** @description The part of the user's day an occurrence that comes due in is held through. Absent is no hold. */
+            readonly quiet_hours?: components["schemas"]["ScheduledTaskQuietHours"];
             readonly schedule: components["schemas"]["ScheduledTaskSchedule"];
             /** @description The conversation the task follows up in. Empty until its first occurrence opens one. */
             readonly session_id: string;
@@ -7188,10 +7196,22 @@ export type components = {
             /** @description Pass as cursor for the next page. Absent on the last one. */
             readonly next_cursor?: string;
         };
+        readonly ScheduledTaskQuietHours: {
+            /**
+             * @description When the hold ends. It may read before the start: 22:00 to 07:00 holds the night.
+             * @example 07:00
+             */
+            readonly end: string;
+            /**
+             * @description When the hold begins, as the user's clock reads it. Both boundaries empty is no hold, which is also how an update clears one.
+             * @example 22:00
+             */
+            readonly start: string;
+        };
         readonly ScheduledTaskRun: {
             /** Format: int64 */
             readonly attempts: number;
-            /** @description Where the follow-up landed: conversation, or call when it was spoken on a call. Empty until it lands. */
+            /** @description Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands. */
             readonly delivered_to: string;
             /** @description Why it failed, when it did. Null otherwise. */
             readonly error: string | null;
@@ -8598,10 +8618,14 @@ export type components = {
             readonly turn_count: number;
         };
         readonly UpdateScheduledTaskRequest: {
+            /** @description Replaces where an occurrence is delivered, in order. An empty list is the conversation alone. */
+            readonly deliver_to?: readonly string[];
             /** @description What the agent is told when the task comes due. Server-side only: a device sending it is refused. */
             readonly instructions?: string;
             /** @description Moves the next occurrence only: a snooze, or a skip when it lands past the following one. */
             readonly next?: components["schemas"]["ScheduledTaskNext"];
+            /** @description Replaces the part of the day an occurrence is held through. Both boundaries empty clears the hold. */
+            readonly quiet_hours?: components["schemas"]["ScheduledTaskQuietHours"];
             /** @description Replaces the whole schedule, except a timezone left out of it keeps the task's. */
             readonly schedule?: components["schemas"]["ScheduledTaskSchedule"];
             /** @description A short name the user will recognise. */

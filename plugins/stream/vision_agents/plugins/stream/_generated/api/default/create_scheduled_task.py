@@ -106,7 +106,8 @@ def sync_detailed(
     taken from session_id's own config, and the follow-up lands in that session's conversation; without
     a session, the first occurrence opens one. An id the caller chooses may be sent again only to be
     told it is taken (409), the same answer session create gives. scheduling.enabled on the config is
-    not required: that flag only offers the tools to the model.
+    not required: that flag only offers the tools to the model. deliver_to says where an occurrence
+    goes, in order, and quiet_hours holds one that comes due in them until they end.
 
     Args:
         x_stream_user_id (str | Unset): The user the task is for, named by the backend acting for
@@ -146,7 +147,8 @@ def sync(
     taken from session_id's own config, and the follow-up lands in that session's conversation; without
     a session, the first occurrence opens one. An id the caller chooses may be sent again only to be
     told it is taken (409), the same answer session create gives. scheduling.enabled on the config is
-    not required: that flag only offers the tools to the model.
+    not required: that flag only offers the tools to the model. deliver_to says where an occurrence
+    goes, in order, and quiet_hours holds one that comes due in them until they end.
 
     Args:
         x_stream_user_id (str | Unset): The user the task is for, named by the backend acting for
@@ -181,7 +183,8 @@ async def asyncio_detailed(
     taken from session_id's own config, and the follow-up lands in that session's conversation; without
     a session, the first occurrence opens one. An id the caller chooses may be sent again only to be
     told it is taken (409), the same answer session create gives. scheduling.enabled on the config is
-    not required: that flag only offers the tools to the model.
+    not required: that flag only offers the tools to the model. deliver_to says where an occurrence
+    goes, in order, and quiet_hours holds one that comes due in them until they end.
 
     Args:
         x_stream_user_id (str | Unset): The user the task is for, named by the backend acting for
@@ -219,7 +222,8 @@ async def asyncio(
     taken from session_id's own config, and the follow-up lands in that session's conversation; without
     a session, the first occurrence opens one. An id the caller chooses may be sent again only to be
     told it is taken (409), the same answer session create gives. scheduling.enabled on the config is
-    not required: that flag only offers the tools to the model.
+    not required: that flag only offers the tools to the model. deliver_to says where an occurrence
+    goes, in order, and quiet_hours holds one that comes due in them until they end.
 
     Args:
         x_stream_user_id (str | Unset): The user the task is for, named by the backend acting for

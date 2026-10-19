@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.create_scheduled_task_request_custom import (
         CreateScheduledTaskRequestCustom,
     )
+    from ..models.scheduled_task_quiet_hours import ScheduledTaskQuietHours
     from ..models.scheduled_task_schedule import ScheduledTaskSchedule
 
 
@@ -30,8 +31,13 @@ class CreateScheduledTaskRequest:
         agent (str | Unset): The agent config by name, as session create names it. config_id or this, or session_id.
         config_id (str | Unset): The agent config by id. agent or this, or session_id.
         custom (CreateScheduledTaskRequestCustom | Unset): The caller's own labels, handed back untouched.
+        deliver_to (list[str] | None | Unset): Where an occurrence is delivered, in order, the first that lands:
+            conversation, sms, whatsapp, imessage or phone. The agent's reply is written in its conversation either way; a
+            channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the
+            conversation alone.
         id (str | Unset): The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _.
             Left out, the router generates one. Sending one that is used answers 409. Example: booking-4821-reminder.
+        quiet_hours (ScheduledTaskQuietHours | Unset):
         session_id (str | Unset): The named user's own session whose conversation the follow-up lands in; its config is
             the task's. Left out, the first occurrence opens a session.
     """
@@ -42,7 +48,9 @@ class CreateScheduledTaskRequest:
     agent: str | Unset = UNSET
     config_id: str | Unset = UNSET
     custom: CreateScheduledTaskRequestCustom | Unset = UNSET
+    deliver_to: list[str] | None | Unset = UNSET
     id: str | Unset = UNSET
+    quiet_hours: ScheduledTaskQuietHours | Unset = UNSET
     session_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -61,7 +69,20 @@ class CreateScheduledTaskRequest:
         if not isinstance(self.custom, Unset):
             custom = self.custom.to_dict()
 
+        deliver_to: list[str] | None | Unset
+        if isinstance(self.deliver_to, Unset):
+            deliver_to = UNSET
+        elif isinstance(self.deliver_to, list):
+            deliver_to = self.deliver_to
+
+        else:
+            deliver_to = self.deliver_to
+
         id = self.id
+
+        quiet_hours: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.quiet_hours, Unset):
+            quiet_hours = self.quiet_hours.to_dict()
 
         session_id = self.session_id
 
@@ -80,8 +101,12 @@ class CreateScheduledTaskRequest:
             field_dict["config_id"] = config_id
         if custom is not UNSET:
             field_dict["custom"] = custom
+        if deliver_to is not UNSET:
+            field_dict["deliver_to"] = deliver_to
         if id is not UNSET:
             field_dict["id"] = id
+        if quiet_hours is not UNSET:
+            field_dict["quiet_hours"] = quiet_hours
         if session_id is not UNSET:
             field_dict["session_id"] = session_id
 
@@ -92,6 +117,7 @@ class CreateScheduledTaskRequest:
         from ..models.create_scheduled_task_request_custom import (
             CreateScheduledTaskRequestCustom,
         )
+        from ..models.scheduled_task_quiet_hours import ScheduledTaskQuietHours
         from ..models.scheduled_task_schedule import ScheduledTaskSchedule
 
         d = dict(src_dict)
@@ -112,7 +138,31 @@ class CreateScheduledTaskRequest:
         else:
             custom = CreateScheduledTaskRequestCustom.from_dict(_custom)
 
+        def _parse_deliver_to(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                deliver_to_type_0 = cast(list[str], data)
+
+                return deliver_to_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        deliver_to = _parse_deliver_to(d.pop("deliver_to", UNSET))
+
         id = d.pop("id", UNSET)
+
+        _quiet_hours = d.pop("quiet_hours", UNSET)
+        quiet_hours: ScheduledTaskQuietHours | Unset
+        if isinstance(_quiet_hours, Unset):
+            quiet_hours = UNSET
+        else:
+            quiet_hours = ScheduledTaskQuietHours.from_dict(_quiet_hours)
 
         session_id = d.pop("session_id", UNSET)
 
@@ -123,7 +173,9 @@ class CreateScheduledTaskRequest:
             agent=agent,
             config_id=config_id,
             custom=custom,
+            deliver_to=deliver_to,
             id=id,
+            quiet_hours=quiet_hours,
             session_id=session_id,
         )
 

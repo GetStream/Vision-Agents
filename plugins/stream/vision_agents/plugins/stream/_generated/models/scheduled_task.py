@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.scheduled_task_custom import ScheduledTaskCustom
+    from ..models.scheduled_task_quiet_hours import ScheduledTaskQuietHours
     from ..models.scheduled_task_schedule import ScheduledTaskSchedule
 
 
@@ -28,6 +29,7 @@ class ScheduledTask:
         consecutive_failures (int):
         created_at (datetime.datetime):
         created_by (ScheduledTaskCreatedBy): agent when the model made it in a conversation, api when a backend did.
+        deliver_to (list[str]): Where an occurrence is delivered, in order, the first that lands.
         id (str):
         instructions (str):
         last_run_at (None | str): When a run last finished, in UTC. Null when none has.
@@ -42,12 +44,14 @@ class ScheduledTask:
         updated_at (datetime.datetime):
         user_id (str):
         custom (ScheduledTaskCustom | Unset):
+        quiet_hours (ScheduledTaskQuietHours | Unset):
     """
 
     config_id: str
     consecutive_failures: int
     created_at: datetime.datetime
     created_by: ScheduledTaskCreatedBy
+    deliver_to: list[str]
     id: str
     instructions: str
     last_run_at: None | str
@@ -60,6 +64,7 @@ class ScheduledTask:
     updated_at: datetime.datetime
     user_id: str
     custom: ScheduledTaskCustom | Unset = UNSET
+    quiet_hours: ScheduledTaskQuietHours | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +75,8 @@ class ScheduledTask:
         created_at = self.created_at.isoformat()
 
         created_by = self.created_by.value
+
+        deliver_to = self.deliver_to
 
         id = self.id
 
@@ -99,6 +106,10 @@ class ScheduledTask:
         if not isinstance(self.custom, Unset):
             custom = self.custom.to_dict()
 
+        quiet_hours: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.quiet_hours, Unset):
+            quiet_hours = self.quiet_hours.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -107,6 +118,7 @@ class ScheduledTask:
                 "consecutive_failures": consecutive_failures,
                 "created_at": created_at,
                 "created_by": created_by,
+                "deliver_to": deliver_to,
                 "id": id,
                 "instructions": instructions,
                 "last_run_at": last_run_at,
@@ -122,12 +134,15 @@ class ScheduledTask:
         )
         if custom is not UNSET:
             field_dict["custom"] = custom
+        if quiet_hours is not UNSET:
+            field_dict["quiet_hours"] = quiet_hours
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.scheduled_task_custom import ScheduledTaskCustom
+        from ..models.scheduled_task_quiet_hours import ScheduledTaskQuietHours
         from ..models.scheduled_task_schedule import ScheduledTaskSchedule
 
         d = dict(src_dict)
@@ -138,6 +153,8 @@ class ScheduledTask:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         created_by = ScheduledTaskCreatedBy(d.pop("created_by"))
+
+        deliver_to = cast(list[str], d.pop("deliver_to"))
 
         id = d.pop("id")
 
@@ -178,11 +195,19 @@ class ScheduledTask:
         else:
             custom = ScheduledTaskCustom.from_dict(_custom)
 
+        _quiet_hours = d.pop("quiet_hours", UNSET)
+        quiet_hours: ScheduledTaskQuietHours | Unset
+        if isinstance(_quiet_hours, Unset):
+            quiet_hours = UNSET
+        else:
+            quiet_hours = ScheduledTaskQuietHours.from_dict(_quiet_hours)
+
         scheduled_task = cls(
             config_id=config_id,
             consecutive_failures=consecutive_failures,
             created_at=created_at,
             created_by=created_by,
+            deliver_to=deliver_to,
             id=id,
             instructions=instructions,
             last_run_at=last_run_at,
@@ -195,6 +220,7 @@ class ScheduledTask:
             updated_at=updated_at,
             user_id=user_id,
             custom=custom,
+            quiet_hours=quiet_hours,
         )
 
         scheduled_task.additional_properties = d

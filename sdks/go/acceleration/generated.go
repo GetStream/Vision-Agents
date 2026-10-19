@@ -4421,14 +4421,18 @@ type CreateScheduledTaskRequest struct {
 	// Custom The caller's own labels, handed back untouched.
 	Custom *map[string]interface{} `json:"custom,omitempty"`
 
+	// DeliverTo Where an occurrence is delivered, in order, the first that lands: conversation, sms, whatsapp, imessage or phone. The agent's reply is written in its conversation either way; a channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the conversation alone.
+	DeliverTo *[]string `json:"deliver_to,omitempty"`
+
 	// Id The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409.
 	//
 	// Example: booking-4821-reminder
 	Id *string `json:"id,omitempty"`
 
 	// Instructions What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read.
-	Instructions string                `json:"instructions"`
-	Schedule     ScheduledTaskSchedule `json:"schedule"`
+	Instructions string                   `json:"instructions"`
+	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty"`
+	Schedule     ScheduledTaskSchedule    `json:"schedule"`
 
 	// SessionId The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session.
 	SessionId *string `json:"session_id,omitempty"`
@@ -6189,17 +6193,21 @@ type ScheduledTask struct {
 	CreatedAt           time.Time `json:"created_at"`
 
 	// CreatedBy agent when the model made it in a conversation, api when a backend did.
-	CreatedBy    ScheduledTaskCreatedBy  `json:"created_by"`
-	Custom       *map[string]interface{} `json:"custom,omitempty"`
-	Id           string                  `json:"id"`
-	Instructions string                  `json:"instructions"`
+	CreatedBy ScheduledTaskCreatedBy  `json:"created_by"`
+	Custom    *map[string]interface{} `json:"custom,omitempty"`
+
+	// DeliverTo Where an occurrence is delivered, in order, the first that lands.
+	DeliverTo    []string `json:"deliver_to"`
+	Id           string   `json:"id"`
+	Instructions string   `json:"instructions"`
 
 	// LastRunAt When a run last finished, in UTC. Null when none has.
 	LastRunAt *string `json:"last_run_at"`
 
 	// NextRunAt The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none.
-	NextRunAt *string               `json:"next_run_at"`
-	Schedule  ScheduledTaskSchedule `json:"schedule"`
+	NextRunAt  *string                  `json:"next_run_at"`
+	QuietHours *ScheduledTaskQuietHours `json:"quiet_hours,omitempty"`
+	Schedule   ScheduledTaskSchedule    `json:"schedule"`
 
 	// SessionId The conversation the task follows up in. Empty until its first occurrence opens one.
 	SessionId string `json:"session_id"`
@@ -6242,11 +6250,24 @@ type ScheduledTaskPage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// ScheduledTaskQuietHours defines model for ScheduledTaskQuietHours.
+type ScheduledTaskQuietHours struct {
+	// End When the hold ends. It may read before the start: 22:00 to 07:00 holds the night.
+	//
+	// Example: 07:00
+	End string `json:"end"`
+
+	// Start When the hold begins, as the user's clock reads it. Both boundaries empty is no hold, which is also how an update clears one.
+	//
+	// Example: 22:00
+	Start string `json:"start"`
+}
+
 // ScheduledTaskRun defines model for ScheduledTaskRun.
 type ScheduledTaskRun struct {
 	Attempts int64 `json:"attempts"`
 
-	// DeliveredTo Where the follow-up landed: conversation, or call when it was spoken on a call. Empty until it lands.
+	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
 	// Error Why it failed, when it did. Null otherwise.
@@ -7758,10 +7779,14 @@ type TurnStatsBucket struct {
 
 // UpdateScheduledTaskRequest defines model for UpdateScheduledTaskRequest.
 type UpdateScheduledTaskRequest struct {
+	// DeliverTo Replaces where an occurrence is delivered, in order. An empty list is the conversation alone.
+	DeliverTo *[]string `json:"deliver_to,omitempty"`
+
 	// Instructions What the agent is told when the task comes due. Server-side only: a device sending it is refused.
-	Instructions *string                `json:"instructions,omitempty"`
-	Next         *ScheduledTaskNext     `json:"next,omitempty"`
-	Schedule     *ScheduledTaskSchedule `json:"schedule,omitempty"`
+	Instructions *string                  `json:"instructions,omitempty"`
+	Next         *ScheduledTaskNext       `json:"next,omitempty"`
+	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty"`
+	Schedule     *ScheduledTaskSchedule   `json:"schedule,omitempty"`
 
 	// Title A short name the user will recognise.
 	Title *string `json:"title,omitempty"`
@@ -10332,7 +10357,7 @@ type ClientInterface interface {
 
 	// CreateScheduledTaskWithBody Schedule a task for a user
 	//
-	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -10341,7 +10366,7 @@ type ClientInterface interface {
 
 	// CreateScheduledTask Schedule a task for a user
 	//
-	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10364,7 +10389,7 @@ type ClientInterface interface {
 
 	// UpdateScheduledTaskWithBody Change a scheduled task
 	//
-	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -10373,7 +10398,7 @@ type ClientInterface interface {
 
 	// UpdateScheduledTask Change a scheduled task
 	//
-	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -14350,7 +14375,7 @@ func (c *Client) ListScheduledTasks(ctx context.Context, params *ListScheduledTa
 
 // CreateScheduledTaskWithBody Schedule a task for a user
 //
-// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 //
 // Takes any type of body and a specified content type.
 //
@@ -14369,7 +14394,7 @@ func (c *Client) CreateScheduledTaskWithBody(ctx context.Context, params *Create
 
 // CreateScheduledTask Schedule a task for a user
 //
-// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -14422,7 +14447,7 @@ func (c *Client) GetScheduledTask(ctx context.Context, id string, reqEditors ...
 
 // UpdateScheduledTaskWithBody Change a scheduled task
 //
-// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 //
 // Takes any type of body and a specified content type.
 //
@@ -14441,7 +14466,7 @@ func (c *Client) UpdateScheduledTaskWithBody(ctx context.Context, id string, con
 
 // UpdateScheduledTask Change a scheduled task
 //
-// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -29662,7 +29687,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateScheduledTaskWithBodyWithResponse Schedule a task for a user
 	//
-	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29671,7 +29696,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateScheduledTaskWithResponse Schedule a task for a user
 	//
-	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29698,7 +29723,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateScheduledTaskWithBodyWithResponse Change a scheduled task
 	//
-	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29707,7 +29732,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateScheduledTaskWithResponse Change a scheduled task
 	//
-	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -50234,7 +50259,7 @@ func (c *ClientWithResponses) ListScheduledTasksWithResponse(ctx context.Context
 
 // CreateScheduledTaskWithBodyWithResponse Schedule a task for a user
 //
-// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50249,7 +50274,7 @@ func (c *ClientWithResponses) CreateScheduledTaskWithBodyWithResponse(ctx contex
 
 // CreateScheduledTaskWithResponse Schedule a task for a user
 //
-// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50294,7 +50319,7 @@ func (c *ClientWithResponses) GetScheduledTaskWithResponse(ctx context.Context, 
 
 // UpdateScheduledTaskWithBodyWithResponse Change a scheduled task
 //
-// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50309,7 +50334,7 @@ func (c *ClientWithResponses) UpdateScheduledTaskWithBodyWithResponse(ctx contex
 
 // UpdateScheduledTaskWithResponse Change a scheduled task
 //
-// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

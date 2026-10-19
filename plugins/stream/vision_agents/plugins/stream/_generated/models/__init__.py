@@ -327,6 +327,7 @@ from .scheduled_task_created_by import ScheduledTaskCreatedBy
 from .scheduled_task_custom import ScheduledTaskCustom
 from .scheduled_task_next import ScheduledTaskNext
 from .scheduled_task_page import ScheduledTaskPage
+from .scheduled_task_quiet_hours import ScheduledTaskQuietHours
 from .scheduled_task_run import ScheduledTaskRun
 from .scheduled_task_run_page import ScheduledTaskRunPage
 from .scheduled_task_run_state import ScheduledTaskRunState
@@ -790,6 +791,7 @@ __all__ = (
     "ScheduledTaskCustom",
     "ScheduledTaskNext",
     "ScheduledTaskPage",
+    "ScheduledTaskQuietHours",
     "ScheduledTaskRun",
     "ScheduledTaskRunPage",
     "ScheduledTaskRunState",

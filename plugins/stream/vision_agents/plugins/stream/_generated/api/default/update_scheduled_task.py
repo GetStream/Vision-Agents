@@ -95,7 +95,8 @@ def sync_detailed(
      A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out
     of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past
     the following one — and on a one-shot it is the reschedule. An end user's device may change title,
-    schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+    schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them
+    is refused with a 403.
 
     Args:
         id (str): The task, as returned when it was created.
@@ -132,7 +133,8 @@ def sync(
      A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out
     of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past
     the following one — and on a one-shot it is the reschedule. An end user's device may change title,
-    schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+    schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them
+    is refused with a 403.
 
     Args:
         id (str): The task, as returned when it was created.
@@ -164,7 +166,8 @@ async def asyncio_detailed(
      A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out
     of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past
     the following one — and on a one-shot it is the reschedule. An end user's device may change title,
-    schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+    schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them
+    is refused with a 403.
 
     Args:
         id (str): The task, as returned when it was created.
@@ -199,7 +202,8 @@ async def asyncio(
      A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out
     of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past
     the following one — and on a one-shot it is the reschedule. An end user's device may change title,
-    schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+    schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them
+    is refused with a 403.
 
     Args:
         id (str): The task, as returned when it was created.

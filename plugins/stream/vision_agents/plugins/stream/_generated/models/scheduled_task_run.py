@@ -19,8 +19,8 @@ class ScheduledTaskRun:
     """
     Attributes:
         attempts (int):
-        delivered_to (str): Where the follow-up landed: conversation, or call when it was spoken on a call. Empty until
-            it lands.
+        delivered_to (str): Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it
+            lands.
         error (None | str): Why it failed, when it did. Null otherwise.
         finished_at (datetime.datetime | None):
         id (str):
