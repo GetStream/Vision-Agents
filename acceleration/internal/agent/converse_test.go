@@ -1810,3 +1810,117 @@ func (s *ConverseSuite) TestWorkThatNeedsTheCallerAskedRecordsTheQuestion() {
 	s.Equal("Where are you starting from?", back.Text,
 		"the question is the useful half of what came back")
 }
+
+func (s *ConverseSuite) TestEmptyNumberedFinalSupersedesItsProvisionalOverlap() {
+	const utterance = 91
+	var provisional candidate
+	for _, action := range s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeDelta,
+		Utterance:   utterance,
+		Text:        "wait, please",
+	}, s.talking()) {
+		if action.Kind == ActAsk {
+			provisional = action.Candidate
+		}
+	}
+	s.Require().NotEmpty(provisional.ID)
+
+	actions := s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   utterance,
+		Text:        "  ",
+	}, s.talking())
+	var canceled bool
+	for _, action := range actions {
+		if action.Kind == ActSupersede && action.TurnID == provisional.ID {
+			canceled = true
+		}
+	}
+	s.True(canceled, "the provisional ruling must be canceled when its utterance finalizes empty")
+
+	late := s.converse.Ruled(harness.Decided{
+		CandidateID: provisional.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, s.talking())
+	s.Empty(late, "a stale ruling must not interrupt after its transcript was withdrawn")
+}
+
+func (s *ConverseSuite) TestStaleEmptyFinalDoesNotCancelANewerSameTextOverlap() {
+	const olderUtterance = 92
+	const newerUtterance = 93
+	observe := func(utterance int64, text string) (candidate, []Action) {
+		var provisional candidate
+		actions := s.converse.Observe(stt.Transcript{
+			Participant: caller,
+			Mode:        stt.ModeDelta,
+			Utterance:   utterance,
+			Text:        text,
+		}, s.talking())
+		for _, action := range actions {
+			if action.Kind == ActAsk {
+				provisional = action.Candidate
+			}
+		}
+		return provisional, actions
+	}
+	older, _ := observe(olderUtterance, "please stop")
+	s.Require().NotEmpty(older.ID)
+	newer, actions := observe(newerUtterance, "please stop")
+	s.Require().NotEmpty(newer.ID, "a new numbered utterance is distinct even with the same text")
+	var canceledOlder bool
+	for _, action := range actions {
+		if action.Kind == ActSupersede && action.TurnID == older.ID {
+			canceledOlder = true
+		}
+	}
+	s.True(canceledOlder)
+
+	stale := s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   olderUtterance,
+		Text:        "",
+	}, s.talking())
+	s.Empty(stale, "an empty final for an older turn leaves the newer overlap in flight")
+
+	late := s.converse.Ruled(harness.Decided{
+		CandidateID: newer.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, s.talking())
+	s.Equal([]ActionKind{ActInterrupt}, kinds(late))
+}
+
+func (s *ConverseSuite) TestNumberedPartialKeepsAnOlderQueuedReplyUntilFinal() {
+	const previousUtterance = 95
+	const activeUtterance = 96
+	queued := s.queueSettledTurn("the earlier request", previousUtterance, harness.Continue)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeDelta,
+		Utterance:   activeUtterance,
+		Text:        "one more thing",
+	}, s.quiet())
+
+	// The provider can take longer than callerHold to send its adaptive final preview.
+	time.Sleep(callerHold + 20*time.Millisecond)
+	got, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the previous answer remains queued while a numbered turn is unfinished")
+	s.Empty(got.Kind)
+	s.True(s.converse.Listening())
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller,
+		Mode:        stt.ModeFinal,
+		Utterance:   activeUtterance,
+		Text:        "one more thing",
+	}, s.quiet())
+
+	got, waiting = s.converse.Waiting(s.quiet())
+	s.True(waiting, "the previous answer can drain once the numbered turn has finalized")
+	s.Equal(ActAnswer, got.Kind)
+	s.Equal(queued.ID, got.Candidate.ID)
+}

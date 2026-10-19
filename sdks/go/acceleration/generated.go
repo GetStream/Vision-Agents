@@ -5720,6 +5720,9 @@ type Provider struct {
 	Provider string `json:"provider"`
 	Realtime bool   `json:"realtime"`
 
+	// Recorded Whether this STT model can transcribe a whole recording. False for other modalities; legacy non-realtime STT models are eligible by default.
+	Recorded bool `json:"recorded"`
+
 	// Tier What the model optimises for.
 	Tier Tier `json:"tier"`
 
@@ -5841,6 +5844,12 @@ type RCSProfile struct {
 type RecordingSource struct {
 	// Audio The file itself, base64. For clips - a long recording belongs behind a URL.
 	Audio *[]byte `json:"audio,omitempty"`
+
+	// ContentType The original audio file's media type, when known.
+	ContentType *string `json:"content_type,omitempty"`
+
+	// Filename The original audio file's name, when known.
+	Filename *string `json:"filename,omitempty"`
 
 	// Url A fetchable audio or video file.
 	Url *string `json:"url,omitempty"`

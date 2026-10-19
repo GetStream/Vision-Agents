@@ -54,6 +54,7 @@ func routableConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			Recorded:  true,
 			Terms:     everyTerm,
 		}},
 		Aliases: map[string]routing.Alias{

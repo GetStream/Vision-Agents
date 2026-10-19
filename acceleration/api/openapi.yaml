@@ -5141,6 +5141,9 @@ components:
           type: string
         realtime:
           type: boolean
+        recorded:
+          description: Whether this STT model can transcribe a whole recording. False for other modalities; legacy non-realtime STT models are eligible by default.
+          type: boolean
         tier:
           $ref: '#/components/schemas/Tier'
         usage_share:
@@ -5152,6 +5155,7 @@ components:
         - languages
         - model
         - provider
+        - recorded
         - realtime
         - tier
       type: object
@@ -5307,6 +5311,12 @@ components:
         audio:
           description: The file itself, base64. For clips - a long recording belongs behind a URL.
           format: byte
+          type: string
+        content_type:
+          description: The original audio file's media type, when known.
+          type: string
+        filename:
+          description: The original audio file's name, when known.
           type: string
         url:
           description: A fetchable audio or video file.

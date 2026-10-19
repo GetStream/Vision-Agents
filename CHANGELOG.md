@@ -734,6 +734,26 @@ The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase
 
 - `bigquery` is Google's hosted BigQuery MCP server at `https://bigquery.googleapis.com/mcp`. A connection signs in with `oauth2_code` through the same Google web client as the other Google connectors (`GOOGLE`), asking for `https://www.googleapis.com/auth/bigquery`, the only scope Google documents for it.
 - `metabase` is the MCP server a Metabase instance serves at `https://{host}/api/metabase-mcp`. A connection gives `host` (a host name only), and the router registers its own client with that Metabase (`dcr`), asking for `agent:content:read` and `agent:query:run`: search, read and run queries, but no raw SQL and no writes. The Metabase must be reachable on a public https address; one on a private network is refused, as for `mcp_servers`.
+### OpenAI-compatible batch transcription
+
+The recordings router supports OpenAI-compatible endpoints through `OPENAI_STT_BASE_URL`
+and an optional `OPENAI_STT_API_KEY`. It forwards uploaded audio unchanged and supports
+standard transcription settings, word timings and speaker labels when the selected model
+provides them. Recording URLs are not supported. (#972)
+
+### OpenAI-compatible live transcription
+
+The `openai-compatible/whisper-1` target can also serve live sessions when its model entry
+sets `realtime: true`. It streams 16 kHz mono call audio to the configured OpenAI-compatible
+transcription WebSocket, forwards standard transcription deltas while a turn is open, and emits
+the canonical final transcript when the turn ends or the session closes. Audio continues
+while previous turns are transcribed; responses are matched by item ID. Set `recorded: true`
+alongside `realtime: true` for a model that serves both modes. The default model entry
+remains batch-only. (#972)
+
+Baseten Qwen3-ASR streaming endpoints use the same provider with
+`OPENAI_STT_REALTIME_PROTOCOL=baseten`. This selects their WebSocket setup, 16 kHz
+audio and server-VAD transcript protocol; the default OpenAI protocol is unchanged.
 
 ### An agent config says which agent.yaml connectors its last sync left out
 

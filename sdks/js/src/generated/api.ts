@@ -6663,6 +6663,8 @@ export type components = {
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
+            /** @description Whether this STT model can transcribe a whole recording. False for other modalities; legacy non-realtime STT models are eligible by default. */
+            readonly recorded: boolean;
             readonly tier: components["schemas"]["Tier"];
             /**
              * Format: double
@@ -6793,6 +6795,10 @@ export type components = {
              * @description The file itself, base64. For clips - a long recording belongs behind a URL.
              */
             readonly audio?: string;
+            /** @description The original audio file's media type, when known. */
+            readonly content_type?: string;
+            /** @description The original audio file's name, when known. */
+            readonly filename?: string;
             /** @description A fetchable audio or video file. */
             readonly url?: string;
         };

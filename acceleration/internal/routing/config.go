@@ -225,8 +225,12 @@ type ProviderConfig struct {
 	Description string `yaml:"description"`
 	// Languages are the ISO codes the model handles.
 	Languages []string `yaml:"languages"`
-	// Realtime is false for models that only make sense off the live path.
+	// Realtime says whether a model can serve a live session. A model that also
+	// transcribes whole recordings sets Recorded as well.
 	Realtime bool `yaml:"realtime"`
+	// Recorded says whether a realtime-capable model can transcribe a whole recording.
+	// Non-realtime models remain eligible for recordings by default.
+	Recorded bool `yaml:"recorded"`
 	// Tier is what the model optimises for. It defaults to low-latency, since a model
 	// that says nothing is assumed to be usable in a conversation.
 	Tier Tier `yaml:"tier"`
@@ -256,6 +260,15 @@ type ProviderConfig struct {
 // Supports reports whether this model can express every term a request named.
 func (p ProviderConfig) Supports(terms []options.Term) bool {
 	return options.Expressible(p.Terms, terms)
+}
+
+// supportsMode reports whether this model can serve the requested path. Non-realtime
+// models remain eligible for recordings without opting in.
+func (p ProviderConfig) supportsMode(realtime bool) bool {
+	if realtime {
+		return p.Realtime
+	}
+	return p.Recorded || !p.Realtime
 }
 
 // Permits reports whether this model may serve a request asking for that data policy. A
@@ -327,9 +340,7 @@ type Alias struct {
 	Multilingual bool `yaml:"multilingual"`
 	// RequireRealtime excludes models that are not suitable for the live path.
 	RequireRealtime bool `yaml:"require_realtime"`
-	// RequireRecorded is the other way round: it excludes the live models, so a whole
-	// recording routes to the batch endpoint that is cheaper and more accurate than the
-	// same vendor's streaming one rather than being streamed at a socket.
+	// RequireRecorded excludes models that cannot transcribe a whole recording.
 	RequireRecorded bool `yaml:"require_recorded"`
 	// Tier restricts candidates to one tier. Empty accepts any.
 	Tier Tier `yaml:"tier"`
@@ -347,7 +358,7 @@ func (a Alias) matches(provider ProviderConfig) bool {
 	if a.RequireRealtime && !provider.Realtime {
 		return false
 	}
-	if a.RequireRecorded && provider.Realtime {
+	if a.RequireRecorded && !provider.supportsMode(false) {
 		return false
 	}
 	if a.Multilingual && !provider.Multilingual() {

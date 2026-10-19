@@ -441,3 +441,150 @@ func (s *CadenceSuite) TestParticipantsKeepIndependentCadences() {
 	second := s.ready()
 	s.ElementsMatch([]string{"alice", "bob"}, []string{first.Participant.ID, second.Participant.ID})
 }
+
+func (s *CadenceSuite) TestNumberedDeltasWaitForTheFinalEvenAcrossLongPreviewGaps() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 9, Text: "book a table",
+	})
+	s.quiet()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 9, Text: " for four",
+	})
+	s.quiet()
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 9, Text: "book a table for four",
+	})
+	s.Equal("book a table for four", s.ready().Text)
+}
+
+func (s *CadenceSuite) TestSameTextFinalReleasesANumberedDelta() {
+	alice := stt.Participant{ID: "alice"}
+	const text = "book a table for four"
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 10, Text: text,
+	})
+	s.quiet()
+
+	superseded, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 10, Text: text,
+	})
+
+	s.Empty(superseded)
+	s.Empty(saying, "the final confirms the same assembled words")
+	s.Equal(text, s.ready().Text)
+}
+
+func (s *CadenceSuite) TestSameTextNumberedFinalStillRetriesAnIncompleteIdentifier() {
+	alice := stt.Participant{ID: "alice"}
+	const text = "member ID ABC12345"
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 11, Text: text,
+	})
+	s.quiet()
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 11, Text: text,
+	})
+
+	select {
+	case ready := <-s.cadence.Ready():
+		s.Failf("an incomplete identifier used the short final gap", "got %q", ready.Text)
+	case <-time.After(7 * time.Millisecond):
+	}
+	s.Equal(text, s.ready().Text)
+}
+
+func (s *CadenceSuite) TestUnknownNumberedDeltaIdentityKeepsLegacySettling() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Text: "hello there",
+	})
+
+	s.Equal("hello there", s.ready().Text)
+}
+
+func (s *CadenceSuite) TestUnknownIdentityCanReleaseANumberedDeltaTurn() {
+	alice := stt.Participant{ID: "alice"}
+	const text = "book a table"
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 12, Text: text,
+	})
+	s.quiet()
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Text: text,
+	})
+
+	s.Equal(text, s.ready().Text,
+		"a provider that cannot number turns must not inherit the prior provider's final wait")
+}
+
+func (s *CadenceSuite) TestEmptyFinalClearsANumberedPartialAndKeepsItsCarriedPrefix() {
+	patient := newCadence(100*time.Millisecond, 150*time.Millisecond, time.Second,
+		slog.New(slog.DiscardHandler))
+	s.T().Cleanup(patient.Close)
+	alice := stt.Participant{ID: "alice"}
+	patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 20, Text: "last name Alvarez",
+	})
+	patientReady := func() candidate {
+		select {
+		case ready := <-patient.Ready():
+			return ready
+		case <-time.After(time.Second):
+			s.FailNow("the transcript never became ready")
+			return candidate{}
+		}
+	}
+	prior := patientReady()
+	superseded, saying := patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 21, Text: "callback is five one two",
+	})
+	s.Equal(prior.ID, superseded, "the first numbered delta supersedes the previous turn candidate")
+	s.Equal("last name Alvarez callback is five one two", saying)
+
+	superseded, saying = patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 21, Text: "  ",
+	})
+
+	s.Empty(saying)
+	s.Empty(superseded)
+	s.Equal("last name Alvarez", patientReady().Text,
+		"the carried unanswered words survive an empty later utterance")
+}
+
+func (s *CadenceSuite) TestEmptyFinalForAnOlderUtteranceLeavesTheNewerTurnAlone() {
+	patient := newCadence(100*time.Millisecond, 150*time.Millisecond, time.Second,
+		slog.New(slog.DiscardHandler))
+	s.T().Cleanup(patient.Close)
+	alice := stt.Participant{ID: "alice"}
+	patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 30, Text: "first words",
+	})
+	select {
+	case <-patient.Ready():
+	case <-time.After(time.Second):
+		s.FailNow("the first transcript never became ready")
+	}
+	patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeDelta, Utterance: 31, Text: "newer words",
+	})
+
+	superseded, saying := patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 30, Text: "",
+	})
+
+	s.Empty(superseded)
+	s.Empty(saying)
+	patient.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 31, Text: "newer words",
+	})
+	select {
+	case ready := <-patient.Ready():
+		s.Equal("first words newer words", ready.Text)
+	case <-time.After(time.Second):
+		s.FailNow("the newer utterance was canceled by an older empty final")
+	}
+}

@@ -339,8 +339,25 @@ func (s *ServerSuite) TestProvidersReportLiveHealth() {
 		}
 	}
 	s.Require().NotNil(routed)
+	s.True(routed.Realtime)
+	s.True(routed.Recorded, "a model configured for both paths should report recorded eligibility")
 	s.Positive(routed.Health.Requests, "health should come from the live counters")
 	s.True(routed.Health.Available)
+}
+
+func (s *ServerSuite) TestRecordedEligibilityIsOnlyReportedForSTT() {
+	var providers []Provider
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/tts/providers", nil, &providers))
+
+	var routed *Provider
+	for i := range providers {
+		if providers[i].Model == "stub-model" {
+			routed = &providers[i]
+		}
+	}
+	s.Require().NotNil(routed)
+	s.False(routed.Recorded, "recorded eligibility only describes STT whole-recording transcription")
 }
 
 func (s *ServerSuite) TestAModelThatServedRequestsHasAShareOfThem() {
