@@ -8,6 +8,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -158,6 +159,59 @@ func (s *SessionSuite) TestACommandNamesTheResponseItIsRecordedAs() {
 	s.Require().Len(held.responses, 1, "the turn's own event does not record a second response")
 	s.Equal(responseID, held.responses[0].ID)
 	s.Equal("First question", held.responses[0].Said)
+}
+
+// onTheCall opens a person's saved conversation on a call, with lookup_record on the
+// person's phone.
+func (s *SessionSuite) onTheCall() *Session {
+	service := persistent.NewForChat(chattest.Client(s.T()))
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	created := s.joins(Spec{
+		PersistConversation: true,
+		Caller:              routing.Caller{UserID: "employee-1"},
+		Tools:               []harness.Tool{{Name: "lookup_record", Description: "look a record up"}},
+	})
+	s.T().Cleanup(func() { _ = created.Close() })
+	return created
+}
+
+func (s *SessionSuite) TestAToolCalledOnASpokenTurnIsAskedOfThePhone() {
+	// Said on a call, a question has no request id, so its tool calls are bound to the turn
+	// alone; they were refused for having no command.
+	running := s.onTheCall()
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_record", Arguments: "{}"}}
+	events, detach := running.Watch()
+	defer detach()
+
+	s.says(running, "what is on record")
+
+	asked := awaitToolCall(events)
+	s.Require().NotNil(asked, "the phone was never asked")
+	s.True(running.ResolveTurnTool(asked.ID, asked.TurnID, llm.TextParts("on record"), ""))
+}
+
+func (s *SessionSuite) TestALookThroughTheCameraIsAskedOfThePhone() {
+	// The vision skill's request for frames belongs to no turn at all.
+	running := s.onTheCall()
+	events, detach := running.Watch()
+	defer detach()
+
+	shown := make(chan error, 1)
+	go func() {
+		_, err := running.tools.Run(context.Background(), llm.ToolCall{
+			ID: "task-1-capture", Name: agent.VideoFramesTool, Arguments: `{"limit":1}`,
+		})
+		shown <- err
+	}()
+
+	asked := awaitToolCall(events)
+	s.Require().NotNil(asked, "the phone was never asked for frames")
+	s.True(running.ResolveToolParts(asked.ID, []llm.ContentPart{
+		{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}},
+	}, ""))
+	s.Require().NoError(<-shown)
 }
 
 func (s *SessionSuite) TestACommandsPhotoIsShownToTheModelAndOnThePersonsMessage() {
