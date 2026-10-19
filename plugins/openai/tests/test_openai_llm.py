@@ -1,11 +1,8 @@
 import copy
 import os
-from typing import Any, AsyncIterator
 
 import openai
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.core.agents.inference.llm_turn import LLMTurn
@@ -26,42 +23,6 @@ async def llm():
     llm.set_conversation(InMemoryConversation("be friendly", []))
     yield llm
     await llm.close()
-
-
-@pytest.fixture
-async def openai_api() -> AsyncIterator[
-    tuple[openai.AsyncOpenAI, list[dict[str, Any]]]
-]:
-    """A real server standing in for OpenAI: a client of it, and every request body sent.
-
-    Every answer is an empty stream: the tests are about requests.
-    """
-    bodies: list[dict[str, Any]] = []
-
-    async def conversation(request: web.Request) -> web.Response:
-        return web.json_response(
-            {"id": "conv_1", "object": "conversation", "created_at": 0, "metadata": {}}
-        )
-
-    async def stream(request: web.Request) -> web.StreamResponse:
-        bodies.append(await request.json())
-        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
-        await response.prepare(request)
-        await response.write(b"data: [DONE]\n\n")
-        await response.write_eof()
-        return response
-
-    app = web.Application()
-    app.router.add_post("/v1/conversations", conversation)
-    app.router.add_post("/v1/responses", stream)
-    server = TestServer(app)
-    await server.start_server()
-    client = openai.AsyncOpenAI(
-        api_key="test", base_url=str(server.make_url("/v1")), max_retries=0
-    )
-    yield client, bodies
-    await client.close()
-    await server.close()
 
 
 class TestOpenAILLM:
@@ -90,7 +51,7 @@ class TestOpenAILLM:
         assert messages2[0].original is not None
 
     async def test_only_the_turn_is_sent_named_once_a_second_person_has_spoken(
-        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, Any]]]
+        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, object]]]
     ):
         client, bodies = openai_api
         alice = Participant(original=None, user_id="alice", id="alice-1", name="Alice")

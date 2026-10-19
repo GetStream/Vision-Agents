@@ -21,8 +21,9 @@ SAMPLE_RATE = 16_000
 
 # STARTED is how long start waits for the router to say a provider is transcribing. The
 # router tries the candidates one after another, each under its own connect bound
-# (acceleration/internal/stt/*): 15 s for cartesia, inworld and muse, 30 s for most, 60 s
-# for parakeet, whose Baseten cold starts are slow. 90 s lets the slowest of them fail over
+# (acceleration/internal/stt/<provider>/<provider>.go): 15 s for cartesia (cartesia.go:191),
+# inworld and muse (muse.go:246), 30 s for most, 60 s for parakeet (parakeet.go:125),
+# whose Baseten cold starts are slow. 90 s lets the slowest of them fail over
 # to a 30 s one before a router that never answers is given up on.
 STARTED = 90.0
 

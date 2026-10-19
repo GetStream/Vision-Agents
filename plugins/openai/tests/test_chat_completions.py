@@ -3,14 +3,12 @@ import fractions
 import os
 import time
 import uuid
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import AsyncIterator, Literal, Optional
 from unittest.mock import AsyncMock
 
 import numpy as np
 import openai
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestServer
 from av import VideoFrame
 from openai.types.chat.chat_completion_chunk import (
     ChatCompletionChunk,
@@ -53,36 +51,6 @@ async def vlm(openai_client_mock, conversation):
     llm_ = ChatCompletionsVLM(client=openai_client_mock, model="test")
     llm_.set_conversation(conversation)
     return llm_
-
-
-@pytest.fixture
-async def openai_api() -> AsyncIterator[
-    tuple[openai.AsyncOpenAI, list[dict[str, Any]]]
-]:
-    """A real server standing in for OpenAI: a client of it, and every request body sent.
-
-    Every answer is an empty stream: the tests are about requests.
-    """
-    bodies: list[dict[str, Any]] = []
-
-    async def stream(request: web.Request) -> web.StreamResponse:
-        bodies.append(await request.json())
-        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
-        await response.prepare(request)
-        await response.write(b"data: [DONE]\n\n")
-        await response.write_eof()
-        return response
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", stream)
-    server = TestServer(app)
-    await server.start_server()
-    client = openai.AsyncOpenAI(
-        api_key="test", base_url=str(server.make_url("/v1")), max_retries=0
-    )
-    yield client, bodies
-    await client.close()
-    await server.close()
 
 
 async def answer(
@@ -190,7 +158,7 @@ class TestChatCompletionsLLM:
         assert messages[2]["role"] == "user"
 
     async def test_who_spoke_is_named_once_a_second_person_has(
-        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, Any]]]
+        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, object]]]
     ):
         client, bodies = openai_api
         conversation = InMemoryConversation("", [])
@@ -208,7 +176,9 @@ class TestChatCompletionsLLM:
 
         await answer(llm, conversation, BOB, "Me too")
         await answer(llm, conversation, ALICE, "Who is that?")
-        assert bodies[-1]["messages"][2:] == [
+        sent = bodies[-1]["messages"]
+        assert isinstance(sent, list)
+        assert sent[2:] == [
             {"role": "user", "content": "Are you there?"},
             {"role": "assistant", "content": "Ok"},
             {"role": "user", "content": "Bob: Me too"},
