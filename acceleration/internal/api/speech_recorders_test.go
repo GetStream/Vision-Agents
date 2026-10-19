@@ -9,30 +9,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
-
-// onlyStreams is what a recording of live-model is told, which names the one that records.
-const onlyStreams = "live/live-model can only stream speech, not record it; models that record: stub/stub-model"
 
 // SpeechRecordersSuite routes text to speech over live, a vendor that only streams, as
 // Cartesia, Inworld and Breeze do in the built-in config: the live router lists it and the
 // recordings router has no recorder for it.
 type SpeechRecordersSuite struct {
 	RouterSuite
+	// live is the model of the vendor that only streams, new each run: health outlives a
+	// run, and errors left by an earlier one would put it behind stub.
+	live string
 }
 
 func TestSpeechRecordersSuite(t *testing.T) {
-	suite := new(SpeechRecordersSuite)
+	suite := &SpeechRecordersSuite{live: "live/" + uuid.NewString()}
 	suite.ttsConfig = routableConfig()
 	suite.ttsConfig.Providers = append(suite.ttsConfig.Providers, routing.ProviderConfig{
-		Provider: "live", Model: "live-model", Languages: []string{"en"}, Realtime: true, Terms: everyTerm,
+		Provider: "live", Model: suite.live[len("live/"):], Languages: []string{"en"}, Realtime: true, Terms: everyTerm,
 	})
 	// live-first puts live ahead of stub, as tts-quality puts Cartesia ahead of ElevenLabs
 	// v4 Turbo.
-	suite.ttsConfig.Aliases["live-first"] = routing.Alias{Languages: []string{"en"}, Prefer: "live/live-model"}
-	suite.ttsConfig.Aliases["live-only"] = routing.Alias{Title: "Live only", Only: []string{"live/live-model"}}
+	suite.ttsConfig.Aliases["live-first"] = routing.Alias{Languages: []string{"en"}, Prefer: suite.live}
+	suite.ttsConfig.Aliases["live-only"] = routing.Alias{Title: "Live only", Only: []string{suite.live}}
 	runSuite(t, suite)
 }
 
@@ -41,21 +43,21 @@ func (s *SpeechRecordersSuite) SetupTest() {
 }
 
 func (s *SpeechRecordersSuite) TestASpeechJobPinnedToAModelThatOnlyStreamsIsRefusedBeforeItIsQueued() {
-	// On da97ee28 this was accepted, queued and failed: "live/live-model: no factory registered".
+	// On da97ee28 this was accepted, queued and failed: "<live>: no factory registered".
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
-		map[string]any{"text": "hello", "options": map[string]any{"target": "live/live-model"}})
+		map[string]any{"text": "hello", "options": map[string]any{"target": s.live}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, onlyStreams)
+	s.Contains(failure, s.onlyStreams())
 }
 
 func (s *SpeechRecordersSuite) TestATextSpokenInlineOnAModelThatOnlyStreamsIsRefused() {
 	// On da97ee28 this was a 202 with status failed.
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
-		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": "live/live-model"}})
+		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": s.live}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, onlyStreams)
+	s.Contains(failure, s.onlyStreams())
 }
 
 func (s *SpeechRecordersSuite) TestARecordingOnAShortcutOfModelsThatOnlyStreamIsRefused() {
@@ -63,11 +65,15 @@ func (s *SpeechRecordersSuite) TestARecordingOnAShortcutOfModelsThatOnlyStreamIs
 		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": "live-only"}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, onlyStreams)
+	s.Contains(failure, s.onlyStreams())
 }
 
 func (s *SpeechRecordersSuite) TestARecordingOnAShortcutIsServedByTheModelThatRecords() {
 	// Probed on da97ee28: completed by stub-model, and no row for live.
+	var resolved []Candidate
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/tts/routes/live-first", nil, &resolved))
+	s.Require().Equal("live", resolved[0].Provider, "live is tried first, or this proves nothing")
+
 	var spoken Speech
 	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
 		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": "live-first"}}, &spoken))
@@ -105,6 +111,11 @@ func (s *SpeechRecordersSuite) TestSpeechToTextRoutesSayNothingAboutRecording() 
 	for _, candidate := range resolved {
 		s.Nil(candidate.CanRecord, candidate.Provider)
 	}
+}
+
+// onlyStreams is what a recording of live is told, which names the model that records.
+func (s *SpeechRecordersSuite) onlyStreams() string {
+	return s.live + " can only stream speech, not record it; models that record: stub/stub-model"
 }
 
 // speechStats are the text-to-speech rows written for this test's app.
