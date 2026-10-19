@@ -2,10 +2,13 @@ package voices
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -119,6 +122,27 @@ func (s *CatalogueSuite) TestAProviderThatPublishesNoLibraryIsRefusedRatherThanE
 	s.Require().Error(err)
 	s.Empty(found)
 	s.Contains(err.Error(), "breeze")
+}
+
+func (s *CatalogueSuite) TestAProviderWithNoLibraryAndNoNoteIsWordedAsBefore() {
+	_, listed := s.catalogue.List(s.ctx, "breeze")
+	_, previewed := s.catalogue.Preview(s.ctx, "breeze", "x")
+
+	// Both as the base answered them (1b4404556).
+	s.EqualError(listed, "voices: breeze publishes no voice library")
+	s.EqualError(previewed, "voices: breeze publishes no voice library")
+}
+
+func (s *CatalogueSuite) TestAskingForFishsLibrarySaysHowToSpeakInAFishVoice() {
+	const told = "voices: fish voices cannot be browsed through the router yet; name a fish voice by its " +
+		"model id (what Fish's API calls reference_id), found in the fish.audio Voice Library"
+
+	found, listed := s.catalogue.List(s.ctx, "fish")
+	_, previewed := s.catalogue.Preview(s.ctx, "fish", "9a9cf47702da476aa4629e2506d4a857")
+
+	s.Empty(found)
+	s.EqualError(listed, told)
+	s.EqualError(previewed, told)
 }
 
 func (s *CatalogueSuite) TestALibraryIsReadAgainOnlyOnceItHasGoneStale() {
@@ -744,4 +768,240 @@ func (s *LibrarySuite) TestInworldDecodesThePreviewItAnswersWith() {
 	s.Equal("audio/mpeg", spoken.ContentType)
 	s.Equal("ID3", string(spoken.Audio))
 	s.Contains(s.seen[0], "voice_id=Ashley")
+}
+
+// cartesiaLibrary serves ids as Cartesia pages its library, live on 2026-10-19T18:53:35Z:
+// at most limit (and 100) voices a page, next_page the last id on it, read back as
+// starting_after, and has_more false with next_page null on the last page.
+func (s *LibrarySuite) cartesiaLibrary(ids []string) {
+	s.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.seen = append(s.seen, r.URL.RequestURI())
+		query := r.URL.Query()
+		start := 0
+		if after := query.Get("starting_after"); after != "" {
+			start = slices.Index(ids, after) + 1
+			if start == 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
+		limit, err := strconv.Atoi(query.Get("limit"))
+		s.Require().NoError(err)
+		end := min(start+min(limit, 100), len(ids))
+		data := []map[string]string{}
+		for _, id := range ids[start:end] {
+			data = append(data, map[string]string{"id": id, "name": "voice " + id})
+		}
+		page := map[string]any{"data": data, "has_more": end < len(ids), "next_page": nil}
+		if end < len(ids) {
+			page["next_page"] = ids[end-1]
+		}
+		s.Require().NoError(json.NewEncoder(w).Encode(page))
+	})
+}
+
+// cartesiaIDs is n voice ids shaped as Cartesia's are.
+func cartesiaIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("a0e99841-438c-4a64-b679-%012d", i)
+	}
+	return ids
+}
+
+func (s *LibrarySuite) cartesia() *Cartesia {
+	lister, err := NewCartesia(CartesiaOptions{APIKey: "k", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+	return lister
+}
+
+func (s *LibrarySuite) TestCartesiaListsEveryVoicePastTheFirstThousand() {
+	ids := cartesiaIDs(1050)
+	s.cartesiaLibrary(ids)
+
+	found, err := s.cartesia().List(s.ctx)
+
+	s.Require().NoError(err)
+	listed := make([]string, 0, len(found))
+	for _, voice := range found {
+		listed = append(listed, voice.ID)
+	}
+	s.Equal(ids, listed)
+	s.Len(s.seen, 11, "ten full pages of 100 and one of 50")
+	s.Contains(s.seen[10], "starting_after="+ids[999])
+}
+
+func (s *LibrarySuite) TestACartesiaCursorIsSentAsOneQueryValue() {
+	ids := []string{"first&limit=1", "second"}
+	s.cartesiaLibrary(ids)
+	s.server.Config.Handler = func(serve http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// One voice a page, so the second is read with the first id as the cursor.
+			query := r.URL.Query()
+			query.Set("limit", "1")
+			r.URL.RawQuery = query.Encode()
+			serve.ServeHTTP(w, r)
+		})
+	}(s.server.Config.Handler)
+
+	found, err := s.cartesia().List(s.ctx)
+
+	s.Require().NoError(err)
+	s.Require().Len(found, 2)
+	s.Equal("second", found[1].ID)
+}
+
+func (s *LibrarySuite) TestACartesiaListingThatNeverEndsIsAnErrorRatherThanAShortList() {
+	s.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.seen = append(s.seen, r.URL.RequestURI())
+		id := fmt.Sprintf("voice-%d", len(s.seen))
+		_, _ = fmt.Fprintf(w, `{"data":[{"id":%q,"name":"n"}],"has_more":true,"next_page":%q}`, id, id)
+	})
+
+	found, err := s.cartesia().List(s.ctx)
+
+	s.EqualError(err, "voices: cartesia list: still more voices after 100 pages of 100")
+	s.Empty(found)
+	s.Len(s.seen, cartesiaMaxPages)
+}
+
+func (s *LibrarySuite) TestACartesiaCursorThatComesBackIsAnErrorRatherThanALoop() {
+	s.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.seen = append(s.seen, r.URL.RequestURI())
+		_, _ = w.Write([]byte(`{"data":[{"id":"same","name":"n"}],"has_more":true,"next_page":"same"}`))
+	})
+
+	found, err := s.cartesia().List(s.ctx)
+
+	s.EqualError(err, `voices: cartesia list: next_page "same" came back after it was read`)
+	s.Empty(found)
+	s.Len(s.seen, 2)
+}
+
+func (s *LibrarySuite) TestACartesiaListingCutShortKeepsTheListingTheCatalogueHad() {
+	clock := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	catalogue := NewCatalogue()
+	catalogue.now = func() time.Time { return clock }
+	catalogue.Register("cartesia", s.cartesia())
+	ids := cartesiaIDs(1050)
+	s.cartesiaLibrary(ids)
+	_, err := catalogue.List(s.ctx, "cartesia")
+	s.Require().NoError(err)
+	clock = clock.Add(libraryTTL + time.Minute)
+	s.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"same","name":"n"}],"has_more":true,"next_page":"same"}`))
+	})
+
+	found, err := catalogue.List(s.ctx, "cartesia")
+
+	s.Require().NoError(err, "the listing it had is still served")
+	s.Len(found, len(ids))
+}
+
+func (s *LibrarySuite) TestAThousandCartesiaVoicesAreReadOncePerHourNotPerRequest() {
+	catalogue := NewCatalogue()
+	catalogue.Register("cartesia", s.cartesia())
+	s.cartesiaLibrary(cartesiaIDs(1050))
+
+	first, err := catalogue.List(s.ctx, "cartesia")
+	s.Require().NoError(err)
+	second, err := catalogue.List(s.ctx, "cartesia")
+
+	s.Require().NoError(err)
+	s.Len(second, 1050)
+	s.Equal(first, second)
+	s.Len(s.seen, 11, "the second request is answered from the cache")
+}
+
+// inworldUnscoped is how Inworld answered staging's key on 2026-10-16, before its scopes
+// were widened.
+const inworldUnscoped = `{"code":7,"message":"api key does not have required scopes"}`
+
+func (s *LibrarySuite) TestAnInworldKeyThatCannotListSaysSoRatherThanRefusingAVoice() {
+	s.routes["/voices/v1/voices"] = inworldUnscoped
+	s.statuses["/voices/v1/voices"] = http.StatusForbidden
+	lister, err := NewInworld(InworldOptions{APIKey: "k", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = lister.List(s.ctx)
+
+	s.EqualError(err, "voices: the inworld key cannot list voices (http 403): "+inworldUnscoped)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsKeyThatCannotListSaysSoRatherThanRefusingAVoice() {
+	s.routes["/v1/voices"] = `{"detail":{"status":"invalid_api_key"}}`
+	s.statuses["/v1/voices"] = http.StatusUnauthorized
+
+	_, err := s.elevenLabs().List(s.ctx)
+
+	s.EqualError(err, `voices: the elevenlabs key cannot list voices (http 401): {"detail":{"status":"invalid_api_key"}}`)
+}
+
+func (s *LibrarySuite) TestACartesiaKeyThatCannotListSaysSoRatherThanRefusingAVoice() {
+	s.routes["/voices"] = `{"error":"nope"}`
+	s.statuses["/voices"] = http.StatusForbidden
+
+	_, err := s.cartesia().List(s.ctx)
+
+	s.EqualError(err, `voices: the cartesia key cannot list voices (http 403): {"error":"nope"}`)
+}
+
+func (s *LibrarySuite) TestAListingTheVendorFailsIsWordedAsBefore() {
+	s.routes["/voices/v1/voices"] = `{"error":"nope"}`
+	s.statuses["/voices/v1/voices"] = http.StatusInternalServerError
+	lister, err := NewInworld(InworldOptions{APIKey: "k", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = lister.List(s.ctx)
+
+	// As the base answered it (1b4404556).
+	s.EqualError(err, `voices: inworld refused the voice (http 500): {"error":"nope"}`)
+}
+
+func (s *LibrarySuite) TestAPreviewTheKeyIsRefusedStillRefusesTheVoice() {
+	s.routes["/voices/x"] = `{"error":"nope"}`
+	s.statuses["/voices/x"] = http.StatusForbidden
+
+	_, err := s.cartesia().Preview(s.ctx, "x")
+
+	// As the base answered it (1b4404556).
+	s.EqualError(err, `voices: cartesia refused the voice (http 403): {"error":"nope"}`)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsListingReadsAsBefore() {
+	s.routes["/v1/voices"] = `{"voices":[
+		{"voice_id":"abc","name":"Rachel","category":"premade","description":"Warm and calm",
+		 "preview_url":"http://example/sample.mp3",
+		 "labels":{"gender":"female","accent":"American","age":"middle-aged","use_case":"social media"}},
+		{"voice_id":"def","name":"Mine","category":"cloned","labels":{"descriptive":"bright"}}]}`
+
+	found, err := s.elevenLabs().List(s.ctx)
+
+	s.Require().NoError(err)
+	// As the base read it (1b4404556).
+	s.Equal([]Library{
+		{ID: "abc", Name: "Rachel", Description: "Warm and calm", Gender: "female", Accent: "American",
+			Tags: []string{"middle-aged", "social media"}, Preview: true},
+		{ID: "def", Name: "Mine", Description: "bright", Own: true},
+	}, found)
+}
+
+func (s *LibrarySuite) TestAnInworldListingReadsAsBefore() {
+	s.routes["/voices/v1/voices"] = `{"voices":[
+		{"voiceId":"Ashley","displayName":"","description":"Bright","gender":"female",
+		 "ageGroup":"young","langCode":"EN_US","source":"SYSTEM","tags":["friendly"]},
+		{"voiceId":"mine__x","displayName":"Mine","description":"","gender":"","ageGroup":"",
+		 "langCode":"DE_DE","source":"IVC","tags":[]}]}`
+	lister, err := NewInworld(InworldOptions{APIKey: "k", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	found, err := lister.List(s.ctx)
+
+	s.Require().NoError(err)
+	// As the base read it (1b4404556).
+	s.Equal([]Library{
+		{ID: "Ashley", Name: "Ashley", Description: "Bright", Gender: "female", Language: "EN_US",
+			Tags: []string{"young", "friendly"}, Preview: true},
+		{ID: "mine__x", Name: "Mine", Language: "DE_DE", Tags: []string{}, Own: true, Preview: true},
+	}, found)
 }

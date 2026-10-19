@@ -64,7 +64,7 @@ func (i *Inworld) List(ctx context.Context) ([]Library, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, refused(inworld.ProviderName, response)
+		return nil, listRefused(inworld.ProviderName, response)
 	}
 	var listed struct {
 		Voices []struct {
