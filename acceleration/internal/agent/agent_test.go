@@ -1284,26 +1284,32 @@ func (s *AgentSuite) TestAudioFromSomebodyWhoLeftOpensNoTranscriptionSession() {
 
 func (s *AgentSuite) TestSomebodyStillTalkingAfterALeaveIsTranscribedAgain() {
 	s.join(true)
-	clock := time.Now()
-	s.setClock(clock)
+	left := time.Now()
+	s.setClock(left)
 	alice := stt.Participant{ID: "alice"}
 	s.edge.attending <- Attendance{Participant: alice, Joined: true}
 	s.edge.attending <- Attendance{Participant: alice, Joined: false}
 	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
 		"the departure was never reported")
+
+	// The agent was held up for a minute, say opening somebody else's session, before the
+	// audio that trailed the leave reached it.
+	trailed := left.Add(time.Minute)
+	s.setClock(trailed)
 	bob := stt.Participant{ID: "bob"}
 	s.speak(alice)
 	s.speak(bob)
 	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
 
-	s.setClock(clock.Add(departedGrace / 2))
+	s.setClock(trailed.Add(999 * time.Millisecond))
 	s.speak(alice)
 	carol := stt.Participant{ID: "carol"}
 	s.speak(carol)
 	s.eventually(func() bool { return s.listening(carol.ID) }, "carol's audio never arrived")
 	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
 
-	s.setClock(clock.Add(departedGrace))
+	s.setClock(trailed.Add(time.Second))
 	s.speak(alice)
 
 	s.eventually(func() bool { return s.listening(alice.ID) },
