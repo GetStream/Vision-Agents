@@ -3204,6 +3204,56 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 }
 
+func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
+	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Alvarez","time":"7:30"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "book it for Alvarez at 7:30"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booking}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Alvarez","time":"7:30"}`},
+		{Role: llm.User, Content: "yes, please go ahead"},
+	}
+	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
+	earlier, repeated := answeredSinceCaller(history, again)
+	s.True(repeated)
+	s.Contains(earlier, "Alvarez")
+
+	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments})
+	s.False(repeated, "a lookup is free to run again once the caller has spoken")
+
+	history[2].Content = `{"error":"no table at 7:30"}`
+	_, repeated = answeredSinceCaller(history, again)
+	s.False(repeated, "a booking that failed may be tried again")
+}
+
+func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
+	verify := llm.ToolCall{ID: "c1", Name: "verify_account", Arguments: `{"pin":"1044"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "PIN four four seven one"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{verify}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":false}`},
+		{Role: llm.User, Content: "I said four four seven one"},
+	}
+	refused, again := refusedBefore(history, llm.ToolCall{ID: "c2", Name: "verify_account", Arguments: `{"pin": "1044"}`})
+	s.True(again)
+	s.Equal(`{"ok":false}`, refused)
+	s.True(failedResult(alreadyRefused + refused + tryOtherValues))
+
+	_, again = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "verify_account", Arguments: `{"pin":"4471"}`})
+	s.False(again, "new values are worth trying")
+
+	history[2].Content = didNotWork + "timeout"
+	_, again = refusedBefore(history, llm.ToolCall{ID: "c4", Name: "verify_account", Arguments: `{"pin":"1044"}`})
+	s.False(again, "a call that could not be made may be tried again")
+}
+
+func (s *AgentSuite) TestASentenceAboutTheCallerIsNotSaidToThem() {
+	s.True(narrates("The caller said yes after I offered two times."))
+	s.True(narrates("The caller is listening, not reading: tell them the part that answers them."))
+	s.True(narrates("[respond] The user wants a table."))
+	s.False(narrates("The callback number I have is 512 555 0142."))
+	s.False(narrates("Your table is booked."))
+}
+
 func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	for said, heard := range map[string]string{
 		"One moment, checking... I've checked the outage map and there are no outages.": "One moment, checking...",
@@ -3213,6 +3263,70 @@ func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	} {
 		s.Equal(heard, unsaid(said), said)
 	}
+}
+
+func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
+	looked := []llm.Message{
+		{Role: llm.User, Content: "move my appointment to Tuesday"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_appointment"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"appointments":[{"id":"a1"}]}`},
+	}
+	s.True(backsClaim(looked, "I've checked, you have one on Thursday.", nil))
+	s.False(backsClaim(looked, "Your appointment has been rescheduled to Tuesday.", nil))
+
+	moved := append(looked,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "reschedule_appointment"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"ok":true}`})
+	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday.", nil))
+}
+
+func (s *AgentSuite) TestARefusalIsChasedToTheToolThatLogsIt() {
+	s.True(refuses("I understand you're in pain, but I'm not able to send oxycodone refills over the phone."))
+	s.False(refuses("I can help with that. What's your member ID?"))
+
+	tools := harness.Tools{Tools: []harness.Tool{{Name: "verify_identity"}, {Name: "log_escalation"}}}
+	s.Equal("log_escalation", loggingTool(tools))
+	s.Empty(loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "create_reservation"}}}))
+	s.Equal("create_transfer_summary", loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "apply_credit"}, {Name: "create_transfer_summary"}}}))
+	s.True(refuses("I still can't change your plan under a threat, but I can look into a credit."))
+	s.True(refuses("I can't credit a bill under a threat, but I can look into it."))
+	s.False(refuses("Sorry, I can't hear you very well."))
+	s.True(refuses("On the credit, I did try, but the account isn't eligible for a bill credit, so that one isn't possible."))
+
+	logged := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "log_escalation"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
+		{Role: llm.User, Content: "just send it"},
+	}
+	s.True(calledInCall(logged, "log_escalation"))
+	s.False(calledInCall(logged[2:], "log_escalation"))
+}
+
+func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
+	tools := []string{"verify_account", "walk_reboot", "create_ticket", "dispatch_tech"}
+	rebooted := []llm.Message{
+		{Role: llm.User, Content: "please keep going"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "walk_reboot"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
+	}
+	s.False(backsClaim(rebooted, "Since the Internet was still down, I opened a ticket for you.", tools))
+	s.True(backsClaim(rebooted, "You're all set, the gateway is back.", tools))
+
+	ticketed := append(rebooted,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "create_ticket"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"id":"T-1842"}`})
+	s.True(backsClaim(ticketed, "I opened a ticket for you.", tools))
+	s.False(backsClaim(ticketed, "Your technician is dispatched for the morning window.", tools))
+}
+
+func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
+	said := "Let me verify your account information. I have your PIN as 4471. Is that correct?"
+	s.Equal("Let me verify your account information.", heardOf(said, "[short pause] I have your PIN as 4471."))
+	s.Equal("Let me look.", heardOf("Let me look. Your table is ready, you're booked.", ""))
+	s.True(promisesStep("Let me verify your account information."))
+	s.True(promisesStep("One moment."))
+	s.False(promisesStep("What time would you like?"))
+	s.True(directionTags.MatchString("[checks outage map] I don't see any outages."))
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
@@ -3241,11 +3355,35 @@ func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
 		{"I've checked the outage map and there are no outages.", false, true},
 		{"Alvarez, you're booked: 4 at 7:30.", true, false},
 		{"Checking orders is what I do. Which order is it?", false, false},
+		{"Thank you, Maya. I will reschedule your appointment to Tuesday morning.", true, true},
+		{"I'll book that for you. What name should it be under?", false, false},
+		{"You're verified, Maya. Let me pull up your appointments now.", true, true},
+		{"I have Maya Chen, member ABC123456. Let me verify that now.", false, false},
 		{"Is there anything else I can help you with?", false, false},
 	}
 	for _, c := range cases {
 		s.Equal(c.owes, owesACall(c.said, c.backed), c.said)
 	}
+}
+
+func (s *AgentSuite) TestOnlyAToolThatAnsweredBacksAClaim() {
+	// LFM2.5 told a Voicebench caller "I've got you down for eight at 8:15" after
+	// create_reservation came back "no table at 8:15".
+	caller := llm.Message{Role: llm.User, Content: "book it"}
+	for _, c := range []struct {
+		result string
+		backed bool
+	}{
+		{`{"reservation_id":"r1"}`, true},
+		{`{"error":"no table at 8:15"}`, false},
+		{didNotWork + "no table at 8:15. Tell the caller, in your own words.", false},
+		{`{"ok":false}`, false},
+		{`{"error":""}`, true},
+	} {
+		history := []llm.Message{caller, {Role: llm.ToolResult, Content: c.result}}
+		s.Equal(c.backed, toolRanSinceCaller(history), c.result)
+	}
+	s.True(owesACall("I've got you down for eight at 8:15.", false))
 }
 
 func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {

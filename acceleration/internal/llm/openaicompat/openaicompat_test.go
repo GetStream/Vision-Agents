@@ -361,6 +361,21 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 		}
 	}
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
+	s.Equal("The user said hi, so", response.ReasoningText)
+}
+
+func (s *OpenAICompatSuite) TestThinkingStreamedAsReasoningIsThinkingToo() {
+	s.frames = []string{
+		frame([]any{map[string]any{"index": 0, "delta": map[string]any{"reasoning": "Greet them back."}}}, nil),
+		textFrame("Hi! How can I help?"),
+		usageFrame(11, 0, 20, 16, "stop"),
+	}
+	provider := s.provider(Options{Capabilities: llm.Capabilities{StreamsReasoning: true}})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal("Hi! How can I help?", response.OutputText)
+	s.Equal("Greet them back.", response.ReasoningText)
 }
 
 // reasoningOf joins the reasoning a response streamed.
@@ -785,6 +800,22 @@ func (s *OpenAICompatSuite) TestAProvidersOwnRequestFieldsReachIt() {
 	s.Equal(false, args["thinking"])
 }
 
+func (s *OpenAICompatSuite) TestAPrefillOpensTheReplyForTheModelToContinue() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{Prefill: func(llm.ResponseParams) string { return "<think>\n</think>\n" }})
+
+	s.ask(provider, hello())
+
+	messages, ok := s.requests[0]["messages"].([]any)
+	s.Require().True(ok)
+	last, ok := messages[len(messages)-1].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("assistant", last["role"])
+	s.Equal("<think>\n</think>\n", last["content"])
+	s.Equal(true, s.requests[0]["continue_final_message"], "the model continues the prefill rather than answering after it")
+	s.Equal(false, s.requests[0]["add_generation_prompt"])
+}
+
 func (s *OpenAICompatSuite) TestTheReasoningEffortIsResolvedBeforeItIsSent() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	var sent string
@@ -1095,6 +1126,21 @@ func (s *OpenAICompatSuite) TestAnUnsignedToolCallIsReplayedWithoutAnEmptySignat
 	call, ok := calls[0].(map[string]any)
 	s.Require().True(ok)
 	s.NotContains(call, "extra_content")
+}
+
+func (s *OpenAICompatSuite) TestEarlierThinkingIsSentBackOnlyToAProviderThatReplaysIt() {
+	input := []llm.Message{
+		{Role: llm.User, Content: "my internet is down"},
+		{Role: llm.Assistant, Content: "I can help with that.", Reasoning: "Unverified; ask for the PIN."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}, Reasoning: "Look it up."},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "found"},
+	}
+	for replay, want := range map[bool][]any{true: {"Unverified; ask for the PIN.", "Look it up."}, false: {nil, nil}} {
+		s.frames = []string{textFrame("done"), usageFrame(30, 0, 4, 0, "stop")}
+		s.ask(s.provider(Options{ReplayReasoning: replay}), llm.ResponseParams{Input: input})
+		sent := s.sentMessages(len(s.requests) - 1)
+		s.Equal(want, []any{sent[1]["reasoning"], sent[2]["reasoning"]}, "replay=%v", replay)
+	}
 }
 
 func (s *OpenAICompatSuite) TestCallsAnotherModelMadeAreSignedForAProviderThatRefusesThemUnsigned() {
