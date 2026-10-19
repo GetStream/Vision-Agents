@@ -785,8 +785,13 @@ func (s *LibrarySuite) cartesiaLibrary(ids []string) {
 				return
 			}
 		}
+		// A handler runs off the test goroutine, where FailNow is not allowed: answer 500
+		// and let the check after List fail.
 		limit, err := strconv.Atoi(query.Get("limit"))
-		s.Require().NoError(err)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		end := min(start+min(limit, 100), len(ids))
 		data := []map[string]string{}
 		for _, id := range ids[start:end] {
@@ -796,7 +801,12 @@ func (s *LibrarySuite) cartesiaLibrary(ids []string) {
 		if end < len(ids) {
 			page["next_page"] = ids[end-1]
 		}
-		s.Require().NoError(json.NewEncoder(w).Encode(page))
+		body, err := json.Marshal(page)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(body)
 	})
 }
 
@@ -966,6 +976,51 @@ func (s *LibrarySuite) TestAPreviewTheKeyIsRefusedStillRefusesTheVoice() {
 
 	// As the base answered it (1b4404556).
 	s.EqualError(err, `voices: cartesia refused the voice (http 403): {"error":"nope"}`)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsPreviewTheKeyIsRefusedStillRefusesTheVoice() {
+	s.routes["/v1/voices/abc"] = `{"detail":"nope"}`
+	s.statuses["/v1/voices/abc"] = http.StatusForbidden
+
+	_, err := s.elevenLabs().Preview(s.ctx, "abc")
+
+	// As the base answered it (1b4404556).
+	s.EqualError(err, `voices: elevenlabs refused the voice (http 403): {"detail":"nope"}`)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsSampleTheBucketRefusesStillRefusesTheVoice() {
+	s.routes["/v1/voices/abc"] = `{"preview_url":"` + s.server.URL + `/sample.mp3"}`
+	s.routes["/sample.mp3"] = `denied`
+	s.statuses["/sample.mp3"] = http.StatusForbidden
+
+	_, err := s.elevenLabs().Preview(s.ctx, "abc")
+
+	// As the base answered it (1b4404556); fetchPreview is the path.
+	s.EqualError(err, `voices: elevenlabs refused the voice (http 403): denied`)
+}
+
+func (s *LibrarySuite) TestAnElevenLabsLibrarySearchTheKeyIsRefusedStillRefusesTheVoice() {
+	s.routes["/v1/voices/cVOjvbxC2c4mOyGcx3AH"] = voiceNotFound
+	s.statuses["/v1/voices/cVOjvbxC2c4mOyGcx3AH"] = http.StatusBadRequest
+	s.routes["/v1/shared-voices"] = `{"detail":"nope"}`
+	s.statuses["/v1/shared-voices"] = http.StatusForbidden
+
+	_, err := s.elevenLabs().Exists(s.ctx, "cVOjvbxC2c4mOyGcx3AH")
+
+	// As the base answered it (1b4404556).
+	s.EqualError(err, `voices: elevenlabs refused the voice (http 403): {"detail":"nope"}`)
+}
+
+func (s *LibrarySuite) TestAnInworldPreviewTheKeyIsRefusedStillRefusesTheVoice() {
+	s.routes["/tts/v1/voice:preview"] = `{"error":"nope"}`
+	s.statuses["/tts/v1/voice:preview"] = http.StatusForbidden
+	lister, err := NewInworld(InworldOptions{APIKey: "k", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = lister.Preview(s.ctx, "Ashley")
+
+	// As the base answered it (1b4404556).
+	s.EqualError(err, `voices: inworld refused the voice (http 403): {"error":"nope"}`)
 }
 
 func (s *LibrarySuite) TestAnElevenLabsListingReadsAsBefore() {
