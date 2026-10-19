@@ -298,7 +298,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/reasoning_effort`.
             internal var reasoningEffort: Swift.String?
-            /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+            /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/request_id`.
             internal var requestId: Swift.String?
@@ -316,7 +316,7 @@ extension Components {
             ///   - images:
             ///   - maxOutputTokens: Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
             ///   - reasoningEffort: How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
-            ///   - requestId: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+            ///   - requestId: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
             ///   - text: What to answer, as though it had been said.
             ///   - videos: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
             internal init(

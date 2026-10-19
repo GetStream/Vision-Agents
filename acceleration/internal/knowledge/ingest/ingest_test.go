@@ -1,8 +1,10 @@
 package ingest
 
 import (
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,6 +131,70 @@ func (s *DocumentsSuite) TestNestedDocumentsKeepThePathTheyWereFoundAt() {
 	s.Equal("reference/api.md#0", documents[0].ID)
 	s.Equal("reference/api.md > API", documents[0].Source)
 }
+
+func (s *DocumentsSuite) TestAnIDThatFitsIsKeptAsItWas() {
+	// What the ids were before long sources were hashed: a base filled then is found,
+	// trimmed and deleted by the same ids without a re-index.
+	s.Equal([]string{"guide.md#0", "guide.md#1"}, IDs("guide.md", 0, 2))
+	s.Equal("guide.md#10", IDs("guide.md", 10, 11)[0])
+	s.Equal([]string{
+		"https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#0",
+		"https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#9",
+	}, []string{IDs(sixtyOne, 0, 1)[0], IDs(sixtyOne, 9, 10)[0]}, "63 bytes is the longest id kept")
+}
+
+func (s *DocumentsSuite) TestEveryIDFitsWhateverTheSourceAndIndex() {
+	// turbopuffer refuses an id of 64 bytes or more, which every url over 61 bytes made.
+	for _, source := range []string{
+		sixtyOne,
+		sixtyOne + "a",
+		"https://getstream.io/chat/docs/sdk/android/client/guides/push-notifications/",
+		"https://example.com/" + strings.Repeat("long/", 400),
+	} {
+		for _, index := range []int{0, 9, 10, 100_000, math.MaxInt} {
+			id := passageID(source, index)
+			s.LessOrEqual(len(id), 63, id)
+			s.True(strings.HasSuffix(id, "#"+strconv.Itoa(index)), id)
+		}
+	}
+}
+
+func (s *DocumentsSuite) TestALongSourceIsKeyedByAHashOfAllOfIt() {
+	push := "https://getstream.io/chat/docs/sdk/android/client/guides/push-notifications/"
+	content := "# One\n\nfirst\n\n# Two\n\nsecond\n"
+
+	written := Split(push, content, DefaultChunk)
+
+	s.Require().Len(written, 2)
+	s.Equal(IDs(push, 0, 2), []string{written[0].ID, written[1].ID},
+		"reading back, trimming and deleting name what was written")
+	s.Equal("s9X5PdOacmqTmtGOosmBp2IUcfgci9mQTB0qRg62q1k#0", written[0].ID,
+		"a stored base is only found again while the hash stays the same")
+	s.Equal(push+" > One", written[0].Source, "a reader still sees the url")
+
+	// This hash holds "_", so a swap to the standard base64 alphabet would rename it.
+	s.Equal("O8s6_kKeTdYIiCnGTGI3FmEHc4qQOCDEGXmMSqqkZlU#0",
+		IDs("https://getstream.io/moderation/docs/node/content-moderation/before-message-send/", 0, 1)[0])
+
+	// Two urls with the same first 60 bytes, as two pages of one docs section have.
+	shared := "https://getstream.io/moderation/docs/node/content-moderation/"
+	s.NotEqual(IDs(shared+"before-message-send/", 0, 1), IDs(shared+"custom-actions/", 0, 1))
+}
+
+func (s *DocumentsSuite) TestFilesCountsADocumentOnceThoughItsIDsAreKeyedTwoWays() {
+	// Eleven passages of a 61-byte source: #0 to #9 fit as they are, #10 is hashed.
+	var long strings.Builder
+	for index := range 11 {
+		long.WriteString("# Part " + strconv.Itoa(index) + "\n\ntext\n\n")
+	}
+	documents := append(Split(sixtyOne, long.String(), DefaultChunk), Split("guide.md", "# One\n\nfirst\n", DefaultChunk)...)
+	s.Require().Len(documents, 12)
+
+	s.Equal(2, Files(documents))
+}
+
+// sixtyOne is a source whose ids up to #9 are 63 bytes, the longest kept as they are.
+var sixtyOne = "https://example.com/" + strings.Repeat("a", 41)
 
 // write puts a file in a directory, creating it if it is not there yet.
 func (s *DocumentsSuite) write(directory, name, content string) {

@@ -72,7 +72,8 @@ type Message struct {
 	// ClientID is the install a person's command came from, written on their message.
 	ClientID  string               `json:"client_id,omitempty"`
 	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
-	// Files are what the agent's own code made for this reply, such as a rendered image.
+	// Files are what the agent's own code made for this reply, such as a rendered image, or
+	// on a person's message the photos they sent with it.
 	Files []sandbox.Attachment `json:"files,omitempty"`
 	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
 	// They are written among the attachments, by MarshalJSON.
@@ -935,9 +936,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		}
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
-			if msg.Role == "assistant" {
-				msg.Files = filesFromAttachments(m.Attachments)
-			}
+			msg.Files = filesFromAttachments(m.Attachments)
 			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.ConnectorAuthorizations = connectorAuthorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
@@ -1021,7 +1020,13 @@ func history(p Page) ([]llm.Message, bool) {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
-		content := m.Text
+		said := m.Text
+		if m.Role == "user" && len(m.Files) > 0 {
+			// The model saw the photos with the reply to this message alone, as it does while
+			// a session is open, so history says they were sent rather than sending them again.
+			said += "\n\n" + photoNote(len(m.Files))
+		}
+		content := said
 		var artifacts []ArtifactAttachment
 		for _, artifact := range m.Artifacts {
 			if len(artifacts) == maxArtifactAttachments {
@@ -1056,7 +1061,7 @@ func history(p Page) ([]llm.Message, bool) {
 			}{Author: struct {
 				ID   string `json:"user_id"`
 				Name string `json:"display_name,omitempty"`
-			}{m.authorID, string(label)}, Text: m.Text})
+			}{m.authorID, string(label)}, Text: said})
 			content = string(envelope)
 		}
 		if size+utf8.RuneCountInString(content) > MaxHistoryRunes || len(out) == limit {
@@ -1082,6 +1087,14 @@ func history(p Page) ([]llm.Message, bool) {
 		out = append([]llm.Message{{Role: llm.System, Content: sharedHistoryAttribution}}, out...)
 	}
 	return out, tr
+}
+
+// photoNote follows a person's words in history when they sent photos with them.
+func photoNote(count int) string {
+	if count == 1 {
+		return "[sent with a photo, not shown again]"
+	}
+	return fmt.Sprintf("[sent with %d photos, not shown again]", count)
 }
 
 // HistoryLine is one message of a conversation the caller kept itself, such as a thread in
@@ -1201,8 +1214,9 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A command Stream holds is never automatically executed again, including after a restart.
-// clientID names the install the command came from; an invalid one is ignored.
-func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, error) {
+// clientID names the install the command came from; an invalid one is ignored. photos are
+// what the person sent with it (PublishPhotos), which their message shows.
+func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -1211,7 +1225,7 @@ func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, 
 	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
 		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
 	}
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
+	digest := commandDigest(text, photos)
 	if previous, ok := c.data.Commands[id]; ok {
 		if previous.Initiator != c.data.Owner {
 			return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
@@ -1234,6 +1248,9 @@ func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, 
 	// message before it is delivered (an optimistic send) sees Stream's copy replace
 	// its own instead of a duplicate.
 	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID}
+	for _, photo := range photos {
+		u.Files = append(u.Files, photo.Uploaded)
+	}
 	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {
@@ -1248,6 +1265,23 @@ func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, 
 	c.publish(u)
 	c.publish(a)
 	return receipt, nil
+}
+
+// commandDigest is what a retry of a command is matched on: its text and the bytes of each
+// photo sent with it. A command with no photos keeps the digest of its text alone, which is
+// what the commands recorded before photos were taken are stored under.
+func commandDigest(text string, photos []Photo) string {
+	digest := sha256.Sum256([]byte(text))
+	if len(photos) == 0 {
+		return fmt.Sprintf("%x", digest)
+	}
+	sum := sha256.New()
+	sum.Write(digest[:])
+	for _, photo := range photos {
+		image := sha256.Sum256(photo.Sent.Data)
+		sum.Write(image[:])
+	}
+	return fmt.Sprintf("%x", sum.Sum(nil))
 }
 
 // receipt reads a recorded command whether or not the conversation is still open, which
@@ -1765,7 +1799,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 			custom["ai_generated"] = true
 		}
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom,
+			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
