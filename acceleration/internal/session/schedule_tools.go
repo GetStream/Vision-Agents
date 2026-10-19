@@ -623,7 +623,7 @@ func fromNow(now, instant time.Time) string {
 		return "in under a minute"
 	}
 	days := int(away / (24 * time.Hour))
-	hours := int(away%(24*time.Hour) / time.Hour)
+	hours := int(away % (24 * time.Hour) / time.Hour)
 	minutes := int(away % time.Hour / time.Minute)
 	parts := make([]string, 0, 3)
 	if days > 0 {
