@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 # SAMPLE_RATE is what the router transcribes at, and what every provider behind it wants.
 SAMPLE_RATE = 16_000
 
+# START_TIMEOUT is how long start waits for the router to say it is transcribing or why it
+# is not. Our choice, not a vendor's: the router answers once a provider session is open,
+# which takes well under a second against every provider today.
+START_TIMEOUT = 10.0
+
 
 class STT(stt.STT):
     """Transcription routed through the acceleration backend.
@@ -46,6 +51,7 @@ class STT(stt.STT):
         config_id: str = "",
         options: Optional[dict[str, Any]] = None,
         backend: Optional[Backend] = None,
+        keyterms: Optional[list[str]] = None,
     ):
         """Route transcription to `target`.
 
@@ -62,6 +68,9 @@ class STT(stt.STT):
                 `Router.stt.realtime`.
             backend: A backend to use as it is, instead of building one from `url` and
                 `customer_id`.
+            keyterms: Words the transcriber would otherwise get wrong, such as names and
+                member IDs, at most 100. A model that takes none refuses them, and so does
+                `start`. Empty leaves whatever `options` or the config named.
         """
         super().__init__(provider_name="stream")
         self.model = target
@@ -69,6 +78,8 @@ class STT(stt.STT):
         self.tags = tags or {}
         self.config_id = config_id
         self.options = options or {}
+        if keyterms:
+            self.options = {**self.options, "keyterms": keyterms}
         self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         # _unclaimed is the socket opened by start, until somebody speaks into it.
@@ -81,11 +92,23 @@ class STT(stt.STT):
         self._readers: list[asyncio.Task] = []
 
     async def start(self):
-        """Open the first socket, so that a refusal is raised here, and start reading it."""
+        """Open the first socket and wait until the router is transcribing on it.
+
+        Raises:
+            RouterError: if the router refused the socket or what to transcribe on it,
+                such as a model that takes no keyterms.
+            asyncio.TimeoutError: if the router said neither within `START_TIMEOUT`.
+        """
         await super().start()
         await ensure_router(self.config_id, self.backend)
         self._unclaimed = self._socket()
-        await self._open(self._unclaimed)
+        started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        await self._open(self._unclaimed, started)
+        try:
+            await asyncio.wait_for(started, START_TIMEOUT)
+        except BaseException:
+            await self._unclaimed.close()
+            raise
         self._on_connected()
 
     async def __aenter__(self) -> "STT":
@@ -138,8 +161,13 @@ class STT(stt.STT):
     def _socket(self) -> Socket:
         return Socket(self.backend.socket("/v1/stt/stream"), self.backend.headers)
 
-    async def _open(self, socket: Socket) -> None:
-        """Connect `socket`, say what to transcribe on it and start reading it."""
+    async def _open(
+        self, socket: Socket, started: Optional[asyncio.Future[None]] = None
+    ) -> None:
+        """Connect `socket`, say what to transcribe on it and start reading it.
+
+        `started` is resolved by the router's first answer: `started`, or its `error`.
+        """
         await socket.connect()
         await socket.send(
             {
@@ -152,7 +180,7 @@ class STT(stt.STT):
                 "stt": self.options,
             }
         )
-        self._readers.append(asyncio.create_task(self._read(socket)))
+        self._readers.append(asyncio.create_task(self._read(socket, started)))
 
     def _claim(self, participant: Participant) -> Socket:
         """The socket `participant` is heard on: the one start opened if nobody has it yet,
@@ -188,12 +216,29 @@ class STT(stt.STT):
         finally:
             self._held.pop(participant.id, None)
 
-    async def _read(self, socket: Socket) -> None:
-        """Turn what the router says on `socket` into transcripts on the output stream."""
+    async def _read(
+        self, socket: Socket, started: Optional[asyncio.Future[None]] = None
+    ) -> None:
+        """Turn what the router says on `socket` into transcripts on the output stream.
+
+        Until `started` is resolved, an `error` frame is the refusal `start` raises, so it
+        is not reported a second time as an event.
+        """
         async for frame in socket.frames():
             if isinstance(frame, bytes):
                 continue
+            if started is not None and not started.done():
+                if frame.get("type") == "started":
+                    started.set_result(None)
+                    continue
+                if frame.get("type") == "error":
+                    started.set_exception(RouterError(frame.get("error", "")))
+                    continue
             self._received(frame, self._speakers.get(socket))
+        if started is not None and not started.done():
+            started.set_exception(
+                RouterError("the router closed the socket before it started")
+            )
 
     def _received(self, frame: dict[str, Any], speaker: Optional[Participant]) -> None:
         kind = frame.get("type", "")
