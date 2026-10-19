@@ -3238,6 +3238,7 @@ func (s *AgentSuite) TestARefusalIsChasedToTheToolThatLogsIt() {
 	s.True(refuses("I still can't change your plan under a threat, but I can look into a credit."))
 	s.True(refuses("I can't credit a bill under a threat, but I can look into it."))
 	s.False(refuses("Sorry, I can't hear you very well."))
+	s.True(refuses("On the credit, I did try, but the account isn't eligible for a bill credit, so that one isn't possible."))
 
 	logged := []llm.Message{
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "log_escalation"}}},

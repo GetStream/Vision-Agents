@@ -397,6 +397,9 @@ type Agent struct {
 	// refusalChased is set once a refusal nothing was logged for has been chased, since the
 	// caller last spoke.
 	refusalChased bool
+	// refusedWithCalls is set when a reply refused the caller and called other tools in the
+	// same breath, since the caller last spoke, so the refusal is chased once those are done.
+	refusedWithCalls bool
 	// stepChased is the tool whose described step was last chased up since the caller
 	// last spoke (describedStep).
 	stepChased string
@@ -1705,6 +1708,7 @@ func (a *Agent) respondTurn(
 	a.chaseForced = false
 	a.narrationAsked = false
 	a.refusalChased = false
+	a.refusedWithCalls = false
 	a.callerTurns++
 	a.stepChased = ""
 	a.toolReply = false
@@ -2468,8 +2472,21 @@ func (a *Agent) finish(response llm.Response) {
 			a.keepPromise(response.ID, speakToTheCaller, false)
 		}
 	}
-	if logger := loggingTool(a.availableTools()); logger != "" && said != "" && len(calls) == 0 && !forced &&
-		refuses(said) && !calledInCall(history, logger) {
+	logger := loggingTool(a.availableTools())
+	if logger != "" && len(calls) > 0 && refuses(said) && !slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
+		return call.Name == logger
+	}) {
+		// MiniMax refused a bill credit while opening a ticket, and the hand-off it owed
+		// was never chased.
+		a.mu.Lock()
+		a.refusedWithCalls = true
+		a.mu.Unlock()
+	}
+	a.mu.Lock()
+	refusedEarlier := a.refusedWithCalls
+	a.mu.Unlock()
+	if logger != "" && len(calls) == 0 && !forced && (said != "" && refuses(said) || refusedEarlier) &&
+		!calledInCall(history, logger) {
 		// Told to refuse an oxycodone refill, offer a callback and log an escalation, Nemotron
 		// Bolt and PhoneLLM Mini refused and offered in every run, and never logged.
 		a.mu.Lock()

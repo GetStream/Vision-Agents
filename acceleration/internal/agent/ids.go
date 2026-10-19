@@ -143,7 +143,8 @@ func placeholderName(call llm.ToolCall) (string, bool) {
 		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
 			continue
 		}
-		if slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4 {
+		if slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4 ||
+			notAName(text) {
 			return text, true
 		}
 	}
@@ -282,6 +283,22 @@ func misspelledResult(name, spelled string) string {
 }
 
 var placeholders = []string{"caller", "the caller", "customer", "guest", "user", "john doe", "jane doe", "unknown", "n/a"}
+
+// notNames are words no name holds. Flux heard "Last name is Alvarez" as "Let Last name is
+// Alvarez", and MiniMax booked "Let Alvarez". Words that are also names (Will, May, Rose)
+// are left out.
+var notNames = []string{"let", "let's", "lets", "is", "my", "the", "name", "last", "first", "yes",
+	"okay", "ok", "um", "uh", "hi", "hello", "please", "thanks", "it's", "its", "under", "this", "that"}
+
+// notAName reports a name with a word in it that no name holds.
+func notAName(text string) bool {
+	for _, word := range strings.Fields(strings.ToLower(text)) {
+		if slices.Contains(notNames, strings.Trim(word, ".,!?\"")) {
+			return true
+		}
+	}
+	return false
+}
 
 // placeholderResult is what a call with a stand-in name is answered with.
 func placeholderResult(name string) string {
