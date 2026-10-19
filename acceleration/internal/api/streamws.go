@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -1165,8 +1166,9 @@ func (s *socket) end(failure error) {
 }
 
 // closeReason fits a failure into a close frame, cut between characters since the reason
-// must be UTF-8 (RFC 6455 section 5.5.1).
+// must be UTF-8 (RFC 6455 section 5.5.1), which a failure's text from a provider may not be.
 func closeReason(message string) string {
+	message = strings.ToValidUTF8(message, "\uFFFD")
 	if len(message) <= maxCloseReason {
 		return message
 	}

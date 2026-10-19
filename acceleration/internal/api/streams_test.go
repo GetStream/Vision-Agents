@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -182,22 +185,50 @@ func (s *StreamsSuite) TestARefusalReachesACallerStillSendingAudio() {
 	s.Equal(websocket.CloseInternalServerErr, closed.Code)
 }
 
-func (s *StreamsSuite) TestAStartRefusedBeforeAnyModelIsAskedEndsWithTheSameClose() {
-	for name, opening := range map[string]frame{
-		"no target":      {"tts": frame{"target": "en-low-latency"}},
-		"unknown config": {"config_id": "no such config " + s.utils.uuid()},
-		"bad tag":        {"target": "en-low-latency", "tags": frame{"Not A Key!": "x"}},
-	} {
-		s.Run(name, func() {
-			read, ended := s.ending(s.start("/v1/stt/stream", opening))
+func (s *StreamsSuite) TestAStartWithNoTargetEndsWithTheSameClose() {
+	s.refusedStartEndsWithItsMessage(frame{"tts": frame{"target": "en-low-latency"}})
+}
 
-			s.Require().Len(read, 1)
-			s.Equal("error", read[0]["type"])
-			var closed *websocket.CloseError
-			s.Require().ErrorAs(ended, &closed)
-			s.Equal(websocket.CloseInternalServerErr, closed.Code)
-			s.Equal(read[0]["error"], closed.Text)
-		})
+func (s *StreamsSuite) TestAStartNamingAnUnknownConfigEndsWithTheSameClose() {
+	s.refusedStartEndsWithItsMessage(frame{"config_id": "no such config " + s.utils.uuid()})
+}
+
+func (s *StreamsSuite) TestAStartWithABadTagEndsWithTheSameClose() {
+	s.refusedStartEndsWithItsMessage(frame{"target": "en-low-latency", "tags": frame{"Not A Key!": "x"}})
+}
+
+func (s *StreamsSuite) refusedStartEndsWithItsMessage(opening frame) {
+	read, ended := s.ending(s.start("/v1/stt/stream", opening))
+
+	s.Require().Len(read, 1)
+	s.Equal("error", read[0]["type"])
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.Equal(read[0]["error"], closed.Text)
+}
+
+func (s *StreamsSuite) TestAFailureThatIsNotUTF8IsSentAsTextThatIs() {
+	reason := closeReason("provider said \xff\xfe and stopped")
+
+	s.True(utf8.ValidString(reason))
+	s.Equal("provider said \uFFFD and stopped", reason, "a run of bad bytes is one replacement")
+}
+
+func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsHungUpOn() {
+	listening := s.start("/v1/stt/stream", frame{"target": "nobody/x"})
+	// Never reads and never answers: the router's wait for the close has to end on its own.
+	time.Sleep(closeWait + 500*time.Millisecond)
+	raw := listening.UnderlyingConn()
+	s.Require().NoError(raw.SetReadDeadline(time.Now().Add(2 * time.Second)))
+	buffer := make([]byte, 4096)
+	for {
+		if _, err := raw.Read(buffer); err != nil {
+			var timeout net.Error
+			s.False(errors.As(err, &timeout) && timeout.Timeout(), "the router still holds the socket: %v", err)
+			s.ErrorIs(err, io.EOF)
+			return
+		}
 	}
 }
 
