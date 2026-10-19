@@ -1616,8 +1616,8 @@ func (s *SessionSuite) TestASessionIsCountedUntilItHasFinishedClosing() {
 }
 
 func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
+	// Nothing can look: no vision worker, and a conversation model that reads only text.
 	s.manages()
-	s.model.sees = true
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "get_video_frame", Arguments: "{}"}}
 	created := s.joins(Spec{
 		Tools: []harness.Tool{{Name: "get_video_frame", Description: "photograph the camera"}},
@@ -1645,6 +1645,49 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 		}
 		return false
 	}, "the failed vision delegation was not reported to the model")
+}
+
+func (s *SessionSuite) TestAToolsPictureIsShownToAModelThatSeesWithItsReplyAlone() {
+	// A chat has no vision worker, and its model can look at a tool's picture itself.
+	s.manages()
+	s.model.sees = true
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "photograph_room", Arguments: "{}"}}
+	created := s.joins(Spec{
+		Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}},
+	})
+	events, detach := created.Watch()
+	defer detach()
+	s.says(created, "what is in the room")
+
+	asked := awaitToolCall(events)
+	s.Require().NotNil(asked)
+	s.True(created.ResolveToolParts(asked.ID, []llm.ContentPart{
+		{Text: "the room"},
+		{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}},
+	}, ""))
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			for _, message := range request.Input {
+				if message.ToolCallID == asked.ID && message.HasImage() {
+					return true
+				}
+			}
+		}
+		return false
+	}, "the model was never shown the tool's picture")
+
+	s.says(created, "and what colour is the wall")
+	var next llm.ResponseParams
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if slices.Contains(handed(request), "user: and what colour is the wall") {
+				next = request
+				return true
+			}
+		}
+		return false
+	}, "the next turn was never asked")
+	s.False(next.HasImage(), "the tool's picture was sent again with a later turn")
 }
 
 func (s *SessionSuite) TestImagesAreRefusedWhenNeitherASkillNorTheModelCanSeeThem() {
@@ -1801,6 +1844,18 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.manages()
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Memory: MemorySpec{UserID: "organization-cats"}})
 	s.Require().ErrorContains(err, "memory is unavailable")
+}
+
+func (s *SessionSuite) TestAChatThatStartsVoiceIsGivenAThinkingModelItCanRoute() {
+	// A call started from a chat hands the hard parts over, and looks at a tool's pictures,
+	// as a call opened as one does.
+	s.thinks = true
+	s.manages()
+	created := s.writes(Spec{})
+
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
+
+	s.Equal(defaultSubagentTarget, created.Spec().SubagentTarget)
 }
 
 func (s *SessionSuite) TestTextSessionHasNoSubagent() {

@@ -535,9 +535,11 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	a.mu.Unlock()
-	// Visual tool results go to the vision worker in both native and cascade calls.
-	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
-		_, err = a.harness.Delegate(visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, a.History())
+	// Visual tool results go to the vision worker in both native and cascade calls. The
+	// call is still open in the history it is handed, which a provider refuses to replay.
+	// With no worker, as in a chat, a model that sees images is shown them itself.
+	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) && !a.looksItself() {
+		_, err = a.harness.Delegate(visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}
@@ -962,6 +964,43 @@ func (a *Agent) resolveToolLocked(call llm.ToolCall, parts []llm.ContentPart, ho
 		a.lateResults = nil
 	}
 }
+
+// looksItself reports whether a tool's pictures are shown to the conversation model rather
+// than handed to a vision worker: there is no worker to hand them to, as in a chat, and the
+// model takes images.
+func (a *Agent) looksItself() bool {
+	a.mu.Lock()
+	current, model := a.harness, a.llm
+	a.mu.Unlock()
+	return current != nil && !current.Offers(visionSkill) && model != nil && model.Capabilities().Accepts(llm.ModalityImage)
+}
+
+// toolPicturesSeen is history with the pictures tools showed the model replaced by a note,
+// for a new turn: like a person's photos, a tool's pictures are seen with the reply they
+// came back for alone, rather than paid for again on every turn after it.
+func toolPicturesSeen(history []llm.Message) []llm.Message {
+	if !llm.HasImage(history) {
+		return history
+	}
+	out := append([]llm.Message(nil), history...)
+	for i, message := range out {
+		if message.Role != llm.ToolResult || !message.HasImage() {
+			continue
+		}
+		var words []llm.ContentPart
+		for _, part := range message.Parts {
+			if part.Image == nil {
+				words = append(words, part)
+			}
+		}
+		words = append(words, llm.ContentPart{Text: pictureSeen})
+		out[i].Parts, out[i].Content = nil, llm.TextOf(words)
+	}
+	return out
+}
+
+// pictureSeen stands for a tool's picture once the reply it came back for is over.
+const pictureSeen = "[the picture this returned was seen with an earlier reply]"
 
 // callsOpen reports whether history ends in an assistant message with a tool call that no
 // result after it answers yet.

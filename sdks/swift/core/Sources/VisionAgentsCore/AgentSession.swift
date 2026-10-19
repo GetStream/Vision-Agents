@@ -48,6 +48,9 @@ public final class AgentSession {
     private let socket: SessionSocket
     private let tools: [String: AgentTool]
     private var pump: Task<Void, Never>?
+    /// The frames this device's camera showed lately, while it is on a call with it on, which
+    /// answer the router's `get_video_frames`.
+    var cameraFrames: CameraFrames?
 
     init(backend: Backend, session: Session, tools: [AgentTool]) {
         self.session = session
@@ -199,12 +202,44 @@ public final class AgentSession {
     private func answer(_ call: AgentEvent.ToolCall) {
         // Session events are broadcast to observers as well as tool owners. A Python
         // video worker may own this request; an observer must not resolve it first.
+        if call.name == CameraFrames.toolName, let cameraFrames {
+            return show(cameraFrames, for: call)
+        }
         guard let tool = tools[call.name] else { return }
         if let approval = tool.approval {
             approvals.append(ToolApprovalRequest(call: call, approval: approval, tool: tool))
         } else {
             run(call, with: tool)
         }
+    }
+
+    /// Answers the router's request for frames with the ones the camera showed at the moment it
+    /// names: what the frames are, then the frames, oldest first. Nothing recent enough is said
+    /// as the answer rather than as a failure, as the router's own video workers say it, so the
+    /// agent can ask the person to show it again.
+    private func show(_ frames: CameraFrames, for call: AgentEvent.ToolCall) {
+        let arguments = call.argumentValues
+        let at = Date(timeIntervalSince1970: (arguments["at_ms"]?.doubleValue ?? Date().timeIntervalSince1970 * 1000) / 1000)
+        let limit = Int(arguments["limit"]?.doubleValue ?? 1)
+        let answer: Command
+        do {
+            let selected = try frames.select(at: at, limit: limit)
+            let described = selected.map { frame in
+                ["frame_id": "camera-\(frame.id)", "captured_at_ms": Int(frame.capturedAt.timeIntervalSince1970 * 1000)] as [String: Any]
+            }
+            let words = (try? JSONSerialization.data(
+                withJSONObject: ["source": "camera", "clock": "device_unix_ms", "frames": described],
+                options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            answer = .toolResult(
+                id: call.id, output: words, error: nil,
+                images: selected.map { ImageSource(url: "data:image/jpeg;base64," + $0.jpeg.base64EncodedString()) },
+                requestID: call.requestID, turnID: call.turnID)
+        } catch {
+            answer = .toolResult(
+                id: call.id, output: error.localizedDescription, error: nil, requestID: call.requestID,
+                turnID: call.turnID)
+        }
+        Task { [socket] in try? await socket.send(answer) }
     }
 
     /// Runs a tool and sends back what it returned.
@@ -218,8 +253,8 @@ public final class AgentSession {
                 let output = try await tool.run(call.argumentValues)
                 try await socket.send(
                     .toolResult(
-                        id: call.id, output: output, error: nil, requestID: call.requestID,
-                        turnID: call.turnID))
+                        id: call.id, output: output.text, error: nil, images: output.images,
+                        requestID: call.requestID, turnID: call.turnID))
             } catch {
                 try? await socket.send(
                     .toolResult(

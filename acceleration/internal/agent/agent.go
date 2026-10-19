@@ -904,7 +904,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		a.mu.Unlock()
 		return "", errors.New("agent: not joined")
 	}
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: text})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
@@ -1859,8 +1859,9 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 }
 
 // keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+// What tools showed the model before it stand as a note from here on (toolPicturesSeen).
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
-	a.history = append(a.history, a.userTurnLocked(participant, text))
+	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
 	if participant.ID != typedCaller {
 		a.speakers[personOf(participant)] = struct{}{}
 	}

@@ -622,6 +622,30 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A phone on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` now lets the agent look through the
+phone's camera. The call's frames are sampled twice a second through its video filter and the last
+four seconds kept; when the agent's `vision` skill asks for what the camera showed
+(`get_video_frames`), the call's `AgentSession` answers with the frames taken at or before the
+moment the question was taken, newest last, at most eight, as the router's Python video workers
+do. With nothing from the last five seconds it says so as the answer, so the agent asks the person
+to show it again. The Swift assistant example has a camera button in voice mode, with a preview
+of what Juno sees.
+
+### A tool can show the model pictures
+
+A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
+(`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
+whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
+carries them as `tool_result` parts, which the router already took. On a call it hands them to
+the agent's `vision` skill, so a tool can show the agent what a camera sees. In a written
+conversation, which has no vision worker, a conversation model that takes images is shown them
+itself, with the reply that follows the call alone: once the next question comes they stand as a
+note, as a person's photos do. A model that reads only text is told such a tool failed. A tool
+hosted on a dispatch worker answers in words only and is reported as failed when it returns
+pictures. In Go, `tools.Registry.Call` returns a `tools.Output` instead of a string.
+
 ### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
 
 `await router.tts.recording(text, inline=True)` speaks a short text while the request waits and
@@ -2174,6 +2198,9 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A phone's tools work on the call of a person's saved conversation. Every tool call there needed a typed question's request id, which a spoken question and the vision skill's request for camera frames never have, so on a call each was refused with `session: tool call has no durable command binding` and the agent said the tool did not work. A request id is now needed only in a conversation held in writing, as taking the results already was.
+- A chat that starts voice hands its skills over on the call. A session opened on a call is given the default subagent (`llm-thinking`) when its config names none, and one that started in writing was not when voice started, so its call had nothing to run `think`, `recall`, `explain` or `vision` on: a tool's pictures ended as `skill "vision" is not available`. Starting voice now gives it the same default.
+- A tool's pictures reach the `vision` skill on a model that checks a conversation's tool calls. The vision task was handed the conversation with the call that took the picture still open, which OpenAI refused (`400 No tool output found for function call`), so the agent said the analysis did not work. The open call is now answered as still running before the conversation is handed over.
 - An agent opens no transcription session for a participant who has left the call. Their audio and their departure come apart, so a last frame handled after the leave, or one whose session was still opening, opened a vendor socket that stayed open until the agent closed. A participant who comes back with the same session id is transcribed again, and so is one whose audio still comes a second after the first frame dropped, in case the SFU reported a leave for somebody who stayed (AI-1433).
 - A live transcription pinned to a batch model, such as `deepgram/nova-3`, is refused before the vendor is called: `routing: deepgram/nova-3 is a batch model for recordings, not live calls; for a live call name deepgram/flux-general-en or deepgram/flux-general-multi or stt-fast or stt-accurate`. It was dialled at Deepgram's live endpoint and failed after about 4 s with `deepgram: connect failed`, recording a `start_failed` row against Nova-3. This is the `/v1/stt/stream` `error` frame, and for an agent the 400 that starting its voice session answers with (`agent: start stt: routing: ...`) rather than an `stt` error on every frame of the call; a priority list made only of batch models, and the recorded shortcuts `en-recorded` and `multilingual-recorded`, are refused the same way. A list with a live model in it is served by that model, a recording on Nova-3 is unchanged, and `mock/mock-stt` is now marked live so the load benchmark still streams at it (AI-1431).
 - `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
