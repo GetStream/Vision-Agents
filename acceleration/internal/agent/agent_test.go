@@ -3918,3 +3918,107 @@ func TestADescribedStepIsTheToolNotYetCalled(t *testing.T) {
 		}
 	}
 }
+
+func (s *AgentSuite) TestAFailureThatNamesAnotherToolsStepNamesThatTool() {
+	tools := []harness.Tool{{Name: "dispatch_tech"}, {Name: "walk_reboot"}, {Name: "check_outage"}}
+	called := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "dispatch_tech"}}}
+	failed := llm.Message{Role: llm.ToolResult, ToolCallID: "1",
+		Content: `{"error": "reboot the gateway before dispatching a truck"}`}
+	s.Equal("walk_reboot", stepNamed([]llm.Message{called, failed}, tools))
+
+	worked := llm.Message{Role: llm.ToolResult, ToolCallID: "1", Content: `{"ok": true, "note": "reboot done"}`}
+	s.Empty(stepNamed([]llm.Message{called, worked}, tools), "a result that did not fail names no step")
+	s.Empty(stepNamed([]llm.Message{called, failed, {Role: llm.User, Content: "ok"}}, tools),
+		"the caller spoke since")
+}
+
+func (s *AgentSuite) TestACallThatLeavesARequiredArgumentEmptyIsNotRun() {
+	tool := harness.Tool{Name: "verify_account", Parameters: map[string]any{
+		"required": []any{"pin", "last4", "address"},
+	}}
+	s.Equal([]string{"last4", "address"}, blankRequired(tool, `{"pin": "4471", "last4": "", "address": " "}`))
+	s.Empty(blankRequired(tool, `{"pin": "4471", "last4": "9821", "address": "14 Cedar Lane"}`))
+	s.Empty(blankRequired(harness.Tool{Name: "check_outage"}, `{}`), "a tool that requires nothing")
+}
+
+func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke() {
+	booked := llm.ToolCall{ID: "1", Name: "create_reservation", Arguments: `{"time": "7:30"}`}
+	history := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booked}},
+		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"time": "7:30"}`},
+		{Role: llm.User, Content: "Thanks."},
+	}
+	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"time":"7:30"}`})
+	s.True(repeated)
+
+	failed := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "lookup_appointment", Arguments: `{}`}}},
+		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"error": "identity not verified"}`},
+		{Role: llm.User, Content: "My member ID is ABC123456."},
+	}
+	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`})
+	s.False(repeated, "a call that failed may be tried again")
+}
+
+func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {
+	s.JSONEq(`{"name": "Patel", "party_size": 4}`, unspelled(`{"name": "Patel P A T E L", "party_size": 4}`))
+	s.JSONEq(`{"name": "Ana Lopez"}`, unspelled(`{"name": "Ana Lopez L-O-P-E-Z"}`))
+	s.JSONEq(`{"pin": "4471", "address": "14 Cedar Lane"}`, unspelled(`{"pin": "four four seven one", "address": "one four Cedar Lane"}`))
+	s.JSONEq(`{"address": "14 Cedar Lane", "reason": "down since 6, error 840"}`, unspelled(`{"address": "fourteen Cedar Lane", "reason": "down since 6, error 840"}`))
+	s.JSONEq(`{"address": "42 Elm Street"}`, unspelled(`{"address": "forty-two Elm Street"}`))
+	s.JSONEq(`{"notes": "one high chair"}`, unspelled(`{"notes": "one high chair"}`), "a lone number word")
+	s.Equal(`{"address": "14 Cedar Lane A B"}`, unspelled(`{"address": "14 Cedar Lane A B"}`), "letters that spell nothing before them")
+}
+
+func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
+	s.True(fillsIn(`{"name": "Alvarez", "phone": ""}`, `{"name": "Alvarez", "phone": "512-550-1422"}`))
+	s.False(fillsIn(`{"party_size": 4, "phone": ""}`, `{"party_size": 6, "phone": ""}`))
+	s.True(fillsIn(`{"name": "Alvarez"}`, `{"name": "Alvarez", "phone": "512-550-1422"}`), "a text argument the first call left out")
+	s.False(fillsIn(`{"party_size": 6}`, `{"party_size": 6, "patio": true}`), "a choice the first call never made")
+	s.True(fillsIn(`{"party_size": 2}`, `{"party_size": 2, "high_chair": false}`), "a choice left at its default")
+}
+
+func (s *AgentSuite) TestAToolIsNotRunBeforeTheStepItsDescriptionNeeds() {
+	tools := []harness.Tool{
+		{Name: "verify_account", Description: "Required before tickets."},
+		{Name: "walk_reboot", Description: "Must run before dispatch_tech."},
+		{Name: "create_ticket", Description: "Open a support ticket. Identity required."},
+		{Name: "dispatch_tech", Description: "Dispatch a technician. Identity required."},
+		{Name: "check_outage", Description: "Check the outage map."},
+	}
+	result := func(name, content string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: name, Name: name}}},
+			{Role: llm.ToolResult, ToolCallID: name, Content: content},
+		}
+	}
+	s.Equal("verify_account", unmetPrerequisite(tools[2], tools, nil))
+	s.Equal("verify_account", unmetPrerequisite(tools[2], tools, result("verify_account", `{"ok": false}`)))
+	s.Empty(unmetPrerequisite(tools[2], tools, result("verify_account", `{"ok": true}`)))
+	verified := result("verify_account", `{"ok": true}`)
+	s.Equal("walk_reboot", unmetPrerequisite(tools[3], tools, verified))
+	s.Empty(unmetPrerequisite(tools[3], tools, append(verified, result("walk_reboot", `{"ok": false, "error_code": "840"}`)...)),
+		"a reboot that failed is the one a dispatch needs")
+	s.Empty(unmetPrerequisite(tools[4], tools, nil))
+	s.Equal("verify_account", stepNamed(append(result("create_ticket", fmt.Sprintf(runFirst, "create_ticket", "verify_account", "verify_account"))), tools))
+}
+
+func (s *AgentSuite) TestAGoAheadToWorkAlreadyDoneHasNothingToDo() {
+	booked := []llm.Message{
+		{Role: llm.User, Content: "That's all. Thanks."},
+		{Role: llm.Assistant, Content: "Alvarez, you're booked: 4 at 7:30."},
+		{Role: llm.User, Content: "Yes, that's right. Please go ahead."},
+	}
+	s.True(doneBeforeGoAhead(booked))
+	booked[1].Content = "Shall I book it?"
+	s.False(doneBeforeGoAhead(booked))
+}
+
+func (s *AgentSuite) TestAHoldOrADoneClaimOwesACall() {
+	s.True(owesACall("One moment, checking. Let me verify your PIN 4471. Is that correct?", false),
+		"a hold that ends in a question")
+	s.False(owesACall("Checking orders is what I do. Which order is it?", false))
+	s.True(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", false))
+	s.False(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", true),
+		"a claim a tool backs")
+}

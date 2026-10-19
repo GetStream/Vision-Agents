@@ -2178,6 +2178,9 @@ func unsaid(said string) string {
 			cut = i
 		}
 	}
+	if at := doneClaim.FindStringIndex(lower); at != nil && at[0] < cut {
+		cut = at[0]
+	}
 	if cut == len(said) {
 		return said
 	}
@@ -2353,14 +2356,21 @@ func (a *Agent) finish(response llm.Response) {
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
 		backed := toolRanSinceCaller(history)
+		step := stepNamed(history, a.availableTools().Tools)
 		switch {
 		case withheld:
 			a.keepPromise(response.ID, keepPromise, true)
+		case step != "":
+			// Made to call after dispatch_tech failed for want of a reboot, Qwen called
+			// dispatch_tech again, so the chase offers the named step alone.
+			a.chase(response.ID, fmt.Sprintf(doTheStep, step), true, step)
 		case owesACall(said, backed):
 			// A hold phrase can come before the caller has given what the call needs, and
 			// a forced call is then made with blanks; a claim that it is done cannot.
 			a.keepPromise(response.ID, keepPromise, !backed && claimsDone(said))
-		case !backed && wentAhead(history):
+		case !backed && wentAhead(history) && !doneBeforeGoAhead(history):
+			// A go-ahead to "you're booked" has nothing left to do: forced to call, Qwen
+			// ordered from the menu.
 			a.keepPromise(response.ID, actOnGoAhead, true)
 		default:
 			// A step is chased even after another promise was: in Voicebench the chase that
@@ -2390,10 +2400,41 @@ func (a *Agent) finish(response llm.Response) {
 // made. It is asked once per thing the caller said, so a model that still calls nothing is
 // left to the caller's next words.
 func (a *Agent) keepPromise(promised, note string, mustCall bool) {
+	a.chase(promised, note, mustCall, "")
+}
+
+// chase asks again for the reply to promised, held to the one tool only names if any.
+func (a *Agent) chase(promised, note string, mustCall bool, only string) {
+	a.chaseAfter(promised, note, mustCall, only, 0)
+}
+
+// chaseAfter is chase on its waited-th try. A caller still heard puts the chase off rather
+// than dropping it: on a quiet line the energy gate kept hearing the hiss, every chase
+// was dropped, and the caller who said "please go ahead" waited on a reschedule that
+// never came. A reply begun meanwhile supersedes it; a turn ignored as the TV does not.
+func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, waited int) {
 	a.mu.Lock()
 	if a.promiseChased || a.harness == nil || a.generating || a.interrupting ||
-		a.recoveringVoice != nil || a.converse.Listening() {
+		a.recoveringVoice != nil || a.toolRounds >= maxToolRounds {
+		a.logger.Debug("a chase was dropped", "turn", promised, "only", only, "chased", a.promiseChased,
+			"generating", a.generating, "interrupting", a.interrupting, "recovering", a.recoveringVoice != nil,
+			"rounds", a.toolRounds, "waited", waited)
 		a.mu.Unlock()
+		return
+	}
+	if waited < chaseRetries && a.converse.Listening() {
+		replying := a.speakingTurn
+		a.mu.Unlock()
+		time.AfterFunc(chaseRetry, func() {
+			a.mu.Lock()
+			moved := a.speakingTurn != replying
+			a.mu.Unlock()
+			if !moved {
+				a.chaseAfter(promised, note, mustCall, only, waited+1)
+				return
+			}
+			a.logger.Debug("a chase gave way to a reply", "turn", promised, "only", only)
+		})
 		return
 	}
 	a.promiseChased = true
@@ -2421,11 +2462,18 @@ func (a *Agent) keepPromise(promised, note string, mustCall bool) {
 		// Told in a note alone, Gemma met it with "Is there anything else?" and the
 		// booking it had announced was never made.
 		MustCall: mustCall,
+		OnlyTool: only,
 		Asked:    asked,
 	}, ""); err != nil {
 		a.fail(err, "llm")
 	}
 }
+
+// chaseRetry and chaseRetries bound how long a chase waits on a caller still heard.
+const (
+	chaseRetry   = 500 * time.Millisecond
+	chaseRetries = 6
+)
 
 // keepPromise is the note a reply chasing up an unkept promise is given.
 const keepPromise = "You just told the caller you were checking, or that something was done, " +
@@ -2490,6 +2538,81 @@ var asks = []string{
 	"please provide", "please confirm", "please spell", "please read",
 }
 
+// doTheStep is the note a reply that met a failed call naming another tool's step with no
+// call is chased up with.
+const doTheStep = "The tool you called failed and said what has to happen first, which your " +
+	"%s tool does. Call it now, without saying anything first."
+
+// stepNamed returns the tool whose step the last tool result, a failure, says has to come
+// first ("reboot the gateway before dispatching a truck" names walk_reboot), or empty. Told
+// to call that tool and try again, Gemma and Qwen both asked the caller about it instead.
+func stepNamed(history []llm.Message, tools []harness.Tool) string {
+	if len(history) == 0 || history[len(history)-1].Role != llm.ToolResult {
+		return ""
+	}
+	result := history[len(history)-1]
+	lower := strings.ToLower(result.Content)
+	if !strings.Contains(lower, "error") && !strings.Contains(lower, "did not work") {
+		return ""
+	}
+	// The guidance the result is replayed with names tools of its own.
+	if end := strings.LastIndex(lower, "}"); end >= 0 {
+		lower = lower[:end+1]
+	}
+	failed := ""
+	if call := lastCall(history); call != nil {
+		failed = call.Name
+	}
+	for _, tool := range tools {
+		if tool.Name != failed && strings.Contains(lower, strings.ToLower(tool.Name)) {
+			return tool.Name
+		}
+	}
+	for _, tool := range tools {
+		if tool.Name == failed {
+			continue
+		}
+		for word := range strings.SplitSeq(strings.ToLower(tool.Name), "_") {
+			// "identity not verified" names verify_account by its stem.
+			if len(word) >= 5 && strings.Contains(lower, word[:5]) {
+				return tool.Name
+			}
+		}
+	}
+	return ""
+}
+
+// lastCall is the most recent call the agent made in history, or nil.
+func lastCall(history []llm.Message) *llm.ToolCall {
+	for i := len(history) - 1; i >= 0; i-- {
+		if calls := history[i].ToolCalls; len(calls) > 0 {
+			return &calls[len(calls)-1]
+		}
+	}
+	return nil
+}
+
+// doneBeforeGoAhead reports whether the agent's last words before the caller's told them
+// the work was done.
+func doneBeforeGoAhead(history []llm.Message) bool {
+	caller := -1
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == llm.User {
+			caller = i
+			break
+		}
+	}
+	for i := caller - 1; i >= 0; i-- {
+		if history[i].Role == llm.User {
+			return false
+		}
+		if history[i].Role == llm.Assistant && strings.TrimSpace(history[i].Content) != "" {
+			return claimsDone(history[i].Content)
+		}
+	}
+	return false
+}
+
 // wentAhead reports whether the caller's last words told the agent to go ahead.
 func wentAhead(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
@@ -2513,7 +2636,17 @@ func owesACall(said string, backed bool) bool {
 		return true
 	}
 	last := strings.TrimRight(strings.ToLower(said), " .…!\n")
-	if last == "" || strings.HasSuffix(last, "?") {
+	if last == "" {
+		return false
+	}
+	// "One moment, checking. … Is that correct?" still owes the check it put the caller on
+	// hold for.
+	for _, hold := range holdOpenings {
+		if strings.HasPrefix(last, hold) {
+			return true
+		}
+	}
+	if strings.HasSuffix(last, "?") {
 		return false
 	}
 	for _, end := range []string{". ", "! ", "? ", "… "} {
@@ -2532,8 +2665,13 @@ func owesACall(said string, backed bool) bool {
 // claimsDone reports whether a reply told the caller something has been done.
 func claimsDone(said string) bool {
 	lower := strings.ToLower(said)
-	return slices.ContainsFunc(doneClaims, func(claim string) bool { return strings.Contains(lower, claim) })
+	return slices.ContainsFunc(doneClaims, func(claim string) bool { return strings.Contains(lower, claim) }) ||
+		doneClaim.MatchString(lower)
 }
+
+// doneClaim is a reply saying something has been, or is being, done: "Your appointment has
+// been successfully rescheduled" with no reschedule called.
+var doneClaim = regexp.MustCompile(`\b(has|have) been (successfully )?(re)?(booked|scheduled|moved|updated|cancell?ed|dispatched|created|opened|placed|verified|logged|submitted|processed|changed)\b|\b(is|are) being (re)?(booked|scheduled|moved|updated|cancell?ed|dispatched|created|opened|placed|processed)\b`)
 
 // doneClaims are what a reply telling the caller something has been done says.
 var doneClaims = []string{
@@ -2558,6 +2696,9 @@ func toolRanSinceCaller(history []llm.Message) bool {
 	}
 	return false
 }
+
+// holdOpenings open a reply that puts the caller on hold.
+var holdOpenings = []string{"one moment", "a moment", "one sec", "hold on", "bear with me", "please hold"}
 
 // holdWords are what a sentence asking the caller to wait on a lookup says.
 var holdWords = []string{

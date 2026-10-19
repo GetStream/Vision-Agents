@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -85,6 +86,9 @@ type Options struct {
 	// as text, as vLLM does with Gemma 4, so a call written as text is still made and never
 	// spoken.
 	ToolCallText bool
+	// ForcedCallsFillEveryArgument sends a request that must call with every argument of
+	// every tool required, for a model that otherwise writes only the required ones.
+	ForcedCallsFillEveryArgument bool
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -500,7 +504,11 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		},
 	}
 	if len(request.Tools) > 0 {
-		params.Tools = tools(request.Tools)
+		offered := request.Tools
+		if request.ToolChoice == "required" && l.options.ForcedCallsFillEveryArgument {
+			offered = everyArgumentRequired(offered)
+		}
+		params.Tools = tools(offered)
 	}
 	if request.ToolChoice != "" {
 		params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
@@ -519,6 +527,31 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		params.Temperature = param.NewOpt(*request.Temperature)
 	}
 	return params
+}
+
+// everyArgumentRequired returns the tools with every property of their schemas required.
+// Made to call, Qwen on vLLM writes only the arguments a schema requires, so verify_account
+// went out with the PIN alone although the caller had given the last four and the address
+// too; left to choose, it writes them all.
+func everyArgumentRequired(offered []llm.Tool) []llm.Tool {
+	rendered := make([]llm.Tool, 0, len(offered))
+	for _, tool := range offered {
+		properties, _ := tool.Parameters["properties"].(map[string]any)
+		if len(properties) == 0 {
+			rendered = append(rendered, tool)
+			continue
+		}
+		names := make([]string, 0, len(properties))
+		for name := range properties {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		schema := maps.Clone(tool.Parameters)
+		schema["required"] = names
+		tool.Parameters = schema
+		rendered = append(rendered, tool)
+	}
+	return rendered
 }
 
 // tools renders the tools a request offers. A tool with no parameters is sent without a

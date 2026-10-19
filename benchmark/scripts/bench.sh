@@ -96,9 +96,9 @@ preflight() {
 
   local t
   for _ in $(seq 1 40); do
-    t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$GEMMA_BASE_URL/chat/completions" \
+    t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "${BENCH_WAKE_URL:-$GEMMA_BASE_URL}/chat/completions" \
       -H "Authorization: Bearer $BASETEN_API_KEY" -H 'Content-Type: application/json' \
-      -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}')
+      -d '{"model":"'"${BENCH_WAKE_MODEL:-google/gemma-4-26B-A4B-it}"'","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}')
     echo "gemma $t"
     case "$t" in 200\ 0.*|200\ 1.*) return 0 ;; esac
     sleep 15
