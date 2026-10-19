@@ -59,7 +59,9 @@ STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend
 
 Then open `app/SwiftDemo.xcodeproj` in Xcode 27 and run it on a simulator. Ask about an order
 in the Chat tab or tap talk in the Voice tab. Xcode 27 because the app shows the conversation
-with Stream Chat's AI components (`StreamChatAI`), which need it to add with SPM.
+with Stream Chat's AI components (`StreamChatAI`), which need it to add with SPM. The app takes
+`stream-chat-swift` from its `develop` branch, because the voice glow (`AIVoiceGlowView`) is not
+in a released `StreamChatAI` yet.
 
 The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`; a call keeps the agent's faster model.
@@ -103,13 +105,16 @@ nothing.
   reply; `SuggestionsView` starts a conversation.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
   the user `setUser` named, with the token `backend` signed. Note that `Session.id` addresses the router and `Session.call_id` is
-  what the video SDK joins — they are not the same id.
+  what the video SDK joins — they are not the same id. The agent is shown as Stream's voice
+  glow (`AIVoiceGlowView`): connecting while the call is joined, thinking while it answers, and
+  moving with whoever is talking, metered from the call's audio, with what is said captioned
+  underneath.
 - **`lookup_order`** is a tool the model calls that runs in `Demo.swift`. Its data never leaves
   the phone; the agent asks, and only sees the answer. Ask about order `A-1042` or `A-1043`.
   `configure` names it in `visible_tools`, which is what shows its call on the reply.
 - **`issue_refund`** asks first. Ask for a refund on `A-1042`: once the refund skill says it is
   owed, the agent calls it, and the call waits for you. In Chat the question is on the reply
-  (`AIToolApprovalView`); on a call it is a card over the transcript (`AIToolApprovalCard`).
+  (`AIToolApprovalView`); on a call it is a card under the glow (`AIToolApprovalCard`).
   Refund and the tool runs; Not now and the agent is told you declined.
 
 ## No auth
