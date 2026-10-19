@@ -3713,7 +3713,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Speak a whole text into one audio file, off the live path
-         * @description The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+         * @description The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
          */
         readonly post: operations["recordSpeech"];
         readonly delete?: never;
@@ -3878,6 +3878,7 @@ export type components = {
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
             readonly visible_tools?: readonly string[];
+            /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
@@ -3926,6 +3927,7 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
             readonly visible_tools?: readonly string[];
+            /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
@@ -3984,7 +3986,7 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
             readonly visible_tools?: readonly string[];
-            /** @description Provider-specific voice id. */
+            /** @description The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI. */
             readonly voice?: string;
         };
         /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other. */
@@ -5472,7 +5474,7 @@ export type components = {
             /** @default Vision Agent */
             readonly user_name?: string;
             readonly video?: components["schemas"]["SessionVideo"];
-            /** @description Provider-specific voice id. */
+            /** @description The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. */
             readonly voice?: string;
         };
         readonly CreateSipTrunkRequest: {
@@ -7200,7 +7202,7 @@ export type components = {
             readonly tts?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
-            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            /** @description The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default. */
             readonly voice?: string;
         };
         readonly SessionSort: {
@@ -7530,7 +7532,7 @@ export type components = {
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
             /**
-             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             * @description Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
              * @default false
              */
             readonly inline?: boolean;
@@ -7854,6 +7856,7 @@ export type components = {
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };
         readonly SyncAgentResult: {
@@ -8319,7 +8322,7 @@ export type components = {
             readonly tts?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
-            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            /** @description The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default. */
             readonly voice?: string;
         };
         readonly UpdateSipTrunkRequest: {
