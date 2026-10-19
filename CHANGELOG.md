@@ -640,6 +640,14 @@ and deletes their tasks from a device, runs included. `agent.yaml` takes a `sche
 block (`enabled`, `max_tasks_per_user`, `default_timezone`) in the Go, Python and
 JavaScript SDKs.
 
+Tasks also say where they are delivered: `deliver_to` is an ordered list of
+`conversation`, `sms`, `whatsapp`, `imessage` and `phone`, and the first that lands is
+where the run says it landed. A text channel carries the agent's own words out to the
+number the user already texts the agent from, under the 10DLC gate, and WhatsApp only
+inside the day after the person last wrote; `phone` rings them and speaks it instead.
+`quiet_hours` holds an occurrence that comes due in them until they end, on every
+channel, without counting it a failure.
+
 ### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
 
 `await router.tts.recording(text, inline=True)` speaks a short text while the request waits and

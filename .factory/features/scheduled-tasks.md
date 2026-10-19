@@ -32,6 +32,19 @@ delete, runs), reached the way sessions are — the owner's device sees its back
 tasks, anybody else's answer 404. Scheduled turns are customer spend: they never consume
 the end user's daily caps.
 
+Delivery goes where the task says, in order (`deliver_to`, default the conversation
+alone). The agent's reply is written once in its conversation, under the run's command
+id; a text channel carries those same words out (`channels.Service.Notify`: the user's
+identity on the channel names where they go, the agent's line carries them, the 10DLC
+gate refuses who opted out, and WhatsApp is written only inside the day after the person
+last wrote — outside it the next channel is tried, templates not being supported).
+`phone` rings the user the way a campaign does (`phone.Service.Call`, a session opened
+over the task's conversation) and the agent speaking is the delivery. `quiet_hours`
+holds an occurrence that comes due in them until they end, on every channel: the worker
+keeps the claim, the run stays running, and its age is counted from the hold's end. A
+run made by hand is never held. The tools don't take `deliver_to` or `quiet_hours` yet;
+they are REST-only.
+
 ## Decisions
 
 - **Customer spend, not user allowance.** A scheduled run is charged server-side
@@ -42,18 +55,30 @@ the end user's daily caps.
 - **Mid-call firing waits.** The reminder lands in writing after the call ends; if the
   call outlasts the delivery window, the occurrence fails and retries later.
 - **Delivered means accepted.** A run is delivered once the session has taken the
-  follow-up, never once the turn is over; the peer forwarder's 30 seconds cannot
-  hold a turn.
+  follow-up, never once the turn is over. A channel delivery answers later — once
+  the words are sent — and the peer hand-off answers with where it landed.
 - **Missed occurrences are recorded, not replayed.** A one-shot delivers up to 24h
   late, saying so; a recurrence skips occurrences over an hour old, each with a
   `missed` run row.
+- **A call's outcomes are the ones the router can see.** Nobody answering within the
+  ring is no answer, and the next channel is tried (or the occurrence retried); a
+  vendor refusing the dial fails the channel at once. The router keeps no vendor
+  call dispositions and has no answering-machine detection, so busy collapses into
+  the dial's answer, and a mailbox that picks up hears the reminder and counts as
+  delivered, the way a text in an inbox does.
+- **Quiet hours hold, never fail.** A held occurrence keeps its claim and its run
+  stays `running`; nothing counts against the task, and no channel is attempted —
+  retries and fallbacks happen after the hold, because the whole delivery does.
 
 ## Not done
 
-Phase 2: `deliver_to` fallback beyond the conversation — proactive SMS, WhatsApp and
-iMessage through the channels service (10DLC gate, WhatsApp's 24-hour window), a phone
-call as the delivery, outcome-aware retries, and `quiet_hours`. Lifecycle webhooks
-(`scheduled_task.created`, `scheduled_task.run.delivered`, ...) come with it. The device
-SDKs (Swift, Kotlin, Dart) do not generate the scheduled-task operations yet: the seven
-device-reachable ones are marked `x-client-accessible`, so each SDK's filter can take
-them when a client surface is designed.
+Phase 3: `require_ack` and `escalate_after`; lifecycle webhooks
+(`scheduled_task.created`, `scheduled_task.deleted`, `scheduled_task.run.delivered`,
+`scheduled_task.run.failed`) and a `task_due` dispatch frame; devices naming their own
+zone. The tools don't take `deliver_to` or `quiet_hours` yet. The answered leg of a
+phone delivery is proven by the campaign pattern it copies, not by an api-suite test:
+the suite's telephony has no Stream app to place a call into, so the phone step is
+covered there by its failure and fallback behaviour. The device SDKs (Swift, Kotlin,
+Dart) do not generate the scheduled-task operations yet: the seven device-reachable
+ones are marked `x-client-accessible`, so each SDK's filter can take them when a
+client surface is designed.
