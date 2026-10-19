@@ -622,6 +622,30 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A phone on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` now lets the agent look through the
+phone's camera. The call's frames are sampled twice a second through its video filter and the last
+four seconds kept; when the agent's `vision` skill asks for what the camera showed
+(`get_video_frames`), the call's `AgentSession` answers with the frames taken at or before the
+moment the question was taken, newest last, at most eight, as the router's Python video workers
+do. With nothing from the last five seconds it says so as the answer, so the agent asks the person
+to show it again. The Swift assistant example has a camera button in voice mode, with a preview
+of what Juno sees.
+
+### A tool can show the model pictures
+
+A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
+(`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
+whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
+carries them as `tool_result` parts, which the router already took. On a call it hands them to
+the agent's `vision` skill, so a tool can show the agent what a camera sees. In a written
+conversation, which has no vision worker, a conversation model that takes images is shown them
+itself, with the reply that follows the call alone: once the next question comes they stand as a
+note, as a person's photos do. A model that reads only text is told such a tool failed. A tool
+hosted on a dispatch worker answers in words only and is reported as failed when it returns
+pictures. In Go, `tools.Registry.Call` returns a `tools.Output` instead of a string.
+
 ### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
 
 `await router.tts.recording(text, inline=True)` speaks a short text while the request waits and
@@ -2174,6 +2198,9 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A phone's tools work on the call of a person's saved conversation. Every tool call there needed a typed question's request id, which a spoken question and the vision skill's request for camera frames never have, so on a call each was refused with `session: tool call has no durable command binding` and the agent said the tool did not work. A request id is now needed only in a conversation held in writing, as taking the results already was.
+- A chat that starts voice hands its skills over on the call. A session opened on a call is given the default subagent (`llm-thinking`) when its config names none, and one that started in writing was not when voice started, so its call had nothing to run `think`, `recall`, `explain` or `vision` on: a tool's pictures ended as `skill "vision" is not available`. Starting voice now gives it the same default.
+- A tool's pictures reach the `vision` skill on a model that checks a conversation's tool calls. The vision task was handed the conversation with the call that took the picture still open, which OpenAI refused (`400 No tool output found for function call`), so the agent said the analysis did not work. The open call is now answered as still running before the conversation is handed over.
 - A Python agent on a local LLM plugin is told who is speaking once a second person has spoken in the call, as the router's agent is (AI-1420): their words reach the model as `Bob: what about me`. Every person's words read the same before, so the model answered two people as one. A call where one person speaks sends exactly what it did. The name is the call participant's (`Participant.name`, filled by the Stream edge), else their user id. The plugins that rebuild the request from the conversation (anthropic, aws, huggingface, nvidia, openai Chat Completions, openrouter) name every line from then on; the ones that keep their own history (gemini, openai Responses, xai) are sent the named turn. What the conversation stores and shows is still only the words (AI-1439).
 - `stream.STT.start()` gives up on a router that never answers its start frame after 90 seconds, closes the socket and raises `TimeoutError: the router did not start transcribing within 90 s`. It waited forever, so an agent whose router was stuck never joined and never said why (AI-1440).
 - An agent opens no transcription session for a participant who has left the call. Their audio and their departure come apart, so a last frame handled after the leave, or one whose session was still opening, opened a vendor socket that stayed open until the agent closed. A participant who comes back with the same session id is transcribed again, and so is one whose audio still comes a second after the first frame dropped, in case the SFU reported a leave for somebody who stayed (AI-1433).

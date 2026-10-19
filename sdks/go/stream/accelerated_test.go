@@ -383,6 +383,51 @@ func TestAToolCallIsRunHereAndAnsweredOverTheSocket(t *testing.T) {
 	}
 }
 
+func TestAToolsPicturesGoOverTheSocketBesideItsWords(t *testing.T) {
+	answered := make(chan map[string]any, 1)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		if err := connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-7", "name": "photograph_room", "arguments": "{}",
+		}); err != nil {
+			return
+		}
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil {
+			return
+		}
+		answered <- frame
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	err := tools.Register(pipeline.Functions(), "photograph_room", "Photograph the room",
+		func(_ context.Context, _ struct{}) (any, error) {
+			return tools.Output{Text: "the kitchen", Images: []tools.Image{{URL: "data:image/png;base64,iVBORw0KGgo="}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	select {
+	case frame := <-answered:
+		parts, _ := frame["output"].([]any)
+		if len(parts) != 2 {
+			t.Fatalf("the model was sent %v, want the words and the picture as parts", frame["output"])
+		}
+		picture, _ := parts[1].(map[string]any)
+		url, _ := picture["image_url"].(map[string]any)
+		if picture["type"] != "image_url" || url["url"] != "data:image/png;base64,iVBORw0KGgo=" {
+			t.Errorf("the picture went over as %v", parts[1])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the model is still waiting on the tool")
+	}
+}
+
 func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
 	answered := make(chan map[string]any, 1)
 	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {

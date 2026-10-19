@@ -27,8 +27,9 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples \
 go run ./configure
 ```
 
-`configure` syncs the directory with the Go SDK, then patches on `visible_tools`, which
-`agent.yaml` has no field for: that is what shows a step for the phone's own tools on a reply.
+`configure` syncs the directory with the Go SDK, then patches on `visible_tools` and `skills`,
+which `agent.yaml` has no field for: the first shows a step for the phone's own tools on a reply,
+and the second adds `vision`, which looks through the phone's camera on a call.
 
 Leave the backend running. It signs the Stream token the phone is its user with, as the Swift
 demo's does, and does what only a server may with the person's Gmail connection: start its
@@ -104,6 +105,10 @@ Without the client, the button says so: the router answers that it has no OAuth 
 - **Voice mode** starts voice on the open conversation, so the agent joins its call with the
   chat so far, and everything said on the call lands back in the chat. The chat's socket stays
   open and runs the tools; the call is followed by a second session with none.
+- **The camera** button in voice mode shows Juno what the phone is pointing at, with a preview
+  of it. Ask "what's this?" and the agent's `vision` skill asks for what the camera showed at
+  that moment (`get_video_frames`), which the call's session answers with the last few frames.
+  Try it on a phone: the simulator has no camera.
 - **Tools on the phone**: `get_local_context` (date, time, timezone), `get_location` (asks
   first), `list_events` (EventKit), `add_reminder` (asks first), `send_email` (asks first,
   showing who it goes to). Calendar, reminders and location each need the phone's permission
@@ -111,9 +116,6 @@ Without the client, the button says so: the router answers that it has no OAuth 
 
 ## What does not work yet
 
-- **The camera on a call.** An agent sees video only by asking for frames with
-  `get_video_frames`, which a phone cannot answer: a Swift tool returns a string, not images.
-  So voice mode has no camera.
 - **Sources.** A reply lists what it read in `support_message.sources` only when a shown
   tool's result is a citations object, and the built-in search answers in prose, so a searched
   reply never carries any. Neither SDK nor `StreamChatAI` has a view for them yet either.
