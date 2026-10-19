@@ -188,7 +188,8 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
 	"them to the tool (\"last four 553017 Oak Road\" is read back as \"last four digits, 5530, at 17 Oak " +
 	"Road\"), opening with \"One " +
-	"moment, let me check that\" when you call the tool in that reply. " +
+	"moment, let me check that\" when you call the tool in that reply. Values a tool has " +
+	"already accepted are not read back again: after a check passes, go straight on. " +
 	"An ID one of your tools hands out (a ticket, an appointment, an order) comes only from " +
 	"that tool's result: call the tool that makes it first, and never fill it with a number " +
 	"the caller said. " +
