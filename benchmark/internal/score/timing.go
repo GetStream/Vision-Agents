@@ -46,9 +46,10 @@ type OverlapCheck struct {
 
 // Why a turn produced no V2V sample.
 const (
-	DropBargeIn = "barge_in"
-	DropOverlap = "overlap"
-	DropNoOnset = "no_onset"
+	DropBargeIn  = "barge_in"
+	DropOverlap  = "overlap"
+	DropNoOnset  = "no_onset"
+	DropNextTurn = "no_reply_before_next_turn"
 )
 
 // Metrics is the per-call scorecard.
@@ -134,7 +135,7 @@ type StageTiming struct {
 
 // TimingFromRecording measures V2V from caller-turn end to the next agent onset, and reports
 // the turns it could not measure. A turn played over a still-speaking agent has no meaningful
-// reply gap; one with no later onset never drew a reply at all.
+// reply gap; one with no onset before the next caller turn never drew a measurable reply.
 func TimingFromRecording(rec caller.Result) ([]Timing, []DroppedTurn) {
 	rate := rec.Rate
 	if rate <= 0 {
@@ -142,7 +143,7 @@ func TimingFromRecording(rec caller.Result) ([]Timing, []DroppedTurn) {
 	}
 	var out []Timing
 	var dropped []DroppedTurn
-	for _, ev := range rec.Events {
+	for i, ev := range rec.Events {
 		switch {
 		case ev.BargeIn:
 			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: DropBargeIn})
@@ -152,9 +153,19 @@ func TimingFromRecording(rec caller.Result) ([]Timing, []DroppedTurn) {
 			continue
 		}
 		cEnd := ev.RecEndMs
-		next := firstOnsetAfter(rec.Agent, rate, cEnd, audio.DefaultSpeechThreshold)
+		next := firstOnsetAfter(rec.Agent, rate, cEnd, audio.AgentSpeechThreshold)
+		reason := DropNoOnset
+		// An answer to a later question must not become every unanswered turn's reply.
+		for _, later := range rec.Events[i+1:] {
+			if later.Text && later.OverlapSound == "" {
+				if next >= later.RecStartMs {
+					next, reason = -1, DropNextTurn
+				}
+				break
+			}
+		}
 		if next < 0 {
-			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: DropNoOnset})
+			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: reason})
 			continue
 		}
 		out = append(out, Timing{TurnID: ev.TurnID, V2VMS: next - cEnd})
