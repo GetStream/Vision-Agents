@@ -184,7 +184,8 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"the tool and end your reply there. " +
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
-	"them to the tool (\"last four 553017 Oak Road\" is last four 5530 at 17 Oak Road), opening with \"One " +
+	"them to the tool (\"last four 553017 Oak Road\" is read back as \"last four digits, 5530, at 17 Oak " +
+	"Road\"), opening with \"One " +
 	"moment, let me check that\" when you call the tool in that reply. " +
 	"An ID one of your tools hands out (a ticket, an appointment, an order) comes only from " +
 	"that tool's result: call the tool that makes it first, and never fill it with a number " +
