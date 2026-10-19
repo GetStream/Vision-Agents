@@ -26,8 +26,9 @@ public struct Responses: Sendable {
     ///
     /// It returns as soon as the agent has started answering rather than when it has finished,
     /// so the result is a handle on an answer in progress: `items(responseID:)` reads what has
-    /// been written down so far. A text question carries a fresh request id, so a retry of the
-    /// same request starts no second turn.
+    /// been written down so far. Every question carries a fresh request id, so a retry of the
+    /// same request starts no second turn. In a conversation kept in Stream Chat, `images` are
+    /// data URIs, which the router shows on the person's message.
     ///
     /// `maxOutputTokens` caps this answer, reasoning included, and `reasoningEffort` is how long
     /// the model may think first, one of the efforts the session's model accepts. Both cover the
@@ -54,11 +55,9 @@ public struct Responses: Sendable {
         _ text: String, images: [ImageSource], maxOutputTokens: Int? = nil,
         reasoningEffort: String? = nil
     ) -> Components.Schemas.CreateResponseRequest {
-        // The router refuses a request id on a question with images.
         .init(
             images: images.isEmpty ? nil : images.map(\.schema), maxOutputTokens: maxOutputTokens,
-            reasoningEffort: reasoningEffort, requestId: images.isEmpty ? UUID().uuidString : nil,
-            text: text)
+            reasoningEffort: reasoningEffort, requestId: UUID().uuidString, text: text)
     }
 
     /// One page of the turns so far, oldest first.

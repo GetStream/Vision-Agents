@@ -622,6 +622,19 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A person can send photos in a conversation kept in Stream Chat
+
+A question with a `request_id` may now carry `images`, on `POST /v1/agents/sessions/{id}/responses`
+and on the session socket's `respond`, where before it was refused as "a request id carries text
+only". So a signed-in device can send photos in its saved conversations. Each image is a data URI,
+at most 8 to a question. The router uploads them to the conversation's channel as the person and
+writes them on the person's message as `image` attachments, so every reader of the channel sees
+them. The model sees them with the reply to that question alone, as it already did in a session
+not kept in Chat; when the conversation is reopened, history says the photos were sent without
+sending them again. A retry with the same id, text and images is the same question; different
+images under the same id are a 409. Videos still take no request id. The Swift SDK now sends a
+request id with every question, images or not.
+
 ### A session can join a Stream call that already exists
 
 `POST /v1/agents/sessions` (with `start_voice`) and `POST /v1/agents/sessions/{id}/voice` take

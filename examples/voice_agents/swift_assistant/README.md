@@ -98,6 +98,9 @@ Without the client, the button says so: the router answers that it has no OAuth 
 - **Chat** is Stream's AI components over the session's channel: the reply streaming in, its
   reasoning, each tool call and the approval a tool asks for. The composer's options sheet has
   Think harder, which asks with a higher `reasoning_effort`.
+- **Photos** from the composer go with the question, shrunk and inline as data URIs. The
+  router uploads them to the conversation's channel and writes them on the person's message,
+  where the chat shows them; the model sees them with that question's reply.
 - **Voice mode** starts voice on the open conversation, so the agent joins its call with the
   chat so far, and everything said on the call lands back in the chat. The chat's socket stays
   open and runs the tools; the call is followed by a second session with none.
@@ -108,9 +111,6 @@ Without the client, the button says so: the router answers that it has no OAuth 
 
 ## What does not work yet
 
-- **Photos.** The composer attaches them and the app sends them inline as data URIs, but the
-  router refuses images in a conversation kept in Stream Chat for a signed-in device: without
-  a request id it wants one, and with one it takes text only.
 - **The camera on a call.** An agent sees video only by asking for frames with
   `get_video_frames`, which a phone cannot answer: a Swift tool returns a string, not images.
   So voice mode has no camera.

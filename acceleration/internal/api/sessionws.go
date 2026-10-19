@@ -348,19 +348,15 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, sende
 			}
 			return true
 		}
-		if command.CommandID != "" && found.Durable() {
-			if len(command.Images) > 0 {
-				found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
-				return true
-			}
-			if _, _, err := found.RespondCommand(routing.WithCaller(context.Background(), sender), command.CommandID, command.Text, "", options.LLM{}); err != nil {
-				found.Report(err, "llm")
-			}
-			return true
-		}
 		images, err := imagesFromWire(command.Images)
 		if err != nil {
 			found.Report(err, "llm")
+			return true
+		}
+		if command.CommandID != "" && found.Durable() {
+			if _, _, err := found.RespondCommand(routing.WithCaller(context.Background(), sender), command.CommandID, command.Text, "", images, options.LLM{}); err != nil {
+				found.Report(err, "llm")
+			}
 			return true
 		}
 		if _, err := found.Respond(routing.WithCaller(context.Background(), sender), command.Text, images, options.LLM{}); err != nil {
