@@ -1,5 +1,5 @@
 {
-  "originHash" : "b029775e8fea7afc003e70de3567b344eb67a546683be7228a622d927584c5f0",
+  "originHash" : "ec730d8a9f4b2c674f50f1b7f8130b0d98a4ea282c6e76bf3a1dd3f2d46720e5",
   "pins" : [
     {
       "identity" : "networkimage",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "7f4df436eb78fe64fe2c32c58006e9949fa28ad8",
         "version" : "0.16.0"
+      }
+    },
+    {
+      "identity" : "stream-chat-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/GetStream/stream-chat-swift",
+      "state" : {
+        "branch" : "add/voice-agent-visualizations",
+        "revision" : "7fcb4e340a4abe4c6059addc7a0a205de2f833fc"
       }
     },
     {

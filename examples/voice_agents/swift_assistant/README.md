@@ -46,10 +46,11 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-reaches `stream-chat-swift` by path, `../../../../../stream-chat-swift`, a checkout beside this
-repository, because the voice glow (`AIVoiceGlowView`) is not in a released `StreamChatAI` yet.
-Close `SwiftDemo.xcodeproj` first: it opens the same two local packages, and Xcode gives a local
-package to one window at a time, so the other reports "Missing package product".
+takes `stream-chat-swift` from its `add/voice-agent-visualizations` branch
+([stream-chat-swift#4338](https://github.com/GetStream/stream-chat-swift/pull/4338)), because the
+voice glow (`AIVoiceGlowView`) is not in a released `StreamChatAI` yet.
+Close `SwiftDemo.xcodeproj` first: it opens the same local package, `sdks/swift/core`, and Xcode
+gives a local package to one window at a time, so the other reports "Missing package product".
 
 The router needs `XAI_API_KEY` for the chat's model and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY`
 and `INWORLD_API_KEY` for a call. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or

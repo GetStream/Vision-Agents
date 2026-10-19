@@ -154,7 +154,7 @@
 			mainGroup = B2000500;
 			packageReferences = (
 				B2000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */,
-				B2000B02 /* XCLocalSwiftPackageReference "../../../../../stream-chat-swift" */,
+				B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */,
 				B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */,
 			);
 			productRefGroup = B2000502 /* Products */;
@@ -254,7 +254,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = EHV7XZLAHA;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SwiftAssistant/Info.plist;
@@ -276,7 +276,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = EHV7XZLAHA;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SwiftAssistant/Info.plist;
@@ -320,13 +320,17 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../../sdks/swift/core;
 		};
-		B2000B02 /* XCLocalSwiftPackageReference "../../../../../stream-chat-swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../../../../stream-chat-swift";
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
+			requirement = {
+				branch = "add/voice-agent-visualizations";
+				kind = branch;
+			};
+		};
 		B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/GetStream/stream-video-swift";
@@ -344,10 +348,12 @@
 		};
 		B2000302 /* StreamChat */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */;
 			productName = StreamChat;
 		};
 		B2000303 /* StreamChatAI */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */;
 			productName = StreamChatAI;
 		};
 		B2000304 /* StreamVideo */ = {
