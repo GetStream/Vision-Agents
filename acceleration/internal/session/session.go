@@ -513,9 +513,14 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model, and only
 // that one returns the id of the response it recorded. clientID names the install the
-// command came from, which a client tool called while answering is addressed to. asked is
-// what the caller wants changed about this reply alone.
-func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, asked options.LLM) (persistent.CommandReceipt, string, error) {
+// command came from, which a client tool called while answering is addressed to. images
+// are photos sent with it, shown on the person's message and to the model with this reply
+// alone. asked is what the caller wants changed about this reply alone.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM) (persistent.CommandReceipt, string, error) {
+	photos, err := s.photos(ctx, id, images)
+	if err != nil {
+		return persistent.CommandReceipt{}, "", err
+	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
@@ -527,7 +532,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
-	receipt, err := s.persisted.BeginCommand(id, text, clientID)
+	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -543,7 +548,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, nil, asked)
+	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
@@ -553,6 +558,28 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// photos uploads what a person sent with a command to their conversation before the command
+// takes commandMu: an upload takes as long as the network does, and a stop waits on that
+// lock. A caller the conversation is not theirs uploads nothing into it, and a retry of a
+// command it already took (a client resending after a lost answer) uploads nothing again.
+func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart) ([]persistent.Photo, error) {
+	if len(images) == 0 || s.persisted == nil {
+		return nil, nil
+	}
+	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+		return nil, err
+	}
+	if _, err := s.persisted.Command(id); err == nil {
+		photos := make([]persistent.Photo, 0, len(images))
+		for _, image := range images {
+			photos = append(photos, persistent.Photo{Sent: image})
+		}
+		return photos, nil
+	}
+	photos, err := s.persisted.PublishPhotos(ctx, images)
+	return photos, stack.Wrap(err)
 }
 
 // chose keeps connectionID as the session's selection for the connector binding called name,

@@ -71,11 +71,11 @@ import Testing
         #expect(ids[0] != ids[1])
     }
 
-    @Test func aQuestionWithImagesCarriesNoRequestID() throws {
+    @Test func aQuestionWithImagesCarriesARequestIDToo() throws {
         let body = try JSONEncoder().encode(
-            Responses.body("What is this?", images: [ImageSource(url: "https://example.com/a.png")]))
+            Responses.body("What is this?", images: [ImageSource(url: "data:image/png;base64,iVBORw0KGgo=")]))
 
-        #expect(try JSONDecoder().decode(JSONValue.self, from: body).objectValue["request_id"] == nil)
+        #expect(try JSONDecoder().decode(JSONValue.self, from: body).objectValue["request_id"] != nil)
     }
 
     @Test func oneAnswerCanBeCappedAndToldHowLongToThinkAndNeitherIsSentUnasked() throws {

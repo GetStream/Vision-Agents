@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/stretchr/testify/require"
 )
@@ -141,4 +142,119 @@ func TestTheSameFileRenderedAgainReplacesTheEarlierOne(t *testing.T) {
 	merged := mergeFiles([]sandbox.Attachment{first, other}, []sandbox.Attachment{second})
 
 	require.Equal(t, []sandbox.Attachment{other, second}, merged)
+}
+
+func TestAPersonsPhotosAreUploadedAsThemAndShownOnTheirMessage(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+
+	photos, err := c.PublishPhotos(t.Context(), []llm.ImagePart{{MIME: "image/jpeg", Data: []byte("jpeg")}})
+	require.NoError(t, err)
+	receipt, err := c.BeginCommand("ask-1", "What is this?", "", photos...)
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "A teapot."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	db.mu.Lock()
+	require.Len(t, db.uploads, 1)
+	require.Equal(t, "image", db.uploads[0].endpoint)
+	require.Equal(t, "photo-1.jpeg", db.uploads[0].name)
+	require.JSONEq(t, `{"id":"alice"}`, db.uploads[0].user)
+	require.Equal(t, []byte("jpeg"), db.uploads[0].data)
+	db.mu.Unlock()
+
+	// Somebody coming back later, on a replica that never saw it, still sees the photo.
+	cold := NewForChat(client)
+	t.Cleanup(cold.Close)
+	page, err := cold.HistoryForCaller(t.Context(), "customer", "agent", c.CID(), "", "alice")
+	require.NoError(t, err)
+	require.Len(t, page.Messages, 2)
+	require.Equal(t, receipt.UserMessageID, page.Messages[0].ID)
+	require.Equal(t, []sandbox.Attachment{{Name: "photo-1.jpeg", MIME: "image/jpeg", URL: "https://cdn.fake/image/photo-1.jpeg", Size: 4}}, page.Messages[0].Files)
+}
+
+func TestARetryWithTheSamePhotosIsTheSameCommandAndOtherPhotosAreAnother(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+	teapot := llm.ImagePart{MIME: "image/jpeg", Data: []byte("teapot")}
+	photos, err := c.PublishPhotos(t.Context(), []llm.ImagePart{teapot})
+	require.NoError(t, err)
+	first, err := c.BeginCommand("ask-1", "What is this?", "", photos...)
+	require.NoError(t, err)
+
+	retry, err := c.BeginCommand("ask-1", "What is this?", "", Photo{Sent: teapot})
+	require.NoError(t, err)
+	require.True(t, retry.Duplicate)
+	require.Equal(t, first.UserMessageID, retry.UserMessageID)
+
+	_, err = c.BeginCommand("ask-1", "What is this?", "", Photo{Sent: llm.ImagePart{MIME: "image/jpeg", Data: []byte("kettle")}})
+	require.ErrorIs(t, err, ErrCommandConflict)
+	_, err = c.BeginCommand("ask-1", "What is this?", "")
+	require.ErrorIs(t, err, ErrCommandConflict, "the same words without the photo are another question")
+}
+
+func TestAPhotoLinkedFromElsewhereIsNotTaken(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+
+	_, err = c.PublishPhotos(t.Context(), []llm.ImagePart{{URL: "https://example.com/teapot.jpg"}})
+
+	require.ErrorContains(t, err, "data URIs")
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Empty(t, db.uploads)
+}
+
+func TestMorePhotosThanAMessageShowsAreNotTaken(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+	images := make([]llm.ImagePart, maxFiles+1)
+	for i := range images {
+		images[i] = llm.ImagePart{MIME: "image/png", Data: []byte("png")}
+	}
+
+	_, err = c.PublishPhotos(t.Context(), images)
+
+	require.ErrorContains(t, err, "at most 8 photos")
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Empty(t, db.uploads)
+}
+
+func TestAReopenedConversationSaysAPhotoWasSentWithoutShowingItAgain(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+	photos, err := c.PublishPhotos(t.Context(), []llm.ImagePart{{MIME: "image/jpeg", Data: []byte("a")}, {MIME: "image/jpeg", Data: []byte("b")}})
+	require.NoError(t, err)
+	_, err = c.BeginCommand("ask-1", "Which is nicer?", "", photos...)
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "The first."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	cold := NewForChat(client)
+	t.Cleanup(cold.Close)
+	history, _, err := cold.ContextForCaller(t.Context(), "customer", "agent", c.CID(), "alice")
+
+	require.NoError(t, err)
+	require.Equal(t, []llm.Message{
+		{Role: llm.User, Content: "Which is nicer?\n\n[sent with 2 photos, not shown again]"},
+		{Role: llm.Assistant, Content: "The first."},
+	}, history)
 }
