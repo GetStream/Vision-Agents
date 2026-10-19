@@ -622,6 +622,19 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
+
+`await router.tts.recording(text, inline=True)` speaks a short text while the request waits and
+returns the audio in the answer, storing neither a job nor the audio: the cheap way to check
+that synthesis works on an app. It takes at most 16000 characters and 90 seconds, and with a
+`callback` it raises `ValueError`, since the router refuses that pair. Without `inline` the
+request is the same as before. The `voice` of a session, an agent config and a session update,
+and of `stream.TTS`, `Accelerated` and `define_agent`, is now documented the way
+`TtsOptions.voice` is: a provider's own voice id, or one of your voices, with `custom:` to mean
+only yours, so a typo is refused instead of passed to the provider's library. A native (sts)
+session takes the vendor's own voice name instead. The `POST /v1/tts/recordings` docs now
+describe `inline` (AI-1414).
+
 ### `stream.STT` takes `keyterms`
 
 `stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,

@@ -1378,7 +1378,7 @@ type SessionSettingsRequest struct {
 	Thinking        *SessionSettingsRequestThinking  `json:"thinking,omitempty" enum:"none,minimal,low,medium,high"`
 	Tts             *string                          `json:"tts,omitempty"`
 	Verbosity       *SessionSettingsRequestVerbosity `json:"verbosity,omitempty" enum:"low,medium,high"`
-	Voice           *string                          `json:"voice,omitempty" doc:"The voice to speak in, in the provider's own terms. Empty returns to the provider's default."`
+	Voice           *string                          `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default."`
 }
 
 func (*SessionSettingsRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

@@ -1849,7 +1849,7 @@ type AgentConfigRequest struct {
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
-	Voice              *string                  `json:"voice,omitempty" doc:"Provider-specific voice id."`
+	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
 }
 
 // AgentConfig is the AgentConfig schema.
@@ -1887,7 +1887,7 @@ type AgentConfig struct {
 	UpdatedAt          time.Time                `json:"updated_at"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty"`
-	Voice              *string                  `json:"voice,omitempty"`
+	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 }
 
 // AgentTools is how an agent is offered its plugin, MCP server and connector tools.

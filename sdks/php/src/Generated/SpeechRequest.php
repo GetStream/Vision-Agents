@@ -17,7 +17,7 @@ final readonly class SpeechRequest
         public ?string $callback = null,
         // A stored router config to take the options from. Anything named here as well overrides that one field of it.
         public ?string $configId = null,
-        // Complete this short request synchronously without storing a recording job or audio. The 202 response contai...
+        // Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a jo...
         public ?bool $inline = null,
         public ?TtsOptions $options = null,
         /** @var array<string, string>|null */

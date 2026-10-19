@@ -39,6 +39,7 @@ class Router:
         self.spoken: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.transcriptions: list[dict[str, Any]] = []
         self.speeches: list[dict[str, Any]] = []
+        self.speech_asks = 0
         self.searches: list[dict[str, Any]] = []
         self.configs: list[dict[str, Any]] = []
         self.writes = 0
@@ -146,9 +147,27 @@ class Router:
     async def _speak(self, request: web.Request) -> web.Response:
         body = await request.json()
         self.speeches.append(body)
+        if body.get("inline"):
+            # The router answers an inline recording whole, with a 202 even when it
+            # failed (acceleration/internal/api/recordings.go), and keeps nothing to ask
+            # about later.
+            if self.failing:
+                failed = self._job("failed")
+                failed["error"] = "elevenlabs: the voice was not found"
+                return web.json_response(status=202, data=failed)
+            done = self._job("completed")
+            done.update(
+                {
+                    "format": "mp3_44100_128",
+                    "audio": base64.b64encode(b"\xff\xfb\x90").decode(),
+                    "voice": "dc4e4a1f",
+                }
+            )
+            return web.json_response(status=202, data=done)
         return web.json_response(status=202, data=self._job("queued"))
 
     async def _speech(self, request: web.Request) -> web.Response:
+        self.speech_asks += 1
         done = self._job("completed")
         done.update(
             {
@@ -353,6 +372,63 @@ class TestRouter:
             "format": "mp3_44100_128",
             "voice": "dc4e4a1f",
         }
+
+    async def test_a_recording_not_asked_inline_sends_what_it_always_sent(
+        self, router: stream.Router, backend: Router
+    ):
+        await router.tts.recording(
+            "Chapter one.", format="mp3_44100_128", voice="dc4e4a1f"
+        )
+
+        # Probed on d1654d42, before recording() took inline: the generated model has
+        # always sent "inline": false.
+        assert backend.speeches == [
+            {
+                "config_id": "healthcare",
+                "inline": False,
+                "options": {"format": "mp3_44100_128", "voice": "dc4e4a1f"},
+                "tags": {"project": "clinic"},
+                "text": "Chapter one.",
+            }
+        ]
+
+    async def test_an_inline_recording_comes_back_in_the_answer(
+        self, router: stream.Router, backend: Router
+    ):
+        spoken = await router.tts.recording(
+            "Chapter one.", inline=True, format="mp3_44100_128", voice="dc4e4a1f"
+        )
+
+        assert base64.b64decode(spoken.audio) == b"\xff\xfb\x90"
+        assert spoken.voice == "dc4e4a1f"
+        assert backend.speech_asks == 0, "an inline recording is not polled for"
+        assert backend.speeches == [
+            {
+                "config_id": "healthcare",
+                "inline": True,
+                "options": {"format": "mp3_44100_128", "voice": "dc4e4a1f"},
+                "tags": {"project": "clinic"},
+                "text": "Chapter one.",
+            }
+        ], "inline is the request's own field, not a voice option"
+
+    async def test_an_inline_recording_that_failed_raises(
+        self, router: stream.Router, backend: Router
+    ):
+        backend.failing = True
+
+        with pytest.raises(RuntimeError, match="the voice was not found"):
+            await router.tts.recording("Chapter one.", inline=True)
+
+    async def test_an_inline_recording_takes_no_callback(
+        self, router: stream.Router, backend: Router
+    ):
+        with pytest.raises(ValueError, match="no callback"):
+            await router.tts.recording(
+                "Chapter one.", "https://example.test/done", inline=True
+            )
+
+        assert backend.speeches == [], "the router would refuse it, so it is not sent"
 
     async def test_a_search_answers_out_of_what_is_true_now(
         self, router: stream.Router, backend: Router
