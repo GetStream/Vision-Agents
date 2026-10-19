@@ -6,10 +6,12 @@
 package ingest
 
 import (
-	"fmt"
+	"crypto/sha256"
+	"encoding/base64"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -24,6 +26,14 @@ const DefaultChunk = 1200
 // the path in the id is what makes ingesting the same documentation twice an update
 // rather than a second copy of it.
 const IDSeparator = "#"
+
+// maxID is the longest id a passage is stored under. turbopuffer lists a max id size of 64
+// bytes (https://turbopuffer.com/docs/limits, fetched 2026-10-19) and its write refuses a
+// 64-byte one with "id string should be less than 64 bytes", so 63 is the longest kept.
+//
+// A hashed id always fits: the 43 characters of a SHA-256 in unpadded base64url
+// (RFC 4648 section 5), the separator, and at most the 19 digits of the largest int.
+const maxID = 63
 
 // readable are the files worth putting in front of a model. Anything else in a docs tree
 // is an image, a lockfile or a build artefact, none of which answer a question.
@@ -106,7 +116,7 @@ func Split(name, content string, size int) []knowledge.Document {
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
 		documents = append(documents, knowledge.Document{
-			ID:     fmt.Sprintf("%s%s%d", name, IDSeparator, index),
+			ID:     passageID(name, index),
 			Text:   piece.text,
 			Source: piece.source,
 		})
@@ -121,19 +131,38 @@ func IDs(name string, from, to int) []string {
 	}
 	ids := make([]string, 0, to-from)
 	for index := from; index < to; index++ {
-		ids = append(ids, fmt.Sprintf("%s%s%d", name, IDSeparator, index))
+		ids = append(ids, passageID(name, index))
 	}
 	return ids
 }
 
-// Files is how many documents a set of passages came from.
+// Files is how many documents a set of passages came from. Every document's passages
+// start at index 0, so those are counted rather than the keys before the separator, which
+// can differ between the passages of one document (see passageID).
 func Files(documents []knowledge.Document) int {
-	seen := map[string]struct{}{}
+	files := 0
 	for _, document := range documents {
-		file, _, _ := strings.Cut(document.ID, IDSeparator)
-		seen[file] = struct{}{}
+		if strings.HasSuffix(document.ID, IDSeparator+"0") {
+			files++
+		}
 	}
-	return len(seen)
+	return files
+}
+
+// passageID is the one place a passage's id is built, so writing, reading back, removing a
+// shorter version's tail and deleting a document all name the same passages.
+//
+// It is the name, IDSeparator and the index while that fits in maxID, which is every id
+// turbopuffer ever took, so a base filled before needs no re-index. A longer
+// one keys the passage by a hash of the whole name instead: two long urls that only differ
+// past their first 60 bytes stay apart.
+func passageID(name string, index int) string {
+	suffix := IDSeparator + strconv.Itoa(index)
+	if len(name)+len(suffix) <= maxID {
+		return name + suffix
+	}
+	sum := sha256.Sum256([]byte(name))
+	return base64.RawURLEncoding.EncodeToString(sum[:]) + suffix
 }
 
 // passage is one piece of a document: what it says, and where a reader would find it.
