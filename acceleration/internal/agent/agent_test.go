@@ -1034,6 +1034,13 @@ func (s *AgentSuite) speak(participant stt.Participant) {
 	}
 }
 
+// setClock sets the time the agent reads.
+func (s *AgentSuite) setClock(at time.Time) {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	s.agent.now = func() time.Time { return at }
+}
+
 // listening reports whether the agent has a transcription session for a participant.
 func (s *AgentSuite) listening(participantID string) bool {
 	s.agent.mu.Lock()
@@ -1272,6 +1279,35 @@ func (s *AgentSuite) TestAudioFromSomebodyWhoLeftOpensNoTranscriptionSession() {
 	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
 	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
 	s.EqualValues(1, s.opened.Load(), "a session was opened for a participant who left")
+	s.Zero(countOf[Error](s.reported()), "audio from a participant who left was reported as a failure")
+}
+
+func (s *AgentSuite) TestSomebodyStillTalkingAfterALeaveIsTranscribedAgain() {
+	s.join(true)
+	clock := time.Now()
+	s.setClock(clock)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+	bob := stt.Participant{ID: "bob"}
+	s.speak(alice)
+	s.speak(bob)
+	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+
+	s.setClock(clock.Add(departedGrace / 2))
+	s.speak(alice)
+	carol := stt.Participant{ID: "carol"}
+	s.speak(carol)
+	s.eventually(func() bool { return s.listening(carol.ID) }, "carol's audio never arrived")
+	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
+
+	s.setClock(clock.Add(departedGrace))
+	s.speak(alice)
+
+	s.eventually(func() bool { return s.listening(alice.ID) },
+		"a participant still talking after a leave is never transcribed again")
 }
 
 func (s *AgentSuite) TestSomebodyLeavingWhileTheirSessionOpensHasItClosed() {
