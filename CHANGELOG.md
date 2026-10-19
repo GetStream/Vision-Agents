@@ -622,6 +622,24 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### Agents can schedule tasks for later
+
+An agent with `scheduling.enabled` on its config is offered four tools —
+`schedule_task`, `list_scheduled_tasks`, `update_scheduled_task` and
+`cancel_scheduled_task` — so a user can ask it to remind them or do something later, once
+or on a repeat (`FREQ=DAILY`, `FREQ=WEEKLY;BYDAY=MO,WE,FR`, …), at the hour they mean in
+their own IANA timezone. `CreateSessionRequest` takes a `timezone`, remembered as the
+user's for what follows. When a task comes due, a worker on every router claims it once
+and the agent carries it out in the user's own conversation, with its usual tools; a task
+that fires mid-call waits for the call to end rather than interrupting it. Scheduled runs
+are customer spend and never consume the end user's daily caps.
+
+The same tasks are a REST resource, `/v1/agents/scheduled-tasks`: a backend schedules for
+the user it names with `X-Stream-User-Id`, and the owner reads, changes, pauses, resumes
+and deletes their tasks from a device, runs included. `agent.yaml` takes a `scheduling:`
+block (`enabled`, `max_tasks_per_user`, `default_timezone`) in the Go, Python and
+JavaScript SDKs.
+
 ### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
 
 `await router.tts.recording(text, inline=True)` speaks a short text while the request waits and

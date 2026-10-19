@@ -26,6 +26,7 @@ edits them.
 | [Direct and acceleration first](architectures.md) | sprints 8, 14     | Both shapes work; only Go can host tools |
 | [Transfer and IVR navigation](transfer.md)     | sprint 7             | Built on tool calling; DTMF at Telnyx only |
 | [Campaigns](campaigns.md)                      | sprint 9             | Built; no page in the dashboard         |
+| [Scheduled tasks](scheduled-tasks.md)          | after sprint 17      | Built; conversation delivery only, channels are phase 2 |
 | [Simulate and test](simulations.md)            | sprint 16            | Built for text and audio; nothing schedules one |
 | [The harness](harness.md)                      | sprints 5, 6         | Built with cache-aware compaction        |
 | [Speaking while listening](duplex.md)          | sprints 5, 6, 15     | Built; acknowledgements default on       |
