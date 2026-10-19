@@ -33,14 +33,12 @@ func captureAgentHeard(cfg Config, callID, callDir string) error {
 	return writeJSON(filepath.Join(callDir, "heard.json"), events)
 }
 
-// routerBase is the router a run talked to. STREAM_ACCELERATION_URL overrides it. The
-// acceleration target is the router itself, so its URL is the one the run was given or spawned
-// on; the accelerated target's --target-url is its Python agent, and its router comes from the
-// environment alone, as it does for the SDK.
+// routerBase follows the native target's explicit URL rather than an ambient SDK URL.
+// The accelerated target's URL names its Python agent, so only its router comes from the environment.
 func routerBase(cfg Config) string {
 	fallback := "http://127.0.0.1:8080"
 	if cfg.TargetName == benchtarget.AccelerationName {
-		fallback = envOrValue(cfg.TargetURL, fallback)
+		return strings.TrimRight(envOrValue(cfg.TargetURL, envOr("STREAM_ACCELERATION_URL", fallback)), "/")
 	}
 	return strings.TrimRight(envOr("STREAM_ACCELERATION_URL", fallback), "/")
 }
