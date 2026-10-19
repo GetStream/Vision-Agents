@@ -185,6 +185,20 @@ func (s *StreamsSuite) TestARefusalReachesACallerStillSendingAudio() {
 	s.Equal(websocket.CloseInternalServerErr, closed.Code)
 }
 
+func (s *StreamsSuite) TestAStartPinnedToABatchModelIsRefusedAndLeavesItsHealthAlone() {
+	pinned := "batch/" + batchModel
+	read, _ := s.ending(s.start("/v1/stt/stream", frame{"target": pinned}))
+
+	s.Require().Len(read, 2)
+	s.Equal("routing: "+pinned+" is a batch model for recordings, not live calls; for a live call name en-low-latency",
+		read[0]["error"])
+	s.Never(func() bool {
+		count, err := s.store.DB().NewSelect().Model((*store.Request)(nil)).
+			Where("model = ?", batchModel).Count(context.Background())
+		return err != nil || count > 0
+	}, time.Second, 50*time.Millisecond, "no start_failed row counts against the model")
+}
+
 func (s *StreamsSuite) TestAStartWithNoTargetEndsWithTheSameClose() {
 	s.refusedStartEndsWithItsMessage(frame{"tts": frame{"target": "en-low-latency"}})
 }
