@@ -79,6 +79,43 @@ import Testing
   }
 
   @Test(arguments: [true, false])
+  func aCameraOnACallAnswersTheRequestToLook(recent: Bool) async throws {
+    let server = try ToolEventServer(remoteTool: "get_video_frames")
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let frames = CameraFrames()
+    frames.record(Data([0xff, 0xd8, 0xff]), at: recent ? Date() : Date().addingTimeInterval(-60))
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .voice, state: .live, text: false, userId: "test")),
+      tools: [])
+    session.cameraFrames = frames
+    await session.start()
+    do {
+      let data = try #require(try await server.commands.first(where: { @Sendable _ in true }))
+      let command = try JSONDecoder().decode([String: JSONValue].self, from: data)
+      #expect(command["tool_call_id"]?.stringValue == "remote")
+      if recent {
+        let parts = try #require(command["output"]?.arrayValue)
+        #expect(parts.count == 2, "what the frame is, then the frame")
+        #expect(parts.first?.objectValue["text"]?.stringValue.contains("captured_at_ms") == true)
+        #expect(
+          parts.last?.objectValue["image_url"]?.objectValue["url"]?.stringValue
+            == "data:image/jpeg;base64,/9j/")
+      } else {
+        #expect(command["output"]?.stringValue.contains("point it at what they mean again") == true)
+      }
+      await session.close()
+    } catch {
+      await session.close()
+      throw error
+    }
+  }
+
+  @Test(arguments: [true, false])
   func aToolThatAsksFirstWaitsForThePerson(allowed: Bool) async throws {
     let server = try ApprovalServer()
     defer { server.listener.cancel() }

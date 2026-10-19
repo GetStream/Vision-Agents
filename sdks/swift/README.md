@@ -138,6 +138,22 @@ such worker, a model that sees images is shown them itself, with its next reply 
 reads only text is told the tool failed. One socket message holds at most 5 MB, so shrink a
 photo first.
 
+### Showing the agent the camera
+
+On a call, turn the camera on and the agent can look through it:
+
+```swift
+await voice.join(camera: true)          // or later: await voice.setCameraEnabled(true)
+```
+
+The camera is the back lens. Its frames are sampled twice a second through the call's video
+filter, which leaves each one as it was, and the last four seconds are kept. When the agent's
+`vision` skill needs to see, the router asks for what the camera showed at the moment the
+question was taken (`get_video_frames`), and `voice.session` answers with those frames. Nothing
+is declared as a tool, so the model is never offered it, and a camera turned off forgets what it
+showed. The agent needs the `vision` skill, and the call a subagent to run it on. The call's video
+filter is this one, so an app's own is replaced while the camera is on.
+
 ### A tool that asks first
 
 Give a tool an `approval` and each call waits for the person whose message it answers, in
