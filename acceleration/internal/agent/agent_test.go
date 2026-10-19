@@ -132,6 +132,9 @@ type stubSTT struct {
 	heard []audio.PcmData
 	// terms is the last vocabulary it was retuned to.
 	terms []string
+	// holdClose, if set, is waited on by Close, as a provider that flushes a final transcript
+	// before it lets go of its socket.
+	holdClose <-chan struct{}
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
@@ -161,6 +164,12 @@ func (s *stubSTT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 func (s *stubSTT) Events() <-chan stt.Event { return s.emitter.Events() }
 
 func (s *stubSTT) Close() error {
+	s.mu.Lock()
+	hold := s.holdClose
+	s.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	s.emitter.Close()
 	return nil
 }
@@ -1186,6 +1195,46 @@ func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {
 		"the caller hanging up was never reported")
 	s.Equal(1, countOf[ParticipantJoined](s.reported()),
 		"leaving must not read as arriving again")
+}
+
+func (s *AgentSuite) TestSomebodyLeavingClosesTheirTranscriptionSession() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "the audio never arrived")
+
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(s.agent.listeners) == 0
+	}, "a participant who left still has an open transcription session")
+}
+
+func (s *AgentSuite) TestASlowTranscriberToCloseDoesNotDelayTheNextArrival() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "the audio never arrived")
+	release := make(chan struct{})
+	s.ears.mu.Lock()
+	s.ears.holdClose = release
+	s.ears.mu.Unlock()
+	s.T().Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.edge.attending <- Attendance{Participant: stt.Participant{ID: "bob"}, Joined: true}
+
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 },
+		"a departed participant's session closing held up the next arrival")
+	close(release)
 }
 
 func (s *AgentSuite) TestParticipantAudioIsTranscribed() {

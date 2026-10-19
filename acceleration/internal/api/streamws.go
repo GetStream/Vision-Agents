@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -247,6 +248,12 @@ func (s *Server) streamSTT(
 	// standard: a mode nothing recognises is refused rather than ignored.
 	if err := held.Validate(); err != nil {
 		return err
+	}
+	// The cap a session is held to, counted the same way. Deepgram takes whatever it is
+	// sent, and the providers that do refuse a long list each word it differently.
+	if keyterms := stt.CleanKeyterms(held.Keyterms); len(keyterms) > stt.MaxKeyterms {
+		return stack.Wrap(fmt.Errorf("stt: at most %d keyterms may be named, and this asks for %d",
+			stt.MaxKeyterms, len(keyterms)))
 	}
 
 	session, err := s.streams.STT.Start(ctx, sttrouter.Request{

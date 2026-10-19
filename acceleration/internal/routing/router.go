@@ -431,7 +431,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
-	candidates, err = serving(candidates, request.Terms)
+	candidates, err = serving(candidates, request.Terms, request.Target)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -814,8 +814,10 @@ func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.He
 //
 // A request asking for something none of them can do fails here rather than being served
 // by a provider that ignores the term: a transcript that was quietly not diarized is
-// worse than one that was refused, because nothing about it says so.
-func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) {
+// worse than one that was refused, because nothing about it says so. A target that named
+// the one model refused is named back, since "no provider" reads as if the router had
+// looked elsewhere when the caller ruled everywhere else out.
+func serving(candidates []Candidate, terms []options.Term, target string) ([]Candidate, error) {
 	if len(terms) == 0 {
 		return candidates, nil
 	}
@@ -842,6 +844,9 @@ func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) 
 	}
 	if len(unserved) == 0 {
 		unserved = []string{"that combination of terms"}
+	}
+	if len(candidates) == 1 && candidates[0].Config.Name() == target {
+		return nil, stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", ")))
 	}
 	return nil, stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", ")))
 }

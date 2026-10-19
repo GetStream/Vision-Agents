@@ -325,6 +325,20 @@ func (s *STSRouterSuite) TestAVoiceIdInTheServingVendorsOverwriteIsNotHandedToIt
 	s.Empty(built[0].Voice, "no STS factory reads a voice_id, so the spec carries none, as on base")
 }
 
+func (s *STSRouterSuite) TestSemanticTurnsOnAModelWithoutThemAreRefusedNamingTheModel() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "gemini/gemini-3.8-live",
+		Options:    options.STS{TurnDetection: options.TurnSemantic},
+	})
+
+	s.ErrorContains(err, "routing: gemini/gemini-3.8-live does not take semantic_turns")
+	s.Empty(built)
+}
+
 func (s *STSRouterSuite) TestSemanticTurnsRouteOnlyToAModelThatReadsTheWords() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)
