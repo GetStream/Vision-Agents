@@ -751,6 +751,10 @@ while previous turns are transcribed; responses are matched by item ID. Set `rec
 alongside `realtime: true` for a model that serves both modes. The default model entry
 remains batch-only. (#972)
 
+Baseten Qwen3-ASR streaming endpoints use the same provider with
+`OPENAI_STT_REALTIME_PROTOCOL=baseten`. This selects their WebSocket setup, 16 kHz
+audio and server-VAD transcript protocol; the default OpenAI protocol is unchanged.
+
 ### An agent config says which agent.yaml connectors its last sync left out
 
 A sync (`POST /v1/agents/sync`) takes `left_out_connectors`: the agent.yaml connectors the

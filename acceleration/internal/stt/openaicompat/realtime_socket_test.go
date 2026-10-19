@@ -331,7 +331,7 @@ func (s *RealtimeSocketSuite) build() *Realtime {
 		Language: "en",
 	})
 	s.Require().NoError(err)
-	return provider
+	return provider.(*Realtime)
 }
 
 func (s *RealtimeSocketSuite) connect() *Realtime {

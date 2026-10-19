@@ -56,6 +56,9 @@ type Options struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	// RealtimeProtocol is empty or "openai" for OpenAI Realtime, or "baseten" for
+	// Baseten's Qwen streaming socket. Batch transcription is unchanged.
+	RealtimeProtocol string
 	// Language and Languages remain available to realtime callers and are batch fallbacks
 	// when neither typed transcription settings nor per-recording hints were supplied.
 	Language   string

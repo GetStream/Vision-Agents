@@ -145,6 +145,7 @@ the other commands that read them there.
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |
 | `OPENAI_STT_BASE_URL`   | Required base URL for the configured OpenAI-compatible transcription endpoint; the adapter appends `/audio/transcriptions` for batch or `/realtime` for live sessions |
 | `OPENAI_STT_API_KEY`    | Bearer token for that endpoint; optional for keyless endpoints |
+| `OPENAI_STT_REALTIME_PROTOCOL` | `openai` (default), or `baseten` for Baseten Qwen streaming |
 | `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
@@ -486,6 +487,15 @@ the complete final transcript. It continues sending audio while earlier turns ar
 transcribed and matches responses by item ID. Final-only servers also work. Set
 `recorded: true` to retain batch eligibility when enabling realtime. The default entry
 remains batch-only; its `und` language sentinel keeps it out of language-based shortcuts.
+
+For a Baseten Qwen3-ASR streaming deployment, keep the same provider and set
+`OPENAI_STT_REALTIME_PROTOCOL=baseten`, `OPENAI_STT_BASE_URL` to
+`https://model-<id>.api.baseten.co/environments/production`, and `OPENAI_STT_API_KEY`
+to its Baseten key. Declare the deployed model with `realtime: true` and
+`recorded: false`. This dialect streams 16 kHz PCM to `/websocket`, uses Baseten's
+server VAD, and maps replacement segments and finals to the same transcript contract.
+Unsupported transcription settings are refused. The default OpenAI dialect and batch
+requests are unchanged. No deployment configuration is included here.
 
 Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,11 @@ type Realtime struct {
 }
 
 // NewRealtime validates the configured endpoint and credentials for the streaming path.
-func NewRealtime(options Options) (*Realtime, error) {
+func NewRealtime(options Options) (stt.STT, error) {
+	protocol := options.RealtimeProtocol
+	if protocol == "" && options.BaseURL == "" {
+		protocol = os.Getenv("OPENAI_STT_REALTIME_PROTOCOL")
+	}
 	baseURL, apiKey := endpointCredentials(options)
 	options.BaseURL = strings.TrimSpace(baseURL)
 	options.APIKey = strings.TrimSpace(apiKey)
@@ -80,6 +85,17 @@ func NewRealtime(options Options) (*Realtime, error) {
 	}
 	if hasBatchOnlyRealtimeSettings(options.Settings) {
 		return nil, stack.Wrap(errors.New("openai-compatible: batch-only transcription settings are not supported for realtime"))
+	}
+	switch protocol {
+	case "baseten":
+		provider, err := newBasetenRealtime(options)
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
+	case "", "openai":
+	default:
+		return nil, fmt.Errorf("openai-compatible: unknown realtime protocol %q", protocol)
 	}
 	endpoint, err := realtimeEndpoint(options.BaseURL)
 	if err != nil {
