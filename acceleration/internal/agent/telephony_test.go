@@ -323,6 +323,42 @@ func toolsRanIn(events []Event) []ToolRan {
 	return ran
 }
 
+func (s *AgentSuite) TestAToolsPictureReachesTheVisionSkillWithItsCallAnswered() {
+	// A provider refuses a conversation that replays a call without its result, and the
+	// vision task is handed the conversation while the call that took the picture is still
+	// open in it.
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.runner = &stubToolRunner{run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		return []llm.ContentPart{{Text: "the room"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}}, nil
+	}}
+	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
+	s.join(true)
+	s.model.reply = []string{"Let me look."}
+	s.asksFor("photograph_room", "{}")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is in the room")
+
+	s.eventually(func() bool { return len(s.subagent.requests()) > 0 }, "the vision task was never asked")
+	asked := s.subagent.requests()[0]
+	s.True(asked.HasImage(), "the vision task was not shown the picture")
+	answered := map[string]bool{}
+	for _, message := range asked.Input {
+		if message.Role == llm.ToolResult {
+			answered[message.ToolCallID] = true
+		}
+	}
+	for _, message := range asked.Input {
+		for _, call := range message.ToolCalls {
+			s.True(answered[call.ID], "the vision task was handed %s with no result", call.ID)
+		}
+	}
+}
+
 func (s *AgentSuite) TestToolsAreOnlyOfferedWhenThereIsACallToActOn() {
 	// A model told it may transfer, in a call with nowhere to transfer to, promises the
 	// caller a person who never arrives.
