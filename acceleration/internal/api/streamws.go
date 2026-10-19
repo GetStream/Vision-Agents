@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
@@ -38,6 +39,15 @@ var errNoStreams = notConfigured("this deployment does not stream")
 // startWait bounds how long a socket waits to be told what it is for. A caller that
 // upgraded and then said nothing is holding a connection and a goroutine for no reason.
 const startWait = 30 * time.Second
+
+// closeWait bounds how long a socket that has sent its close frame waits for the caller's
+// reply before dropping the connection. A caller that is reading answers within one round
+// trip, which a second covers many times over; one that is not reading is not held onto.
+const closeWait = time.Second
+
+// maxCloseReason is the most a close frame's reason may hold: a control frame carries at
+// most 125 bytes, two of which are the code (RFC 6455 §5.5, §5.5.1).
+const maxCloseReason = 123
 
 // Streams is the routing a caller running its own pipeline reaches directly, rather than
 // by holding a conversation.
@@ -167,6 +177,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	opening, err := readStart(connection, modality)
 	if err != nil {
 		out.failed(err)
+		out.close(err)
 		return
 	}
 
@@ -178,6 +189,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	config, err := s.routerOptions(ctx, customerID, opening.ConfigID)
 	if err != nil {
 		out.failed(err)
+		out.close(err)
 		return
 	}
 	speech, voice, model, conversation := opening.options(config)
@@ -191,6 +203,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := request.Tags.Validate(); err != nil {
 		out.failed(err)
+		out.close(err)
 		return
 	}
 
@@ -219,6 +232,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		out.failed(err)
 	}
 	out.frame(frame{"type": "closed"})
+	out.close(err)
 }
 
 // serves reports whether this deployment routes a modality over a socket.
@@ -1128,4 +1142,42 @@ func (s *socket) ping() error {
 // failed reports a failure to the caller, which is all that can be done about one here.
 func (s *socket) failed(err error) {
 	s.frame(frame{"type": "error", "error": err.Error()})
+}
+
+// close ends the socket with a close frame, then waits a moment for the caller's reply.
+//
+// A connection dropped without one reaches the caller as 1006, and a proxy between the two
+// may drop the frames written just before it, the error included. A failure closes with
+// 1011, the server hit a condition it could not serve the request through, and its message
+// as the reason; any other end with 1000 (RFC 6455 §7.4.1). It is called once the socket's
+// frame reader has returned, so the only reader left is this one.
+func (s *socket) close(failure error) {
+	code, reason := websocket.CloseNormalClosure, ""
+	if failure != nil {
+		code, reason = websocket.CloseInternalServerErr, closeReason(failure.Error())
+	}
+	// A caller that closed first has been answered already, and this write is refused.
+	if err := s.connection.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(code, reason), time.Now().Add(writeWait)); err != nil {
+		return
+	}
+	s.connection.SetReadDeadline(time.Now().Add(closeWait))
+	for {
+		if _, _, err := s.connection.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
+// closeReason cuts a message to what a close frame holds, at a character boundary, since
+// the reason must be UTF-8 (RFC 6455 §5.5.1).
+func closeReason(message string) string {
+	if len(message) <= maxCloseReason {
+		return message
+	}
+	cut := maxCloseReason
+	for !utf8.RuneStart(message[cut]) {
+		cut--
+	}
+	return message[:cut]
 }

@@ -7,7 +7,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -485,6 +487,87 @@ func (s *StreamsSuite) TestToolsAModelWillNeverCallAreRefused() {
 	s.Contains(refused["error"], "tools")
 }
 
+func (s *StreamsSuite) TestAVoiceThatCannotStartSaysWhyInTheCloseFrameToo() {
+	speaking := s.start("/v1/tts/stream", frame{"target": "nobody/nothing"})
+
+	refused := s.nextFrame(speaking)
+	s.Equal("error", refused["type"])
+	s.Equal(`routing: unknown target "nobody/nothing"`, refused["error"])
+	s.Equal("closed", s.nextFrame(speaking)["type"])
+	closed := s.closedWith(speaking)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code, "a proxy relays a close frame, where a dropped connection reads 1006")
+	s.Equal(refused["error"], closed.Text)
+}
+
+func (s *StreamsSuite) TestAnUnreadableFrameEndsTheVoiceSocketNormally() {
+	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
+	s.Equal("started", s.nextFrame(speaking)["type"])
+
+	s.Require().NoError(speaking.WriteMessage(websocket.TextMessage, []byte("not json")))
+
+	s.Equal("closed", s.nextFrame(speaking)["type"])
+	closed := s.closedWith(speaking)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Empty(closed.Text)
+}
+
+func (s *StreamsSuite) TestEverySocketRefusedAtItsStartClosesWithTheReason() {
+	refusals := []struct {
+		path    string
+		opening frame
+		frames  []string
+	}{
+		// Refused before anything is routed: no target, a config nobody stored, a tag no
+		// bill takes. Nothing was opened, so no closed frame follows the error.
+		{"/v1/stt/stream", frame{}, []string{"error"}},
+		{"/v1/llm/stream", frame{"config_id": "nobody-stored-this"}, []string{"error"}},
+		{"/v1/sts/stream", frame{"target": "en-low-latency", "tags": frame{"not a key": "x"}}, []string{"error"}},
+		// Refused by the modality's own router.
+		{"/v1/llm/stream", frame{"target": "nobody/nothing"}, []string{"error", "closed"}},
+	}
+	for _, refusal := range refusals {
+		connection := s.start(refusal.path, refusal.opening)
+
+		refused := s.nextFrame(connection)
+		s.Equal("error", refused["type"], refusal.path)
+		for _, kind := range refusal.frames[1:] {
+			s.Equal(kind, s.nextFrame(connection)["type"], refusal.path)
+		}
+		closed := s.closedWith(connection)
+		s.Equal(websocket.CloseInternalServerErr, closed.Code, refusal.path)
+		s.Equal(refused["error"], closed.Text, refusal.path)
+	}
+}
+
+func (s *StreamsSuite) TestAReasonTooLongForACloseFrameIsCutBetweenCharacters() {
+	listening := s.start("/v1/stt/stream", frame{"target": "nobody/" + strings.Repeat("é", 100)})
+
+	refused := s.nextFrame(listening)
+	s.Equal("error", refused["type"])
+	s.Equal("closed", s.nextFrame(listening)["type"])
+	closed := s.closedWith(listening)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	// A close frame holds 123 bytes of reason (RFC 6455 §5.5), and the 123rd here is the
+	// first half of an é, so the reason stops one byte short.
+	s.Equal(refused["error"].(string)[:122], closed.Text)
+}
+
+func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsDroppedSoonAfter() {
+	speaking := s.start("/v1/tts/stream", frame{"target": "nobody/nothing"})
+	// Answering nothing, as a caller that stopped reading would.
+	speaking.SetCloseHandler(func(int, string) error { return nil })
+	s.Equal("error", s.nextFrame(speaking)["type"])
+	s.Equal("closed", s.nextFrame(speaking)["type"])
+	s.closedWith(speaking)
+	closedAt := time.Now()
+
+	s.Require().NoError(speaking.NetConn().SetReadDeadline(time.Now().Add(settleFor)))
+	_, err := speaking.NetConn().Read(make([]byte, 1))
+	waited := time.Since(closedAt)
+	s.ErrorIs(err, io.EOF, "the router drops the connection itself")
+	s.GreaterOrEqual(waited, closeWait/2, "after giving the caller a moment to answer")
+}
+
 // refused opens a socket on the model that refuses the account, speaks into it and returns
 // it once the refusal has come back.
 func (s *StreamsSuite) refused() *websocket.Conn {
@@ -572,6 +655,16 @@ func (s *StreamsSuite) nextConversationFrame(connection *websocket.Conn) frame {
 			return decoded
 		}
 	}
+}
+
+// closedWith reads the close frame the router ended the socket with, which must be the next
+// thing on it.
+func (s *StreamsSuite) closedWith(connection *websocket.Conn) *websocket.CloseError {
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	_, _, err := connection.ReadMessage()
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(err, &closed)
+	return closed
 }
 
 // until reads frames until one of a kind arrives, since a reply comes in pieces.

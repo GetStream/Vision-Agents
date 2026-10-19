@@ -115,7 +115,9 @@ def sync_detailed(
     model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
     `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
     of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
-    rather than dropped. All four report failures as `error` frames and end with `closed`.
+    rather than dropped. All four report failures as `error` frames and end with `closed`. The router
+    then sends a WebSocket close frame (RFC 6455 section 7.4.1): 1011 after a failure that ends the
+    socket, with the error's message cut to 123 bytes as the reason, and 1000 after any other end.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
@@ -194,7 +196,9 @@ def sync(
     model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
     `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
     of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
-    rather than dropped. All four report failures as `error` frames and end with `closed`.
+    rather than dropped. All four report failures as `error` frames and end with `closed`. The router
+    then sends a WebSocket close frame (RFC 6455 section 7.4.1): 1011 after a failure that ends the
+    socket, with the error's message cut to 123 bytes as the reason, and 1000 after any other end.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
@@ -268,7 +272,9 @@ async def asyncio_detailed(
     model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
     `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
     of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
-    rather than dropped. All four report failures as `error` frames and end with `closed`.
+    rather than dropped. All four report failures as `error` frames and end with `closed`. The router
+    then sends a WebSocket close frame (RFC 6455 section 7.4.1): 1011 after a failure that ends the
+    socket, with the error's message cut to 123 bytes as the reason, and 1000 after any other end.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
@@ -345,7 +351,9 @@ async def asyncio(
     model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
     `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
     of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
-    rather than dropped. All four report failures as `error` frames and end with `closed`.
+    rather than dropped. All four report failures as `error` frames and end with `closed`. The router
+    then sends a WebSocket close frame (RFC 6455 section 7.4.1): 1011 after a failure that ends the
+    socket, with the error's message cut to 123 bytes as the reason, and 1000 after any other end.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
