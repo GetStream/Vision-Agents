@@ -627,9 +627,11 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
 (`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
 whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
-carries them as `tool_result` parts, which the router already took. It hands them to the agent's
-`vision` skill, so a tool on a call can show the agent what a camera sees. A written
-conversation has no vision worker yet, so its model is told such a tool failed, and a tool
+carries them as `tool_result` parts, which the router already took. On a call it hands them to
+the agent's `vision` skill, so a tool can show the agent what a camera sees. In a written
+conversation, which has no vision worker, a conversation model that takes images is shown them
+itself, with the reply that follows the call alone: once the next question comes they stand as a
+note, as a person's photos do. A model that reads only text is told such a tool failed. A tool
 hosted on a dispatch worker answers in words only and is reported as failed when it returns
 pictures. In Go, `tools.Registry.Call` returns a `tools.Output` instead of a string.
 

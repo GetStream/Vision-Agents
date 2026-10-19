@@ -133,9 +133,10 @@ let snapshot = AgentTool(name: "photograph_room", description: "Take a photo of 
 }
 ```
 
-The router hands the pictures to the agent's `vision` skill, which runs on a call; a written
-conversation has nowhere to send them yet, so its model is told the tool failed. One socket
-message holds at most 5 MB, so shrink a photo first.
+On a call the router hands the pictures to the agent's `vision` skill. In a chat, which has no
+such worker, a model that sees images is shown them itself, with its next reply alone; one that
+reads only text is told the tool failed. One socket message holds at most 5 MB, so shrink a
+photo first.
 
 ### A tool that asks first
 

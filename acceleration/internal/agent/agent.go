@@ -861,7 +861,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		a.mu.Unlock()
 		return "", errors.New("agent: not joined")
 	}
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: text})
 	history := append([]llm.Message(nil), a.history...)
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
@@ -1667,7 +1667,7 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
-	a.history = append(a.history, a.userTurnLocked(text, images))
+	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(text, images))
 	history := a.replayLocked()
 
 	a.speakingTurn = turnID

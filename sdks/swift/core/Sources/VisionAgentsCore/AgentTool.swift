@@ -109,10 +109,11 @@ public struct AgentTool: Sendable {
 /// What a tool gives the model: words, and pictures beside them, such as a photo the person
 /// picked or a frame from the camera.
 ///
-/// The router hands a result's pictures to the agent's `vision` skill, which looks at them and
-/// tells the conversation what it found; an agent without one is told the tool failed. Each
-/// picture is a data URI or an https URL, and one socket message holds at most 5 MB, so shrink
-/// a photo before returning it.
+/// The router hands a result's pictures to the agent's `vision` skill on a call, which looks at
+/// them and tells the conversation what it found. With no such worker, as in a chat, a model
+/// that sees images is shown them with its next reply alone; one that reads only text is told
+/// the tool failed. Each picture is a data URI or an https URL, and one socket message holds at
+/// most 5 MB, so shrink a photo before returning it.
 public struct ToolOutput: Sendable, Hashable {
     /// What the tool says.
     public var text: String

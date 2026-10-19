@@ -179,8 +179,8 @@ enum DeviceTools {
     /// The newest picture in the person's photo library, which the agent is shown. It asks
     /// first, since it is one of their photos.
     ///
-    /// The router hands a tool's pictures to the agent's vision skill, which runs on a call,
-    /// so this works in voice mode; in a chat the agent is told it could not look.
+    /// On a call the router hands a tool's pictures to the agent's vision skill; in a chat
+    /// Grok, which sees images, is shown it with its next reply.
     private static let latestPhoto = AgentTool(
         name: "look_at_latest_photo",
         description: "Look at the newest photo in the person's photo library. Call it when they "

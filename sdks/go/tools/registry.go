@@ -22,8 +22,9 @@ type Function struct {
 }
 
 // Output is what a tool returns to show the model pictures beside its words, such as a frame
-// of the caller's camera. The router hands the pictures to the agent's vision skill, which
-// tells the conversation what it found; an agent without one is told the tool failed.
+// of the caller's camera. On a call the router hands the pictures to the agent's vision skill;
+// in a chat a model that sees images is shown them itself, with its next reply alone, and one
+// that reads only text is told the tool failed.
 type Output struct {
 	Text   string
 	Images []Image

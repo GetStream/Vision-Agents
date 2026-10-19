@@ -66,9 +66,10 @@ data URI:
 return tools.Output{Text: "the room, just now", Images: []tools.Image{{URL: "data:image/jpeg;base64," + frame}}}, nil
 ```
 
-The router hands them to the agent's `vision` skill, which runs on a call; a written
-conversation has nowhere to send them yet, so its model is told the tool failed. A tool hosted
-on a dispatch worker answers in words only, and one that returns pictures is reported as failed.
+On a call the router hands them to the agent's `vision` skill. In a chat, which has no such
+worker, a model that sees images is shown them itself, with its next reply alone; one that reads
+only text is told the tool failed. A tool hosted on a dispatch worker answers in words only, and
+one that returns pictures is reported as failed.
 
 ## Conversations somebody comes back to
 

@@ -109,8 +109,8 @@ Without the client, the button says so: the router answers that it has no OAuth 
   first), `list_events` (EventKit), `add_reminder` (asks first), `send_email` (asks first,
   showing who it goes to), `look_at_latest_photo` (asks first, then shows the agent the newest
   picture in the library). Calendar, reminders, location and photos each need the phone's
-  permission too. The photo tool works in voice mode: the router hands a tool's pictures to the
-  `vision` skill, which runs on a call, and a chat has nowhere to send them yet.
+  permission too. On a call the router hands the photo tool's picture to the `vision` skill; in a
+  chat Grok, which sees images, is shown it with its next reply.
 
 ## What does not work yet
 
