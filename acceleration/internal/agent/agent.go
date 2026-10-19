@@ -334,6 +334,13 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
+	// departed are the participants who have left and not come back. Their audio and
+	// their departure arrive on separate channels, so a frame can come after the leave,
+	// and a session opened for it would stay open until the agent closes. Each holds when
+	// the first such frame was dropped, zero until one is (see departedGrace).
+	departed map[string]time.Time
+	// now is the clock departedGrace is measured on.
+	now func() time.Time
 	// learnedTerms are names the caller said and the agent has said back, which the
 	// transcriber is told to expect for the rest of the call (keyterms.go).
 	learnedTerms []string
@@ -589,6 +596,8 @@ func New(options Options) (*Agent, error) {
 		emitter:          emitter,
 		prompt:           options.Instructions,
 		listeners:        map[string]*sttrouter.Session{},
+		departed:         map[string]time.Time{},
+		now:              time.Now,
 		voices:           map[string]string{},
 		speakers:         map[string]struct{}{},
 		abandoned:        map[string]struct{}{},
@@ -1177,6 +1186,9 @@ func (a *Agent) consumeEdge() {
 			continue
 		}
 		listener, err := a.listen(inbound.Participant)
+		if errors.Is(err, errDeparted) {
+			continue
+		}
 		if err != nil {
 			a.fail(err, "stt")
 			continue
@@ -1193,6 +1205,9 @@ func (a *Agent) consumeRoster(roster Roster) {
 
 	for attendance := range roster.Attendance() {
 		if attendance.Joined {
+			a.mu.Lock()
+			delete(a.departed, attendance.Participant.ID)
+			a.mu.Unlock()
 			a.logger.Debug("a participant joined",
 				"participant", attendance.Participant.UserID)
 			a.emitter.Send(ParticipantJoined{
@@ -1203,6 +1218,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 		}
 		a.unbind(attendance.Participant)
 		a.mu.Lock()
+		a.departed[attendance.Participant.ID] = time.Time{}
 		listener := a.listeners[attendance.Participant.ID]
 		a.mu.Unlock()
 		if listener != nil {
@@ -1224,12 +1240,54 @@ func (a *Agent) consumeRoster(roster Roster) {
 	}
 }
 
+// errDeparted is listen refusing a participant who has left the call.
+var errDeparted = errors.New("agent: participant left")
+
+// departedGrace is how long audio from a participant who left is dropped, counted from the
+// first frame dropped rather than from the leave, so a consumer held up opening someone
+// else's session (a dial, up to a 15 s handshake: stt/muse/muse.go:246) does not use it up.
+// The frames that trail a leave were queued before it: at most audioBuffer (10 chunks of
+// 20 ms, streamedge/streamedge.go:41-43) on the channel, one held in each track's Send
+// (streamedge/streamedge.go:429) and what the track buffered behind it. consumeEdge hands
+// them over back to back, since a dropped frame opens nothing, so they normally come within
+// milliseconds of the first. A stall after the first dropped frame (another participant's
+// first dial, or a slow ProcessAudio) can outlast the grace: a trailing frame after it
+// reopens a session, which then lives until the agent closes, as on base. A second covers
+// the normal case with room to spare, and is all a
+// participant still in the call loses when the SFU reports a leave that did not happen
+// (a migration keeps the session id: getstream-go-webrtc call.go:558-563).
+const departedGrace = time.Second
+
+// dropsDeparted reports whether listen must drop a participant's audio because they left, and
+// forgets the leave once departedGrace has passed: audio still coming then is somebody
+// who is still in the call. Called with a.mu held.
+func (a *Agent) dropsDeparted(participantID string) bool {
+	dropped, gone := a.departed[participantID]
+	if !gone {
+		return false
+	}
+	now := a.now()
+	if dropped.IsZero() {
+		a.departed[participantID] = now
+		return true
+	}
+	if now.Sub(dropped) < departedGrace {
+		return true
+	}
+	delete(a.departed, participantID)
+	return false
+}
+
 // listen returns a participant's transcription session, opening one on first hearing them.
 func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
 		return nil, errors.New("agent: closed")
+	}
+	if a.dropsDeparted(participant.ID) {
+		a.mu.Unlock()
+		return nil, errDeparted
 	}
 	if existing, ok := a.listeners[participant.ID]; ok {
 		a.mu.Unlock()
@@ -1248,6 +1306,17 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 		a.mu.Unlock()
 		_ = session.Close()
 		return nil, errors.New("agent: closed")
+	}
+	// The participant may have left while the session was opening. Closing waits on the
+	// final transcript, so it must not hold up everyone else's audio.
+	if _, gone := a.departed[participant.ID]; gone {
+		a.running.Add(1)
+		a.mu.Unlock()
+		go func() {
+			defer a.running.Done()
+			a.closeListener(session)
+		}()
+		return nil, errDeparted
 	}
 	a.listeners[participant.ID] = session
 	a.mu.Unlock()
