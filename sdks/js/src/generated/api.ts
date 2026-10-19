@@ -1708,6 +1708,138 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/scheduled-tasks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The scheduled tasks of the user, or of the customer
+         * @description Newest first, cursor-paged. A device lists its own user's tasks, including the ones its backend made in its name. A backend naming a user with X-Stream-User-Id lists that user's; a backend naming nobody lists every task of the customer, instructions included: a customer's whole task list is support-visible, so put nothing in instructions a user must not have read back to them. Devices see instructions too, for the same reason.
+         */
+        readonly get: operations["listScheduledTasks"];
+        readonly put?: never;
+        /**
+         * Schedule a task for a user
+         * @description Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model.
+         */
+        readonly post: operations["createScheduledTask"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/scheduled-tasks/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One scheduled task
+         * @description A task that is not the caller's to reach is answered as not there.
+         */
+        readonly get: operations["getScheduledTask"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a scheduled task
+         * @description This is cancel: the task and its runs are gone, and there is no cancelled state to clutter lists.
+         */
+        readonly delete: operations["deleteScheduledTask"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a scheduled task
+         * @description A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule and next; instructions are server-side, and a device sending them is refused with a 403.
+         */
+        readonly patch: operations["updateScheduledTask"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/scheduled-tasks/{id}/pause": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Pause a scheduled task
+         * @description Nothing comes due while a task is paused; what it slept through is never replayed.
+         */
+        readonly post: operations["pauseScheduledTask"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/scheduled-tasks/{id}/resume": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Resume a scheduled task
+         * @description The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+         */
+        readonly post: operations["resumeScheduledTask"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/scheduled-tasks/{id}/run": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Run a scheduled task now
+         * @description Server-side only. Sets one occurrence going by hand and answers with its run while it is still running; the schedule does not move. Test a task with it, or trigger one from your own system.
+         */
+        readonly post: operations["runScheduledTask"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/scheduled-tasks/{id}/runs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A scheduled task's runs
+         * @description Newest first, cursor-paged. Only occurrences that came due, or were run by hand, are recorded; snoozes and pauses write no runs.
+         */
+        readonly get: operations["listScheduledTaskRuns"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions": {
         readonly parameters: {
             readonly query?: never;
@@ -3861,6 +3993,7 @@ export type components = {
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
+            readonly scheduling?: components["schemas"]["AgentScheduling"];
             readonly search?: string;
             readonly skills?: readonly string[];
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
@@ -3913,6 +4046,7 @@ export type components = {
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
+            readonly scheduling?: components["schemas"]["AgentScheduling"];
             readonly search?: string;
             readonly skills?: readonly string[];
             readonly sts?: string;
@@ -3966,6 +4100,8 @@ export type components = {
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
+            /** @description Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay. */
+            readonly scheduling?: components["schemas"]["AgentScheduling"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
             readonly search?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
@@ -4112,6 +4248,18 @@ export type components = {
             readonly items: readonly components["schemas"]["AgentResponse"][];
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description Whether the agent may schedule tasks for its users, and the defaults those tasks take. */
+        readonly AgentScheduling: {
+            /** @description The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone. */
+            readonly default_timezone?: string;
+            /** @description Offer the agent the scheduling tools (schedule_task, list_scheduled_tasks, update_scheduled_task, cancel_scheduled_task), so a user can ask it to remind them or do something later, once or on a repeat. Off by default: it adds four tools to every turn. Left out on an update, the stored setting stays. */
+            readonly enabled?: boolean;
+            /**
+             * Format: int64
+             * @description How many active scheduled tasks one user may hold. Omitted is 25.
+             */
+            readonly max_tasks_per_user?: number;
         };
         readonly AgentStats: {
             /**
@@ -5383,6 +5531,32 @@ export type components = {
             /** @description Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
             readonly videos?: readonly components["schemas"]["VideoSource"][];
         };
+        readonly CreateScheduledTaskRequest: {
+            /** @description The agent config by name, as session create names it. config_id or this, or session_id. */
+            readonly agent?: string;
+            /** @description The agent config by id. agent or this, or session_id. */
+            readonly config_id?: string;
+            /** @description The caller's own labels, handed back untouched. */
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * @description The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409.
+             * @example booking-4821-reminder
+             */
+            readonly id?: string;
+            /** @description What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read. */
+            readonly instructions: string;
+            /** @description When it runs. */
+            readonly schedule: components["schemas"]["ScheduledTaskSchedule"];
+            /** @description The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session. */
+            readonly session_id?: string;
+            /**
+             * @description A short name the user will recognise.
+             * @example Dentist tomorrow
+             */
+            readonly title: string;
+        };
         readonly CreateSessionRequest: {
             /** @description The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree. */
             readonly agent?: string;
@@ -5459,6 +5633,8 @@ export type components = {
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone. */
+            readonly timezone?: string;
             /** @description What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
             readonly title?: string;
             /** @description How long the model waits for a tool result. Zero is the default. */
@@ -5764,7 +5940,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has schedule_in_past, schedule_too_far (a one-shot more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (occurrences less than 15 minutes apart) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6959,6 +7135,124 @@ export type components = {
         readonly SayRequest: {
             readonly text: string;
         };
+        readonly ScheduledTask: {
+            readonly config_id: string;
+            /** Format: int64 */
+            readonly consecutive_failures: number;
+            /** Format: date-time */
+            readonly created_at: string;
+            /**
+             * @description agent when the model made it in a conversation, api when a backend did.
+             * @enum {string}
+             */
+            readonly created_by: "agent" | "api";
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            readonly id: string;
+            readonly instructions: string;
+            /** @description When a run last finished, in UTC. Null when none has. */
+            readonly last_run_at: string | null;
+            /** @description The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none. */
+            readonly next_run_at: string | null;
+            readonly schedule: components["schemas"]["ScheduledTaskSchedule"];
+            /** @description The conversation the task follows up in. Empty until its first occurrence opens one. */
+            readonly session_id: string;
+            /**
+             * @description active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+             * @enum {string}
+             */
+            readonly state: "active" | "paused" | "completed" | "failed";
+            readonly title: string;
+            /** @description Up to the next five occurrences, RFC 3339 with the task zone's offset. */
+            readonly upcoming: readonly string[];
+            /** Format: date-time */
+            readonly updated_at: string;
+            readonly user_id: string;
+        };
+        readonly ScheduledTaskNext: {
+            /**
+             * @description The next occurrence as the user's clock reads it, in the task's zone.
+             * @example 2026-10-20T09:15:00
+             */
+            readonly at?: string;
+            /**
+             * @description How long from now instead, an ISO 8601 duration: PT15M.
+             * @example PT15M
+             */
+            readonly in?: string;
+        };
+        readonly ScheduledTaskPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ScheduledTask"][];
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly ScheduledTaskRun: {
+            /** Format: int64 */
+            readonly attempts: number;
+            /** @description Where the follow-up landed: conversation, or call when it was spoken on a call. Empty until it lands. */
+            readonly delivered_to: string;
+            /** @description Why it failed, when it did. Null otherwise. */
+            readonly error: string | null;
+            /** Format: date-time */
+            readonly finished_at: string | null;
+            readonly id: string;
+            /** @description When the occurrence was due, RFC 3339 with the task zone's offset. */
+            readonly scheduled_for: string;
+            readonly session_id: string;
+            /** Format: date-time */
+            readonly started_at: string | null;
+            /**
+             * @description running (retries included), delivered, failed, or missed (it fell outside the grace period).
+             * @enum {string}
+             */
+            readonly state: "running" | "delivered" | "failed" | "missed";
+            readonly task_id: string;
+            /**
+             * @description schedule when it came due, manual when it was run by hand.
+             * @enum {string}
+             */
+            readonly trigger: "schedule" | "manual";
+        };
+        readonly ScheduledTaskRunPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ScheduledTaskRun"][];
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly ScheduledTaskSchedule: {
+            /**
+             * @description The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
+             * @example 2026-10-20T09:00:00
+             */
+            readonly at?: string;
+            /**
+             * @description What the schedule says, in one sentence. Read-only: written by the router, and the same sentence the model reads back.
+             * @example Every weekday at 09:00 (Europe/Amsterdam)
+             */
+            readonly description?: string;
+            /**
+             * @description How long from now instead, an ISO 8601 duration: PT20M, P1D. Resolved on write; a response never carries it.
+             * @example PT20M
+             */
+            readonly in?: string;
+            /**
+             * @description Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1.
+             * @example FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
+             */
+            readonly repeat?: string;
+            /**
+             * @description An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's stored zone, then the agent's default_timezone; on update, to the task's own zone.
+             * @example Europe/Amsterdam
+             */
+            readonly timezone?: string;
+            /**
+             * @description The last local date it repeats on, inclusive, 2026-12-31.
+             * @example 2026-12-31
+             */
+            readonly until?: string;
+        };
         readonly SearchAnswer: {
             /** @description The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
             readonly answer?: string;
@@ -7840,6 +8134,8 @@ export type components = {
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
+            /** @description Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored. */
+            readonly scheduling?: components["schemas"]["AgentScheduling"];
             readonly search?: string;
             /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
             readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];
@@ -8300,6 +8596,16 @@ export type components = {
             readonly tts_ttfb_p95_ms?: number | null;
             /** Format: int64 */
             readonly turn_count: number;
+        };
+        readonly UpdateScheduledTaskRequest: {
+            /** @description What the agent is told when the task comes due. Server-side only: a device sending it is refused. */
+            readonly instructions?: string;
+            /** @description Moves the next occurrence only: a snooze, or a skip when it lands past the following one. */
+            readonly next?: components["schemas"]["ScheduledTaskNext"];
+            /** @description Replaces the whole schedule, except a timezone left out of it keeps the task's. */
+            readonly schedule?: components["schemas"]["ScheduledTaskSchedule"];
+            /** @description A short name the user will recognise. */
+            readonly title?: string;
         };
         /** @description What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller. */
         readonly UpdateSessionRequest: {
@@ -12178,6 +12484,321 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listScheduledTasks: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Only tasks on this agent config. */
+                readonly config_id?: string;
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+                /** @description Only tasks following up in this session. */
+                readonly session_id?: string;
+                /** @description Only tasks in this state: active, paused, completed or failed. */
+                readonly state?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of scheduled tasks */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTaskPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Not Implemented */
+            readonly 501: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly createScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: {
+                /** @description The user the task is for, named by the backend acting for them. Required: without a named user the create is refused. */
+                readonly "X-Stream-User-Id"?: string;
+            };
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateScheduledTaskRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The task was stored */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTask"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The id is taken, or the user is at their active-task limit */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Not Implemented */
+            readonly 501: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly getScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The task */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTask"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The task is gone */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateScheduledTaskRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The task as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTask"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly pauseScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The task, paused */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTask"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly resumeScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The task, running again */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTask"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The task is completed, or the user is at their active-task limit */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly runScheduledTask: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The run that was set going */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTaskRun"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Not Implemented */
+            readonly 501: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly listScheduledTaskRuns: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The task, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of the task's runs */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduledTaskRunPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
     };

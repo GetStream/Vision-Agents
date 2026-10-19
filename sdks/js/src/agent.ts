@@ -132,6 +132,8 @@ export interface Declaration {
    * connected on the router.
    */
   channels?: Schemas["AgentChannels"];
+  /** Whether the agent may schedule tasks for its users, and the bounds on that. */
+  scheduling?: Schemas["AgentScheduling"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -709,6 +711,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
     ...(declared.mcpServers?.length ? { mcp_servers: declared.mcpServers } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
+    ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
