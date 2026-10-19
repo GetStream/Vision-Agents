@@ -112,8 +112,8 @@ Without the client, the button says so: the router answers that it has no OAuth 
 ## What does not work yet
 
 - **The camera on a call.** An agent sees video only by asking for frames with
-  `get_video_frames`, which a phone cannot answer: a Swift tool returns a string, not images.
-  So voice mode has no camera.
+  `get_video_frames`. A Swift tool can answer with pictures now (`ToolOutput`), but nothing on
+  the phone takes frames from the call's camera to answer it with, so voice mode has no camera.
 - **Sources.** A reply lists what it read in `support_message.sources` only when a shown
   tool's result is a citations object, and the built-in search answers in prose, so a searched
   reply never carries any. Neither SDK nor `StreamChatAI` has a view for them yet either.

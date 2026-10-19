@@ -44,6 +44,40 @@ import Testing
     }
   }
 
+  @Test func aToolsPicturesGoBackBesideItsWords() async throws {
+    let server = try ToolEventServer(remoteTool: "server_lookup")
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let tool = AgentTool(name: "local_lookup", description: "Photograph the room") { _ in
+      ToolOutput(text: "the kitchen", images: [ImageSource(url: "data:image/png;base64,iVBORw0KGgo=")])
+    }
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, userId: "test")),
+      tools: [tool])
+    await session.start()
+    do {
+      let data = try #require(try await server.commands.first(where: { @Sendable _ in true }))
+      let command = try JSONDecoder().decode([String: JSONValue].self, from: data)
+      #expect(
+        command["output"]
+          == .array([
+            .object(["type": .string("text"), "text": .string("the kitchen")]),
+            .object([
+              "type": .string("image_url"),
+              "image_url": .object(["url": .string("data:image/png;base64,iVBORw0KGgo=")]),
+            ]),
+          ]))
+      await session.close()
+    } catch {
+      await session.close()
+      throw error
+    }
+  }
+
   @Test(arguments: [true, false])
   func aToolThatAsksFirstWaitsForThePerson(allowed: Bool) async throws {
     let server = try ApprovalServer()

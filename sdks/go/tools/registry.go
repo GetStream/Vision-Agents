@@ -18,7 +18,44 @@ type Function struct {
 	// Parameters is the JSON Schema object describing the arguments.
 	Parameters map[string]any
 
-	run func(ctx context.Context, arguments []byte) (string, error)
+	run func(ctx context.Context, arguments []byte) (Output, error)
+}
+
+// Output is what a tool returns to show the model pictures beside its words, such as a frame
+// of the caller's camera. The router hands the pictures to the agent's vision skill, which
+// tells the conversation what it found; an agent without one is told the tool failed.
+type Output struct {
+	Text   string
+	Images []Image
+}
+
+// Image is one picture a tool shows.
+type Image struct {
+	// URL is an https URL or a data URI, such as data:image/jpeg;base64,... One socket
+	// message holds at most 5 MB, so shrink a photo before returning it.
+	URL string
+	// Detail is how closely the model looks: auto, low or high. Empty lets it decide.
+	Detail string
+}
+
+// Wire is the output as a tool_result carries it: the words alone, or an array of parts
+// when there are pictures.
+func (o Output) Wire() any {
+	if len(o.Images) == 0 {
+		return o.Text
+	}
+	parts := make([]map[string]any, 0, len(o.Images)+1)
+	if o.Text != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": o.Text})
+	}
+	for _, image := range o.Images {
+		url := map[string]any{"url": image.URL}
+		if image.Detail != "" {
+			url["detail"] = image.Detail
+		}
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": url})
+	}
+	return parts
 }
 
 // Tool is one of the caller's functions, declared as a type.
@@ -41,7 +78,8 @@ type Tool interface {
 	Name() string
 	// Description is what the model is told it does.
 	Description() string
-	// Run does the work, with the model's arguments already in the fields.
+	// Run does the work, with the model's arguments already in the fields. Returning an
+	// Output shows the model pictures beside the words.
 	Run(ctx context.Context) (any, error)
 }
 
@@ -92,18 +130,18 @@ func Register[In any](registry *Registry, name, description string, run func(con
 		Name:        name,
 		Description: description,
 		Parameters:  parameters,
-		run: func(ctx context.Context, arguments []byte) (string, error) {
+		run: func(ctx context.Context, arguments []byte) (Output, error) {
 			var in In
 			if len(arguments) > 0 {
 				if err := json.Unmarshal(arguments, &in); err != nil {
-					return "", fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", name, err)
+					return Output{}, fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", name, err)
 				}
 			}
 			output, err := run(ctx, in)
 			if err != nil {
-				return "", err
+				return Output{}, err
 			}
-			return Render(output), nil
+			return outputOf(output), nil
 		},
 	})
 }
@@ -143,19 +181,19 @@ func (r *Registry) Add(tool Tool) error {
 		Name:        name,
 		Description: description,
 		Parameters:  parameters,
-		run: func(ctx context.Context, arguments []byte) (string, error) {
+		run: func(ctx context.Context, arguments []byte) (Output, error) {
 			call := reflect.New(value.Type())
 			call.Elem().Set(value)
 			if len(arguments) > 0 {
 				if err := json.Unmarshal(arguments, call.Interface()); err != nil {
-					return "", fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", name, err)
+					return Output{}, fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", name, err)
 				}
 			}
 			output, err := call.Interface().(Tool).Run(ctx)
 			if err != nil {
-				return "", err
+				return Output{}, err
 			}
-			return Render(output), nil
+			return outputOf(output), nil
 		},
 	})
 }
@@ -186,22 +224,37 @@ func (r *Registry) List() []*Function {
 	return listed
 }
 
-// Call runs one function and renders what it returned in words the model can use.
+// Call runs one function and returns what it said: words the model can use, and any
+// pictures it returned as an Output.
 //
 // Arguments are the JSON object the model wrote. Empty is treated as no arguments, since a
 // model calling a function that takes none often sends nothing at all.
-func (r *Registry) Call(ctx context.Context, name string, arguments string) (string, error) {
+func (r *Registry) Call(ctx context.Context, name string, arguments string) (Output, error) {
 	r.mu.RLock()
 	function := r.functions[name]
 	r.mu.RUnlock()
 
 	if function == nil {
-		return "", fmt.Errorf("tools: nothing is registered as %s", name)
+		return Output{}, fmt.Errorf("tools: nothing is registered as %s", name)
 	}
 	if arguments == "" {
 		arguments = "{}"
 	}
 	return function.run(ctx, []byte(arguments))
+}
+
+// outputOf is what a function returned as the model is given it: an Output as it is, and
+// anything else as words.
+func outputOf(returned any) Output {
+	switch output := returned.(type) {
+	case Output:
+		return output
+	case *Output:
+		if output != nil {
+			return *output
+		}
+	}
+	return Output{Text: Render(returned)}
 }
 
 // Render turns what a function returned into words the model can use. A string is already

@@ -622,6 +622,17 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A tool can show the model pictures
+
+A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
+(`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
+whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
+carries them as `tool_result` parts, which the router already took. It hands them to the agent's
+`vision` skill, so a tool on a call can show the agent what a camera sees. A written
+conversation has no vision worker yet, so its model is told such a tool failed, and a tool
+hosted on a dispatch worker answers in words only and is reported as failed when it returns
+pictures. In Go, `tools.Registry.Call` returns a `tools.Output` instead of a string.
+
 ### A person can send photos in a conversation kept in Stream Chat
 
 A question with a `request_id` may now carry `images`, on `POST /v1/agents/sessions/{id}/responses`
@@ -2140,6 +2151,8 @@ Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
 ## Bug Fixes
+
+- A tool's pictures reach the `vision` skill on a model that checks a conversation's tool calls. The vision task was handed the conversation with the call that took the picture still open, which OpenAI refused (`400 No tool output found for function call`), so the agent said the analysis did not work. The open call is now answered as still running before the conversation is handed over.
 
 - A Knowledge source whose `<source>#<n>` id reached 64 bytes is indexed: a URL subscribed with `POST /v1/agents/knowledge/urls`, or a document posted to `POST /v1/agents/knowledge` whose `source` is that long. Its passage ids were `<source>#<n>`, and turbopuffer refuses an id of 64 bytes or more (`id string should be less than 64 bytes`), so such a page failed to index. A passage id that would not fit is now a hash of the whole source and the index (`<sha256, base64url>#<n>`); every id that fitted stays the same, so a base filled before needs no re-index (#1010, AI-1408).
 

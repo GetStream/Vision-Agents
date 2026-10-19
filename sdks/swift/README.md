@@ -121,6 +121,22 @@ await session.start()   // the socket is what carries tool calls to this device
 `executor: .client` shows the people in a persistent conversation that a device is running it,
 and `displayTitle` is what the reply's tool attachment says it is doing.
 
+### A tool that shows the model a picture
+
+Return a `ToolOutput` to answer with pictures beside the words, each a data URI or an https URL:
+
+```swift
+let snapshot = AgentTool(name: "photograph_room", description: "Take a photo of the room.") { _ in
+    ToolOutput(
+        text: "the room, just now",
+        images: [ImageSource(url: "data:image/jpeg;base64," + jpeg.base64EncodedString())])
+}
+```
+
+The router hands the pictures to the agent's `vision` skill, which runs on a call; a written
+conversation has nowhere to send them yet, so its model is told the tool failed. One socket
+message holds at most 5 MB, so shrink a photo first.
+
 ### A tool that asks first
 
 Give a tool an `approval` and each call waits for the person whose message it answers, in

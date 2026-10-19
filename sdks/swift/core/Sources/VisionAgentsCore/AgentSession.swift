@@ -218,8 +218,8 @@ public final class AgentSession {
                 let output = try await tool.run(call.argumentValues)
                 try await socket.send(
                     .toolResult(
-                        id: call.id, output: output, error: nil, requestID: call.requestID,
-                        turnID: call.turnID))
+                        id: call.id, output: output.text, error: nil, images: output.images,
+                        requestID: call.requestID, turnID: call.turnID))
             } catch {
                 try? await socket.send(
                     .toolResult(
