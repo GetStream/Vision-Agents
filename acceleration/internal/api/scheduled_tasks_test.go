@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -589,6 +590,309 @@ func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
 
 	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
 	s.Empty(s.tasksOf(user), "the deleted conversation's tasks went with it")
+}
+
+// createTask has the backend schedule a task for the user, as a customer's
+// own system does.
+func (s *ScheduledTasksSuite) createTask(user *testClient, body CreateScheduledTaskRequest) ScheduledTask {
+	var created ScheduledTask
+	s.Require().Equal(http.StatusCreated,
+		s.serverClient.actingFor(user).do(http.MethodPost, "/v1/agents/scheduled-tasks", body, &created))
+	return created
+}
+
+// taskFailure is the status and the error envelope a task call was answered with.
+func (s *ScheduledTasksSuite) taskFailure(client *testClient, method, path string, body any) (int, ErrorResponse) {
+	status, raw := client.call(method, path, body)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(raw, &answered), string(raw))
+	return status, answered
+}
+
+// taskRequest is a create body for a stretch reminder two hours out.
+func taskRequest(config string) CreateScheduledTaskRequest {
+	return CreateScheduledTaskRequest{
+		ConfigId:     &config,
+		Title:        "Stretch",
+		Instructions: "Remind them to stretch.",
+		Schedule: ScheduledTaskSchedule{
+			In:       pointerTo("PT2H"),
+			Timezone: pointerTo("Europe/Amsterdam"),
+		},
+	}
+}
+
+func (s *ScheduledTasksSuite) TestABackendSchedulesATaskForANamedUser() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+
+	created := s.createTask(user, taskRequest(config))
+
+	s.Equal(user.userID, created.UserId)
+	s.Equal(config, created.ConfigId)
+	s.Equal("api", created.CreatedBy)
+	s.Equal(store.ScheduledTaskActive, created.State)
+	s.Equal("Stretch", created.Title)
+	s.Contains(created.Schedule.Description, "Once")
+	s.Require().NotNil(created.NextRunAt)
+	s.Contains(*created.NextRunAt, "+0", "the next run reads in the task's own zone")
+	s.Len(created.Upcoming, 1)
+	s.Equal(created.NextRunAt, &created.Upcoming[0])
+	s.Nil(created.LastRunAt)
+
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+	s.Equal(created.Id, tasks[0].ID)
+	s.Equal("server", tasks[0].CallerKind)
+}
+
+func (s *ScheduledTasksSuite) TestCreatingATaskWithoutANamedUserIsRefused() {
+	config := s.agentWithScheduling(nil)
+
+	status, answered := s.taskFailure(s.serverClient, http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(answered.Error.Message, "X-Stream-User-Id")
+}
+
+func (s *ScheduledTasksSuite) TestADeviceCannotCreateOrRunATask() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+
+	status, answered := s.taskFailure(user, http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config))
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(codeServerSideOnly, answered.Error.Code)
+
+	created := s.createTask(user, taskRequest(config))
+	status, answered = s.taskFailure(user, http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil)
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(codeServerSideOnly, answered.Error.Code)
+}
+
+func (s *ScheduledTasksSuite) TestACreateWithAUsedIdAnswersConflict() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Id = pointerTo("booking-4821-reminder")
+	s.createTask(user, body)
+
+	status, answered := s.taskFailure(s.serverClient.actingFor(user), http.MethodPost, "/v1/agents/scheduled-tasks", body)
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal("conflict", answered.Error.Code)
+	s.Len(s.tasksOf(user), 1)
+}
+
+func (s *ScheduledTasksSuite) TestBadSchedulesAreRefusedWithTheirCodes() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	backend := s.serverClient.actingFor(user)
+
+	for name, change := range map[string]func(*CreateScheduledTaskRequest){
+		"a time that has passed": func(body *CreateScheduledTaskRequest) {
+			body.Schedule = ScheduledTaskSchedule{At: pointerTo("2020-01-01T09:00:00"), Timezone: pointerTo("Europe/Amsterdam")}
+		},
+		"a zone nobody knows": func(body *CreateScheduledTaskRequest) {
+			body.Schedule.Timezone = pointerTo("Nowhere/Special")
+		},
+		"no zone anywhere": func(body *CreateScheduledTaskRequest) {
+			body.Schedule.Timezone = nil
+		},
+		"a repeat outside the subset": func(body *CreateScheduledTaskRequest) {
+			body.Schedule.Repeat = pointerTo("FREQ=HOURLY")
+		},
+	} {
+		s.Run(name, func() {
+			body := taskRequest(config)
+			change(&body)
+			_, answered := s.taskFailure(backend, http.MethodPost, "/v1/agents/scheduled-tasks", body)
+			s.Contains([]string{"schedule_in_past", "invalid_timezone", "timezone_unknown", "invalid_repeat"},
+				answered.Error.Code, answered.Error.Message)
+		})
+	}
+	s.Empty(s.tasksOf(user))
+}
+
+func (s *ScheduledTasksSuite) TestTooManyTasksAnswersConflict() {
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Scheduling.MaxTasksPerUser = pointerTo(1)
+	})
+	user := s.data.createUser()
+	s.createTask(user, taskRequest(config))
+
+	status, answered := s.taskFailure(s.serverClient.actingFor(user), http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config))
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(codeTooManyTasks, answered.Error.Code)
+}
+
+func (s *ScheduledTasksSuite) TestTheOwnerReachesATaskItsBackendMadeAndAnotherUserDoesNot() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id, nil, &read))
+	s.Equal("Remind them to stretch.", read.Instructions, "the owner reads what will be said in their name")
+
+	var page ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks", nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(created.Id, page.Items[0].Id)
+
+	other := s.data.createUser()
+	status, answered := s.taskFailure(other, http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id, nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Equal(codeScheduledTaskNotFound, answered.Error.Code)
+
+	var theirs ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, other.do(http.MethodGet, "/v1/agents/scheduled-tasks", nil, &theirs))
+	s.Empty(theirs.Items)
+}
+
+func (s *ScheduledTasksSuite) TestADeviceMayChangeTitleScheduleAndNextButNotInstructions() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Title: pointerTo("Stretch break")}, &updated))
+	s.Equal("Stretch break", updated.Title)
+
+	status, answered := s.taskFailure(user, http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Instructions: pointerTo("Say something else entirely.")})
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(codeServerSideOnly, answered.Error.Code)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Instructions: pointerTo("Remind them to stretch and ask how the back is.")}, &updated))
+	s.Equal("Remind them to stretch and ask how the back is.", updated.Instructions)
+
+	before := time.Now()
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Next: &ScheduledTaskNext{In: pointerTo("PT30M")}}, &updated))
+	s.Require().NotNil(updated.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
+	s.Require().NoError(err)
+	s.WithinDuration(before.Add(30*time.Minute), next, 2*time.Minute)
+}
+
+func (s *ScheduledTasksSuite) TestPauseAndResumeCountsFromNow() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.Repeat = pointerTo("FREQ=DAILY")
+	created := s.createTask(user, body)
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+
+	var rendered ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/pause", nil, &rendered))
+	s.Equal(store.ScheduledTaskPaused, rendered.State)
+
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/resume", nil, &rendered))
+	s.Equal(store.ScheduledTaskActive, rendered.State)
+	s.Require().NotNil(rendered.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *rendered.NextRunAt)
+	s.Require().NoError(err)
+	s.True(next.After(time.Now()), "the resumed task counts from now")
+	s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
+}
+
+func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSchedule() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+
+	var run ScheduledTaskRun
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, path+"/run", nil, &run))
+	s.Equal(store.ScheduledTaskTriggerManual, run.Trigger)
+	s.Equal(created.Id, run.TaskId)
+
+	s.Eventually(func() bool {
+		runs, err := s.store.ScheduledTaskRuns(context.Background(), s.customerID(), created.Id, 25, nil)
+		return err == nil && len(runs) == 1 && runs[0].State == store.ScheduledTaskRunDelivered
+	}, 30*time.Second, 250*time.Millisecond, "the manual run was not delivered")
+
+	var page ScheduledTaskRunPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path+"/runs", nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(store.ScheduledTaskDeliveredConversation, page.Items[0].DeliveredTo)
+	s.True(s.model().heard("Remind them to stretch."), "the model was never sent the instructions")
+
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path, nil, &read))
+	s.Equal(created.NextRunAt, read.NextRunAt, "running by hand does not move the schedule")
+	s.NotNil(read.LastRunAt)
+}
+
+func (s *ScheduledTasksSuite) TestDeletingATaskDeletesItsRuns() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+
+	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, path, nil, nil))
+
+	status, answered := s.taskFailure(user, http.MethodGet, path, nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Equal(codeScheduledTaskNotFound, answered.Error.Code)
+	status, _ = s.taskFailure(user, http.MethodGet, path+"/runs", nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Empty(s.tasksOf(user))
+}
+
+func (s *ScheduledTasksSuite) TestListingPagesAndFilters() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	backend := s.serverClient.actingFor(user)
+	made := make([]string, 0, 3)
+	for range 3 {
+		var created ScheduledTask
+		s.Require().Equal(http.StatusCreated, backend.do(http.MethodPost, "/v1/agents/scheduled-tasks", taskRequest(config), &created))
+		made = append(made, created.Id)
+	}
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+made[0]+"/pause", nil, nil))
+
+	var first ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks?limit=2", nil, &first))
+	s.Require().Len(first.Items, 2)
+	s.True(first.HasMore)
+	s.Require().NotNil(first.NextCursor)
+
+	var second ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet,
+		"/v1/agents/scheduled-tasks?limit=2&cursor="+*first.NextCursor, nil, &second))
+	s.Len(second.Items, 1)
+	s.False(second.HasMore)
+
+	var paused ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks?state=paused", nil, &paused))
+	s.Require().Len(paused.Items, 1)
+	s.Equal(made[0], paused.Items[0].Id)
+
+	var onConfig ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks?config_id="+config, nil, &onConfig))
+	s.Len(onConfig.Items, 3)
+}
+
+func (s *ScheduledTasksSuite) TestACreateNamingASessionFollowsUpInIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+
+	body := taskRequest(config)
+	body.ConfigId, body.SessionId = nil, &opened.Id
+	created := s.createTask(user, body)
+	s.Equal(opened.Id, created.SessionId)
+	s.Equal(config, created.ConfigId)
+
+	other := s.data.createUser()
+	body.SessionId = &opened.Id
+	status, _ := s.taskFailure(s.serverClient.actingFor(other), http.MethodPost, "/v1/agents/scheduled-tasks", body)
+	s.Equal(http.StatusNotFound, status, "a session is only its own user's to schedule into")
 }
 
 func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {
