@@ -468,3 +468,25 @@ func (s *URLsSuite) TestPassageIDsCoverExactlyWhatWasWritten() {
 	}
 	s.Len(written, page.Passages)
 }
+
+func (s *URLsSuite) TestAPageWithALongURLIsIndexedTrimmedAndRemoved() {
+	// 76 bytes, so its ids were 78 bytes and up, which turbopuffer refuses.
+	address := "https://getstream.io/chat/docs/sdk/android/client/guides/push-notifications/"
+	page := s.added(Subscription{Namespace: "docs", URL: address})
+
+	s.Equal(store.KnowledgeURLIndexed, page.State)
+	s.Require().Equal(2, page.Passages)
+	written := s.base.ids()
+	s.ElementsMatch(ingest.IDs(address, 0, 2), written)
+	for _, id := range written {
+		s.Less(len(id), 64, id)
+	}
+
+	s.reader.serve("# Pricing\n\nA call costs tuppence.\n", nil)
+	reindexed := s.reindexed(page)
+	s.Equal(1, reindexed.Passages)
+	s.Equal(ingest.IDs(address, 0, 1), s.base.ids(), "the old tail is no longer findable")
+
+	s.Require().NoError(s.service.Remove(s.ctx, "acme", page.ID))
+	s.Empty(s.base.ids())
+}

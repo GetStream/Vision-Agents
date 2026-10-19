@@ -54,7 +54,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
 	if len(videos) > 0 && value(request.Body.RequestId) != "" {
-		return nil, invalidRequest("a request id carries text only")
+		return nil, invalidRequest("a request id carries text and images, not videos")
 	}
 	for index, sent := range videos {
 		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
@@ -70,10 +70,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	var responseID string
 	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		if len(parts) > 0 {
-			return nil, invalidRequest("a request id carries text only")
-		}
-		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "", asked)
+		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "", parts, asked)
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}
@@ -405,7 +402,7 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
 	Images          *[]ImageSource `json:"images,omitempty"`
 	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`

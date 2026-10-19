@@ -17,9 +17,13 @@ struct ChatScreen: View {
     @Environment(GmailAccount.self) private var gmail
     @State private var chat: AgentChat?
     @State private var failure: String?
-    /// What the person just asked, shown at once while the conversation is opened and the
-    /// router writes it into the channel, which together take a few seconds.
-    @State private var asking: String?
+    /// What the person just asked, shown at once with its photos until Stream's copy of their
+    /// message arrives: opening a conversation, uploading its photos and writing the message
+    /// take seconds together.
+    @State private var asking: Asked?
+    /// The photos sent from this screen, by the message Stream keeps them on, so they are
+    /// shown from the phone rather than after a download from Stream's CDN.
+    @State private var sentPhotos: [String: [UIImage]] = [:]
     @State private var isVoiceShown = false
     @StateObject private var composer = AIComposerViewModel()
 
@@ -39,12 +43,16 @@ struct ChatScreen: View {
                     if let chat {
                         ForEach(chat.messages, id: \.id) { message in
                             MessageRow(
-                                message: message, reasoning: chat.reasoning,
-                                approver: approver(for: chat.session))
+                                message: message, photos: sentPhotos[message.id] ?? [],
+                                reasoning: chat.reasoning, approver: approver(for: chat.session))
                         }
                     }
-                    if let asking, isEmpty {
-                        PersonBubble(text: asking)
+                    if let asking {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            SentPhotos(photos: asking.photos)
+                            PersonBubble(text: asking.text)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                     if let indicator {
                         AITypingIndicatorView(text: indicator)
@@ -85,6 +93,17 @@ struct ChatScreen: View {
                 VoiceMode(chat: chat)
             }
         }
+        .onChange(of: chat?.messages.count ?? 0) {
+            // The person's first message after the ones there were when they asked is Stream's
+            // copy of the question, which takes its place.
+            guard let asked = asking,
+                let arrived = chat?.messages.filter({ !$0.isAgentReply }).dropFirst(asked.after).first
+            else { return }
+            if !asked.photos.isEmpty {
+                sentPhotos[arrived.id] = asked.photos
+            }
+            asking = nil
+        }
         .onChange(of: chat?.isAnswering ?? false, initial: true) { _, answering in
             composer.isGenerating = answering
         }
@@ -123,14 +142,16 @@ struct ChatScreen: View {
         isEmpty && asking == nil
     }
 
-    /// What the agent is doing, shown under the last message. A first question shows
-    /// "Thinking" before the session says anything, while its conversation is opened.
+    /// What the agent is doing, shown under the last message. A question on its way shows
+    /// "Thinking" before the session says anything.
     private var indicator: String? {
-        chat?.indicator ?? (asking != nil && isEmpty ? "Thinking" : nil)
+        chat?.indicator ?? (asking != nil ? "Thinking" : nil)
     }
 
     private func send(_ message: MessageData) {
-        if isEmpty { asking = message.text }
+        asking = Asked(
+            text: message.text, photos: Photos.thumbnails(for: message.attachments),
+            after: chat?.messages.count(where: { !$0.isAgentReply }) ?? 0)
         Task {
             guard let chat = await open() else {
                 asking = nil
@@ -184,6 +205,15 @@ struct ChatScreen: View {
             try await session.decide(call.id, allowed: allowed)
         }
     }
+}
+
+/// A question on its way, as the person sees it before Stream's copy of it arrives.
+private struct Asked {
+    let text: String
+    let photos: [UIImage]
+    /// How many of the person's messages the conversation held when it was asked: the next
+    /// one is this question.
+    let after: Int
 }
 
 /// The composer with the way into voice mode beside the message box.
