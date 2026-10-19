@@ -344,7 +344,7 @@ type Agent struct {
 	// that cannot tell one voice from another, which leaves it saying nothing rather
 	// than guessing.
 	voices map[string]string
-	// speakers are the participants, by ID, who have had a turn answered. Once there are
+	// speakers are the people, by personOf, who have had a turn answered. Once there are
 	// two, every new turn names who said it, because the model cannot tell them apart
 	// otherwise. Turns typed with RespondTo are the caller's and are never counted.
 	speakers map[string]struct{}
@@ -1711,15 +1711,15 @@ const typedCaller = "caller"
 // come ahead of their words, and a reply is spoken, so one that opened on a name the way
 // their turns do would be heard saying it.
 const severalSpeakers = "Several people are talking in this call. Each of their messages starts with " +
-	"the name of who said it. Never start your reply with a name or a label."
+	"the name of who said it, then a colon. Never start your reply with such a label."
 
 // userTurnLocked is a participant's words as a turn of the conversation. It names who
 // said them once somebody else in the call has had a turn answered too.
 func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
 	turn := llm.Message{Role: llm.User, Content: text}
-	_, known := a.speakers[participant.ID]
+	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
-		turn.Speaker = participantName(participant)
+		turn.Speaker = speakerLabel(participant)
 	}
 	return turn
 }
@@ -1728,8 +1728,27 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
 	a.history = append(a.history, a.userTurnLocked(participant, text))
 	if participant.ID != typedCaller {
-		a.speakers[participant.ID] = struct{}{}
+		a.speakers[personOf(participant)] = struct{}{}
 	}
+}
+
+// personOf is who a participant is. A person who rejoins gets a new ID but keeps their
+// user, so the user, when there is one, is what is counted.
+func personOf(participant stt.Participant) string {
+	if participant.UserID != "" {
+		return participant.UserID
+	}
+	return participant.ID
+}
+
+// speakerLabel is a participant's name as it goes ahead of their words. A line break or a
+// colon in a display name could pass for the start of another person's line, so they go.
+func speakerLabel(participant stt.Participant) string {
+	label := strings.Join(strings.Fields(strings.ReplaceAll(participantName(participant), ":", "")), " ")
+	if label == "" {
+		return participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID})
+	}
+	return label
 }
 
 func (a *Agent) replayLocked() []llm.Message {

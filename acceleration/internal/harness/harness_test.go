@@ -1549,6 +1549,15 @@ func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
 	s.False(s.harness.Delegating(), "the caller is not waiting for private maintenance")
 }
 
+func (s *HarnessSuite) TestTheCompactionPromptKeepsWhoSaidWhat() {
+	prompt := compactionPrompt([]llm.Message{
+		{Role: llm.User, Content: "hello"},
+		{Role: llm.Assistant, Content: "hi"},
+		{Role: llm.User, Content: "and me", Speaker: "Bob"},
+	})
+	s.Equal("user: hello\nassistant: hi\nuser: Bob: and me\n", prompt)
+}
+
 func (s *HarnessSuite) TestCompactionKeepsWholeTurns() {
 	s.build(true)
 	s.slow.automatic = "The caller asked about their calendar."
