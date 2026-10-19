@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -152,6 +153,16 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		Title: strings.TrimSpace(body.Title), Instructions: body.Instructions,
 		State: store.ScheduledTaskActive, CreatedBy: "api",
 	}
+	where, err := deliverToOf(body.DeliverTo)
+	if err != nil {
+		return nil, err
+	}
+	task.Channels = where
+	quiet, err := quietHoursOf(body.QuietHours)
+	if err != nil {
+		return nil, err
+	}
+	task.QuietHours = quiet
 	if body.Id != nil {
 		task.ID = *body.Id
 	}
@@ -302,6 +313,20 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 	if body.Instructions != nil {
 		task.Instructions = *body.Instructions
 	}
+	if body.DeliverTo != nil {
+		where, err := deliverToOf(*body.DeliverTo)
+		if err != nil {
+			return nil, err
+		}
+		task.Channels = where
+	}
+	if body.QuietHours != nil {
+		quiet, err := quietHoursOf(body.QuietHours)
+		if err != nil {
+			return nil, err
+		}
+		task.QuietHours = quiet
+	}
 	now := time.Now()
 	if body.Schedule != nil {
 		if err := s.rescheduleTask(&task, *body.Schedule, now); err != nil {
@@ -339,6 +364,46 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		return nil, err
 	}
 	return &updateScheduledTaskResponse{Body: rendered}, nil
+}
+
+// scheduledTaskChannels are the channels a task may be delivered on: the
+// conversation the follow-up lands in, the channels the user already talks
+// to the agent on, and a call.
+var scheduledTaskChannels = []string{"conversation", "sms", "whatsapp", "imessage", "phone"}
+
+// deliverToOf reads a written deliver_to, in the order written, each
+// channel once. Left out or empty is the conversation alone, as every task
+// before channels was. A name nothing carries is refused here rather than
+// at three in the morning.
+func deliverToOf(written []string) ([]string, error) {
+	where := make([]string, 0, len(written))
+	for _, channel := range written {
+		if !slices.Contains(scheduledTaskChannels, channel) {
+			return nil, invalidRequest("deliver_to names channels nothing carries: " +
+				"use conversation, sms, whatsapp, imessage or phone")
+		}
+		if !slices.Contains(where, channel) {
+			where = append(where, channel)
+		}
+	}
+	if len(where) == 0 {
+		where = []string{store.ScheduledTaskDeliveredConversation}
+	}
+	return where, nil
+}
+
+// quietHoursOf reads a written quiet_hours, or nil for no hold: both
+// boundaries left empty is the hold cleared, which is also what an update
+// that clears one sends.
+func quietHoursOf(written *ScheduledTaskQuietHours) (*store.ScheduledTaskQuietHours, error) {
+	if written == nil || (written.Start == "" && written.End == "") {
+		return nil, nil
+	}
+	if _, _, ok := scheduling.QuietHours(written.Start, written.End); !ok {
+		return nil, invalidRequest("quiet_hours is a start and an end the user's clock reads, " +
+			"such as 22:00 and 07:00, and they cannot read the same")
+	}
+	return &store.ScheduledTaskQuietHours{Start: written.Start, End: written.End}, nil
 }
 
 // rescheduleTask replaces a task's schedule with the one written, keeping the
@@ -545,7 +610,14 @@ func (s *Server) scheduledTaskOf(ctx context.Context, task store.ScheduledTask) 
 		Title: task.Title, Instructions: task.Instructions, State: task.State,
 		ConsecutiveFailures: task.ConsecutiveFailures, CreatedBy: task.CreatedBy,
 		Custom: task.Custom, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
-		Upcoming: []string{},
+		Upcoming:  []string{},
+		DeliverTo: task.Channels,
+	}
+	if len(rendered.DeliverTo) == 0 {
+		rendered.DeliverTo = []string{store.ScheduledTaskDeliveredConversation}
+	}
+	if task.QuietHours != nil {
+		rendered.QuietHours = &ScheduledTaskQuietHours{Start: task.QuietHours.Start, End: task.QuietHours.End}
 	}
 	rendered.Schedule = ScheduledTaskSchedule{
 		At:       optional(task.StartLocal.Format("2006-01-02T15:04:05")),
@@ -618,7 +690,9 @@ func (s *Server) registerScheduledTasks(api huma.API) {
 			"or config_id, or taken from session_id's own config, and the follow-up lands in that session's " +
 			"conversation; without a session, the first occurrence opens one. An id the caller chooses may " +
 			"be sent again only to be told it is taken (409), the same answer session create gives. " +
-			"scheduling.enabled on the config is not required: that flag only offers the tools to the model.",
+			"scheduling.enabled on the config is not required: that flag only offers the tools to the model. " +
+			"deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due " +
+			"in them until they end.",
 		DefaultStatus: http.StatusCreated,
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The task was stored"},
@@ -645,8 +719,8 @@ func (s *Server) registerScheduledTasks(api huma.API) {
 		Description: "A field left out is kept. A schedule given replaces the whole schedule, except a " +
 			"timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or " +
 			"a skip when it lands past the following one — and on a one-shot it is the reschedule. An end " +
-			"user's device may change title, schedule and next; instructions are server-side, and a device " +
-			"sending them is refused with a 403.",
+			"user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are " +
+			"server-side, and a device sending them is refused with a 403.",
 		Responses:  map[string]*huma.Response{"200": {Description: "The task as it now is"}},
 		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 		Extensions: map[string]any{clientAccessibleExtension: true},
@@ -729,24 +803,36 @@ type ScheduledTaskNext struct {
 	In *string `json:"in,omitempty" doc:"How long from now instead, an ISO 8601 duration: PT15M." example:"PT15M"`
 }
 
+// ScheduledTaskQuietHours is the part of the user's day an occurrence is
+// held through rather than delivered into, as their clock reads it in the
+// task's zone.
+type ScheduledTaskQuietHours struct {
+	Start string `json:"start" doc:"When the hold begins, as the user's clock reads it. Both boundaries empty is no hold, which is also how an update clears one." example:"22:00"`
+	End   string `json:"end" doc:"When the hold ends. It may read before the start: 22:00 to 07:00 holds the night." example:"07:00"`
+}
+
 // CreateScheduledTaskRequest is the body of createScheduledTask.
 type CreateScheduledTaskRequest struct {
-	Id           *string               `json:"id,omitempty" doc:"The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409." pattern:"^[A-Za-z0-9_-]{1,64}$" example:"booking-4821-reminder"`
-	Agent        *string               `json:"agent,omitempty" doc:"The agent config by name, as session create names it. config_id or this, or session_id."`
-	ConfigId     *string               `json:"config_id,omitempty" doc:"The agent config by id. agent or this, or session_id."`
-	SessionId    *string               `json:"session_id,omitempty" doc:"The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session."`
-	Title        string                `json:"title" doc:"A short name the user will recognise." minLength:"1" maxLength:"80" example:"Dentist tomorrow"`
-	Instructions string                `json:"instructions" doc:"What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read." minLength:"1" maxLength:"2000"`
-	Schedule     ScheduledTaskSchedule `json:"schedule" doc:"When it runs."`
-	Custom       *map[string]any       `json:"custom,omitempty" doc:"The caller's own labels, handed back untouched."`
+	Id           *string                  `json:"id,omitempty" doc:"The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409." pattern:"^[A-Za-z0-9_-]{1,64}$" example:"booking-4821-reminder"`
+	Agent        *string                  `json:"agent,omitempty" doc:"The agent config by name, as session create names it. config_id or this, or session_id."`
+	ConfigId     *string                  `json:"config_id,omitempty" doc:"The agent config by id. agent or this, or session_id."`
+	SessionId    *string                  `json:"session_id,omitempty" doc:"The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session."`
+	Title        string                   `json:"title" doc:"A short name the user will recognise." minLength:"1" maxLength:"80" example:"Dentist tomorrow"`
+	Instructions string                   `json:"instructions" doc:"What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read." minLength:"1" maxLength:"2000"`
+	Schedule     ScheduledTaskSchedule    `json:"schedule" doc:"When it runs."`
+	DeliverTo    []string                 `json:"deliver_to,omitempty" doc:"Where an occurrence is delivered, in order, the first that lands: conversation, sms, whatsapp, imessage or phone. The agent's reply is written in its conversation either way; a channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the conversation alone."`
+	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"The part of the user's day an occurrence that comes due in is held through, until it ends, on every channel."`
+	Custom       *map[string]any          `json:"custom,omitempty" doc:"The caller's own labels, handed back untouched."`
 }
 
 // UpdateScheduledTaskRequest is the body of updateScheduledTask. A field left out is kept.
 type UpdateScheduledTaskRequest struct {
-	Title        *string                `json:"title,omitempty" doc:"A short name the user will recognise." maxLength:"80"`
-	Instructions *string                `json:"instructions,omitempty" doc:"What the agent is told when the task comes due. Server-side only: a device sending it is refused." maxLength:"2000"`
-	Schedule     *ScheduledTaskSchedule `json:"schedule,omitempty" doc:"Replaces the whole schedule, except a timezone left out of it keeps the task's."`
-	Next         *ScheduledTaskNext     `json:"next,omitempty" doc:"Moves the next occurrence only: a snooze, or a skip when it lands past the following one."`
+	Title        *string                  `json:"title,omitempty" doc:"A short name the user will recognise." maxLength:"80"`
+	Instructions *string                  `json:"instructions,omitempty" doc:"What the agent is told when the task comes due. Server-side only: a device sending it is refused." maxLength:"2000"`
+	Schedule     *ScheduledTaskSchedule   `json:"schedule,omitempty" doc:"Replaces the whole schedule, except a timezone left out of it keeps the task's."`
+	Next         *ScheduledTaskNext       `json:"next,omitempty" doc:"Moves the next occurrence only: a snooze, or a skip when it lands past the following one."`
+	DeliverTo    *[]string                `json:"deliver_to,omitempty" doc:"Replaces where an occurrence is delivered, in order. An empty list is the conversation alone."`
+	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"Replaces the part of the day an occurrence is held through. Both boundaries empty clears the hold."`
 }
 
 // ScheduledTask is a scheduled task as the API renders it.
@@ -758,6 +844,8 @@ type ScheduledTask struct {
 	Title               string                `json:"title"`
 	Instructions        string                `json:"instructions"`
 	Schedule            ScheduledTaskSchedule `json:"schedule"`
+	DeliverTo           []string              `json:"deliver_to" nullable:"false" doc:"Where an occurrence is delivered, in order, the first that lands."`
+	QuietHours          *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"The part of the user's day an occurrence that comes due in is held through. Absent is no hold."`
 	State               string                `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it)." enum:"active,paused,completed,failed"`
 	NextRunAt           *string               `json:"next_run_at" doc:"The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none."`
 	Upcoming            []string              `json:"upcoming" nullable:"false" doc:"Up to the next five occurrences, RFC 3339 with the task zone's offset."`
@@ -776,7 +864,7 @@ type ScheduledTaskRun struct {
 	ScheduledFor string     `json:"scheduled_for" doc:"When the occurrence was due, RFC 3339 with the task zone's offset."`
 	Trigger      string     `json:"trigger" doc:"schedule when it came due, manual when it was run by hand." enum:"schedule,manual"`
 	State        string     `json:"state" doc:"running (retries included), delivered, failed, or missed (it fell outside the grace period)." enum:"running,delivered,failed,missed"`
-	DeliveredTo  string     `json:"delivered_to" doc:"Where the follow-up landed: conversation, or call when it was spoken on a call. Empty until it lands."`
+	DeliveredTo  string     `json:"delivered_to" doc:"Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands."`
 	SessionId    string     `json:"session_id"`
 	Attempts     int        `json:"attempts"`
 	StartedAt    *time.Time `json:"started_at"`
