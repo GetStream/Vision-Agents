@@ -135,6 +135,8 @@ type stubSTT struct {
 	// holdClose, if set, is waited on by Close, as a provider that flushes a final transcript
 	// before it lets go of its socket.
 	holdClose <-chan struct{}
+	// closes counts the times it was closed.
+	closes atomic.Int64
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
@@ -170,6 +172,7 @@ func (s *stubSTT) Close() error {
 	if hold != nil {
 		<-hold
 	}
+	s.closes.Add(1)
 	s.emitter.Close()
 	return nil
 }
@@ -699,6 +702,9 @@ type AgentSuite struct {
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
+	// holdOpen, if set, is waited on by each transcription session the agent opens, as a
+	// provider still dialling.
+	holdOpen chan struct{}
 	// replacement is the voice opened after the first, for a test whose agent loses one.
 	replacement *stubTTS
 	// subagent is the second model, present only when a test asks for delegation.
@@ -765,6 +771,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edgeFactory = nil
+	s.holdOpen = nil
 	s.remembers = nil
 	s.incognito = false
 	s.knows = nil
@@ -905,6 +912,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
 		s.opened.Add(1)
+		if s.holdOpen != nil {
+			<-s.holdOpen
+		}
 		return s.ears, nil
 	})
 	transcriber, err := sttrouter.New(sttrouter.Options{
@@ -1022,6 +1032,14 @@ func (s *AgentSuite) speak(participant stt.Participant) {
 		Participant: participant,
 		Audio:       audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1},
 	}
+}
+
+// listening reports whether the agent has a transcription session for a participant.
+func (s *AgentSuite) listening(participantID string) bool {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	_, ok := s.agent.listeners[participantID]
+	return ok
 }
 
 // says makes the transcriber report a settled turn.
@@ -1235,6 +1253,59 @@ func (s *AgentSuite) TestASlowTranscriberToCloseDoesNotDelayTheNextArrival() {
 	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 },
 		"a departed participant's session closing held up the next arrival")
 	close(release)
+}
+
+func (s *AgentSuite) TestAudioFromSomebodyWhoLeftOpensNoTranscriptionSession() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+
+	s.speak(alice)
+	bob := stt.Participant{ID: "bob"}
+	s.speak(bob)
+
+	// Frames are handled in the order they come, so once bob has a session alice's frame
+	// has been dealt with.
+	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
+	s.EqualValues(1, s.opened.Load(), "a session was opened for a participant who left")
+}
+
+func (s *AgentSuite) TestSomebodyLeavingWhileTheirSessionOpensHasItClosed() {
+	s.join(true)
+	release := make(chan struct{})
+	s.holdOpen = release
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "no session was asked for")
+
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+	close(release)
+
+	s.eventually(func() bool { return s.ears.closes.Load() == 1 },
+		"the session opened for a participant who left was never closed")
+	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
+	s.Empty(s.ears.transcribed(), "a participant who left was transcribed")
+}
+
+func (s *AgentSuite) TestSomebodyWhoComesBackIsTranscribedAgain() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 2 },
+		"the return was never reported")
+
+	s.speak(alice)
+
+	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 },
+		"a participant who came back is not transcribed")
 }
 
 func (s *AgentSuite) TestParticipantAudioIsTranscribed() {
