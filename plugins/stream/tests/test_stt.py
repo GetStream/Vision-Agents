@@ -62,6 +62,18 @@ class Router:
         self.refusing = False
         # dropping makes opening a socket hang up before answering, as a router going away does.
         self.dropping = False
+        # refusing_start is the error the router answers a start frame with, as it does a
+        # model that cannot take what was asked of it, before closing the socket.
+        self.refusing_start = ""
+        # started_after is how long the router takes to answer a start frame, as a provider
+        # that is slow to open does.
+        self.started_after = 0.0
+        # silent makes the router read a start frame and answer nothing, as a stuck provider does.
+        self.silent = False
+        # start_seen is set when a start frame reaches the router.
+        self.start_seen = asyncio.Event()
+        # hanging_up makes the router close the socket on a start frame without a word.
+        self.hanging_up = False
         # answering holds every handshake while it is clear, as a slow router does.
         self.answering = asyncio.Event()
         self.answering.set()
@@ -82,6 +94,10 @@ class Router:
         await self.opened[index].socket.send_json(
             {"type": "transcript", "text": text, "final": True}
         )
+
+    async def fail(self, index: int, error: str) -> None:
+        """Send an error frame down the socket opened `index`th."""
+        await self.opened[index].socket.send_json({"type": "error", "error": error})
 
     async def next_heard(self) -> tuple[int, bytes]:
         """Which socket the next audio frame came over, and the frame."""
@@ -131,6 +147,22 @@ class Router:
         async for message in socket:
             if message.type == WSMsgType.TEXT:
                 opened.start = json.loads(message.data)
+                self.start_seen.set()
+                if self.silent:
+                    continue
+                if self.refusing_start:
+                    await socket.send_json(
+                        {"type": "error", "error": self.refusing_start}
+                    )
+                    await socket.send_json({"type": "closed"})
+                    await socket.close()
+                elif self.hanging_up:
+                    await socket.close()
+                else:
+                    await asyncio.sleep(self.started_after)
+                    await socket.send_json(
+                        {"type": "started", "provider": "deepgram", "model": "nova-3"}
+                    )
             elif message.type == WSMsgType.BINARY:
                 opened.audio.append(message.data)
                 await self.heard.put((index, message.data))
@@ -218,6 +250,20 @@ class TestSTT:
 
         with pytest.raises(RouterError):
             await transcriber.start()
+
+    async def test_a_start_cancelled_while_waiting_closes_its_socket(
+        self, router: Router
+    ):
+        router.silent = True
+        transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
+        starting = asyncio.create_task(transcriber.start())
+        await asyncio.wait_for(router.start_seen.wait(), SETTLE)
+
+        starting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+
+        await asyncio.wait_for(router.opened[0].closed.wait(), SETTLE)
 
     async def test_a_socket_refused_for_a_new_participant_is_reported_once(
         self, router: Router, stt: stream.STT
@@ -382,3 +428,124 @@ class TestSTT:
 
         assert heard == (0, audio(101).samples.tobytes())
         assert len(router.opened) == 1
+
+    async def test_keyterms_are_sent_in_the_start_frame_beside_the_options(
+        self, router: Router
+    ):
+        transcriber = stream.STT(
+            "en-low-latency",
+            url=router.url,
+            customer_id="acme",
+            options={"interim": True, "keyterms": ["old"]},
+            keyterms=["Stream", "Vision Agents"],
+        )
+        await transcriber.start()
+        await transcriber.close()
+
+        assert router.opened[0].start["stt"] == {
+            "interim": True,
+            "keyterms": ["Stream", "Vision Agents"],
+        }
+
+    async def test_a_start_the_router_refuses_is_raised_by_start_with_its_message(
+        self, router: Router
+    ):
+        router.refusing_start = (
+            "microsoft/MAI-Transcribe-2-Streaming does not take keyterms"
+        )
+        transcriber = stream.STT(
+            "microsoft/MAI-Transcribe-2-Streaming",
+            url=router.url,
+            customer_id="acme",
+            keyterms=["Stream"],
+        )
+        seen: list[object] = []
+
+        @transcriber.events.subscribe
+        async def on_event(event: STTErrorEvent | STTConnectedEvent):
+            seen.append(event)
+
+        with pytest.raises(RouterError) as raised:
+            await transcriber.start()
+        await transcriber.events.wait()
+        await transcriber.close()
+
+        assert str(raised.value) == router.refusing_start
+        assert seen == [], (
+            "the refusal is raised, not also reported, and nothing connected"
+        )
+
+    async def test_a_router_that_starts_late_still_starts_and_transcribes(
+        self, router: Router
+    ):
+        router.started_after = 0.5
+        transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
+
+        await transcriber.start()
+        await transcriber.process_audio(audio(100), ALICE)
+        index, _ = await router.next_heard()
+        await router.say(index, "hello")
+        transcript = await asyncio.wait_for(transcriber.output.get(), SETTLE)
+        await transcriber.close()
+
+        assert isinstance(transcript, Transcript)
+        assert transcript.text == "hello"
+
+    async def test_a_socket_closed_before_it_started_is_raised_by_start(
+        self, router: Router
+    ):
+        router.hanging_up = True
+        transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
+
+        with pytest.raises(RouterError, match="closed the socket before it started"):
+            await asyncio.wait_for(transcriber.start(), SETTLE)
+        await transcriber.close()
+
+    async def test_an_error_after_the_start_is_reported_as_an_event(
+        self, router: Router, stt: stream.STT
+    ):
+        errors: list[STTErrorEvent] = []
+        reported = asyncio.Event()
+
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            errors.append(event)
+            reported.set()
+
+        await router.fail(0, "deepgram hung up")
+        await asyncio.wait_for(reported.wait(), SETTLE)
+
+        assert [str(e.error) for e in errors] == ["deepgram hung up"]
+
+    async def test_a_later_participants_refusal_is_reported_as_an_event(
+        self, router: Router, stt: stream.STT
+    ):
+        errors: list[STTErrorEvent] = []
+        reported = asyncio.Event()
+
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            errors.append(event)
+            reported.set()
+
+        await stt.process_audio(audio(100), ALICE)
+        await router.next_heard()
+        router.refusing_start = "bob refused"
+        await stt.process_audio(audio(200), BOB)
+        await asyncio.wait_for(reported.wait(), SETTLE)
+        await stt.events.wait()
+
+        assert [str(e.error) for e in errors] == ["bob refused"]
+
+    async def test_empty_keyterms_leave_what_the_options_named(self, router: Router):
+        transcriber = stream.STT(
+            "en-low-latency",
+            url=router.url,
+            customer_id="acme",
+            options={"keyterms": ["old"]},
+            keyterms=[],
+        )
+        await transcriber.start()
+        await transcriber.close()
+
+        assert router.opened[0].start["stt"] == {"keyterms": ["old"]}

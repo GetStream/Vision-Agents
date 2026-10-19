@@ -622,6 +622,13 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### `stream.STT` takes `keyterms`
+
+`stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,
+such as names and member IDs, at most 100. They went only through the untyped `options` dict
+before; `keyterms` overrides one given there. A model that takes no keyterms refuses them,
+and `start()` raises that (AI-1422).
+
 ### A person can send photos in a conversation kept in Stream Chat
 
 A question with a `request_id` may now carry `images`, on `POST /v1/agents/sessions/{id}/responses`
@@ -2158,6 +2165,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (#1014, AI-1419).
 - A live transcription whose vendor fails for good mid-call, such as ElevenLabs refusing an account that has not accepted its terms (`unaccepted_terms`), reports it once: `/v1/stt/stream` sent one more `error` frame per frame of audio after it (779 in one call). The stat row keeps the vendor's reason as its `error_message`, and the model is unavailable in `GET /v1/stt/providers` and ranked last for the next five minutes, however many turns it served before (AI-1417).
 
+- `stream.STT.start()` raises the router's refusal as a `RouterError`, such as a model that takes no keyterms or has no API key. It sent the start frame and returned at once, so a refusal arrived only as an `STTErrorEvent`, and an agent nobody subscribed to errors on got no `started`, no error and no transcripts. `start()` now waits for the router's `started` or `error` frame, at most 10 seconds (`asyncio.TimeoutError` after that). An error after `started` is still an `STTErrorEvent`, and the sockets opened later for other participants work as before (AI-1422).
 - A Knowledge source whose `<source>#<n>` id reached 64 bytes is indexed: a URL subscribed with `POST /v1/agents/knowledge/urls`, or a document posted to `POST /v1/agents/knowledge` whose `source` is that long. Its passage ids were `<source>#<n>`, and turbopuffer refuses an id of 64 bytes or more (`id string should be less than 64 bytes`), so such a page failed to index. A passage id that would not fit is now a hash of the whole source and the index (`<sha256, base64url>#<n>`); every id that fitted stays the same, so a base filled before needs no re-index (#1010, AI-1408).
 
 - Voicebench reply timing no longer reuses an answer to a later caller turn for earlier turns, and detects quiet speech on the isolated agent track. Methodology v10 separates missing post-caller replies from agent speech that already started while the caller was talking. Native-target diagnostics follow the explicitly selected router instead of a stale environment URL.
