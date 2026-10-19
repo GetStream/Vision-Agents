@@ -200,6 +200,12 @@ type RouterSuite struct {
 	// whose sessions each need a model of their own to read back.
 	notedMu sync.Mutex
 	noted   []*scriptedLLM
+	// scheduled are the "scheduling" models opened so far, one per session, newest last.
+	// They run the tool calls schedulingScript queues, so a test of the scheduling tools
+	// scripts its own sessions' turns and reads back what each model was offered.
+	scheduledMu      sync.Mutex
+	scheduled        []*schedulingModel
+	schedulingScript schedulingScript
 
 	// chat is the Stream Chat the conversations are written to and transcripts read from:
 	// the deployment's own app. apps gives a customer an app of its own instead, and
@@ -751,6 +757,15 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		return &scriptedLLM{reply: "Let me ask.", calls: []llm.ToolCall{{
 			ID: store.NewID(), Name: connectorEcho, Arguments: `{"text":"` + connectorEchoText + `"}`,
 		}}}, nil
+	})
+	// A model that runs the tool calls its test queued in the suite's schedulingScript,
+	// one call per person who speaks, for the scheduling tools' tests.
+	reasoning.Register("scheduling", func(routing.Spec) (llmrouter.Provider, error) {
+		model := &schedulingModel{script: &s.schedulingScript}
+		s.scheduledMu.Lock()
+		s.scheduled = append(s.scheduled, model)
+		s.scheduledMu.Unlock()
+		return model, nil
 	})
 	// A model that runs crm's echo through a waiting binding's call_tool whenever somebody
 	// asks it something, a follow-up after a login included (chat_logins_test.go).
