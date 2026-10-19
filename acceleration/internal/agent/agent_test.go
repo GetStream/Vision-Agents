@@ -2448,6 +2448,89 @@ func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
 	}, "the dead transcriber was kept, so nothing this participant says is heard again")
 }
 
+func (s *AgentSuite) TestAnAgentPinnedToABatchTranscriberIsRefusedOnceWhenItJoins() {
+	// On 6d4d0d4a the agent joined and every inbound frame opened a transcriber that was
+	// refused: 100 frames gave 100 "stt" errors (rev1-probes/agent_head_probe.go.txt).
+	agent, built := s.buildTranscribing("stub/batch", nil)
+
+	err := agent.Join(s.ctx)
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+	s.EqualError(err, "agent: start stt: routing: stub/batch is a batch model for recordings, not live calls; "+
+		"for a live call name stub/stub-model")
+	s.Zero(built.Load(), "nothing was built, so no vendor was dialled")
+	s.False(s.edge.joined, "the call was never joined, so no frame is heard and refused")
+}
+
+func (s *AgentSuite) TestAnAgentWhoseLiveTranscriberFailsToStartTriesAgainOnEachFrame() {
+	// On d1654d42 each frame opened a transcriber, and each failure was one "stt" error.
+	agent, built := s.buildTranscribing("stub/stub-model", errors.New("stub: connect failed"))
+	s.Require().NoError(agent.Join(s.ctx))
+	events := collect(agent)
+	s.T().Cleanup(func() { <-events.done })
+	s.T().Cleanup(func() { _ = agent.Close() })
+
+	for range 3 {
+		s.speak(stt.Participant{ID: "alice"})
+	}
+
+	failed := func() int {
+		count := 0
+		for _, event := range events.seen() {
+			if failure, ok := event.(Error); ok && failure.Context == "stt" {
+				count++
+			}
+		}
+		return count
+	}
+	s.eventually(func() bool { return failed() == 3 }, "a failed start was not tried again on the next frame")
+	s.EqualValues(3, built.Load())
+}
+
+// buildTranscribing builds an agent whose transcriber is pinned to target, over a config
+// that also declares the batch model stub/batch. A start error fails every session opened.
+func (s *AgentSuite) buildTranscribing(target string, start error) (*Agent, *atomic.Int64) {
+	s.edge = newLoopbackEdge()
+	s.model = newStubLLM()
+	s.flow = newStubLLM()
+	s.voice = newStubTTS(true)
+	logger := slog.New(slog.DiscardHandler)
+
+	config := stubConfig()
+	config.Providers = append(config.Providers, routing.ProviderConfig{Provider: "stub", Model: "batch", Languages: []string{"en"}})
+	var built atomic.Int64
+	transcription := sttrouter.NewRegistry()
+	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
+		built.Add(1)
+		return &unstartableSTT{stubSTT: newStubSTT(), err: start}, nil
+	})
+	transcriber, err := sttrouter.New(sttrouter.Options{Config: config, Registry: transcription, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(transcriber.Close)
+	speech := ttsrouter.NewRegistry()
+	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaker, err := ttsrouter.New(ttsrouter.Options{Config: stubConfig(), Registry: speech, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(speaker.Close)
+
+	agent, err := New(Options{
+		Edge: s.edge, Instructions: "be brief", CustomerID: "acme",
+		LLM: s.reasoner(logger), LLMTarget: "en-low-latency",
+		STT: transcriber, STTTarget: target,
+		TTS: speaker, TTSTarget: "en-low-latency", Logger: logger,
+	})
+	s.Require().NoError(err)
+	return agent, &built
+}
+
+// unstartableSTT is a transcriber whose Start fails with err, when it is set.
+type unstartableSTT struct {
+	*stubSTT
+	err error
+}
+
+func (u *unstartableSTT) Start(context.Context) error { return u.err }
+
 func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {
 	// A murmur is meant to overlap. Treating the caller carrying on as barge-in would
 	// report an interruption on every single one.

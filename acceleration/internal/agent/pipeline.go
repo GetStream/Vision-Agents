@@ -504,6 +504,13 @@ func (a *Agent) releasePipeline(keepHarness bool) (*pipeline, []error) {
 // openCascade opens the conversation model, the flow controller, the harness and the
 // voice a cascade runs on.
 func (a *Agent) openCascade(s Settings) (*prepared, error) {
+	// A transcriber opens per participant on each frame until one starts, so a target it
+	// could never start on is refused here, once, rather than on every frame of the call.
+	if !a.options.Text {
+		if err := a.options.STT.Live(sttrouter.Request{Target: s.STTTarget}); err != nil {
+			return nil, stack.Wrap(fmt.Errorf("agent: start stt: %w", err))
+		}
+	}
 	prep := &prepared{}
 	var err error
 	if prep.llm, err = a.startLLM(s.LLMTarget); err != nil {
