@@ -42,6 +42,7 @@ const (
 
 	ScheduledTaskDeliveredConversation = "conversation"
 	ScheduledTaskDeliveredCall         = "call"
+	ScheduledTaskDeliveredPhone        = "phone"
 )
 
 // scheduledTaskStaleRun is how long a run may sit in running before another
@@ -76,6 +77,9 @@ type ScheduledTask struct {
 	NextRunAt  *time.Time     `bun:"next_run_at"`
 	State      string         `bun:"state,notnull"`
 	Channels   []string       `bun:"channels,type:jsonb,notnull"`
+	// QuietHours is the span of the user's local day an occurrence is held
+	// through rather than delivered into. Nil is no hold.
+	QuietHours *ScheduledTaskQuietHours `bun:"quiet_hours,type:jsonb"`
 	Custom     map[string]any `bun:"custom,type:jsonb,nullzero"`
 	LeaseUntil *time.Time     `bun:"lease_until"`
 	ClaimID    string         `bun:"claim_id,notnull"`
@@ -84,6 +88,14 @@ type ScheduledTask struct {
 	CreatedBy           string    `bun:"created_by,notnull"`
 	CreatedAt           time.Time `bun:"created_at,notnull"`
 	UpdatedAt           time.Time `bun:"updated_at,notnull"`
+}
+
+// ScheduledTaskQuietHours is the span of the user's local day an occurrence
+// is held through rather than delivered into, as the clock reads it in the
+// task's zone: "22:00" to "07:00" holds the night.
+type ScheduledTaskQuietHours struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 // ScheduledTaskRun is one occurrence of a task that came due (or was run by
@@ -104,7 +116,11 @@ type ScheduledTaskRun struct {
 	Error        *string    `bun:"error"`
 	StartedAt    *time.Time `bun:"started_at"`
 	FinishedAt   *time.Time `bun:"finished_at"`
-	CreatedAt    time.Time  `bun:"created_at,notnull"`
+	// PostponedUntil is when a hold on this run ends (quiet hours), recorded
+	// when the worker holds it. The next claim counts the occurrence's age
+	// from here, so a held occurrence is delivered, not missed.
+	PostponedUntil *time.Time `bun:"postponed_until"`
+	CreatedAt      time.Time  `bun:"created_at,notnull"`
 }
 
 // ScheduledTaskPosition is where a page of tasks or runs ends.
@@ -410,7 +426,8 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 					task.ClaimID = claimID
 					claimed = append(claimed, ClaimedScheduledTask{Task: task, Run: run, ClaimID: claimID, AlreadySettled: true})
 					continue
-				case run.StartedAt != nil && now.Sub(*run.StartedAt) < scheduledTaskStaleRun:
+				case run.StartedAt != nil && now.Sub(*run.StartedAt) < scheduledTaskStaleRun &&
+					!heldRun(run, now):
 					// A worker had it recently and its lease lapsed without a
 					// renewal only just now; park the task until the run is
 					// stale enough to take over.
@@ -476,6 +493,54 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 		return nil, stack.Wrap(err)
 	}
 	return claimed, nil
+}
+
+// heldRun reports whether a running run is a held one whose hold has ended:
+// nobody is delivering it, however recently it started, so it is taken over
+// rather than parked. A run another worker took a moment ago has no hold
+// recorded, or one still to run out.
+func heldRun(run ScheduledTaskRun, now time.Time) bool {
+	return run.PostponedUntil != nil && !run.PostponedUntil.After(now)
+}
+
+// PostponeScheduledTask holds a claimed task until until, under its claim:
+// the lease moves to the hold's end and the claim stays, so no other worker
+// takes the occurrence meanwhile, and the run stays running with the hold
+// recorded on it. False is a claim an update or pause fenced meanwhile: the
+// change that fenced it decides what happens instead.
+func (s *Store) PostponeScheduledTask(ctx context.Context, customerID, taskID, runID, claimID string, until time.Time) (bool, error) {
+	held := false
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("lease_until = ?", until).
+			Set("updated_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("id = ?", taskID).
+			Where("claim_id = ?", claimID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: postpone scheduled task: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: postpone scheduled task: %w", err)
+		}
+		held = affected > 0
+		if !held {
+			return nil
+		}
+		if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+			Set("postponed_until = ?", until).
+			Where("id = ?", runID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("store: postpone scheduled task run: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return false, stack.Wrap(err)
+	}
+	return held, nil
 }
 
 // RenewScheduledTaskLease extends a claim the worker still holds.

@@ -224,6 +224,85 @@ func (s *StoreSuite) TestDeletingATaskDeletesItsRuns() {
 	s.Empty(runs)
 }
 
+func (s *StoreSuite) TestQuietHoursRoundTrip() {
+	s.task("one", func(task *ScheduledTask) {
+		task.QuietHours = &ScheduledTaskQuietHours{Start: "22:00", End: "07:00"}
+	})
+
+	found, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(found.QuietHours)
+	s.Equal("22:00", found.QuietHours.Start)
+	s.Equal("07:00", found.QuietHours.End)
+}
+
+func (s *StoreSuite) TestAPostponedTaskIsHeldUnderItsClaimUntilTheHoldEnds() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	until := time.Now().Add(2 * time.Hour)
+	held, err := s.store.PostponeScheduledTask(s.ctx, "acme", "one", claimed[0].Run.ID, claimed[0].ClaimID, until)
+	s.Require().NoError(err)
+	s.True(held)
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(task.LeaseUntil)
+	s.True(task.LeaseUntil.After(time.Now().Add(time.Hour)), "the lease is the hold, not the claim's minute")
+	s.Equal(claimed[0].ClaimID, task.ClaimID, "the claim is kept, so no other worker takes the occurrence")
+
+	runs, err := s.store.ScheduledTaskRuns(s.ctx, "acme", "one", 25, nil)
+	s.Require().NoError(err)
+	s.Require().Len(runs, 1)
+	s.Equal(ScheduledTaskRunRunning, runs[0].State, "a held run is still running")
+	s.Require().NotNil(runs[0].PostponedUntil)
+	s.WithinDuration(until, *runs[0].PostponedUntil, time.Second)
+
+	// Nobody claims it while the hold stands.
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Empty(again)
+
+	// The hold ends: the run is taken up at once under the same run, however
+	// recently it started, because nobody is delivering it.
+	ended := time.Now().Add(-time.Minute)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", ended).
+		Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("postponed_until = ?", ended).
+		Where("id = ?", claimed[0].Run.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+	taken, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(taken, 1)
+	s.Equal(claimed[0].Run.ID, taken[0].Run.ID)
+	s.Require().NotNil(taken[0].Run.PostponedUntil, "the claim remembers the hold, so the age counts from its end")
+}
+
+func (s *StoreSuite) TestAPostponeUnderAStolenClaimHoldsNothing() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	stored.Title = "Edited"
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &stored))
+
+	held, err := s.store.PostponeScheduledTask(s.ctx, "acme", "one", claimed[0].Run.ID, claimed[0].ClaimID, time.Now().Add(time.Hour))
+	s.Require().NoError(err)
+	s.False(held, "a fenced claim holds nothing: the edit decides what happens")
+}
+
 func (s *StoreSuite) TestAUserTimezoneIsStoredAndMoved() {
 	s.Require().NoError(s.store.SetUserTimezone(s.ctx, "acme", "sam", "authenticated", "Europe/Amsterdam"))
 	zone, err := s.store.UserTimezone(s.ctx, "acme", "sam")

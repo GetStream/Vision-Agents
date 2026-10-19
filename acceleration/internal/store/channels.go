@@ -188,6 +188,31 @@ func (s *Store) ChannelIdentity(ctx context.Context, customerID, configID, kind,
 	return identity, nil
 }
 
+// ChannelIdentityByUser is where one end user is reached on a channel: the
+// identity an agent holds for them on it, written by whichever of their
+// messages settled who they are.
+func (s *Store) ChannelIdentityByUser(ctx context.Context, customerID, configID, kind, userID string) (ChannelIdentity, error) {
+	if customerID == "" || configID == "" || kind == "" || userID == "" {
+		return ChannelIdentity{}, ErrUnknownChannelIdentity
+	}
+
+	var identity ChannelIdentity
+	err := s.db.NewSelect().Model(&identity).
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Where("kind = ?", kind).
+		Where("user_id = ?", userID).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ChannelIdentity{}, ErrUnknownChannelIdentity
+	}
+	if err != nil {
+		return ChannelIdentity{}, fmt.Errorf("store: channel identity by user: %w", err)
+	}
+	return identity, nil
+}
+
 // SaveChannelIdentity records who a number is, or moves its conversation on.
 func (s *Store) SaveChannelIdentity(ctx context.Context, identity *ChannelIdentity) error {
 	if identity.CustomerID == "" || identity.ConfigID == "" || identity.Kind == "" ||
@@ -205,6 +230,7 @@ func (s *Store) SaveChannelIdentity(ctx context.Context, identity *ChannelIdenti
 		On("CONFLICT (customer_id, config_id, kind, address) DO UPDATE").
 		Set("user_id = EXCLUDED.user_id").
 		Set("conversation_id = EXCLUDED.conversation_id").
+		Set("thread = EXCLUDED.thread").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	if err != nil {
@@ -260,13 +286,13 @@ func (s *Store) ClaimChannelLink(ctx context.Context, customerID, code string) (
 // ErrUnknownChannelLink is a code nobody was given, one already spent, or one past its time.
 var ErrUnknownChannelLink = errors.New("store: there is no such code")
 
-// ClaimChannelMessage records a message as delivered. False is one already taken, which a
-// provider retrying a slow delivery sends.
-func (s *Store) ClaimChannelMessage(ctx context.Context, accountID, messageID string) (bool, error) {
+// ClaimChannelMessage records a message as delivered, and who sent it. False is one
+// already taken, which a provider retrying a slow delivery sends.
+func (s *Store) ClaimChannelMessage(ctx context.Context, accountID, messageID, from string) (bool, error) {
 	result, err := s.db.NewRaw(
-		"INSERT INTO channel_deliveries (account_id, message_id, received_at) "+
-			"VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-		accountID, messageID, time.Now().UTC()).Exec(ctx)
+		"INSERT INTO channel_deliveries (account_id, message_id, received_at, from_address) "+
+			"VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+		accountID, messageID, time.Now().UTC(), from).Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("store: claim channel message: %w", err)
 	}
@@ -275,4 +301,21 @@ func (s *Store) ClaimChannelMessage(ctx context.Context, accountID, messageID st
 		return false, fmt.Errorf("store: claim channel message: %w", err)
 	}
 	return affected == 1, nil
+}
+
+// LastChannelMessageAt is when somebody last wrote to a line, or the zero time when
+// they never have. WhatsApp's window for writing first is counted from it.
+func (s *Store) LastChannelMessageAt(ctx context.Context, accountID, from string) (time.Time, error) {
+	var received time.Time
+	err := s.db.NewRaw(
+		"SELECT received_at FROM channel_deliveries "+
+			"WHERE account_id = ? AND from_address = ? ORDER BY received_at DESC LIMIT 1",
+		accountID, from).Scan(ctx, &received)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("store: last channel message: %w", err)
+	}
+	return received, nil
 }

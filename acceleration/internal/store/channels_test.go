@@ -79,13 +79,56 @@ func (s *StoreSuite) TestAMessageAlreadyTakenIsNotClaimedTwice() {
 	account := s.line(newID(), "+1555"+newID()[:7])
 	message := "wamid." + newID()
 
-	first, err := s.store.ClaimChannelMessage(s.ctx, account.ID, message)
+	first, err := s.store.ClaimChannelMessage(s.ctx, account.ID, message, "+15550001111")
 	s.Require().NoError(err)
-	second, err := s.store.ClaimChannelMessage(s.ctx, account.ID, message)
+	second, err := s.store.ClaimChannelMessage(s.ctx, account.ID, message, "+15550001111")
 	s.Require().NoError(err)
 
 	s.True(first)
 	s.False(second)
+}
+
+func (s *StoreSuite) TestTheLastTimeSomebodyWroteIsWhenTheyLastWrote() {
+	account := s.line(newID(), "+1555"+newID()[:7])
+
+	never, err := s.store.LastChannelMessageAt(s.ctx, account.ID, "+15550001111")
+	s.Require().NoError(err)
+	s.True(never.IsZero(), "somebody who never wrote has no last message")
+
+	before := time.Now().Add(-time.Second)
+	_, err = s.store.ClaimChannelMessage(s.ctx, account.ID, "wamid."+newID(), "+15550001111")
+	s.Require().NoError(err)
+	_, err = s.store.ClaimChannelMessage(s.ctx, account.ID, "wamid."+newID(), "+15550002222")
+	s.Require().NoError(err)
+
+	last, err := s.store.LastChannelMessageAt(s.ctx, account.ID, "+15550001111")
+	s.Require().NoError(err)
+	s.True(last.After(before), "the last message of the person who wrote is theirs, not another's")
+}
+
+func (s *StoreSuite) TestAnIdentityIsFoundByItsUserAndKeepsItsThread() {
+	customerID, configID, userID := newID(), newID(), "user-"+newID()
+	identity := ChannelIdentity{
+		CustomerID: customerID, ConfigID: configID, Kind: "imessage",
+		Address: "+15550001111", Thread: "chat-1", UserID: userID,
+	}
+	s.Require().NoError(s.store.SaveChannelIdentity(s.ctx, &identity))
+
+	held, err := s.store.ChannelIdentityByUser(s.ctx, customerID, configID, "imessage", userID)
+	s.Require().NoError(err)
+	s.Equal("+15550001111", held.Address)
+	s.Equal("chat-1", held.Thread)
+
+	identity.Thread = "chat-2"
+	s.Require().NoError(s.store.SaveChannelIdentity(s.ctx, &identity))
+	moved, err := s.store.ChannelIdentityByUser(s.ctx, customerID, configID, "imessage", userID)
+	s.Require().NoError(err)
+	s.Equal("chat-2", moved.Thread, "the chat a reply goes to moves with the person")
+
+	_, err = s.store.ChannelIdentityByUser(s.ctx, customerID, configID, "imessage", "somebody-else")
+	s.ErrorIs(err, ErrUnknownChannelIdentity)
+	_, err = s.store.ChannelIdentityByUser(s.ctx, newID(), configID, "imessage", userID)
+	s.ErrorIs(err, ErrUnknownChannelIdentity, "another app's identity is not this one's")
 }
 
 func (s *StoreSuite) TestTheAgentOnANumberIsTheOneThatNamedIt() {

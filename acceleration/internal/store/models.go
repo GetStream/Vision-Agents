@@ -728,6 +728,10 @@ type ChannelIdentity struct {
 	Kind       string `bun:"kind,notnull"`
 	// Address is the number that writes, in E.164, or a chat handle where there is no number.
 	Address string `bun:"address,notnull"`
+	// Thread is where a message is sent to reach this person again: the chat, for
+	// iMessage, whose replies go to a conversation rather than to a person. Empty
+	// where a reply goes to the address itself, as on WhatsApp and SMS.
+	Thread  string `bun:"thread,notnull"`
 	UserID  string `bun:"user_id,notnull"`
 	// ConversationID carries on what was said last time. Empty until the first turn settles.
 	ConversationID string    `bun:"conversation_id,notnull"`

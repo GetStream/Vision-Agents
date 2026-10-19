@@ -148,7 +148,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 		return Answer{Status: http.StatusBadRequest, Body: failure(err.Error())}
 	}
 	for _, message := range delivered {
-		fresh, err := s.store.ClaimChannelMessage(ctx, account.ID, message.ID)
+		fresh, err := s.store.ClaimChannelMessage(ctx, account.ID, message.ID, message.From)
 		if err != nil {
 			return Answer{Status: http.StatusInternalServerError, Body: failure(err.Error())}
 		}
@@ -325,6 +325,14 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 	line Account, provider Provider, message Message) (store.ChannelIdentity, bool) {
 	identity, err := s.store.ChannelIdentity(ctx, account.CustomerID, config.ID, account.Kind, message.From)
 	if err == nil {
+		// Where a reply reaches this person moves with the chat they wrote in,
+		// which a proactive message later needs: it is kept as it changes.
+		if message.Thread != "" && identity.Thread != message.Thread {
+			identity.Thread = message.Thread
+			if err := s.store.SaveChannelIdentity(ctx, &identity); err != nil {
+				s.logger.Error("could not record where a channel reply goes", "channel", account.Kind, "error", err)
+			}
+		}
 		return identity, true
 	}
 	if !errors.Is(err, store.ErrUnknownChannelIdentity) {
@@ -337,6 +345,7 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 		ConfigID:   config.ID,
 		Kind:       account.Kind,
 		Address:    message.From,
+		Thread:     message.Thread,
 		UserID:     "phone:" + message.From,
 	}
 	if config.Channels.Identity == store.ChannelIdentityLink {
