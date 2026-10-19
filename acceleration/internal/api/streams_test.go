@@ -217,12 +217,14 @@ func (s *StreamsSuite) TestARefusalTooLongForACloseFrameIsCutBetweenCharacters()
 }
 
 func (s *StreamsSuite) TestASocketTheRouterEndsWithoutAFailureClosesNormally() {
-	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
-	s.Require().Equal("started", s.nextFrame(speaking)["type"])
+	// The echo model is new each session: the suite's one transcriber and one voice end
+	// with the first session that closes them.
+	answering := s.start("/v1/llm/stream", frame{"target": "echo/echo-model"})
+	s.Require().Equal("started", s.nextFrame(answering)["type"])
 	// A frame the socket cannot read ends it, the one end the router chooses itself.
-	s.Require().NoError(speaking.WriteMessage(websocket.TextMessage, []byte("not json")))
+	s.Require().NoError(answering.WriteMessage(websocket.TextMessage, []byte("not json")))
 
-	read, ended := s.ending(speaking)
+	read, ended := s.ending(answering)
 
 	s.Require().Len(read, 1)
 	s.Equal("closed", read[0]["type"])
@@ -232,12 +234,12 @@ func (s *StreamsSuite) TestASocketTheRouterEndsWithoutAFailureClosesNormally() {
 }
 
 func (s *StreamsSuite) TestACallerThatHangsUpIsAnsweredWithItsOwnClose() {
-	listening := s.start("/v1/stt/stream", frame{"target": "en-low-latency"})
-	s.Require().Equal("started", s.nextFrame(listening)["type"])
+	answering := s.start("/v1/llm/stream", frame{"target": "echo/echo-model"})
+	s.Require().Equal("started", s.nextFrame(answering)["type"])
 
-	s.Require().NoError(listening.WriteMessage(websocket.CloseMessage,
+	s.Require().NoError(answering.WriteMessage(websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseGoingAway, "")))
-	read, ended := s.ending(listening)
+	read, ended := s.ending(answering)
 
 	s.Empty(read)
 	var closed *websocket.CloseError
