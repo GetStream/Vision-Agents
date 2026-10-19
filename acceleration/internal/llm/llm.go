@@ -69,6 +69,9 @@ type Message struct {
 	ToolCalls []ToolCall
 	// ToolCallID names the call a ToolResult message answers.
 	ToolCallID string
+	// Speaker names who said a User turn once more than one person has spoken. No provider
+	// reads it: the agent writes it into the words it sends, and keeps Content as said.
+	Speaker string
 }
 
 // Tool is something the model may do instead of, or alongside, saying something.

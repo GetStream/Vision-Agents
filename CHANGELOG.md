@@ -642,6 +642,17 @@ sending them again. A retry with the same id, text and images is the same questi
 images under the same id are a 409. Videos still take no request id. The Swift SDK now sends a
 request id with every question, images or not.
 
+### The reply model is told who is speaking once a second person talks
+
+A hosted voice agent on a call with several people now sends each new turn to the model as
+`<name>: <words>` once a second participant has had a turn answered, and adds one line to the
+instructions saying several people are talking and that a reply never opens with a name. The
+name is the participant's display name, else their user id. Turns from before the second person
+spoke stay as they were, words typed into the session are the caller's and never count as a
+second person, and with one person on the call nothing changes. A speech-to-speech model taking
+over the call reads the same names in place of `Caller`. The session history, the timeline and
+the flow controller keep the words as said. Python LLM plugins follow (AI-1420).
+
 ### A session can join a Stream call that already exists
 
 `POST /v1/agents/sessions` (with `start_voice`) and `POST /v1/agents/sessions/{id}/voice` take
@@ -2149,6 +2160,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `GET /v1/{modality}/providers` lists each model's `supports`: the options it can be asked for, such as `keyterms` and `diarize`, and left out when it takes none. Which models take keyterms was only in the router's config (#1014, AI-1419).
 
 ## Bug Fixes
+
+- A voice asked of one vendor only, as `overwrites.<vendor>.voice_id` with no top-level `voice`, is spoken by that vendor or not at all. On a shortcut that reaches several vendors, such as `tts-quality`, another vendor served it with no voice, so in its default (ElevenLabs' is "Spuds Oxley - Grandpa"). Only the named vendor's models are tried now, and if they fail the error names them; a recording asked in a voice for a vendor with no recorder (any but ElevenLabs) is refused as the caller's mistake. With no top-level `voice`, `overwrites.cartesia.voice_id` is now spoken by Cartesia, which never read it. A request that asks for no voice, or for one at the top level, routes as before; STS is unchanged. The voice that spoke is reported, the provider's default included: `voice` on the `/v1/tts/stream` `started` frame and on a speech job (`Speech.voice`) (AI-1411).
 
 - A request that names one model and asks it for an option it does not take is refused naming that model: `routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms`. It read `routing: no provider can express keyterms`, as if the router had looked beyond the model the caller chose. This is the `/v1/stt/stream`, `/v1/tts/stream` and `/v1/sts/stream` `error` frame and every other refusal of a term; a shortcut keeps the old message (#1014, AI-1419).
 - The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (#1014, AI-1419).

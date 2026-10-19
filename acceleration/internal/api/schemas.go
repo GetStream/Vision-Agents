@@ -1180,6 +1180,7 @@ type Speech struct {
 	Status          RecordingStatus `json:"status"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 	Url             *string         `json:"url,omitempty" doc:"Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead."`
+	Voice           *string         `json:"voice,omitempty" doc:"The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say."`
 }
 
 // StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.

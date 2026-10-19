@@ -335,6 +335,22 @@ type recordingTTS struct {
 
 	mu   sync.Mutex
 	said []string
+	// voice is the one it was last opened with.
+	voice string
+}
+
+// opened is the voice opened again, in the voice asked.
+func (s *recordingTTS) opened(voice string) *recordingTTS {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.voice = voice
+	return s
+}
+
+func (s *recordingTTS) Voice() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.voice
 }
 
 func (s *recordingTTS) Start(context.Context) error { return nil }
@@ -405,13 +421,14 @@ func (t *recordedTranscriber) Close() error                { return nil }
 func (t *recordedTranscriber) Provider() string            { return "stub" }
 func (t *recordedTranscriber) Model() string               { return t.model }
 
-// recordedVoice speaks whatever it is handed into the same audio.
-type recordedVoice struct{ model string }
+// recordedVoice speaks whatever it is handed into the same audio, in the voice it was
+// built for.
+type recordedVoice struct{ model, voice string }
 
 func recorderRegistry() *ttsrouter.Recorders {
 	registry := ttsrouter.NewRecorderRegistry()
 	registry.Register("stub", func(spec routing.Spec) (tts.Recorder, error) {
-		return &recordedVoice{model: spec.Model}, nil
+		return &recordedVoice{model: spec.Model, voice: spec.Voice}, nil
 	})
 	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
 		return &recordedVoice{model: spec.Model}, nil
@@ -432,6 +449,7 @@ func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.
 	}, nil
 }
 
+func (v *recordedVoice) Voice() string               { return v.voice }
 func (v *recordedVoice) Start(context.Context) error { return nil }
 func (v *recordedVoice) Close() error                { return nil }
 func (v *recordedVoice) Provider() string            { return "stub" }

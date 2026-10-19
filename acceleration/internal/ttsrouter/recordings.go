@@ -143,6 +143,11 @@ func (r *Recordings) Record(
 	if err != nil {
 		return tts.Recorded{}, config, err
 	}
+	// Not the voice asked for: a recorder that cannot say leaves it empty rather than claim
+	// a voice it may have dropped.
+	if voiced, ok := provider.(tts.Voiced); ok {
+		recorded.Voice = voiced.Voice()
+	}
 	return recorded, config, nil
 }
 
