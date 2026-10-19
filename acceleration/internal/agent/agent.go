@@ -1173,6 +1173,20 @@ func (a *Agent) consumeRoster(roster Roster) {
 			continue
 		}
 		a.unbind(attendance.Participant)
+		a.mu.Lock()
+		listener := a.listeners[attendance.Participant.ID]
+		a.mu.Unlock()
+		if listener != nil {
+			// A provider that fills silence never cuts an idle session, so a departed
+			// participant's would stay open until the agent closes.
+			// Closing waits on the final transcript, so it must not hold up the next roster event.
+			a.forgetListener(attendance.Participant.ID, listener)
+			a.running.Add(1)
+			go func() {
+				defer a.running.Done()
+				a.closeListener(listener)
+			}()
+		}
 		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
 		a.emitter.Send(ParticipantLeft{
 			Participant: attendance.Participant,
@@ -1222,6 +1236,12 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 // handed every later chunk and the agent is deaf to the participant for the rest of the
 // call rather than for a moment.
 func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
+	a.forgetListener(participantID, session)
+	a.closeListener(session)
+}
+
+// forgetListener takes a session out of use without closing it.
+func (a *Agent) forgetListener(participantID string, session *sttrouter.Session) {
 	a.mu.Lock()
 	// Only when it is still the one in use: a replacement may already have been opened,
 	// and retiring that would put us back where we started.
@@ -1233,9 +1253,11 @@ func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
 	// afresh rather than held to names it never chose.
 	delete(a.voices, participantID)
 	a.mu.Unlock()
+}
 
-	// Closing releases the provider's socket and ends the stream of events this was
-	// reading. Doing it twice is safe, which is what lets Close race with this.
+// closeListener releases the provider's socket and ends the stream of events this was
+// reading. Doing it twice is safe, which is what lets Close race with this.
+func (a *Agent) closeListener(session *sttrouter.Session) {
 	if err := session.Close(); err != nil {
 		a.logger.Debug("closing a dropped transcriber failed", "error", err)
 	}

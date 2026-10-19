@@ -2,6 +2,7 @@ package sttrouter
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -19,6 +20,10 @@ type Session struct {
 	recorder *routing.Recorder
 
 	events chan stt.Event
+	// failed is set once the provider reports a fatal error. The caller has been told, and
+	// the provider hears nothing more, so later audio is dropped rather than failing once
+	// per frame.
+	failed atomic.Bool
 
 	closeOnce sync.Once
 }
@@ -40,8 +45,12 @@ func newSession(
 	return session
 }
 
-// ProcessAudio streams audio to the selected provider.
+// ProcessAudio streams audio to the selected provider, and drops it once the provider has
+// failed for good.
 func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
+	if s.failed.Load() {
+		return nil
+	}
 	return s.provider.ProcessAudio(pcm, participant)
 }
 
@@ -91,13 +100,30 @@ func (s *Session) observe(event stt.Event) {
 		})
 
 	case stt.Error:
-		s.recorder.Record(s.config, routing.Stat{
+		stat := routing.Stat{
 			Owner:     s.owner,
 			StartedAt: time.Now().UTC(),
 			Success:   false,
 			ErrorCode: errorCode(typed),
-		})
+			// The vendor's own words are what tell an account it refuses from a dropped
+			// socket.
+			ErrorMessage: typed.Err.Error(),
+		}
+		if typed.Fatal {
+			// Set before the error is passed on, so a caller who has read it sends no audio
+			// that still reaches the provider.
+			s.failed.Store(true)
+			// Only a refusal the vendor sent marks the model unavailable. Providers report a
+			// socket that dropped as a fatal error with the context read or write, and the
+			// next session can still reach the model.
+			stat.Fatal = !transportDrop(typed)
+		}
+		s.recorder.Record(s.config, stat)
 	}
+}
+
+func transportDrop(failure stt.Error) bool {
+	return failure.Context == "read" || failure.Context == "write"
 }
 
 func errorCode(failure stt.Error) string {
