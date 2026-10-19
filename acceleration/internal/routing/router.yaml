@@ -2347,6 +2347,21 @@ llm:
         per_million_input_tokens: 0.96
         per_million_output_tokens: 4.80
 
+    # MiniMax M3.1 Flash, 428B with about 23B active, on MiniMax's API until its weights are
+    # out. It cannot stop thinking, so it runs at the lowest effort.
+    - provider: minimax
+      model: MiniMax-M3.1-Flash
+      description: "MiniMax M3.1 Flash on MiniMax's API, thinking at low effort, which it cannot turn off."
+      context_window: 1000000
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      reasoning_effort: low
+      price:
+        per_million_input_tokens: 0.15
+        per_million_cached_input_tokens: 0.015
+        per_million_output_tokens: 0.60
+
     # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
     # stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: cerebras
