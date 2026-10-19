@@ -156,6 +156,8 @@ func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Rec
 	if language == "" {
 		language = r.options.Language
 	}
+	// Lowercased as the live voice does, since routing accepts "EN".
+	language = strings.ToLower(language)
 
 	body, err := json.Marshal(recorderRequest{
 		ModelID:      r.options.Model,

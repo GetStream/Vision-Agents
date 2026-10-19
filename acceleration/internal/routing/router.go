@@ -579,8 +579,13 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 	}
 
 	if len(chain) == 0 {
-		return nil, stack.Wrap(fmt.Errorf("routing: nothing in the priority list %s can serve this request: %w",
-			strings.Join(request.Providers, ", "), errors.Join(refusals...)))
+		message := fmt.Sprintf("routing: nothing in the priority list %s can serve this request",
+			strings.Join(request.Providers, ", "))
+		// Every entry resolved and was filtered out, so there is no refusal to wrap.
+		if len(refusals) == 0 {
+			return nil, stack.Wrap(errors.New(message))
+		}
+		return nil, stack.Wrap(fmt.Errorf("%s: %w", message, errors.Join(refusals...)))
 	}
 
 	demote(chain)

@@ -287,6 +287,19 @@ func (s *RecordingsSuite) TestARecordingInAFormatCartesiaCannotProduceIsRefusedN
 	s.Empty(s.asked, "no other file is made in its place")
 }
 
+func (s *RecordingsSuite) TestACartesiaRecorderThatCannotBeBuiltForAnotherReasonCountsAgainstTheModel() {
+	recordings := s.newRecordings()
+	s.T().Setenv("CARTESIA_API_KEY", "")
+	recording := Recording{CustomerID: "acme", Options: options.TTS{Target: "cartesia/sonic-preview"}, Text: "hello"}
+
+	s.Require().NoError(recordings.Check(s.ctx, recording))
+	_, _, err := recordings.Record(s.ctx, recording)
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, routing.ErrRequest, "a missing key is the provider's failure, not the caller's")
+	s.ErrorContains(err, "api key is required")
+}
+
 func (s *RecordingsSuite) TestARecordingAskingCartesiaForWhatItCannotExpressIsRefused() {
 	// On 41cb93cba these were refused because Cartesia did not record at all.
 	speed, volume := 0.8, 1.2
@@ -313,6 +326,55 @@ func (s *RecordingsSuite) TestAPriorityListOfModelsThatOnlyStreamIsRefused() {
 
 	s.Require().ErrorIs(err, routing.ErrRequest)
 	s.ErrorContains(err, "mock/mock-tts can only stream speech, not record it")
+}
+
+func (s *RecordingsSuite) TestAPriorityListNamingCartesiaIsServedByItsBatchModel() {
+	// On ef4a4cad8 this was refused: Cartesia had no batch entry, so the recording filter
+	// dropped sonic-preview.
+	for _, providers := range [][]string{{"cartesia"}, {"cartesia/sonic-3.6"}} {
+		s.Run(strings.Join(providers, ","), func() {
+			s.built = nil
+			served, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: providers})
+
+			s.Require().NoError(err)
+			s.Equal("cartesia/sonic-3.6", served)
+			s.Require().Len(s.built, 1)
+			s.Equal("sonic-3.6", s.built[0].(interface{ Model() string }).Model(), "a model /tts/bytes lists")
+		})
+	}
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfElevenLabsThenCartesiaFallsBackToCartesia() {
+	recordings := s.newRecordings()
+	s.T().Setenv("ELEVENLABS_API_KEY", "")
+	providers := []string{"elevenlabs", "cartesia"}
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: providers}, Text: "hello"})
+
+	s.Require().NoError(err)
+	s.Equal("cartesia/sonic-3.6", served.Name())
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfElevenLabsAloneIsStillServedByV3() {
+	// Probed on 41cb93cba: served by elevenlabs/eleven_v3.
+	served, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs"}})
+
+	s.Require().NoError(err)
+	s.Equal("elevenlabs/eleven_v3", served)
+}
+
+func (s *RecordingsSuite) TestTheRecordedShortcutsAreStillServedByElevenLabs() {
+	// Probed on 41cb93cba: en-recorded and multilingual-recorded were served by
+	// elevenlabs/eleven_v3, the one batch model; Cartesia's batch entry must not take them.
+	for _, target := range []string{"en-recorded", "multilingual-recorded"} {
+		s.Run(target, func() {
+			served, err := s.recordOn(options.TTS{Target: target})
+
+			s.Require().NoError(err)
+			s.Equal("elevenlabs/eleven_v3", served)
+		})
+	}
 }
 
 func (s *RecordingsSuite) TestAPriorityListWithOneModelThatRecordsIsServedByIt() {

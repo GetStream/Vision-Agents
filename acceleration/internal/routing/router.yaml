@@ -1791,6 +1791,80 @@ tts:
       price:
         per_million_chars: 14.8
 
+    # Sonic 3.6 on /tts/bytes, which returns the whole file: the recording path, as eleven_v3
+    # is for ElevenLabs, because a priority list asked for a recording only passes models
+    # with realtime: false. The id is one /tts/bytes lists (sonic-3.6, sonic-3.5, sonic-3,
+    # sonic-latest; sonic-preview is not among them) -
+    # https://docs.cartesia.ai/api-reference/tts/bytes, read 2026-10-19. Everything else is
+    # copied from the sonic-preview entry above: same languages, benchmark, terms and price.
+    - provider: cartesia
+      model: sonic-3.6
+      description: "Cartesia Sonic 3.6 as a whole file, for recordings rather than live calls."
+      benchmark: { elo: 1279, characters_per_second: 109 }
+      languages:
+        [
+          ar,
+          bg,
+          bn,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fr,
+          gu,
+          he,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ka,
+          kn,
+          ko,
+          ml,
+          mr,
+          ms,
+          nl,
+          no,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          te,
+          th,
+          tl,
+          tr,
+          uk,
+          ur,
+          vi,
+          zh,
+        ]
+      realtime: false
+      tier: low-latency
+      # A recording's file format, which /tts/bytes takes as output_format. The live voice
+      # refuses one: it streams raw audio into the call. Speed, volume and emotion are not
+      # declared, so a request asking for one is refused rather than spoken without it.
+      supports: [format]
+      # Their terms have Inputs and Outputs used "to train, enhance, evolve and improve"
+      # the models unless the account files the opt-out form, and Zero Data Retention -
+      # which does cover the text in and the audio out - is an Enterprise setting switched
+      # on per workspace rather than sent with a request. This is the self-serve default,
+      # and a deployment that has opted out or bought ZDR edits it to "no" and none.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_million_chars: 50.0
+
     # v3 on the plain synthesis endpoint, which returns the whole file rather than
     # streaming it. That is the recording path: an audiobook is not a conversation, so
     # nothing is gained by getting the first sound out early, and asking for the file is
@@ -1902,13 +1976,17 @@ tts:
       tier: low-latency
       prefer: elevenlabs/eleven_v4_turbo
 
+    # eleven_v3 is pinned so these shortcuts keep recording where they did before Cartesia
+    # had a batch entry; health orders Cartesia behind it.
     en-recorded:
       languages: [en]
       require_recorded: true
+      prefer: elevenlabs/eleven_v3
 
     multilingual-recorded:
       multilingual: true
       require_recorded: true
+      prefer: elevenlabs/eleven_v3
 
     en-high-accuracy:
       languages: [en]

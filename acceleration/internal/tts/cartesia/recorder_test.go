@@ -89,6 +89,7 @@ func (s *RecorderSuite) TestARecordingThatAsksForNothingIsAnMp3OfTheRecordersVoi
 	s.Equal("/tts/bytes", request.path)
 	s.Equal("Bearer k", request.header.Get("Authorization"))
 	s.Equal("2026-08-14", request.header.Get("Cartesia-Version"))
+	s.Equal("application/json", request.header.Get("Content-Type"))
 	s.JSONEq(`{"model_id":"sonic-preview","transcript":"hello","voice":{"id":"v1"},"language":"en",
 		"output_format":{"container":"mp3","sample_rate":44100,"bit_rate":128000}}`, request.body)
 	s.Equal(tts.Recorded{Audio: []byte("audio"), Format: "mp3_44100_128", Characters: 5}, recorded)
@@ -99,6 +100,24 @@ func (s *RecorderSuite) TestTheVoiceAndLanguageARecordingNamesWinOverTheRecorder
 
 	s.JSONEq(`{"model_id":"sonic-preview","transcript":"hello","voice":{"id":"v2"},"language":"de",
 		"output_format":{"container":"mp3","sample_rate":44100,"bit_rate":128000}}`, request.body)
+}
+
+func (s *RecorderSuite) TestALanguageIsSentInLowerCaseWhoseverNamedIt() {
+	_, fromRecording := s.record(RecorderOptions{VoiceID: "v1"}, tts.Recording{Language: "FR"})
+	_, fromRecorder := s.record(RecorderOptions{VoiceID: "v1", Language: "DE"}, tts.Recording{})
+
+	s.Contains(fromRecording.body, `"language":"fr"`)
+	s.Contains(fromRecorder.body, `"language":"de"`)
+}
+
+func (s *RecorderSuite) TestARecorderNamingNoVoiceSpeaksInTheVoiceOfTheEnvironment() {
+	s.T().Setenv("CARTESIA_VOICE_ID", "env-voice")
+
+	recorded, request := s.record(RecorderOptions{}, tts.Recording{})
+
+	s.Equal("env-voice", s.newRecorder(RecorderOptions{}).Voice())
+	s.Contains(request.body, `"voice":{"id":"env-voice"}`)
+	s.Equal("mp3_44100_128", recorded.Format)
 }
 
 func (s *RecorderSuite) TestARecorderNamingNoVoiceSpeaksInCartesiasDefault() {
