@@ -205,6 +205,48 @@ func (s *ConfigsSuite) TestAConfigOffersToolsWholeUnlessItSaysProgressively() {
 	s.True(value(saved.Tools.Progressive), "a setting left out on an update stays")
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersItsScheduling() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "max_tasks_per_user": 5, "default_timezone": "Europe/Amsterdam",
+	}})
+	s.Require().NotNil(created.Scheduling)
+	s.True(value(created.Scheduling.Enabled))
+	s.Equal(5, value(created.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(created.Scheduling.DefaultTimezone))
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.True(value(read.Scheduling.Enabled))
+	s.Equal(5, value(read.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(read.Scheduling.DefaultTimezone))
+}
+
+func (s *ConfigsSuite) TestAConfigSchedulingStaysWhenAPatchLeavesItOut() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "default_timezone": "Europe/Amsterdam",
+	}})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+created.Id, map[string]any{"name": "help"}, &patched))
+	s.True(value(patched.Scheduling.Enabled))
+	s.Equal("Europe/Amsterdam", value(patched.Scheduling.DefaultTimezone))
+}
+
+func (s *ConfigsSuite) TestAConfigNamingAnUnknownDefaultTimezoneIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+
+	created := s.createConfig(map[string]any{"name": "support"})
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+}
+
 func (s *ConfigsSuite) TestADispatchSettingThatIsNeitherOnNorOffIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "dispatch": map[string]any{"text": "sometimes"}})

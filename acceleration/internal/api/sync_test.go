@@ -94,6 +94,27 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhetherItsToolsAreOfferedProgressive
 	s.True(value(again.Config.Tools.Progressive), "a directory that says nothing leaves what is stored")
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresItsScheduling() {
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "scheduling": map[string]any{
+		"enabled": true, "max_tasks_per_user": 5, "default_timezone": "Europe/Amsterdam",
+	}})
+	s.True(value(result.Config.Scheduling.Enabled))
+	s.Equal(5, value(result.Config.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(result.Config.Scheduling.DefaultTimezone))
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	s.True(value(again.Config.Scheduling.Enabled), "a directory that says nothing leaves what is stored")
+	s.Equal("Europe/Amsterdam", value(again.Config.Scheduling.DefaultTimezone))
+}
+
+func (s *SyncSuite) TestASyncNamingAnUnknownDefaultTimezoneIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "concierge", "hash": "v1",
+			"scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+}
+
 func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
 	result := s.sync(map[string]any{
 		"name": "artist", "hash": "v1", "sandbox": "daytona",

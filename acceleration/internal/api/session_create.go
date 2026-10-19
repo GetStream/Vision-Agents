@@ -5,7 +5,10 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -62,7 +65,28 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 		// log the caller cannot see.
 		return nil, invalidRequest(err.Error())
 	}
+	s.rememberTimezone(ctx, customerID, spec)
 	return &createSessionResponse{Body: sessionOf(created)}, nil
+}
+
+// rememberTimezone stores the zone a session was opened in as its user's zone, so what a
+// task scheduled later runs at is the hour this user means. The latest explicit zone wins,
+// a session that names none says nothing, and an incognito session speaks for nobody.
+func (s *Server) rememberTimezone(ctx context.Context, customerID string, spec session.Spec) {
+	if s.store == nil || spec.Timezone == "" || spec.Incognito {
+		return
+	}
+	caller := CallerFrom(ctx)
+	if caller.UserID == "" {
+		return
+	}
+	kind := store.UserKindAuthenticated
+	if KindFrom(ctx) == auth.KindGuest {
+		kind = store.UserKindGuest
+	}
+	if err := s.store.SetUserTimezone(ctx, customerID, caller.UserID, kind, spec.Timezone); err != nil {
+		s.logger.Error("could not store the user's timezone", "user", caller.UserID, "error", err)
+	}
 }
 
 // errDeviceHistory refuses a history sent by an end user's device.
@@ -84,6 +108,13 @@ func refuseSessionRequest(ctx context.Context, request CreateSessionRequest) (AP
 	if returnURL := value(request.ReturnUrl); returnURL != "" {
 		if err := checkReturnURL(returnURL); err != nil {
 			return invalidRequest("return_url: " + err.Error()), true
+		}
+	}
+	// A zone nobody knows is refused where it is named, rather than at the first task
+	// that would have run in it.
+	if zone := value(request.Timezone); zone != "" {
+		if _, err := scheduling.LoadZone(zone); err != nil {
+			return invalidTimezone("timezone: " + err.Error()), true
 		}
 	}
 	return APIError{}, false

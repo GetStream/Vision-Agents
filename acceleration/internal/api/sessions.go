@@ -606,6 +606,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.ModelOverwrites = modelOverwritesOf(*request.ModelOverwrites)
 	}
 
+	spec.Timezone = value(request.Timezone)
 	spec.UserID = override(spec.UserID, request.UserId)
 	spec.UserName = override(spec.UserName, request.UserName)
 	spec.AgentID = override(spec.AgentID, request.AgentId)

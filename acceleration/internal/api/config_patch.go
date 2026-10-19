@@ -39,6 +39,7 @@ type AgentConfigPatch struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
 	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -188,6 +189,10 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	applyDispatch(&config, patch.Dispatch)
 	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
+	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)

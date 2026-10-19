@@ -55,6 +55,36 @@ func (s *SpecSuite) TestAConfigsExactGreetingIsSaidAsWritten() {
 	s.False(spec.VaryGreeting)
 }
 
+func (s *SpecSuite) TestAConfigsSchedulingBecomesTheSessions() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme",
+		Scheduling: store.AgentScheduling{Enabled: true, MaxTasksPerUser: 5, DefaultTimezone: "Europe/Amsterdam"}})
+
+	s.Equal(store.AgentScheduling{Enabled: true, MaxTasksPerUser: 5, DefaultTimezone: "Europe/Amsterdam"}, spec.Scheduling)
+}
+
+func (s *SpecSuite) TestThePromptSaysWhatDayItIsWhenSchedulingToolsAreOffered() {
+	spec := s.spec(nil)
+	spec.Timezone = "Europe/Amsterdam"
+	spec.SchedulingTools = true
+
+	s.Contains(spec.prompt(), "Today is ")
+	s.Contains(spec.prompt(), "for the user (Europe/Amsterdam).")
+}
+
+func (s *SpecSuite) TestThePromptKeepsTheDayToItselfOtherwise() {
+	spec := s.spec(nil)
+	spec.Timezone = "Europe/Amsterdam"
+
+	s.NotContains(spec.prompt(), "Today is ")
+}
+
+func (s *SpecSuite) TestThePromptSaysNoDayWithoutAZone() {
+	spec := s.spec(nil)
+	spec.SchedulingTools = true
+
+	s.NotContains(spec.prompt(), "Today is ")
+}
+
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{
 		CustomerID: "acme",

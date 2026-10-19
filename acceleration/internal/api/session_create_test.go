@@ -79,6 +79,54 @@ func (s *SessionCreateSuite) TestASessionMayBeNamedThreadOrSupport() {
 	}
 }
 
+func (s *SessionCreateSuite) TestASessionsTimezoneIsRememberedForItsUser() {
+	request := textSession(nil)
+	request.Timezone = pointerTo("Europe/Amsterdam")
+	s.client.createSession(request)
+
+	zone, err := s.store.UserTimezone(context.Background(), s.customerID(), s.client.userID)
+	s.Require().NoError(err)
+	s.Equal("Europe/Amsterdam", zone)
+
+	second := textSession(nil)
+	second.Timezone = pointerTo("America/New_York")
+	s.client.createSession(second)
+
+	zone, err = s.store.UserTimezone(context.Background(), s.customerID(), s.client.userID)
+	s.Require().NoError(err)
+	s.Equal("America/New_York", zone, "the latest zone a user opens a session in wins")
+}
+
+func (s *SessionCreateSuite) TestASessionInNoZoneLeavesItsUsersZoneAlone() {
+	user := s.data.createUser()
+	user.createSession(textSession(nil))
+
+	zone, err := s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	s.Empty(zone)
+}
+
+func (s *SessionCreateSuite) TestAnIncognitoSessionsTimezoneIsNotRemembered() {
+	user := s.data.createUser()
+	request := textSession(nil)
+	request.Timezone = pointerTo("Europe/Amsterdam")
+	request.Incognito = pointerTo(true)
+	user.createSession(request)
+
+	zone, err := s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	s.Empty(zone)
+}
+
+func (s *SessionCreateSuite) TestAnUnknownTimezoneIsRefused() {
+	request := textSession(nil)
+	request.Timezone = pointerTo("Nowhere/Special")
+	status, payload := s.client.call(http.MethodPost, "/v1/agents/sessions", request)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), `"invalid_timezone"`)
+}
+
 func (s *SessionCreateSuite) TestAnEndedSessionTellsTheBackendWhatItSpentAndWhatWasMadeOfIt() {
 	opened := s.serverClient.createSession(textSession(nil))
 	s.spent(opened, 900, 2500)
