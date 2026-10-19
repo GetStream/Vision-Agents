@@ -257,6 +257,123 @@ func (s *MuseSocketSuite) TestAServerThatHangsUpMidCallIsReported() {
 	}
 }
 
+func (s *MuseSocketSuite) TestASilentGapIsFilledWithSilence() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	s.setup(conn)
+
+	// A call carries audio only while someone speaks, and the server hangs up on a
+	// session whose audio falls behind the clock.
+	s.speak(provider, voice(100*time.Millisecond))
+	time.Sleep(time.Second)
+	s.Require().NoError(provider.Close())
+
+	audio, _ := s.upstream(conn)
+	s.Require().NotEmpty(audio)
+	s.Equal(stt.PcmData{Samples: voice(100 * time.Millisecond), SampleRate: stt.SampleRate, Channels: 1}.Bytes(),
+		audio[0], "the caller's audio goes up first and unchanged")
+	s.GreaterOrEqual(silence(audio[1:]), 600*time.Millisecond,
+		"a second of nobody speaking should be made up with silence, less what the audio may lag by")
+}
+
+func (s *MuseSocketSuite) TestAudioThatKeepsUpWithTheClockIsNotPadded() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	s.setup(conn)
+
+	chunk := 20 * time.Millisecond
+	begin := time.Now()
+	for i := range 50 {
+		time.Sleep(time.Until(begin.Add(time.Duration(i) * chunk)))
+		s.speak(provider, voice(chunk))
+	}
+	s.Require().NoError(provider.Close())
+
+	audio, _ := s.upstream(conn)
+	s.Len(audio, 50, "only the caller's own audio should go up")
+	s.Zero(silence(audio))
+}
+
+func (s *MuseSocketSuite) TestNoSilenceFollowsTheEndOfTheAudio() {
+	fake := newFakeSTT()
+	defer fake.close()
+	// The fake never answers the end of the stream, so Close waits out the whole flush,
+	// which is long enough for the audio to fall behind the clock.
+	provider, conn := s.connect(fake, Options{FlushTimeout: 600 * time.Millisecond})
+	s.setup(conn)
+
+	s.speak(provider, voice(100*time.Millisecond))
+	s.Require().NoError(provider.Close())
+
+	_, afterEnd := s.upstream(conn)
+	s.Empty(afterEnd, "nothing should follow the end of the audio stream")
+}
+
+func (s *MuseSocketSuite) TestTheFillerStopsWhenTheServerHangsUp() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer func() { _ = provider.Close() }()
+	s.setup(conn)
+
+	s.Require().NoError(conn.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "Ingress below real-time")))
+
+	stopped := make(chan struct{})
+	go func() {
+		provider.filling.Wait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		s.FailNow("the filler kept writing to a socket the server had closed")
+	}
+}
+
+// upstream reads everything the provider sent after the setup frame until the connection
+// ends, split into the audio before the end of the stream and any frame after it.
+func (s *MuseSocketSuite) upstream(conn *websocket.Conn) (audio [][]byte, afterEnd [][]byte) {
+	ended := false
+	for {
+		s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+		messageType, raw, err := conn.ReadMessage()
+		if err != nil {
+			return audio, afterEnd
+		}
+		switch {
+		case ended:
+			afterEnd = append(afterEnd, raw)
+		case messageType == websocket.BinaryMessage:
+			audio = append(audio, raw)
+		case strings.Contains(string(raw), controlTypeEndStream):
+			ended = true
+		}
+	}
+}
+
+// voice is audio that is not silence, so the caller's own frames can be told from filler.
+func voice(length time.Duration) []int16 {
+	samples := make([]int16, int(length/samplePeriod))
+	for i := range samples {
+		samples[i] = 1000
+	}
+	return samples
+}
+
+// silence is how long the frames made only of zeros last between them.
+func silence(frames [][]byte) time.Duration {
+	var total time.Duration
+	for _, frame := range frames {
+		if strings.Trim(string(frame), "\x00") == "" {
+			total += time.Duration(len(frame)/2) * samplePeriod
+		}
+	}
+	return total
+}
+
 // finalText is the text of the settled turn among everything the session emitted. Close
 // has already run, so the channel is closed and reading it to the end terminates.
 func (s *MuseSocketSuite) finalText(provider *STT) string {
