@@ -1807,7 +1807,7 @@ func (a *Agent) labelLocked(participant stt.Participant) string {
 	person := personOf(participant)
 	name := speakerLabel(participant)
 	label, ok := a.speakers[person]
-	if ok && (label != participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID}) || name == label) {
+	if ok && label != participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID}) {
 		return label
 	}
 	var taken []string

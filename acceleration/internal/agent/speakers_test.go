@@ -361,17 +361,18 @@ func (s *AgentSuite) TestAPersonFirstHeardWithoutANameTakesItOnceItIsKnown() {
 	for i, turn := range []struct {
 		participant stt.Participant
 		text        string
-	}{{bob, "hello"}, {anon, "hi"}, {other, "hey"}, {named, "it is Carol"}, {namedLikeBob, "it is Bob"}, {named, "Carol again"}} {
+	}{{bob, "hello"}, {anon, "hi"}, {anon, "hi again"}, {other, "hey"}, {named, "it is Carol"}, {namedLikeBob, "it is Bob"}, {named, "Carol again"}} {
 		s.says(turn.participant, turn.text)
 		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
 		s.quiet()
 	}
 
-	input := s.model.requests()[5].Input
-	s.Require().Len(input, 11)
+	input := s.model.requests()[6].Input
+	s.Require().Len(input, 13)
 	s.Equal("u-1: hi", input[2].Content)
-	s.Equal("u-2: hey", input[4].Content)
-	s.Equal("Carol: it is Carol", input[6].Content)
-	s.Equal("Bob (2): it is Bob", input[8].Content)
-	s.Equal("Carol: Carol again", input[10].Content)
+	s.Equal("u-1: hi again", input[4].Content)
+	s.Equal("u-2: hey", input[6].Content)
+	s.Equal("Carol: it is Carol", input[8].Content)
+	s.Equal("Bob (2): it is Bob", input[10].Content)
+	s.Equal("Carol: Carol again", input[12].Content)
 }
