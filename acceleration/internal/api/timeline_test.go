@@ -82,6 +82,33 @@ func (s *TimelineSuite) TestALineStoredOnlyOnceHeardStillBelongsToItsTurn() {
 	s.Equal("Hello there.", value(timeline[0].Said))
 }
 
+func (s *TimelineSuite) TestALineStoredAfterItsTurnStartedIsNotHeardAgainByTheNextTurn() {
+	timeline := timelineOf(s.turns(11_940, 20_000), []chatlog.Spoken{
+		s.caller(12_100, "Hi."),
+		s.agent(12_900, "Hello there."),
+		s.caller(19_000, "Bye."),
+		s.agent(20_500, "Goodbye."),
+	}, nil)
+
+	s.Require().Len(timeline, 2)
+	s.Equal("Hi.", value(timeline[0].Heard))
+	s.Equal("Bye.", value(timeline[1].Heard))
+}
+
+func (s *TimelineSuite) TestSeveralAgentLinesInOneTurnAreSaidTogether() {
+	timeline := timelineOf(s.turns(11_940, 15_000), []chatlog.Spoken{
+		s.caller(10_608, "Book a table."),
+		s.agent(12_500, "One moment."),
+		s.caller(13_000, "For two."),
+		s.agent(13_500, "Booked."),
+		s.agent(15_600, "Anything else?"),
+	}, nil)
+
+	s.Require().Len(timeline, 2)
+	s.Equal("One moment. Booked.", value(timeline[0].Said))
+	s.Equal("For two.", value(timeline[1].Heard))
+}
+
 func (s *TimelineSuite) TestATurnTheAgentStartedHeardNothing() {
 	// A greeting, or the answer after a tool ran, is a turn nobody asked for in words.
 	timeline := timelineOf(s.turns(1_000, 11_940), []chatlog.Spoken{
