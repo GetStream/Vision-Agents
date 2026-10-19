@@ -4,7 +4,9 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -109,6 +112,26 @@ func (m *schedulingModel) toolsOffered() []string {
 	return names
 }
 
+// heard reports whether the model was ever sent text holding needle, in any
+// turn: what a follow-up sent it is found this way.
+func (m *schedulingModel) heard(needle string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, asked := range m.asked {
+		for _, input := range asked.Input {
+			if strings.Contains(input.Content, needle) {
+				return true
+			}
+			for _, part := range input.Parts {
+				if strings.Contains(part.Text, needle) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // instructions is what the model was last told to be.
 func (m *schedulingModel) instructions() string {
 	m.mu.Lock()
@@ -203,6 +226,50 @@ func (s *ScheduledTasksSuite) tasksOf(user *testClient) []store.ScheduledTask {
 	}, 25, nil)
 	s.Require().NoError(err)
 	return tasks
+}
+
+// runWorker starts the scheduled-task worker over the suite's store,
+// delivering through the suite's own router, as every router does.
+func (s *ScheduledTasksSuite) runWorker() {
+	worker := scheduling.NewScheduler(s.store, s.router.DeliverScheduledTask, slog.New(slog.DiscardHandler))
+	worker.Start()
+	s.T().Cleanup(worker.Close)
+}
+
+// makeDue moves a task's next run into the past, so the worker claims it at
+// its next look.
+func (s *ScheduledTasksSuite) makeDue(task store.ScheduledTask) {
+	past := time.Now().Add(-time.Minute)
+	task.NextRunAt = &past
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &task))
+}
+
+// runsOf is the task's runs, newest first.
+func (s *ScheduledTasksSuite) runsOf(task store.ScheduledTask) []store.ScheduledTaskRun {
+	runs, err := s.store.ScheduledTaskRuns(context.Background(), s.customerID(), task.ID, 25, nil)
+	s.Require().NoError(err)
+	return runs
+}
+
+// taskReloaded is the task as the store holds it now.
+func (s *ScheduledTasksSuite) taskReloaded(task store.ScheduledTask) store.ScheduledTask {
+	stored, err := s.store.ScheduledTask(context.Background(), s.customerID(), task.ID)
+	s.Require().NoError(err)
+	return stored
+}
+
+// delivered waits for the task's latest run to be delivered, and returns it.
+func (s *ScheduledTasksSuite) delivered(task store.ScheduledTask) store.ScheduledTaskRun {
+	var latest store.ScheduledTaskRun
+	s.Eventually(func() bool {
+		runs := s.runsOf(task)
+		if len(runs) == 0 {
+			return false
+		}
+		latest = runs[0]
+		return latest.State == store.ScheduledTaskRunDelivered
+	}, 30*time.Second, 250*time.Millisecond, "the occurrence was not delivered")
+	return latest
 }
 
 // ranResult is the text a tool that ran in the watched session answered with.
@@ -402,6 +469,126 @@ func (s *ScheduledTasksSuite) TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools
 	for _, name := range []string{"schedule_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task"} {
 		s.NotContains(offered, name)
 	}
+}
+
+func (s *ScheduledTasksSuite) TestADueTaskFollowsUpInTheConversationItWasScheduledIn() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.ranResult(watching)
+
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+	s.makeDue(tasks[0])
+	s.runWorker()
+
+	run := s.delivered(tasks[0])
+	s.Equal(store.ScheduledTaskDeliveredConversation, run.DeliveredTo)
+	s.Equal(opened.Id, run.SessionID)
+	// Only the pointer was moved, not the schedule, so the occurrence the
+	// task was made for still stands.
+	standing := s.taskReloaded(tasks[0])
+	s.Equal(store.ScheduledTaskActive, standing.State)
+	s.Require().NotNil(standing.NextRunAt)
+	s.True(standing.NextRunAt.After(time.Now()), "the made occurrence still stands")
+
+	model := s.model()
+	s.True(model.heard("<scheduled_task"), "the model was never sent the task")
+	s.True(model.heard("Remind them to stretch."), "the model was never sent the instructions")
+	s.True(model.heard("not a message from the user"), "the model was not told what the follow-up is")
+}
+
+func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurrence() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	now := time.Now()
+	next := now.Add(-time.Minute)
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CallerKind: "authenticated", Title: "Stretch",
+		Instructions: "Remind them to stretch.",
+		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
+		NextRunAt: &next, State: store.ScheduledTaskActive, CreatedBy: "api",
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
+	s.runWorker()
+
+	run := s.delivered(task)
+	opened := s.taskReloaded(task)
+	s.NotEmpty(opened.SessionID, "the first occurrence opened no session")
+	s.Equal(opened.SessionID, run.SessionID)
+	s.True(s.model().heard("Remind them to stretch."), "the model was never sent the instructions")
+}
+
+func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.StartVoice = pointerTo(true)
+	})
+	now := time.Now()
+	next := now.Add(-time.Minute)
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
+		Instructions: "Remind them to stretch.",
+		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
+		NextRunAt: &next, State: store.ScheduledTaskActive, CreatedBy: "api",
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
+	s.runWorker()
+
+	// The worker claims the occurrence, but nothing reaches the model while
+	// the call is live: a reminder is never spoken over the user.
+	s.Never(func() bool { return s.model().heard("<scheduled_task") },
+		5*time.Second, 250*time.Millisecond, "the task interrupted the call")
+
+	s.Require().Equal(http.StatusOK, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id+"/voice", nil, nil))
+	s.delivered(task)
+	s.True(s.model().heard("Remind them to stretch."))
+}
+
+func (s *ScheduledTasksSuite) TestADueTaskIsHandedToTheNodeHoldingItsConversation() {
+	other, _ := s.otherRouter(nil)
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	// The conversation lives on the other node; this node's worker claims
+	// the task all the same, and hands the occurrence over.
+	opened := user.on(other).createSession(CreateSessionRequest{ConfigId: &config})
+	now := time.Now()
+	next := now.Add(-time.Minute)
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
+		Instructions: "Remind them to stretch.",
+		StartLocal:   now.UTC(), Timezone: "Europe/Amsterdam",
+		NextRunAt: &next, State: store.ScheduledTaskActive, CreatedBy: "api",
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
+	s.runWorker()
+
+	run := s.delivered(task)
+	s.Equal(opened.Id, run.SessionID)
+	s.True(s.model().heard("Remind them to stretch."), "the holding node never ran the follow-up")
+}
+
+func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.ranResult(watching)
+	s.Require().Len(s.tasksOf(user), 1)
+
+	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
+	s.Empty(s.tasksOf(user), "the deleted conversation's tasks went with it")
 }
 
 func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {

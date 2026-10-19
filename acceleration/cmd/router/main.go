@@ -73,6 +73,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -1243,6 +1244,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	server, err := api.NewServer(options)
 	if err != nil {
 		return err
+	}
+	// Every router runs the scheduled-task worker: whichever of them claims
+	// an occurrence delivers it, in the conversation its task belongs to.
+	if pgStore != nil && sessions != nil {
+		scheduler := scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
+		scheduler.Start()
+		defer scheduler.Close()
+		server.SetSchedulerKick(scheduler.Kick)
 	}
 	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
 	// pinned to, read once, within the one attempt's time the deployment's own check gets.

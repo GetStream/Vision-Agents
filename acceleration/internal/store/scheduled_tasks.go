@@ -307,6 +307,23 @@ func (s *Store) DeleteScheduledTasksForSession(ctx context.Context, customerID, 
 	return nil
 }
 
+// SetScheduledTaskSession records the session a task follows up in, once its
+// first occurrence has opened one. It touches nothing else: the task may be
+// claimed when this runs, and clearing the claim would fence the worker out
+// of finishing the run.
+func (s *Store) SetScheduledTaskSession(ctx context.Context, customerID, taskID, sessionID string) error {
+	_, err := s.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("session_id = ?", sessionID).
+		Set("updated_at = now()").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", taskID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set scheduled task session: %w", err))
+	}
+	return nil
+}
+
 // ActiveScheduledTaskCount is how many active tasks a user holds.
 func (s *Store) ActiveScheduledTaskCount(ctx context.Context, customerID, userID string) (int, error) {
 	count, err := s.db.NewSelect().Model((*ScheduledTask)(nil)).
