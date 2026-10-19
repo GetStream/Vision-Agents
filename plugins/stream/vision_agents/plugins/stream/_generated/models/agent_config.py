@@ -86,7 +86,9 @@ class AgentConfig:
         tts (str | Unset):
         video (SessionVideo | Unset):
         visible_tools (list[str] | Unset):
-        voice (str | Unset):
+        voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
+            one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
+            voice name instead.
     """
 
     created_at: datetime.datetime
