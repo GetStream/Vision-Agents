@@ -577,6 +577,30 @@ func (s *STTRouterSuite) TestALiveSessionPinnedToABatchModelIsRefusedBeforeAnyVe
 	s.Empty(*built, "nothing was built, so nothing was dialled or recorded")
 }
 
+func (s *STTRouterSuite) TestALiveSessionOnARecordedShortcutIsRefusedBeforeAnyVendorIsDialled() {
+	// On d1654d42 both built Nova-3 and failed with "routing: every candidate for
+	// \"en-recorded\" failed: deepgram/nova-3: deepgram: connect failed".
+	for _, target := range []string{"en-recorded", "multilingual-recorded"} {
+		router, built := s.dialled()
+
+		_, err := s.startOn(router, Request{Target: target})
+
+		s.Require().ErrorIs(err, routing.ErrRequest, target)
+		s.ErrorContains(err, "routing: "+target+" is a shortcut for recordings, not live calls; for a live call name ")
+		s.Empty(*built, target)
+	}
+}
+
+func (s *STTRouterSuite) TestALiveSessionOnALiveShortcutStarts() {
+	// Probed on d1654d42: flux-general-en.
+	router, _ := s.dialled()
+
+	served, err := s.startOn(router, Request{Target: "en-low-latency"})
+
+	s.Require().NoError(err)
+	s.Equal("flux-general-en", served)
+}
+
 func (s *STTRouterSuite) TestAPriorityListOfOnlyBatchModelsIsRefusedNamingThem() {
 	// On d1654d42: "routing: nothing in the priority list deepgram/nova-3 can serve this
 	// request: %!w(<nil>)", which never said why.
