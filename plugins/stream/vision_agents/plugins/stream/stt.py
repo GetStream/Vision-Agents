@@ -19,11 +19,6 @@ logger = logging.getLogger(__name__)
 # SAMPLE_RATE is what the router transcribes at, and what every provider behind it wants.
 SAMPLE_RATE = 16_000
 
-# START_TIMEOUT is how long start waits for the router to say it is transcribing or why it
-# is not. Our choice, not a vendor's: the router answers once a provider session is open,
-# and no vendor documents how long that may take.
-START_TIMEOUT = 10.0
-
 
 class STT(stt.STT):
     """Transcription routed through the acceleration backend.
@@ -69,8 +64,8 @@ class STT(stt.STT):
             backend: A backend to use as it is, instead of building one from `url` and
                 `customer_id`.
             keyterms: Words the transcriber would otherwise get wrong, such as names and
-                member IDs, at most 100. A model that takes none refuses them, and so does
-                `start`. Empty leaves whatever `options` or the config named.
+                member IDs, at most 100. A model that takes none refuses them, and `start`
+                raises that refusal. Empty leaves whatever `options` or the config named.
         """
         super().__init__(provider_name="stream")
         self.model = target
@@ -94,10 +89,12 @@ class STT(stt.STT):
     async def start(self):
         """Open the first socket and wait until the router is transcribing on it.
 
+        There is no timeout here: the router bounds how long each provider may take to
+        start, and always answers `started` or an error, or closes the socket.
+
         Raises:
             RouterError: if the router refused the socket or what to transcribe on it,
-                such as a model that takes no keyterms.
-            asyncio.TimeoutError: if the router said neither within `START_TIMEOUT`.
+                such as a model that takes no keyterms, or closed it before it started.
         """
         await super().start()
         await ensure_router(self.config_id, self.backend)
@@ -105,7 +102,7 @@ class STT(stt.STT):
         started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._open(self._unclaimed, started)
         try:
-            await asyncio.wait_for(started, START_TIMEOUT)
+            await started
         except BaseException:
             await self._unclaimed.close()
             raise
