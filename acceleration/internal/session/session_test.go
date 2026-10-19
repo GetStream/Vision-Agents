@@ -308,6 +308,12 @@ type SessionSuite struct {
 	edges   []*quietEdge
 	model   *stubLLM
 	voice   *stubTTS
+	// ears is the transcriber a voice session listens through, so a test can speak.
+	ears *stubSTT
+	// others are the models opened after the first, kept to read what the agent that
+	// took over asked of them.
+	othersMu sync.Mutex
+	others   []*stubLLM
 	// remembers is the memory store the manager was built with, when a test wants one.
 	remembers *stubMemory
 	// records is where a session's conversation is stored, when a test wants to read it
@@ -348,6 +354,8 @@ func (s *SessionSuite) SetupTest() {
 	s.apps = nil
 	s.edgeApps = nil
 	s.plugins = nil
+	s.ears = nil
+	s.others = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -369,6 +377,7 @@ func (s *SessionSuite) manages() {
 	logger := slog.New(slog.DiscardHandler)
 
 	ears := &stubSTT{emitter: stt.NewEmitter(64)}
+	s.ears = ears
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) { return ears, nil })
 	transcriber, err := sttrouter.New(sttrouter.Options{
@@ -389,7 +398,11 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
-		return &stubLLM{}, nil
+		other := &stubLLM{reply: "Sure."}
+		s.othersMu.Lock()
+		s.others = append(s.others, other)
+		s.othersMu.Unlock()
+		return other, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: s.thinking(), Registry: reasoning, Logger: logger,

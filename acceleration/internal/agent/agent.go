@@ -1799,15 +1799,24 @@ func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
 }
 
 // labelLocked is the label a person's words go under. It is fixed by their first answered
-// turn. A person whose name another already goes under is numbered, "Alex (2)", in the
-// order they first spoke, so the model tells them apart without being told their user.
+// turn, unless that turn had no display name and went under their user ID: the name, once
+// it is known, replaces it. A person whose name another already goes under is numbered,
+// "Alex (2)", in the order they first spoke, so the model tells them apart without being
+// told their user.
 func (a *Agent) labelLocked(participant stt.Participant) string {
-	if label, ok := a.speakers[personOf(participant)]; ok {
+	person := personOf(participant)
+	name := speakerLabel(participant)
+	label, ok := a.speakers[person]
+	if ok && (label != participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID}) || name == label) {
 		return label
 	}
-	name := speakerLabel(participant)
-	taken := slices.Collect(maps.Values(a.speakers))
-	label := name
+	var taken []string
+	for other, otherLabel := range a.speakers {
+		if other != person {
+			taken = append(taken, otherLabel)
+		}
+	}
+	label = name
 	for n := 2; slices.Contains(taken, label); n++ {
 		label = fmt.Sprintf("%s (%d)", name, n)
 	}
@@ -3834,6 +3843,8 @@ func turnOf(synthesisID string) string {
 func (a *Agent) Continue(previous *Agent) {
 	previous.mu.Lock()
 	history := append([]llm.Message(nil), previous.history...)
+	// A copy: the old agent can still keep a turn between this and its Close, and would
+	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
 	previous.mu.Unlock()
 	a.mu.Lock()

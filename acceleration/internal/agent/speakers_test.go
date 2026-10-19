@@ -345,3 +345,33 @@ func (s *AgentSuite) TestTheNamesOfThePeopleHeardCarryOnToTheAgentThatTakesOver(
 	s.Equal("Bob: hi there", asked.Input[2].Content)
 	s.Equal("Alice: and me", asked.Input[4].Content)
 }
+
+func (s *AgentSuite) TestAPersonFirstHeardWithoutANameTakesItOnceItIsKnown() {
+	s.join(true)
+	bob := stt.Participant{ID: "bob", UserID: "bob", Name: "Bob"}
+	anon := stt.Participant{ID: "u-1", UserID: "u-1"}
+	other := stt.Participant{ID: "u-2", UserID: "u-2"}
+	// The first person gives a name that is free, the second one that Bob has.
+	named := stt.Participant{ID: "u-1b", UserID: "u-1", Name: "Carol"}
+	namedLikeBob := stt.Participant{ID: "u-2b", UserID: "u-2", Name: "Bob"}
+	for _, participant := range []stt.Participant{bob, anon, other, named, namedLikeBob} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{bob, "hello"}, {anon, "hi"}, {other, "hey"}, {named, "it is Carol"}, {namedLikeBob, "it is Bob"}, {named, "Carol again"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	input := s.model.requests()[5].Input
+	s.Require().Len(input, 11)
+	s.Equal("u-1: hi", input[2].Content)
+	s.Equal("u-2: hey", input[4].Content)
+	s.Equal("Carol: it is Carol", input[6].Content)
+	s.Equal("Bob (2): it is Bob", input[8].Content)
+	s.Equal("Carol: Carol again", input[10].Content)
+}
