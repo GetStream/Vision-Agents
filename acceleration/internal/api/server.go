@@ -48,6 +48,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -1272,6 +1273,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Description: &candidate.Config.Description,
 			Languages:   candidate.Config.Languages,
 			Realtime:    candidate.Config.Realtime,
+			Supports:    supportsOf(candidate.Config.Terms),
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
@@ -1280,6 +1282,15 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 		})
 	}
 	return &listProvidersResponse{Body: providers}, nil
+}
+
+// supportsOf is the terms a model declared, as the names a request's options use.
+func supportsOf(terms []options.Term) []string {
+	var names []string
+	for _, term := range terms {
+		names = append(names, string(term))
+	}
+	return names
 }
 
 // listRoutes returns the shortcuts offered as a choice and what each resolves to now.
@@ -2175,7 +2186,7 @@ func (*ProviderBenchmark) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 
 // ProviderHealth is the ProviderHealth schema.
 type ProviderHealth struct {
-	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold."`
+	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses."`
 	ErrorRate    float64 `json:"error_rate"`
 	Errors       int64   `json:"errors"`
 	LatencyMsAvg float64 `json:"latency_ms_avg"`

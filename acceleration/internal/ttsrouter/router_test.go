@@ -829,6 +829,21 @@ func (s *TTSRouterSuite) TestASimilarityOnTheQualityShortcutIsRefusedAtRouting()
 	s.Empty(built, "nothing is built, so nothing is counted against a model")
 }
 
+func (s *TTSRouterSuite) TestASimilarityOnAModelThatTakesNoneIsRefusedNamingTheModel() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+	similarity := 0.7
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "elevenlabs/eleven_v4",
+		Options:    options.TTS{Similarity: &similarity},
+	})
+
+	s.ErrorContains(err, "routing: elevenlabs/eleven_v4 does not take similarity")
+	s.Empty(built)
+}
+
 func (s *TTSRouterSuite) TestASimilarityOnTheDefaultShortcutSkipsTheDialogueModel() {
 	var built []string
 	router := s.newRouterOverRealElevenLabs(&built)

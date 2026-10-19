@@ -689,6 +689,7 @@ type Provider struct {
 	Price       *ProviderPrice     `json:"price,omitempty"`
 	Provider    string             `json:"provider" example:"elevenlabs"`
 	Realtime    bool               `json:"realtime"`
+	Supports    []string           `json:"supports,omitempty" nullable:"false" example:"[\"keyterms\",\"diarize\"]" doc:"The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none."`
 	Tier        Tier               `json:"tier"`
 	UsageShare  *float64           `json:"usage_share,omitempty" doc:"This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics."`
 }
