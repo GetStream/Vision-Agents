@@ -93,6 +93,32 @@ func TestALongWaitWithoutAnotherCallerTurnIsStillMeasured(t *testing.T) {
 	}
 }
 
+func TestSpeechDuringTheCallerIsNotReportedAsUnanswered(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:   rate,
+		Agent:  audio.Concat(audio.Silence(rate), audio.Tone(rate/2, 220, 12000), audio.Silence(2*rate)),
+		Events: []caller.Event{{TurnID: "question", RecStartMs: 500, RecEndMs: 2000, Text: true}},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 0 || len(dropped) != 1 || dropped[0].Reason != "agent_started_during_caller" {
+		t.Fatalf("early speech is a timing exclusion rather than a missing answer: %+v, dropped %+v", got, dropped)
+	}
+}
+
+func TestAnEarlyInterruptionDoesNotHideALaterReply(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:   rate,
+		Agent:  audio.Concat(audio.Silence(rate), audio.Tone(rate/2, 220, 12000), audio.Silence(3*rate/2), audio.Tone(rate/2, 220, 12000)),
+		Events: []caller.Event{{TurnID: "question", RecStartMs: 500, RecEndMs: 2000, Text: true}},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 1 || got[0].V2VMS != 1000 || len(dropped) != 0 {
+		t.Fatalf("the later post-caller reply still has a measurable gap: %+v, dropped %+v", got, dropped)
+	}
+}
+
 func TestAQuietAgentReplyUsesTheAgentTrackThreshold(t *testing.T) {
 	rate := audio.Rate
 	rec := caller.Result{

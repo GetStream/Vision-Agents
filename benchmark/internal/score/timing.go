@@ -46,10 +46,11 @@ type OverlapCheck struct {
 
 // Why a turn produced no V2V sample.
 const (
-	DropBargeIn  = "barge_in"
-	DropOverlap  = "overlap"
-	DropNoOnset  = "no_onset"
-	DropNextTurn = "no_reply_before_next_turn"
+	DropBargeIn      = "barge_in"
+	DropOverlap      = "overlap"
+	DropNoOnset      = "no_onset"
+	DropNextTurn     = "no_reply_before_next_turn"
+	DropDuringCaller = "agent_started_during_caller"
 )
 
 // Metrics is the per-call scorecard.
@@ -143,6 +144,7 @@ func TimingFromRecording(rec caller.Result) ([]Timing, []DroppedTurn) {
 	}
 	var out []Timing
 	var dropped []DroppedTurn
+	agentSpans := audio.DetectSpeech(rec.Agent, rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	for i, ev := range rec.Events {
 		switch {
 		case ev.BargeIn:
@@ -165,6 +167,13 @@ func TimingFromRecording(rec caller.Result) ([]Timing, []DroppedTurn) {
 			}
 		}
 		if next < 0 {
+			// An early interruption is not an unanswered turn, even if no fresh reply follows.
+			for _, span := range agentSpans {
+				if span.StartMs > ev.RecStartMs+80 && span.StartMs < ev.RecEndMs-80 {
+					reason = DropDuringCaller
+					break
+				}
+			}
 			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: reason})
 			continue
 		}
