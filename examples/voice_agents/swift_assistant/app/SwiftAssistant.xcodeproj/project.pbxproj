@@ -327,7 +327,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
 			requirement = {
-				branch = "add/voice-agent-visualizations";
+				branch = develop;
 				kind = branch;
 			};
 		};

@@ -1,5 +1,5 @@
 {
-  "originHash" : "ec730d8a9f4b2c674f50f1b7f8130b0d98a4ea282c6e76bf3a1dd3f2d46720e5",
+  "originHash" : "65b04176f1cbfb7f38fb673af42f2ce1e3b38f37140a7aca941716d0c0ec44f6",
   "pins" : [
     {
       "identity" : "networkimage",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/GetStream/stream-chat-swift",
       "state" : {
-        "branch" : "add/voice-agent-visualizations",
-        "revision" : "7fcb4e340a4abe4c6059addc7a0a205de2f833fc"
+        "branch" : "develop",
+        "revision" : "5cda2ae5337a799200f1c082e49f8b9a195bb321"
       }
     },
     {
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-openapi-runtime",
       "state" : {
-        "revision" : "50ad7976f18fec6c09466d2aebf7be3dc9476cfb",
-        "version" : "1.13.0"
+        "revision" : "478bf6ce34f71734bc88b79b37b842118312d133",
+        "version" : "1.13.2"
       }
     },
     {
