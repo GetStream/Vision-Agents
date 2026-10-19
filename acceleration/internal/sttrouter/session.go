@@ -105,18 +105,25 @@ func (s *Session) observe(event stt.Event) {
 			StartedAt: time.Now().UTC(),
 			Success:   false,
 			ErrorCode: errorCode(typed),
+			// The vendor's own words are what tell an account it refuses from a dropped
+			// socket.
+			ErrorMessage: typed.Err.Error(),
 		}
 		if typed.Fatal {
 			// Set before the error is passed on, so a caller who has read it sends no audio
 			// that still reaches the provider.
 			s.failed.Store(true)
-			// The vendor's own words are what tell an account it refuses from a dropped
-			// socket.
-			stat.ErrorMessage = typed.Err.Error()
-			stat.Fatal = true
+			// Only a refusal the vendor sent marks the model unavailable. Providers report a
+			// socket that dropped as a fatal error with the context read or write, and the
+			// next session can still reach the model.
+			stat.Fatal = !transportDrop(typed)
 		}
 		s.recorder.Record(s.config, stat)
 	}
+}
+
+func transportDrop(failure stt.Error) bool {
+	return failure.Context == "read" || failure.Context == "write"
 }
 
 func errorCode(failure stt.Error) string {

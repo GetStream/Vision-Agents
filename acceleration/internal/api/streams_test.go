@@ -434,7 +434,6 @@ func (s *StreamsSuite) TestToolsAModelWillNeverCallAreRefused() {
 	s.Contains(refused["error"], "tools")
 }
 
-// start opens a modality socket and sends its start frame.
 // refused opens a socket on the model that refuses the account, speaks into it and returns
 // it once the refusal has come back.
 func (s *StreamsSuite) refused() *websocket.Conn {
@@ -450,6 +449,7 @@ func (s *StreamsSuite) refused() *websocket.Conn {
 	return listening
 }
 
+// start opens a modality socket and sends its start frame.
 func (s *StreamsSuite) start(path string, opening frame) *websocket.Conn {
 	connection := s.serverClient.opens(path)
 	opening["type"] = "start"

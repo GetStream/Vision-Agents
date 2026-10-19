@@ -145,6 +145,45 @@ func (s *SessionSuite) TestAFatalErrorIsRecordedWithTheVendorsReason() {
 	s.Equal(refusal, rows[0].ErrorMessage)
 }
 
+func (s *SessionSuite) TestAnErrorThatIsNotFatalIsRecordedWithItsMessage() {
+	failure := refused()
+	failure.Fatal = false
+	failure.Context = "commit_throttled"
+	router := s.router(0, failure)
+	s.Require().NoError(s.failed(router).Close())
+	router.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).
+		Where("customer_id = ?", s.customerID).Scan(s.ctx))
+	s.Require().Len(rows, 1)
+	s.Equal("commit_throttled", rows[0].ErrorCode)
+	s.Equal(refusal, rows[0].ErrorMessage)
+}
+
+func (s *SessionSuite) TestADroppedSocketLeavesTheModelAvailable() {
+	for _, context := range []string{"read", "write"} {
+		s.Run(context, func() {
+			s.SetupTest()
+			failure := stt.Error{Err: errors.New("websocket: close 1006 (abnormal closure)"), Context: context, Fatal: true}
+			router := s.router(3, failure)
+			defer router.Close()
+			session := s.failed(router)
+			s.NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}),
+				"the socket is gone, so audio is still dropped")
+			s.Require().NoError(session.Close())
+			s.awaitHealth(4)
+
+			health, err := s.live.Health(s.ctx, "stt", s.refusing, "live")
+			s.Require().NoError(err)
+			s.True(health.Available)
+			next := s.start(router)
+			defer next.Close()
+			s.Equal(s.refusing, next.Provider())
+		})
+	}
+}
+
 func (s *SessionSuite) TestOneFatalErrorSendsTheNextSessionToAnotherProvider() {
 	router := s.router(3, refused())
 	defer router.Close()
