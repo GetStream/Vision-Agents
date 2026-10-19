@@ -218,7 +218,7 @@ func (s *StreamsSuite) TestAFailureThatIsNotUTF8IsSentAsTextThatIs() {
 func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsHungUpOn() {
 	listening := s.start("/v1/stt/stream", frame{"target": "nobody/x"})
 	// Never reads and never answers: the router's wait for the close has to end on its own.
-	time.Sleep(closeWait + 500*time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
 	raw := listening.UnderlyingConn()
 	s.Require().NoError(raw.SetReadDeadline(time.Now().Add(2 * time.Second)))
 	buffer := make([]byte, 4096)
