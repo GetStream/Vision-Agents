@@ -989,6 +989,10 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # A recording's file format, which /tts/bytes takes as output_format. The live voice
+      # refuses one: it streams raw audio into the call. Speed, volume and emotion are not
+      # declared, so a request asking for one is refused rather than spoken without it.
+      supports: [format]
       # Their terms have Inputs and Outputs used "to train, enhance, evolve and improve"
       # the models unless the account files the opt-out form, and Zero Data Retention -
       # which does cover the text in and the audio out - is an Enterprise setting switched

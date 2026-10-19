@@ -231,7 +231,7 @@ func (s *TTSRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	}
 }
 
-func (s *TTSRouterSuite) TestAVendorWithNoRecorderStillSpeaksLive() {
+func (s *TTSRouterSuite) TestAVendorThatRecordsStillSpeaksLive() {
 	// Probed on da97ee28: served by cartesia/sonic-preview.
 	var built []routing.Spec
 	session, err := s.newStubbedRouter(&built).Start(s.ctx, Request{CustomerID: "acme", Target: "cartesia/sonic-preview"})
@@ -239,6 +239,25 @@ func (s *TTSRouterSuite) TestAVendorWithNoRecorderStillSpeaksLive() {
 	s.T().Cleanup(func() { _ = session.Close() })
 
 	s.Equal("cartesia/sonic-preview", session.Provider()+"/"+session.Model())
+}
+
+func (s *TTSRouterSuite) TestALiveCartesiaVoiceAskedForAFormatIsRefusedRatherThanStreamingRawAudio() {
+	// On 41cb93cba both were refused before a voice was built, sonic-preview declaring no
+	// format: "routing: cartesia/sonic-preview does not take format" and "routing: no
+	// provider can express format".
+	s.T().Setenv("CARTESIA_API_KEY", "test-key")
+	for _, target := range []string{"cartesia/sonic-preview", "tts-fast"} {
+		s.Run(target, func() {
+			_, err := s.newRouter().Start(s.ctx, Request{
+				CustomerID: "acme",
+				Target:     target,
+				Options:    options.TTS{Format: "pcm_16000"},
+			})
+
+			s.Require().ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
+			s.EqualError(err, "cartesia/sonic-preview: a format is taken only when recording, not by a live voice")
+		})
+	}
 }
 
 func (s *TTSRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
