@@ -617,9 +617,11 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	if err != nil {
 		return zero, err
 	}
-	// The overwrite is the voice spoken. A factory that reads no overwrites, as Cartesia's
-	// does not, would otherwise speak the request's voice, or its own default with none.
-	if overwritten != "" {
+	// With no top-level voice, a TTS overwrite is the voice spoken: a factory that reads no
+	// overwrites, as Cartesia's does not, would otherwise speak its own default. A top-level
+	// voice stays what is handed over, as it always was, and no other modality reads a
+	// voice_id, so STS is left to its factories.
+	if overwritten != "" && request.Voice == "" && r.modality == TTS {
 		voice = overwritten
 	}
 
@@ -696,10 +698,11 @@ func (r *Router[P]) overwriteVoice(request Request, provider string) string {
 // caller asked for one. A voice named only in overwrites is one vendor's: any other vendor
 // is handed no voice and answers in its default, and nothing in the audio says that is
 // wrong. A voice at the top level is handed to every candidate, so nothing is left out.
+// Only TTS: no STS vendor reads a voice_id, so there it routes as it always did.
 // When none of the named vendors can be built, the request is refused as the caller's,
 // rather than spoken by a vendor nobody asked a voice of.
 func (r *Router[P]) voiced(request Request, candidates []Candidate) ([]Candidate, error) {
-	if request.Voice != "" || (r.modality != TTS && r.modality != STS) {
+	if request.Voice != "" || r.modality != TTS {
 		return candidates, nil
 	}
 	var named []string

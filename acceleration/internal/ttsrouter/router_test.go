@@ -1011,6 +1011,24 @@ func (s *TTSRouterSuite) TestWithNoVoiceAskedTheQualityShortcutSpeaksInElevenLab
 	s.Empty(built[0].Voice)
 }
 
+func (s *TTSRouterSuite) TestATopLevelVoiceIsStillTheOneCartesiaIsBuiltWithBesideItsOwnVoiceId() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// Probed on b1e563f98: built with top-voice, which Cartesia's factory reads from the spec.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "top-voice",
+		Options:    options.TTS{Providers: []string{"cartesia"}, Overwrites: onlyCartesiasVoice},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("cartesia", session.Provider())
+	s.Require().Len(built, 1)
+	s.Equal("top-voice", built[0].Voice, "a top-level voice is not replaced by an overwrite, as on base")
+}
+
 func (s *TTSRouterSuite) TestAVoiceAtTheTopLevelStillGoesToEveryVendorBesideAnOverwrite() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)
