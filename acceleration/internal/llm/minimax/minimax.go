@@ -81,8 +81,9 @@ func New(options Options) (*openaicompat.LLM, error) {
 			DefaultEffort:    options.ReasoningEffort,
 			StreamsReasoning: true,
 		},
-		RequestFields: requestFields(options.ReasoningEffort),
-		Logger:        options.Logger,
+		RequestFields:      requestFields(options.ReasoningEffort),
+		ResultsFollowCalls: true,
+		Logger:             options.Logger,
 	})
 }
 
