@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 # SAMPLE_RATE is what the router transcribes at, and what every provider behind it wants.
 SAMPLE_RATE = 16_000
 
+# STARTED is how long start waits for the router to say a provider is transcribing. The
+# router tries the candidates one after another, each under its own connect bound
+# (acceleration/internal/stt/*): 15 s for cartesia, inworld and muse, 30 s for most, 60 s
+# for parakeet, whose Baseten cold starts are slow. 90 s lets the slowest of them fail over
+# to a 30 s one before a router that never answers is given up on.
+STARTED = 90.0
+
 
 class STT(stt.STT):
     """Transcription routed through the acceleration backend.
@@ -89,12 +96,13 @@ class STT(stt.STT):
     async def start(self):
         """Open the first socket and wait until the router is transcribing on it.
 
-        There is no timeout here: the router bounds how long each provider may take to
-        start, and always answers `started` or an error, or closes the socket.
+        The router bounds each provider's connect but not the walk down the candidates,
+        and a router that is stuck answers nothing, so the wait is bounded by `STARTED`.
 
         Raises:
             RouterError: if the router refused the socket or what to transcribe on it,
                 such as a model that takes no keyterms, or closed it before it started.
+            TimeoutError: if the router said nothing within `STARTED` seconds.
         """
         await super().start()
         await ensure_router(self.config_id, self.backend)
@@ -102,7 +110,14 @@ class STT(stt.STT):
         started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._open(self._unclaimed, started)
         try:
-            await started
+            # Not shielded: _read checks started.done(), so the future wait_for cancels on
+            # a timeout is left alone, and nothing is set on it that nobody would read.
+            await asyncio.wait_for(started, STARTED)
+        except asyncio.TimeoutError as timeout:
+            await self._unclaimed.close()
+            raise TimeoutError(
+                f"the router did not start transcribing within {STARTED:g} s"
+            ) from timeout
         except BaseException:
             await self._unclaimed.close()
             raise

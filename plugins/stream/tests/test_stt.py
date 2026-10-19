@@ -18,6 +18,7 @@ from vision_agents.core.stt.events import (
 )
 from vision_agents.plugins import stream
 from vision_agents.plugins.stream import RouterError
+from vision_agents.plugins.stream import stt as stt_module
 
 SETTLE = 2.0
 
@@ -499,6 +500,18 @@ class TestSTT:
 
         with pytest.raises(RouterError, match="closed the socket before it started"):
             await asyncio.wait_for(transcriber.start(), SETTLE)
+        await transcriber.close()
+
+    async def test_a_router_that_never_starts_is_given_up_on_and_its_socket_closed(
+        self, router: Router, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(stt_module, "STARTED", 0.2)
+        router.silent = True
+        transcriber = stream.STT("en-low-latency", url=router.url, customer_id="acme")
+
+        with pytest.raises(TimeoutError, match="within 0.2 s"):
+            await asyncio.wait_for(transcriber.start(), SETTLE)
+        await asyncio.wait_for(router.opened[0].closed.wait(), SETTLE)
         await transcriber.close()
 
     async def test_an_error_after_the_start_is_reported_as_an_event(

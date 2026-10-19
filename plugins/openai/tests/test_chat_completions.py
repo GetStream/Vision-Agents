@@ -3,22 +3,32 @@ import fractions
 import os
 import time
 import uuid
-from typing import AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional
 from unittest.mock import AsyncMock
 
 import numpy as np
 import openai
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from av import VideoFrame
 from openai.types.chat.chat_completion_chunk import (
     ChatCompletionChunk,
     Choice,
     ChoiceDelta,
 )
-from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
+from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
+from vision_agents.core.llm import LLM
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.plugins.openai import ChatCompletionsLLM, ChatCompletionsVLM
 
 from vision_agents.testing import collect_simple_response
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
 
 @pytest.fixture()
@@ -43,6 +53,56 @@ async def vlm(openai_client_mock, conversation):
     llm_ = ChatCompletionsVLM(client=openai_client_mock, model="test")
     llm_.set_conversation(conversation)
     return llm_
+
+
+@pytest.fixture
+async def openai_api() -> AsyncIterator[
+    tuple[openai.AsyncOpenAI, list[dict[str, Any]]]
+]:
+    """A real server standing in for OpenAI: a client of it, and every request body sent.
+
+    Every answer is an empty stream: the tests are about requests.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    async def stream(request: web.Request) -> web.StreamResponse:
+        bodies.append(await request.json())
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", stream)
+    server = TestServer(app)
+    await server.start_server()
+    client = openai.AsyncOpenAI(
+        api_key="test", base_url=str(server.make_url("/v1")), max_retries=0
+    )
+    yield client, bodies
+    await client.close()
+    await server.close()
+
+
+async def answer(
+    llm: LLM, conversation: Conversation, participant: Participant, text: str
+) -> None:
+    """What the agent does with a participant's words: keep them, then ask the LLM."""
+    await conversation.upsert_message(
+        role="user", user_id=participant.user_id, content=text, participant=participant
+    )
+    events = EventManager()
+    events.register(LLMResponseFinalEvent)
+    turn = LLMTurn(
+        transcript=text,
+        participant=participant,
+        events=events,
+        speaker=conversation.speaker_label(participant),
+    )
+    turn.start(llm)
+    await turn.stream.collect()
+    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
 
 
 class TestChatCompletionsVLM:
@@ -128,6 +188,33 @@ class TestChatCompletionsLLM:
         assert messages[1]["content"] == "message2"
         assert messages[2]["content"] == "prompt"
         assert messages[2]["role"] == "user"
+
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, Any]]]
+    ):
+        client, bodies = openai_api
+        conversation = InMemoryConversation("", [])
+        llm = ChatCompletionsLLM(client=client, model="test")
+        llm.set_conversation(conversation)
+
+        await answer(llm, conversation, ALICE, "Hi")
+        await answer(llm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (d1654d42e) sent for the same two turns.
+        assert bodies[-1]["messages"] == [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Are you there?"},
+        ]
+
+        await answer(llm, conversation, BOB, "Me too")
+        await answer(llm, conversation, ALICE, "Who is that?")
+        assert bodies[-1]["messages"][2:] == [
+            {"role": "user", "content": "Are you there?"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Alice: Who is that?"},
+        ]
 
     async def test_simple_response_model_failure(
         self, llm, conversation, openai_client_mock

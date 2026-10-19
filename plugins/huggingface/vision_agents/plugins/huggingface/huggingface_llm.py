@@ -163,7 +163,9 @@ class HuggingFaceLLM(LLM):
 
         if self._conversation is not None:
             for message in self._conversation.messages:
-                messages.append({"role": message.role, "content": message.content})
+                messages.append(
+                    {"role": message.role, "content": message.named_content}
+                )
         return messages
 
     def _input_to_messages(self, input_value: Any) -> List[Dict[str, Any]]:

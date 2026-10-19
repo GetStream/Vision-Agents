@@ -688,7 +688,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
             for msg in self._conversation.messages:
-                messages.append({"role": msg.role, "content": msg.content})
+                messages.append({"role": msg.role, "content": msg.named_content})
         return messages
 
     def _convert_tools_to_provider_format(
