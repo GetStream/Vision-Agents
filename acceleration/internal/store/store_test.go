@@ -125,7 +125,8 @@ func (s *StoreSuite) SetupTest() {
 				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+
 				" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
 				" connection_event_subscriptions, connection_event_deliveries,"+
-				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases CASCADE",
+				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
+				" scheduled_tasks, scheduled_task_runs CASCADE",
 		)
 		s.Require().NoError(err)
 	}

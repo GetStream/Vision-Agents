@@ -372,6 +372,9 @@ type AgentConfig struct {
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
+	// Scheduling is whether the agent may schedule tasks for its users, and the
+	// defaults those tasks take. The zero value is off.
+	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -762,6 +765,19 @@ type AgentChannels struct {
 	IMessage *ChannelLine `json:"imessage,omitempty"`
 	// Identity is how a sender becomes an end user: phone or link. Empty is phone.
 	Identity string `json:"identity,omitempty"`
+}
+
+// AgentScheduling is an agent config's scheduled-task settings, stored in
+// agent_configs.scheduling.
+type AgentScheduling struct {
+	// Enabled offers the scheduling tools to the agent's sessions. Off unless a
+	// config turns it on: it adds four tools to every turn.
+	Enabled bool `json:"enabled,omitempty"`
+	// MaxTasksPerUser caps one user's active tasks. Zero is the default of 25.
+	MaxTasksPerUser int `json:"max_tasks_per_user,omitempty"`
+	// DefaultTimezone is the zone a task takes when neither the user nor their
+	// session has ever named one.
+	DefaultTimezone string `json:"default_timezone,omitempty"`
 }
 
 // Lines are the channels named, by kind.
@@ -1734,8 +1750,12 @@ type User struct {
 	ID string `bun:"id,pk"`
 	// Kind is what the credential proved them to be, UserKindGuest or
 	// UserKindAuthenticated. Only a guest may be claimed.
-	Kind      string         `bun:"kind,notnull"`
-	Name      string         `bun:"name,notnull"`
+	Kind string `bun:"kind,notnull"`
+	Name string `bun:"name,notnull"`
+	// Timezone is the IANA zone the user was last explicitly known to be in,
+	// which a scheduled task resolves to when nothing nearer names one. Empty
+	// when nobody has ever said.
+	Timezone  string         `bun:"timezone"`
 	Custom    map[string]any `bun:"custom,type:jsonb,nullzero"`
 	CreatedAt time.Time      `bun:"created_at,notnull"`
 	// ClaimedBy is the real user this guest turned out to be, empty while they are still a

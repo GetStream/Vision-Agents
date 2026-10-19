@@ -303,7 +303,7 @@ func (s *StoreSuite) TestThePeakIsTheMostSessionsOpenAtOnce() {
 	s.Require().NoError(err)
 	s.EqualValues(3, peak.Sessions)
 	s.Require().NotNil(peak.At)
-	s.True(peak.At.Equal(s.base.Add(3*time.Minute)))
+	s.True(peak.At.Equal(s.base.Add(3 * time.Minute)))
 }
 
 func (s *StoreSuite) TestASessionThatClosedAsAnotherOpenedDidNotOverlapIt() {
