@@ -282,3 +282,66 @@ func (s *AgentSuite) TestASpeculativeReplyWithOnePersonIsUnchanged() {
 	s.Equal("be brief", second.Instructions)
 	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, second.Input[len(second.Input)-1])
 }
+
+func (s *AgentSuite) TestPeopleWithOneNameAreNumberedInTheOrderTheySpoke() {
+	s.join(true)
+	first := stt.Participant{ID: "alex-1", UserID: "alex-1", Name: "Alex"}
+	second := stt.Participant{ID: "alex-2", UserID: "alex-2", Name: "Alex"}
+	third := stt.Participant{ID: "alex-3", UserID: "alex-3", Name: "Alex"}
+	// The second Alex rejoins under a new ID and a new display name, and is still the
+	// second Alex: a label is fixed for the session once it is given.
+	returning := stt.Participant{ID: "alex-2-again", UserID: "alex-2", Name: "Alexander"}
+	for _, participant := range []stt.Participant{first, second, third} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{first, "hello"}, {second, "hi"}, {third, "hey"}, {first, "again"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+	s.speak(returning)
+	s.says(returning, "back")
+	s.eventually(func() bool { return len(s.model.requests()) == 5 }, "the rejoined turn was never asked")
+
+	input := s.model.requests()[4].Input
+	s.Require().Len(input, 9)
+	s.Equal("hello", input[0].Content)
+	s.Equal("Alex (2): hi", input[2].Content)
+	s.Equal("Alex (3): hey", input[4].Content)
+	s.Equal("Alex: again", input[6].Content)
+	s.Equal("Alex (2): back", input[8].Content)
+}
+
+func (s *AgentSuite) TestTheNamesOfThePeopleHeardCarryOnToTheAgentThatTakesOver() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice", Name: "Alice"}
+	bob := stt.Participant{ID: "bob", Name: "Bob"}
+	s.speak(alice)
+	s.speak(bob)
+	s.says(alice, "hello")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "alice was never answered")
+	s.quiet()
+	s.says(bob, "hi there")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "bob was never answered")
+	s.quiet()
+	old := s.agent
+
+	// What a session does when it switches between voice and writing: a new agent picks
+	// up the conversation.
+	s.join(true)
+	s.agent.Continue(old)
+	s.speak(alice)
+	s.says(alice, "and me")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "alice was never answered after the switch")
+
+	asked := s.model.requests()[0]
+	s.Equal("be brief\n\n"+severalSpeakers, asked.Instructions)
+	s.Require().Len(asked.Input, 5)
+	s.Equal("hello", asked.Input[0].Content)
+	s.Equal("Bob: hi there", asked.Input[2].Content)
+	s.Equal("Alice: and me", asked.Input[4].Content)
+}

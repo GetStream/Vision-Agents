@@ -344,10 +344,11 @@ type Agent struct {
 	// that cannot tell one voice from another, which leaves it saying nothing rather
 	// than guessing.
 	voices map[string]string
-	// speakers are the people, by personOf, who have had a turn answered. Once there are
-	// two, every new turn names who said it, because the model cannot tell them apart
-	// otherwise. Turns typed with RespondTo are the caller's and are never counted.
-	speakers map[string]struct{}
+	// speakers are the people, by personOf, who have had a turn answered, each with the
+	// label their words go under. Once there are two, every new turn names who said it,
+	// because the model cannot tell them apart otherwise. Turns typed with RespondTo are
+	// the caller's and are never counted.
+	speakers map[string]string
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -590,7 +591,7 @@ func New(options Options) (*Agent, error) {
 		prompt:           options.Instructions,
 		listeners:        map[string]*sttrouter.Session{},
 		voices:           map[string]string{},
-		speakers:         map[string]struct{}{},
+		speakers:         map[string]string{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
@@ -1784,7 +1785,7 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	turn := llm.Message{Role: llm.User, Content: text}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
-		turn.Speaker = speakerLabel(participant)
+		turn.Speaker = a.labelLocked(participant)
 	}
 	return turn
 }
@@ -1793,8 +1794,24 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
 	a.history = append(a.history, a.userTurnLocked(participant, text))
 	if participant.ID != typedCaller {
-		a.speakers[personOf(participant)] = struct{}{}
+		a.speakers[personOf(participant)] = a.labelLocked(participant)
 	}
+}
+
+// labelLocked is the label a person's words go under. It is fixed by their first answered
+// turn. A person whose name another already goes under is numbered, "Alex (2)", in the
+// order they first spoke, so the model tells them apart without being told their user.
+func (a *Agent) labelLocked(participant stt.Participant) string {
+	if label, ok := a.speakers[personOf(participant)]; ok {
+		return label
+	}
+	name := speakerLabel(participant)
+	taken := slices.Collect(maps.Values(a.speakers))
+	label := name
+	for n := 2; slices.Contains(taken, label); n++ {
+		label = fmt.Sprintf("%s (%d)", name, n)
+	}
+	return label
 }
 
 // personOf is who a participant is. A person who rejoins gets a new ID but keeps their
@@ -3809,6 +3826,20 @@ func turnOf(synthesisID string) string {
 		return synthesisID[:index]
 	}
 	return synthesisID
+}
+
+// Continue picks up the conversation another agent held: what was said and who said it,
+// so the people already heard keep their labels when a session switches between voice and
+// writing.
+func (a *Agent) Continue(previous *Agent) {
+	previous.mu.Lock()
+	history := append([]llm.Message(nil), previous.history...)
+	speakers := maps.Clone(previous.speakers)
+	previous.mu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = history
+	a.speakers = speakers
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.

@@ -964,7 +964,7 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 		s.logger.Debug("the agent was still talking when voice changed", "error", err)
 	}
 	cancel()
-	fresh.RestoreHistory(old.History())
+	fresh.Continue(old)
 
 	var transcript Transcript
 	if voice && s.transcribe != nil {
