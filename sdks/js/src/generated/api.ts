@@ -6718,7 +6718,7 @@ export type components = {
             readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
-            /** @description False once the error rate crosses the configured threshold. */
+            /** @description False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
             readonly available: boolean;
             /** Format: double */
             readonly error_rate: number;

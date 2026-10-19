@@ -2,6 +2,7 @@ package sttrouter
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -19,6 +20,10 @@ type Session struct {
 	recorder *routing.Recorder
 
 	events chan stt.Event
+	// failed is set once the provider reports a fatal error. The caller has been told, and
+	// the provider hears nothing more, so later audio is dropped rather than failing once
+	// per frame.
+	failed atomic.Bool
 
 	closeOnce sync.Once
 }
@@ -40,8 +45,12 @@ func newSession(
 	return session
 }
 
-// ProcessAudio streams audio to the selected provider.
+// ProcessAudio streams audio to the selected provider, and drops it once the provider has
+// failed for good.
 func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
+	if s.failed.Load() {
+		return nil
+	}
 	return s.provider.ProcessAudio(pcm, participant)
 }
 
@@ -91,12 +100,22 @@ func (s *Session) observe(event stt.Event) {
 		})
 
 	case stt.Error:
-		s.recorder.Record(s.config, routing.Stat{
+		stat := routing.Stat{
 			Owner:     s.owner,
 			StartedAt: time.Now().UTC(),
 			Success:   false,
 			ErrorCode: errorCode(typed),
-		})
+		}
+		if typed.Fatal {
+			// Set before the error is passed on, so a caller who has read it sends no audio
+			// that still reaches the provider.
+			s.failed.Store(true)
+			// The vendor's own words are what tell an account it refuses from a dropped
+			// socket.
+			stat.ErrorMessage = typed.Err.Error()
+			stat.Fatal = true
+		}
+		s.recorder.Record(s.config, stat)
 	}
 }
 

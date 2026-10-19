@@ -14,7 +14,8 @@ T = TypeVar("T", bound="ProviderHealth")
 class ProviderHealth:
     """
     Attributes:
-        available (bool): False once the error rate crosses the configured threshold.
+        available (bool): False once the error rate crosses the configured threshold, and for a speech-to-text model for
+            one health window after a fatal error, such as an account the vendor refuses.
         error_rate (float):
         errors (int):
         latency_ms_avg (float):

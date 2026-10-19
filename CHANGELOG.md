@@ -2141,6 +2141,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A live transcription whose vendor fails for good mid-call, such as ElevenLabs refusing an account that has not accepted its terms (`unaccepted_terms`), reports it once: `/v1/stt/stream` sent one more `error` frame per frame of audio after it (779 in one call). The stat row keeps the vendor's reason as its `error_message`, and the model is unavailable in `GET /v1/stt/providers` and ranked last for the next five minutes, however many turns it served before (AI-1417).
+
 - A Knowledge source whose `<source>#<n>` id reached 64 bytes is indexed: a URL subscribed with `POST /v1/agents/knowledge/urls`, or a document posted to `POST /v1/agents/knowledge` whose `source` is that long. Its passage ids were `<source>#<n>`, and turbopuffer refuses an id of 64 bytes or more (`id string should be less than 64 bytes`), so such a page failed to index. A passage id that would not fit is now a hash of the whole source and the index (`<sha256, base64url>#<n>`); every id that fitted stays the same, so a base filled before needs no re-index (#1010, AI-1408).
 
 - Voicebench reply timing no longer reuses an answer to a later caller turn for earlier turns, and detects quiet speech on the isolated agent track. Methodology v10 separates missing post-caller replies from agent speech that already started while the caller was talking. Native-target diagnostics follow the explicitly selected router instead of a stale environment URL.
