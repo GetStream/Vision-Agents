@@ -217,16 +217,18 @@ func (s *StreamsSuite) TestAFailureThatIsNotUTF8IsSentAsTextThatIs() {
 
 func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsHungUpOn() {
 	listening := s.start("/v1/stt/stream", frame{"target": "nobody/x"})
-	// Never reads and never answers: the router's wait for the close has to end on its own.
-	time.Sleep(1500 * time.Millisecond)
+	// Never answers the close: the router's wait for it has to end on its own, in about
+	// closeWait. The read deadline keeps a router that never lets go from hanging the suite.
+	began := time.Now()
 	raw := listening.UnderlyingConn()
-	s.Require().NoError(raw.SetReadDeadline(time.Now().Add(2 * time.Second)))
+	s.Require().NoError(raw.SetReadDeadline(began.Add(5 * time.Second)))
 	buffer := make([]byte, 4096)
 	for {
 		if _, err := raw.Read(buffer); err != nil {
 			var timeout net.Error
 			s.False(errors.As(err, &timeout) && timeout.Timeout(), "the router still holds the socket: %v", err)
 			s.ErrorIs(err, io.EOF)
+			s.Less(time.Since(began), 1500*time.Millisecond, "the router waits for the close for about a second")
 			return
 		}
 	}
