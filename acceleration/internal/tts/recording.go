@@ -58,6 +58,9 @@ type Recorded struct {
 	AudioDurationMs int64
 	// Characters is how much text was spoken, which is what it is billed on.
 	Characters int64
+	// Voice is the voice it was spoken in, the provider's default included. Empty when the
+	// recorder cannot say.
+	Voice string
 }
 
 // Recorder speaks a whole text into one file.

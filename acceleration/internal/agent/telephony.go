@@ -181,20 +181,24 @@ const alreadyCalled = "You already made this exact call and it returned the foll
 const didNotWork = "That did not work: "
 
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
-// arguments, that already succeeded in this conversation. After a result Gemma often asks
-// for the same call again, and run twice a dispatch or a booking is made twice; a forced
-// chase made Qwen book the same table again after the caller thanked it, and the second
-// booking failed. A call that failed may be tried again, since what failed may not fail twice.
+// arguments, already answered since the caller last spoke. After a result Gemma often asks
+// for the same call again, and run twice a dispatch or a booking is made twice. A call that
+// failed may be tried again, since what failed may not fail twice.
+//
+// A call that changes something is matched across the whole call: Nemotron booked a table,
+// heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
+// table again after the caller thanked it; each second booking failed against the first.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
 	}
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role != llm.ToolResult || strings.HasPrefix(history[i].Content, didNotWork) ||
-			strings.Contains(history[i].Content, `"error"`) || strings.Contains(history[i].Content, notRun) {
+	changes := !readsOnly(call.Name)
+	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
+		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
+			strings.Contains(history[i].Content, notRun) {
 			continue
 		}
-		for j := i - 1; j >= 0; j-- {
+		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == history[i].ToolCallID && same(asked)
 			}) {
@@ -204,6 +208,35 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	}
 	return "", false
 }
+
+// refusedBefore returns the answer of an identical call the tool already refused on this
+// call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Nemotron
+// sent verify_account the PIN it had misheard three times over and was refused each time;
+// only what the caller says next can change the answer.
+func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		result := history[i]
+		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) || !failedResult(result.Content) {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
+				return asked.ID == result.ToolCallID && asked.Name == call.Name && sameArguments(asked.Arguments, call.Arguments)
+			}) {
+				return result.Content, true
+			}
+		}
+	}
+	return "", false
+}
+
+// alreadyRefused opens the answer to a call repeated after the tool refused it.
+// It opens with didNotWork so that it backs no claim.
+const alreadyRefused = didNotWork + "you already made this exact call with these values and it was refused: "
+
+// tryOtherValues closes it.
+const tryOtherValues = ". Do not call it again with the same values. Read them back to the caller, " +
+	"digit by digit, and ask which one is wrong."
 
 // fillsIn reports whether a later call's arguments are an earlier call's with at most the
 // text arguments it left empty or out filled in, and the others it left out given their
@@ -336,8 +369,8 @@ func succeeded(history []llm.Message, name string, passed bool) bool {
 // digitWords are the digits as a caller reads them out, in order.
 var digitWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
 
-// spokenDigits is two or more digits read out as words, as in "four four seven one".
-var spokenDigits = regexp.MustCompile(`(?i)\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[ -]+(?:zero|one|two|three|four|five|six|seven|eight|nine))+\b`)
+// digitWordRun is two or more digits read out as words, as in "four four seven one".
+var digitWordRun = regexp.MustCompile(`(?i)\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[ -]+(?:zero|one|two|three|four|five|six|seven|eight|nine))+\b`)
 
 // spokenNumbers are the numbers from ten to ninety read out as one word, as the house
 // number in "fourteen Cedar Lane" that failed verify_account.
@@ -351,8 +384,8 @@ var spokenNumbers = map[string]string{
 // spokenNumber is a number from ten to ninety-nine read out in words.
 var spokenNumber = regexp.MustCompile(`(?i)\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[ -](one|two|three|four|five|six|seven|eight|nine))?\b`)
 
-// spelledOut is a word followed by its letters, as in "Patel P A T E L".
-var spelledOut = regexp.MustCompile(`\b([A-Za-z]{2,})((?:[ ,.-]+[A-Za-z]\b){2,})`)
+// spelledAfterName is a word followed by its letters, as in "Patel P A T E L".
+var spelledAfterName = regexp.MustCompile(`\b([A-Za-z]{2,})((?:[ ,.-]+[A-Za-z]\b){2,})`)
 
 // unspelled drops the letters a caller spelled a name out with from a call's string
 // arguments, which a model copies in after the name, and writes digits read out as words
@@ -368,7 +401,7 @@ func unspelled(arguments string) string {
 		if !ok {
 			continue
 		}
-		cleaned := spokenDigits.ReplaceAllStringFunc(text, func(match string) string {
+		cleaned := digitWordRun.ReplaceAllStringFunc(text, func(match string) string {
 			var digits strings.Builder
 			for word := range strings.FieldsFuncSeq(strings.ToLower(match), func(r rune) bool { return r == ' ' || r == '-' }) {
 				digits.WriteByte(byte('0' + slices.Index(digitWords, word)))
@@ -386,8 +419,8 @@ func unspelled(arguments string) string {
 			}
 			return number
 		})
-		cleaned = spelledOut.ReplaceAllStringFunc(cleaned, func(match string) string {
-			parts := spelledOut.FindStringSubmatch(match)
+		cleaned = spelledAfterName.ReplaceAllStringFunc(cleaned, func(match string) string {
+			parts := spelledAfterName.FindStringSubmatch(match)
 			letters := strings.Map(func(r rune) rune {
 				if unicode.IsLetter(r) {
 					return r
@@ -472,10 +505,26 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	tool, _ := a.availableTools().Lookup(requested.Call.Name)
 	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
+	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
+		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
 	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, a.History()); first != "" {
 		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
+	} else if key, value, known, unfound := unfoundID(a.History(), requested.Call, toolNames(a.availableTools())); unfound {
+		parts = llm.TextParts(unfoundIDResult(key, value, known))
+	} else if key, known, missing := missingID(a.History(), requested.Call, a.availableTools()); missing {
+		parts = llm.TextParts(unfoundIDResult(key, "", known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
+	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
+		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
+	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
+		parts = llm.TextParts(misshapenResult(key, value, a.History()))
+	} else if key, value, heard, unheard := unheardNumber(a.History(), requested.Call); unheard {
+		parts = llm.TextParts(unheardResult(key, value, heard))
+	} else if name, spelled, misspelled := misspelledName(a.History(), requested.Call); misspelled {
+		parts = llm.TextParts(misspelledResult(name, spelled))
+	} else if name, stand := placeholderName(requested.Call); stand {
+		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
 		said, files, err = a.runCode(ctx, requested.Call)

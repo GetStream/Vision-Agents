@@ -67,8 +67,14 @@ type Message struct {
 	// has to be replayed with them, because the provider rejects a tool result that
 	// answers nothing.
 	ToolCalls []ToolCall
+	// Reasoning is what an assistant turn thought before it answered, for a provider that
+	// is sent it again with the turn.
+	Reasoning string
 	// ToolCallID names the call a ToolResult message answers.
 	ToolCallID string
+	// Speaker names who said a User turn once more than one person has spoken. No provider
+	// reads it: the agent writes it into the words it sends, and keeps Content as said.
+	Speaker string
 }
 
 // Tool is something the model may do instead of, or alongside, saying something.

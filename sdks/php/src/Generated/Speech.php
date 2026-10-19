@@ -28,6 +28,8 @@ final readonly class Speech
         public ?string $provider = null,
         // Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
         public ?string $url = null,
+        // The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked f...
+        public ?string $voice = null,
     ) {
     }
 
@@ -50,6 +52,7 @@ final readonly class Speech
             model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
             provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
             url: array_key_exists('url', $data) && $data['url'] !== null ? Json::string($data, 'url') : null,
+            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
     }
 
@@ -91,6 +94,9 @@ final readonly class Speech
         }
         if ($this->url !== null) {
             $out['url'] = $this->url;
+        }
+        if ($this->voice !== null) {
+            $out['voice'] = $this->voice;
         }
         return $out;
     }

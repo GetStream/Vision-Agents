@@ -48,6 +48,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -1272,6 +1273,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Description: &candidate.Config.Description,
 			Languages:   candidate.Config.Languages,
 			Realtime:    candidate.Config.Realtime,
+			Supports:    supportsOf(candidate.Config.Terms),
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
@@ -1280,6 +1282,15 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 		})
 	}
 	return &listProvidersResponse{Body: providers}, nil
+}
+
+// supportsOf is the terms a model declared, as the names a request's options use.
+func supportsOf(terms []options.Term) []string {
+	var names []string
+	for _, term := range terms {
+		names = append(names, string(term))
+	}
+	return names
 }
 
 // listRoutes returns the shortcuts offered as a choice and what each resolves to now.
@@ -1300,20 +1311,12 @@ func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*l
 		if err != nil {
 			return nil, err
 		}
-		resolved := make([]Candidate, 0, len(candidates))
-		for _, candidate := range candidates {
-			resolved = append(resolved, Candidate{
-				Provider: candidate.Config.Provider,
-				Model:    candidate.Config.Model,
-				Health:   providerHealth(candidate.Health),
-			})
-		}
 		alias := config.Aliases[name]
 		routes = append(routes, Route{
 			Id:          name,
 			Title:       alias.Title,
 			Description: alias.Description,
-			Candidates:  resolved,
+			Candidates:  s.candidatesOf(request.Modality, candidates),
 		})
 	}
 	return &listRoutesResponse{Body: routes}, nil
@@ -1339,15 +1342,27 @@ func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetReques
 		return nil, notFound(err.Error())
 	}
 
+	return &resolveTargetResponse{Body: s.candidatesOf(request.Modality, candidates)}, nil
+}
+
+// candidatesOf is what a target resolved to, as the routes say it. Each comes from the live
+// router, so a text-to-speech candidate also says whether a recording can use it.
+func (s *Server) candidatesOf(modality Modality, candidates []routing.Candidate) []Candidate {
 	resolved := make([]Candidate, 0, len(candidates))
 	for _, candidate := range candidates {
+		var canRecord *bool
+		if modality == Tts && s.streams != nil && s.streams.Speech != nil {
+			records := s.streams.Speech.Records(candidate.Config.Provider)
+			canRecord = &records
+		}
 		resolved = append(resolved, Candidate{
-			Provider: candidate.Config.Provider,
-			Model:    candidate.Config.Model,
-			Health:   providerHealth(candidate.Health),
+			CanRecord: canRecord,
+			Provider:  candidate.Config.Provider,
+			Model:     candidate.Config.Model,
+			Health:    providerHealth(candidate.Health),
 		})
 	}
-	return &resolveTargetResponse{Body: resolved}, nil
+	return resolved
 }
 
 // getStats returns the calling customer's aggregated usage for one modality.
@@ -2120,9 +2135,10 @@ func (ActivityGranularity) Schema(registry huma.Registry) *huma.Schema {
 
 // Candidate is the Candidate schema.
 type Candidate struct {
-	Health   ProviderHealth `json:"health"`
-	Model    string         `json:"model"`
-	Provider string         `json:"provider"`
+	CanRecord *bool          `json:"can_record,omitempty" doc:"Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them."`
+	Health    ProviderHealth `json:"health"`
+	Model     string         `json:"model"`
+	Provider  string         `json:"provider"`
 }
 
 // Granularity is the Granularity schema.
@@ -2175,7 +2191,7 @@ func (*ProviderBenchmark) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 
 // ProviderHealth is the ProviderHealth schema.
 type ProviderHealth struct {
-	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold."`
+	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses."`
 	ErrorRate    float64 `json:"error_rate"`
 	Errors       int64   `json:"errors"`
 	LatencyMsAvg float64 `json:"latency_ms_avg"`

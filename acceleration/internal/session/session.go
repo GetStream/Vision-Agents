@@ -874,7 +874,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		return stack.Wrap(ErrCardedToNative)
 	}
 	if next.ControllerTarget == "" && !next.Native() {
-		next.ControllerTarget = next.internalTarget(defaultControllerTarget)
+		next.ControllerTarget = next.controllerTarget()
 	}
 
 	if err := s.current().SetSettings(ctx, agent.Settings{

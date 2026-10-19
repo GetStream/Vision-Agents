@@ -168,3 +168,16 @@ func refused(provider string, response *http.Response) error {
 	return stack.Wrap(fmt.Errorf("voices: %s refused the voice (http %d): %s",
 		provider, response.StatusCode, bytes.TrimSpace(body)))
 }
+
+// listRefused is refused for a listing. A list names no voice, so a 401 or 403 on one is
+// about the key: staging's Inworld key answered the list with a 403 until its scopes were
+// widened on 2026-10-19, and "refused the voice" sent people looking for a voice nobody
+// had asked for. Any other status is worded as refused words it.
+func listRefused(provider string, response *http.Response) error {
+	if response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
+		return refused(provider, response)
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+	return stack.Wrap(fmt.Errorf("voices: the %s key cannot list voices (http %d): %s",
+		provider, response.StatusCode, bytes.TrimSpace(body)))
+}

@@ -292,12 +292,65 @@ func (s *quietSTT) Close() error {
 	return nil
 }
 
+// refusingSTT turns the account away on its first audio, as ElevenLabs answers an account
+// that has not accepted its terms (probed 2026-10-19): one fatal error, then every write
+// fails on the socket the vendor closed.
+type refusingSTT struct {
+	emitter *stt.Emitter
+	refused bool
+}
+
+// refusingModel is new each run: health is kept in a Redis that other runs share, and one
+// fatal error marks the model unavailable for everyone reading it.
+var refusingModel = fmt.Sprintf("refusing-%d", time.Now().UnixNano())
+
+// termsRefusal is ElevenLabs' own words for an account that has not accepted its terms.
+const termsRefusal = "You have not accepted the terms required to use this feature."
+
+func (s *refusingSTT) Start(context.Context) error { return nil }
+func (s *refusingSTT) Events() <-chan stt.Event    { return s.emitter.Events() }
+func (s *refusingSTT) Provider() string            { return "refusing" }
+func (s *refusingSTT) Model() string               { return refusingModel }
+
+func (s *refusingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	if s.refused {
+		return errors.New("refusing: write audio: websocket: close sent")
+	}
+	s.refused = true
+	s.emitter.Send(stt.Error{
+		Provider: "refusing", Model: refusingModel, Err: errors.New(termsRefusal),
+		Context: "unaccepted_terms", Fatal: true,
+	})
+	return nil
+}
+
+func (s *refusingSTT) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
 // recordingTTS keeps what it was asked to say.
 type recordingTTS struct {
 	emitter *tts.Emitter
 
 	mu   sync.Mutex
 	said []string
+	// voice is the one it was last opened with.
+	voice string
+}
+
+// opened is the voice opened again, in the voice asked.
+func (s *recordingTTS) opened(voice string) *recordingTTS {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.voice = voice
+	return s
+}
+
+func (s *recordingTTS) Voice() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.voice
 }
 
 func (s *recordingTTS) Start(context.Context) error { return nil }
@@ -368,13 +421,14 @@ func (t *recordedTranscriber) Close() error                { return nil }
 func (t *recordedTranscriber) Provider() string            { return "stub" }
 func (t *recordedTranscriber) Model() string               { return t.model }
 
-// recordedVoice speaks whatever it is handed into the same audio.
-type recordedVoice struct{ model string }
+// recordedVoice speaks whatever it is handed into the same audio, in the voice it was
+// built for.
+type recordedVoice struct{ model, voice string }
 
 func recorderRegistry() *ttsrouter.Recorders {
 	registry := ttsrouter.NewRecorderRegistry()
 	registry.Register("stub", func(spec routing.Spec) (tts.Recorder, error) {
-		return &recordedVoice{model: spec.Model}, nil
+		return &recordedVoice{model: spec.Model, voice: spec.Voice}, nil
 	})
 	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
 		return &recordedVoice{model: spec.Model}, nil
@@ -395,6 +449,7 @@ func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.
 	}, nil
 }
 
+func (v *recordedVoice) Voice() string               { return v.voice }
 func (v *recordedVoice) Start(context.Context) error { return nil }
 func (v *recordedVoice) Close() error                { return nil }
 func (v *recordedVoice) Provider() string            { return "stub" }
@@ -647,7 +702,8 @@ func stsrouterStub() (*stsrouter.Router, error) {
 		Providers: []routing.ProviderConfig{{
 			Provider: "stub", Model: "stub-sts", Languages: []string{"en"}, Realtime: true,
 		}},
-		Aliases: map[string]routing.Alias{"sts-fast": {RequireRealtime: true}},
+		// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
+		Aliases: map[string]routing.Alias{"sts-fast": {Title: "Fast", RequireRealtime: true}},
 	}
 	registry := stsrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (sts.STS, error) {

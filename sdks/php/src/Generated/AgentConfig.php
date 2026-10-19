@@ -57,6 +57,7 @@ final readonly class AgentConfig
         public ?SessionVideo $video = null,
         /** @var list<string>|null */
         public ?array $visibleTools = null,
+        // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
     ) {
     }

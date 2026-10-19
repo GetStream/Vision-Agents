@@ -333,9 +333,58 @@ func (s *CallsSuite) TestReadingACallsTranscriptCreatesNoChannel() {
 	s.False(exists, "a call nobody wrote down leaves nothing behind in the app")
 }
 
+func (s *CallsSuite) TestATimelinePairsWhatEachCallerSaidWithTheAgentsAnswer() {
+	// A caller's line is stored when they start talking, so it is older than the turn it
+	// started. The times are a staging call's: Alice's line at 18:26:10.608, her turn at
+	// 18:26:11.940, Bob's line at 18:26:21.409, his turn at 18:26:22.468.
+	ctx := context.Background()
+	call := s.started(store.Call{StartedAt: time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)})
+	at := func(ms int) time.Time { return call.StartedAt.Add(time.Duration(ms) * time.Millisecond) }
+	s.inChannelAs(call.AgentID, s.customerID(), "alice", at(10_608), "My favorite color is blue.")
+	s.inChannelAs(call.AgentID, s.customerID(), call.AgentID, at(13_100), "Got it, your favorite color is blue.")
+	s.inChannelAs(call.AgentID, s.customerID(), "bob", at(21_409), "My favorite color is green.")
+	s.inChannelAs(call.AgentID, s.customerID(), call.AgentID, at(23_500), "Noted, Bob, your favorite is green.")
+	for _, turn := range []live.Turn{{TurnID: "turn-1", StartedAt: at(11_940)}, {TurnID: "turn-2", StartedAt: at(22_468)}} {
+		turn.CustomerID, turn.AgentID, turn.CallID = s.customerID(), call.AgentID, call.CallID
+		s.Require().NoError(s.live.RecordTurn(ctx, turn))
+	}
+
+	var timeline []TimelineEntry
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/timeline", nil, &timeline))
+
+	s.Require().Len(timeline, 2)
+	s.Equal("My favorite color is blue.", value(timeline[0].Heard))
+	s.Equal("Got it, your favorite color is blue.", value(timeline[0].Said))
+	s.Equal("My favorite color is green.", value(timeline[1].Heard))
+	s.Equal("Noted, Bob, your favorite is green.", value(timeline[1].Said))
+}
+
+func (s *CallsSuite) TestATimelineOfACallNobodyWroteDownHasTurnsWithoutWords() {
+	ctx := context.Background()
+	call := s.started(store.Call{StartedAt: time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)})
+	s.Require().NoError(s.live.RecordTurn(ctx, live.Turn{CustomerID: s.customerID(), AgentID: call.AgentID,
+		CallID: call.CallID, TurnID: "turn-1", StartedAt: call.StartedAt.Add(time.Second)}))
+
+	var timeline []TimelineEntry
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/timeline", nil, &timeline))
+
+	s.Require().Len(timeline, 1)
+	s.Equal("turn-1", timeline[0].TurnId)
+	s.Nil(timeline[0].Heard)
+	s.Nil(timeline[0].Said)
+}
+
 // inChannel writes one line into an agent channel, created and stamped for a customer the
 // way the router creates the channels it writes to.
 func (s *CallsSuite) inChannel(channel, customer string, at time.Time, text string) {
+	s.inChannelAs(channel, customer, "alice", at, text)
+}
+
+// inChannelAs is inChannel written as somebody: a line written as the agent's own id is
+// what the agent said.
+func (s *CallsSuite) inChannelAs(channel, customer, speaker string, at time.Time, text string) {
 	ctx := context.Background()
 	creator := "vision-agent"
 	_, err := s.chat.Client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, channel,
@@ -344,7 +393,6 @@ func (s *CallsSuite) inChannel(channel, customer string, at time.Time, text stri
 		}})
 	s.Require().NoError(err)
 	s.chat.At(at)
-	speaker := "alice"
 	_, err = s.chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, channel,
 		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &speaker}})
 	s.Require().NoError(err)

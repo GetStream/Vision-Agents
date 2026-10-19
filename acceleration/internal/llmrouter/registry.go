@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/inceptron"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/ionet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/meta"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/minimax"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/moondream"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/nextbit"
@@ -59,6 +60,14 @@ func DefaultRegistry() *Registry {
 		return Started(deepseek.New(deepseek.Options{
 			Model:           spec.Model,
 			Thinking:        spec.Thinking,
+			ReasoningEffort: spec.ReasoningEffort,
+			Logger:          spec.Logger,
+		}))
+	})
+
+	registry.Register(minimax.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(minimax.New(minimax.Options{
+			Model:           spec.Model,
 			ReasoningEffort: spec.ReasoningEffort,
 			Logger:          spec.Logger,
 		}))

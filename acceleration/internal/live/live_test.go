@@ -118,6 +118,44 @@ func (s *LiveSuite) TestProviderBecomesUnavailableWhenErrorsDominate() {
 	s.False(health.Available, "a 75% error rate is over the default 50% threshold")
 }
 
+func (s *LiveSuite) TestOneFatalFailureOutweighsEverythingServedBeforeIt() {
+	for range 3 {
+		s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1000, true)))
+	}
+	fatal := s.usage(100, 0, false)
+	fatal.Fatal = true
+	s.Require().NoError(s.client.RecordRequest(s.ctx, fatal))
+
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.InDelta(0.25, health.ErrorRate(), 0.001)
+	s.False(health.Available, "an account the provider refuses is refused to every caller")
+}
+
+func (s *LiveSuite) TestAFatalFailureLastsOneWindowWhileRequestsKeepComing() {
+	short, err := New(Options{Address: os.Getenv(AddressEnvVar), Window: 2 * time.Second})
+	s.Require().NoError(err)
+	defer short.Close()
+
+	fatal := s.usage(100, 0, false)
+	fatal.Fatal = true
+	s.Require().NoError(short.RecordRequest(s.ctx, fatal))
+	time.Sleep(1200 * time.Millisecond)
+	// Each of these moves the counters' expiry on, past the end of the fatal's window.
+	for range 3 {
+		s.Require().NoError(short.RecordRequest(s.ctx, s.usage(100, 1000, true)))
+	}
+	health, err := short.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.False(health.Available, "still inside the window of the fatal failure")
+
+	time.Sleep(1000 * time.Millisecond)
+	health, err = short.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.EqualValues(4, health.Requests, "the counters are still in their window")
+	s.True(health.Available, "the fatal failure is older than the window")
+}
+
 func (s *LiveSuite) TestErrorRateThresholdIsConfigurable() {
 	strict, err := New(Options{Address: os.Getenv(AddressEnvVar), MaxErrorRate: 0.1})
 	s.Require().NoError(err)

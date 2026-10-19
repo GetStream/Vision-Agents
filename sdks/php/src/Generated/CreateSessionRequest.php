@@ -85,7 +85,7 @@ final readonly class CreateSessionRequest
         public ?string $userId = null,
         public ?string $userName = null,
         public ?SessionVideo $video = null,
-        // Provider-specific voice id.
+        // The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. P...
         public ?string $voice = null,
     ) {
     }

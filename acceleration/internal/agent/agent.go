@@ -344,6 +344,10 @@ type Agent struct {
 	// that cannot tell one voice from another, which leaves it saying nothing rather
 	// than guessing.
 	voices map[string]string
+	// speakers are the people, by personOf, who have had a turn answered. Once there are
+	// two, every new turn names who said it, because the model cannot tell them apart
+	// otherwise. Turns typed with RespondTo are the caller's and are never counted.
+	speakers map[string]struct{}
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -379,9 +383,27 @@ type Agent struct {
 	// toolRounds is how many replies to tool results have been started since the caller
 	// last spoke (maxToolRounds).
 	toolRounds int
+	// heardCaller is set once a turn has come from somebody speaking rather than a typed
+	// instruction; until then replies are offered no tools.
+	heardCaller bool
 	// promiseChased is set once a reply that promised to check and called nothing has been
 	// asked for the call (keepPromise), since the caller last spoke.
 	promiseChased bool
+	// callerTurns counts the turns the caller has started, so a chase put off for a moment
+	// is dropped once they have said something new.
+	callerTurns int
+	// chaseForced is set once a chase that still called nothing has been chased again with
+	// the call required, since the caller last spoke.
+	chaseForced bool
+	// narrationAsked is set once a reply that only talked about the caller has been asked
+	// again, since the caller last spoke.
+	narrationAsked bool
+	// refusalChased is set once a refusal nothing was logged for has been chased, since the
+	// caller last spoke.
+	refusalChased bool
+	// refusedWithCalls is set when a reply refused the caller and called other tools in the
+	// same breath, since the caller last spoke, so the refusal is chased once those are done.
+	refusedWithCalls bool
 	// stepChased is the tool whose described step was last chased up since the caller
 	// last spoke (describedStep).
 	stepChased string
@@ -458,6 +480,17 @@ type Agent struct {
 	// behind it, so it and everything after it went unsaid. Only the model consumer
 	// touches it.
 	withheld bool
+	// withheldFrom is the sentence the withholding began at, for cutting the history at
+	// what the caller heard.
+	withheldFrom string
+	// narrated says a sentence of this reply spoke of the caller rather than to them, so it
+	// and everything after it went unsaid without the chase a withheld claim gets.
+	narrated bool
+	// promised says a sentence of this reply, said before any tool answered, told the caller
+	// a step was under way. A direction the model writes after it ([short pause], [checks
+	// outage map]) is the wait acted out, and what follows it a guess at the step's result.
+	// Only the model consumer touches it.
+	promised bool
 
 	// following serialises the turns the agent takes of its own accord, so two answers
 	// landing together cannot both decide the agent is free to speak.
@@ -557,6 +590,7 @@ func New(options Options) (*Agent, error) {
 		prompt:           options.Instructions,
 		listeners:        map[string]*sttrouter.Session{},
 		voices:           map[string]string{},
+		speakers:         map[string]struct{}{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
@@ -728,7 +762,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
-	caller := stt.Participant{ID: "caller"}
+	caller := stt.Participant{ID: typedCaller}
 	sender, _ := routing.CallerFrom(ctx)
 	// Typed into a call, the words are what the caller said as much as anything transcribed,
 	// and the transcript, the review and the logs all take a caller's line from Heard. A text
@@ -769,17 +803,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender)
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached, asked, sender)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender)
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil, asked, sender)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -862,7 +896,10 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		return "", errors.New("agent: not joined")
 	}
 	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: text})
-	history := append([]llm.Message(nil), a.history...)
+	history := make([]llm.Message, len(a.history))
+	for i, message := range a.history {
+		history[i] = named(message)
+	}
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()
@@ -1165,6 +1202,20 @@ func (a *Agent) consumeRoster(roster Roster) {
 			continue
 		}
 		a.unbind(attendance.Participant)
+		a.mu.Lock()
+		listener := a.listeners[attendance.Participant.ID]
+		a.mu.Unlock()
+		if listener != nil {
+			// A provider that fills silence never cuts an idle session, so a departed
+			// participant's would stay open until the agent closes.
+			// Closing waits on the final transcript, so it must not hold up the next roster event.
+			a.forgetListener(attendance.Participant.ID, listener)
+			a.running.Add(1)
+			go func() {
+				defer a.running.Done()
+				a.closeListener(listener)
+			}()
+		}
 		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
 		a.emitter.Send(ParticipantLeft{
 			Participant: attendance.Participant,
@@ -1214,6 +1265,12 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 // handed every later chunk and the agent is deaf to the participant for the rest of the
 // call rather than for a moment.
 func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
+	a.forgetListener(participantID, session)
+	a.closeListener(session)
+}
+
+// forgetListener takes a session out of use without closing it.
+func (a *Agent) forgetListener(participantID string, session *sttrouter.Session) {
 	a.mu.Lock()
 	// Only when it is still the one in use: a replacement may already have been opened,
 	// and retiring that would put us back where we started.
@@ -1225,9 +1282,11 @@ func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
 	// afresh rather than held to names it never chose.
 	delete(a.voices, participantID)
 	a.mu.Unlock()
+}
 
-	// Closing releases the provider's socket and ends the stream of events this was
-	// reading. Doing it twice is safe, which is what lets Close race with this.
+// closeListener releases the provider's socket and ends the stream of events this was
+// reading. Doing it twice is safe, which is what lets Close race with this.
+func (a *Agent) closeListener(session *sttrouter.Session) {
 	if err := session.Close(); err != nil {
 		a.logger.Debug("closing a dropped transcriber failed", "error", err)
 	}
@@ -1507,6 +1566,8 @@ type heard struct {
 	revisedAt    time.Time
 	sttLatencyMs float64
 	confidence   float64
+	// typed is a turn written rather than spoken, such as the instruction opening a call.
+	typed bool
 }
 
 func participantName(participant stt.Participant) string {
@@ -1667,18 +1728,29 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
-	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(text, images))
+	a.keepTurnLocked(participant, text)
 	history := a.replayLocked()
 
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolRounds = 0
 	a.promiseChased = false
+	a.chaseForced = false
+	a.narrationAsked = false
+	a.refusalChased = false
+	a.refusedWithCalls = false
+	a.callerTurns++
 	a.stepChased = ""
 	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
 	a.lastParticipant = participant
+	if !listened.typed {
+		a.heardCaller = true
+	}
+	// A call opened with a typed instruction ("greet the caller") has nothing to act on
+	// yet, and a model offered tools then logs a summary of the empty call.
+	noTools := !a.options.Text && !a.heardCaller
 	instructions := a.instructions()
 	a.mu.Unlock()
 
@@ -1692,19 +1764,76 @@ func (a *Agent) respondTurn(
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
 		Images:       images,
 		Asked:        asked,
+		NoTools:      noTools,
 	}, text)
 }
 
-func (a *Agent) userTurnLocked(text string, images []llm.ImagePart) llm.Message {
-	return llm.Message{Role: llm.User, Content: text}
+// typedCaller is the participant RespondTo answers as. Typed words are the caller's own,
+// so they never count as a second person in the call.
+const typedCaller = "caller"
+
+// severalSpeakers is what the model is told once a second person has spoken. Their names
+// come ahead of their words, and a reply is spoken, so one that opened on a name the way
+// their turns do would be heard saying it.
+const severalSpeakers = "Several people are talking in this call. Each of their messages starts with " +
+	"the name of who said it, then a colon. Never start your reply with such a label."
+
+// userTurnLocked is a participant's words as a turn of the conversation. It names who
+// said them once somebody else in the call has had a turn answered too.
+func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
+	turn := llm.Message{Role: llm.User, Content: text}
+	_, known := a.speakers[personOf(participant)]
+	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
+		turn.Speaker = speakerLabel(participant)
+	}
+	return turn
+}
+
+// keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+// What tools showed the model before it stand as a note from here on (toolPicturesSeen).
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
+	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
+	if participant.ID != typedCaller {
+		a.speakers[personOf(participant)] = struct{}{}
+	}
+}
+
+// personOf is who a participant is. A person who rejoins gets a new ID but keeps their
+// user, so the user, when there is one, is what is counted.
+func personOf(participant stt.Participant) string {
+	if participant.UserID != "" {
+		return participant.UserID
+	}
+	return participant.ID
+}
+
+// speakerLabel is a participant's name as it goes ahead of their words. A line break or a
+// colon in a display name could pass for the start of another person's line, so they go.
+func speakerLabel(participant stt.Participant) string {
+	label := strings.Join(strings.Fields(strings.ReplaceAll(participantName(participant), ":", "")), " ")
+	if label == "" {
+		return participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID})
+	}
+	return label
 }
 
 func (a *Agent) replayLocked() []llm.Message {
 	replay := append([]llm.Message(nil), a.history...)
+	for i, message := range replay {
+		replay[i] = named(message)
+	}
 	if a.options.Text {
 		return replay
 	}
 	return spokenResults(replay)
+}
+
+// named is a turn as the model reads it: who said it ahead of the words, when it says.
+func named(message llm.Message) llm.Message {
+	if message.Speaker != "" {
+		message.Content = message.Speaker + ": " + message.Content
+	}
+	return message
 }
 
 func joinNotes(notes ...string) string {
@@ -1837,6 +1966,9 @@ func (a *Agent) instructions() string {
 	// about who the agent is.
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
+	}
+	if len(a.speakers) > 1 {
+		parts = append(parts, severalSpeakers)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -2150,28 +2282,93 @@ func (a *Agent) say(turnID, delta string) {
 // Gemma wrote "One moment, checking... I've checked the outage map and there are no
 // outages" in one breath; chased afterwards, the caller had already heard the invented
 // result. Unsaid, the chase that follows makes the call and the result answers instead.
+//
+// Qwen wrote "Let me look up your appointments. [short pause] I see you have one on
+// Thursday": once a step is promised, a direction and everything after it is held back
+// the same way, and the chase makes the call the promise was for.
 func (a *Agent) withhold(sentence string) bool {
-	if a.withheld {
+	if a.withheld || a.narrated {
 		return true
 	}
-	if !claimsDone(sentence) || len(a.availableTools().Tools) == 0 || a.delegating() {
+	if narrates(sentence) {
+		a.narrated = true
+		a.withheldFrom = sentence
+		a.logger.Debug("holding back a reply that talks about the caller", "sentence", sentence)
+		return true
+	}
+	if len(a.availableTools().Tools) == 0 || a.delegating() {
+		return false
+	}
+	pause := a.promised && directionTags.MatchString(sentence)
+	if !pause && !claimsDone(sentence) && !promisesStep(sentence) {
 		return false
 	}
 	a.mu.Lock()
-	backed := toolRanSinceCaller(a.history)
+	backed := backsClaim(a.history, sentence, toolNames(a.availableTools()))
+	ran := toolRanSinceCaller(a.history)
 	a.mu.Unlock()
-	if backed {
+	if claimsDone(sentence) && backed || !claimsDone(sentence) && ran {
 		return false
 	}
-	a.withheld = true
-	a.logger.Debug("holding back a claim no tool has made true", "sentence", sentence)
-	return true
+	if pause || claimsDone(sentence) {
+		a.withheld = true
+		a.withheldFrom = sentence
+		a.logger.Debug("holding back what no tool has made true", "sentence", sentence)
+		return true
+	}
+	a.promised = true
+	return false
 }
+
+// narrates reports whether a sentence speaks of the caller in the third person, which a
+// reply to them never does. Nemotron wrote its reasoning into the reply ("The caller said
+// yes after I offered two times. This is ambiguous.") and once read out the system's note
+// to it ("The caller is listening, not reading: …").
+func narrates(sentence string) bool {
+	lower := strings.TrimSpace(spokenLower(directionTags.ReplaceAllString(sentence, "")))
+	return slices.ContainsFunc(narrations, func(opening string) bool { return strings.HasPrefix(lower, opening) })
+}
+
+var narrations = []string{"the caller ", "the caller's ", "the user ", "the user's ", "caller said", "user said"}
+
+// spokenLower lowercases a reply for matching with straight apostrophes: Qwen writes
+// "I’ll reschedule".
+func spokenLower(said string) string {
+	return strings.ReplaceAll(strings.ToLower(said), "’", "'")
+}
+
+// promisesStep reports whether a sentence tells the caller a lookup is under way.
+func promisesStep(sentence string) bool {
+	lower := spokenLower(sentence)
+	return slices.ContainsFunc(holdWords, func(hold string) bool { return strings.Contains(lower, hold) }) ||
+		slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(lower, promise) }) ||
+		slices.ContainsFunc(stepWords, func(step string) bool { return strings.Contains(lower, step) })
+}
+
+// stepWords are what a sentence starting a step says beyond asking the caller to wait.
+var stepWords = []string{
+	"let me verify", "let me confirm your", "let me pull", "let me find", "i'll check",
+	"i will check", "i'll look", "i'll verify", "i'll pull",
+}
+
+// heardOf cuts a reply's text where withholding began, so the history holds what the
+// caller heard.
+func heardOf(said, from string) string {
+	if from != "" {
+		plain := strings.TrimSpace(directionTags.ReplaceAllString(from, ""))
+		if i := strings.Index(said, plain); plain != "" && i >= 0 {
+			return strings.TrimSpace(said[:i])
+		}
+	}
+	return unsaid(said)
+}
+
+var directionTags = regexp.MustCompile(`\[[^\]]*\]`)
 
 // unsaid cuts a reply's text where a withheld claim begins, so the history holds what the
 // caller heard.
 func unsaid(said string) string {
-	lower := strings.ToLower(said)
+	lower := spokenLower(said)
 	cut := len(said)
 	for _, claim := range doneClaims {
 		if i := strings.Index(lower, claim); i >= 0 && i < cut {
@@ -2210,7 +2407,7 @@ func (a *Agent) finish(response llm.Response) {
 	// Taken before resetTurn forgets them: a skill tag that named a tool is a call this
 	// turn made, and has to be on the history the result answers.
 	asked := a.harness.TakeAsked()
-	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	calls := withSpokenNumbers(append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...))
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
@@ -2266,9 +2463,9 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
-	withheld := a.withheld
-	if withheld {
-		said = unsaid(said)
+	withheld, narrated := a.withheld, a.narrated
+	if withheld || narrated {
+		said = heardOf(said, a.withheldFrom)
 	}
 	a.resetTurn()
 
@@ -2282,6 +2479,7 @@ func (a *Agent) finish(response llm.Response) {
 			Role:      llm.Assistant,
 			Content:   said,
 			ToolCalls: calls,
+			Reasoning: response.ReasoningText,
 		})
 	}
 	exchange := lastExchange(a.history)
@@ -2352,11 +2550,63 @@ func (a *Agent) finish(response llm.Response) {
 		a.mu.Unlock()
 		a.keepPromise(response.ID, forcedNote, false)
 	}
+	if narrated && said == "" && len(calls) == 0 && !forced {
+		// Nemotron met "Yes, please go ahead" with its reasoning and the caller was left
+		// with nothing. A reply nobody heard is asked again whatever was chased before it,
+		// once per caller turn.
+		a.mu.Lock()
+		again := !a.narrationAsked
+		if again {
+			a.narrationAsked, a.promiseChased = true, false
+		}
+		a.mu.Unlock()
+		if again {
+			a.keepPromise(response.ID, speakToTheCaller, false)
+		}
+	}
+	logger := loggingTool(a.availableTools())
+	if logger != "" && len(calls) > 0 && refuses(said) && !slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
+		return call.Name == logger
+	}) {
+		// MiniMax refused a bill credit while opening a ticket, and the hand-off it owed
+		// was never chased.
+		a.mu.Lock()
+		a.refusedWithCalls = true
+		a.mu.Unlock()
+	}
+	a.mu.Lock()
+	refusedEarlier := a.refusedWithCalls
+	a.mu.Unlock()
+	if logger != "" && len(calls) == 0 && !forced && (said != "" && refuses(said) || refusedEarlier) &&
+		!calledInCall(history, logger) {
+		// Told to refuse an oxycodone refill, offer a callback and log an escalation, Nemotron
+		// Bolt and PhoneLLM Mini refused and offered in every run, and never logged.
+		a.mu.Lock()
+		again := !a.refusalChased
+		a.refusalChased = true
+		a.mu.Unlock()
+		if again {
+			a.keepPromise(response.ID, fmt.Sprintf(logTheRefusal, logger), true)
+		}
+	}
 	// Work handed to the subagent is the promise being kept, and asking again supersedes it.
 	if !a.options.Text && len(calls) == 0 && !a.delegating() && response.Status == llm.StatusCompleted &&
 		len(a.availableTools().Tools) > 0 {
-		backed := toolRanSinceCaller(history)
+		backed := backsClaim(history, said, toolNames(a.availableTools()))
 		step := stepNamed(history, a.availableTools().Tools)
+		owes := withheld || owesACall(said, backed)
+		if owes && strings.HasPrefix(response.ID, toolPrefix) {
+			// Qwen met the chase with "Let me check for any outages. One moment, please."
+			// and no call, twice over: a chase that still promises is asked once more, with
+			// the call required.
+			a.mu.Lock()
+			again := a.promiseChased && !a.chaseForced && !changedSinceCaller(history, anyTool)
+			if again {
+				a.promiseChased, a.chaseForced = false, true
+			}
+			a.mu.Unlock()
+			withheld = withheld || again
+		}
 		switch {
 		case withheld:
 			a.keepPromise(response.ID, keepPromise, true)
@@ -2368,7 +2618,7 @@ func (a *Agent) finish(response llm.Response) {
 			// A hold phrase can come before the caller has given what the call needs, and
 			// a forced call is then made with blanks; a claim that it is done cannot.
 			a.keepPromise(response.ID, keepPromise, !backed && claimsDone(said))
-		case !backed && wentAhead(history) && !doneBeforeGoAhead(history):
+		case !changedSinceCaller(history, anyTool) && wentAhead(history) && !doneBeforeGoAhead(history):
 			// A go-ahead to "you're booked" has nothing left to do: forced to call, Qwen
 			// ordered from the menu.
 			a.keepPromise(response.ID, actOnGoAhead, true)
@@ -2414,7 +2664,7 @@ func (a *Agent) chase(promised, note string, mustCall bool, only string) {
 // never came. A reply begun meanwhile supersedes it; a turn ignored as the TV does not.
 func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, waited int) {
 	a.mu.Lock()
-	if a.promiseChased || a.harness == nil || a.generating || a.interrupting ||
+	if a.promiseChased || a.harness == nil || a.closed || a.generating || a.interrupting ||
 		a.recoveringVoice != nil || a.toolRounds >= maxToolRounds {
 		a.logger.Debug("a chase was dropped", "turn", promised, "only", only, "chased", a.promiseChased,
 			"generating", a.generating, "interrupting", a.interrupting, "recovering", a.recoveringVoice != nil,
@@ -2483,6 +2733,62 @@ const keepPromise = "You just told the caller you were checking, or that somethi
 // actOnGoAhead is the note a reply that met a go-ahead with no call is chased up with.
 const actOnGoAhead = "The caller just told you to go ahead. Call the tool that does what they " +
 	"agreed to now, with what you have, without asking for anything optional first."
+
+// logTheRefusal is the note a refusal is chased with when nothing has been logged in the call.
+const logTheRefusal = "You just refused the caller. If your instructions say to log, escalate " +
+	"or hand off what you refused, call %s now with the reason, then tell the caller. If they " +
+	"do not, answer the caller's last words again."
+
+// refuses reports whether said turns the caller down.
+func refuses(said string) bool {
+	lower := spokenLower(said)
+	return refusedAction.MatchString(lower) ||
+		slices.ContainsFunc(refusals, func(refusal string) bool { return strings.Contains(lower, refusal) })
+}
+
+// refusedAction is "can't" or "cannot" before something the caller asked to have done:
+// PhoneLLM Max said "I can't credit a bill under a threat".
+var refusedAction = regexp.MustCompile(`\b(can't|cannot|can not|won't be able to)\s+(credit|refill|change|apply|skip|send|process|waive|override|approve|authorize|refund|prescribe|give you|do that)\b`)
+
+var refusals = []string{
+	"i can't refill", "i cannot refill", "i'm not able to", "i am not able to", "i'm unable to",
+	"i am unable to", "i can't skip", "i cannot skip", "i'm not allowed", "i can't do that",
+	"i cannot do that", "i can't send", "i cannot send", "i can't process", "i cannot process",
+	"can't change your", "cannot change your", "can't apply", "cannot apply", "isn't eligible",
+	"is not eligible", "aren't eligible", "are not eligible",
+}
+
+// loggingTool is the tool that logs, escalates or hands the call off, when there is one:
+// log_escalation, or create_transfer_summary, which no model called for a caller who
+// threatened to cancel after being refused a credit.
+func loggingTool(tools harness.Tools) string {
+	for _, tool := range tools.Tools {
+		name := strings.ToLower(tool.Name)
+		if strings.HasPrefix(name, "log_") || slices.ContainsFunc(handOffs, func(word string) bool { return strings.Contains(name, word) }) {
+			return tool.Name
+		}
+	}
+	return ""
+}
+
+var handOffs = []string{"escalat", "transfer_summary", "handoff", "hand_off"}
+
+// calledInCall reports whether tool has answered without failing anywhere in the call.
+func calledInCall(history []llm.Message, tool string) bool {
+	names := map[string]string{}
+	for _, message := range history {
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Name
+		}
+	}
+	return slices.ContainsFunc(history, func(message llm.Message) bool {
+		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content)
+	})
+}
+
+// speakToTheCaller is the note a reply that only talked about the caller is asked again with.
+const speakToTheCaller = "Your last reply described the caller instead of speaking to them, and " +
+	"they heard none of it. Answer them now, speaking to them directly."
 
 // callTheStep is the note a reply that described a tool's step instead of calling it is
 // chased up with.
@@ -2635,7 +2941,7 @@ func owesACall(said string, backed bool) bool {
 	if !backed && claimsDone(said) {
 		return true
 	}
-	last := strings.TrimRight(strings.ToLower(said), " .…!\n")
+	last := strings.TrimRight(spokenLower(said), " .…!\n")
 	if last == "" {
 		return false
 	}
@@ -2659,12 +2965,29 @@ func owesACall(said string, backed bool) bool {
 			return true
 		}
 	}
-	return false
+	return slices.ContainsFunc(actionPromises, func(promise string) bool { return strings.Contains(last, promise) }) ||
+		slices.ContainsFunc(fetchPromises, func(promise string) bool { return strings.Contains(last, promise) })
+}
+
+// fetchPromises are what a sentence telling the caller a record is about to be pulled says.
+// Nemotron ended "You're verified, Maya. Let me pull up your appointments now." and made no
+// call. "Let me verify" is not one: after a read-back it can come before the caller agrees.
+var fetchPromises = []string{"let me pull", "let me find", "i'll pull", "i will pull", "i'll look", "i will look"}
+
+// actionPromises are what a sentence telling the caller a change is about to be made says.
+// Qwen ended "I will reschedule your appointment to Tuesday morning." and made no call.
+var actionPromises = []string{
+	"i'll book", "i will book", "i'll reschedule", "i will reschedule", "i'll move", "i will move",
+	"i'll update", "i will update", "i'll change", "i will change", "i'll cancel", "i will cancel",
+	"i'll go ahead", "i will go ahead", "i'll open", "i will open", "i'll create", "i will create",
+	"i'll dispatch", "i will dispatch", "i'll schedule", "i will schedule", "i'll reserve",
+	"let me book", "let me reschedule", "let me move", "let me update", "let me change",
+	"let me cancel", "let me open", "let me create", "let me schedule", "let me reserve",
 }
 
 // claimsDone reports whether a reply told the caller something has been done.
 func claimsDone(said string) bool {
-	lower := strings.ToLower(said)
+	lower := spokenLower(said)
 	return slices.ContainsFunc(doneClaims, func(claim string) bool { return strings.Contains(lower, claim) }) ||
 		doneClaim.MatchString(lower)
 }
@@ -2682,19 +3005,127 @@ var doneClaims = []string{
 	"has been cancelled", "has been dispatched", "is on the way",
 	"i'm logging", "i am logging", "i will log", "i'll log", "i'm opening", "i am opening",
 	"i'm booking", "i am booking", "i'm dispatching", "i am dispatching",
+	"got you down for", "got you booked", "i've moved", "i've changed", "i've reserved",
+	"has been rescheduled", "has been moved", "is booked", "is all set",
+	"i opened", "i booked", "i scheduled", "i rescheduled", "i cancelled", "i canceled",
+	"i dispatched", "i created", "i logged", "is dispatched", "are dispatched", "has been opened",
+	"has been created", "has been logged",
 }
 
-// toolRanSinceCaller reports whether a tool has answered since the caller last spoke.
-func toolRanSinceCaller(history []llm.Message) bool {
+// backsClaim reports whether what a tool has answered since the caller last spoke makes
+// said's claim true: "I've checked" takes any tool, while "you're booked" or "has been
+// rescheduled" takes one that changes something. Qwen said "your appointment has been
+// rescheduled" on the strength of the lookup that found it.
+//
+// A change claim that names what one of the tools makes ("I opened a ticket" against
+// create_ticket) takes that tool: PhoneLLM Mini told the caller "I opened a ticket for
+// you... Ticket number 12345" with only walk_reboot behind it.
+func backsClaim(history []llm.Message, said string, tools []string) bool {
+	if !claimsChange(said) {
+		return toolRanSinceCaller(history)
+	}
+	named := claimedObjects(said, tools)
+	return changedSinceCaller(history, func(tool string) bool {
+		return len(named) == 0 || slices.ContainsFunc(named, func(object string) bool {
+			return slices.Contains(strings.Split(strings.ToLower(tool), "_")[1:], object)
+		})
+	})
+}
+
+// claimedObjects are the objects of tools ("ticket" in create_ticket) that said names, a
+// word they open counting ("technician" for dispatch_tech).
+func claimedObjects(said string, tools []string) []string {
+	words := strings.FieldsFunc(spokenLower(said), func(r rune) bool { return !unicode.IsLetter(r) })
+	var named []string
+	for _, tool := range tools {
+		parts := strings.Split(strings.ToLower(tool), "_")
+		for _, object := range parts[1:] {
+			said := slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, object) })
+			if len(object) >= 4 && said && !slices.Contains(named, object) {
+				named = append(named, object)
+			}
+		}
+	}
+	return named
+}
+
+// claimsChange reports whether said claims more than a lookup.
+func claimsChange(said string) bool {
+	lower := spokenLower(said)
+	return slices.ContainsFunc(doneClaims, func(claim string) bool {
+		return strings.Contains(lower, claim) && !slices.Contains(lookedClaims, claim)
+	})
+}
+
+// lookedClaims are the done claims a lookup is enough for.
+var lookedClaims = []string{"i've checked", "i have checked", "i've verified"}
+
+// changedSinceCaller reports whether a tool that changes something, rather than one that
+// only reads (lookup_, check_, verify_ and the like), has answered without failing since
+// the caller last spoke, and is one that counts.
+func changedSinceCaller(history []llm.Message, counts func(tool string) bool) bool {
+	names := map[string]string{}
+	for _, message := range history {
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Name
+		}
+	}
 	for i := len(history) - 1; i >= 0; i-- {
 		switch history[i].Role {
 		case llm.ToolResult:
-			return true
+			name := names[history[i].ToolCallID]
+			if !failedResult(history[i].Content) && !readsOnly(name) && counts(name) {
+				return true
+			}
 		case llm.User:
 			return false
 		}
 	}
 	return false
+}
+
+func anyTool(string) bool { return true }
+
+// readVerbs open the names of tools that only read.
+var readVerbs = []string{"lookup", "look_up", "check", "get", "find", "search", "verify", "list", "read", "fetch", "query"}
+
+// readsOnly reports whether a tool's name says it only reads. A name that cannot be found
+// counts as a change, so a claim it backs is let through as before.
+func readsOnly(name string) bool {
+	name = strings.ToLower(name)
+	return name != "" && slices.ContainsFunc(readVerbs, func(verb string) bool { return strings.HasPrefix(name, verb) })
+}
+
+// toolRanSinceCaller reports whether a tool has answered since the caller last spoke, and
+// answered with something other than its failure: "I've got you down for 8:15" after the
+// booking came back "no table at 8:15" is as unbacked as one with no call at all.
+func toolRanSinceCaller(history []llm.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		switch history[i].Role {
+		case llm.ToolResult:
+			if !failedResult(history[i].Content) {
+				return true
+			}
+		case llm.User:
+			return false
+		}
+	}
+	return false
+}
+
+// failedResult reports whether a tool result is the tool failing rather than answering.
+func failedResult(content string) bool {
+	if strings.HasPrefix(content, didNotWork) {
+		return true
+	}
+	var body struct {
+		Error any   `json:"error"`
+		OK    *bool `json:"ok"`
+	}
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	return body.Error != nil && body.Error != "" || body.OK != nil && !*body.OK
 }
 
 // holdOpenings open a reply that puts the caller on hold.
@@ -2721,14 +3152,25 @@ func (a *Agent) preSpeech(calls []llm.ToolCall) string {
 	return ""
 }
 
+// fillerQuiet is how long the line has to have been quiet before a step taken on a result
+// is announced. Audio is published as it plays, so a shorter gap is the last reply still
+// being heard.
+const fillerQuiet = 300 * time.Millisecond
+
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run. Only a result that earns a reply of its own is worth
 // promising: anything else leaves a promise to check as the last thing the caller heard.
 // A turn reading a result has already been promised, and a filler there only queues behind
-// the last one.
+// the last one, unless that has finished playing: the next step (the outage check after
+// the account is verified) is otherwise run in silence.
 func (a *Agent) fillsPause(completionID string, calls []llm.ToolCall) bool {
 	if strings.HasPrefix(completionID, toolPrefix) {
-		return false
+		a.mu.Lock()
+		playing := a.utterances > 0 || time.Since(a.lastSpokeAt) < fillerQuiet
+		a.mu.Unlock()
+		if playing {
+			return false
+		}
 	}
 	return slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
 		return a.followsTool(harness.ToolRequested{TurnID: completionID, Call: call})
@@ -3176,6 +3618,9 @@ func (a *Agent) resetTurn() {
 	a.sentences = 0
 	a.openTurn = ""
 	a.withheld = false
+	a.withheldFrom = ""
+	a.narrated = false
+	a.promised = false
 	a.mu.Lock()
 	a.saying = ""
 	a.mu.Unlock()

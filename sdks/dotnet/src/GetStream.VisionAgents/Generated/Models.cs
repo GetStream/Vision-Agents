@@ -296,6 +296,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("visible_tools")]
         public System.Collections.Generic.List<string>? VisibleTools { get; set; } = default!;
 
+        /// <summary>
+        /// The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
 
@@ -427,6 +430,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("visible_tools")]
         public System.Collections.Generic.List<string>? VisibleTools { get; set; } = default!;
 
+        /// <summary>
+        /// The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
 
@@ -580,7 +586,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? VisibleTools { get; set; } = default!;
 
         /// <summary>
-        /// Provider-specific voice id.
+        /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
@@ -2314,6 +2320,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Candidate
     {
+
+        /// <summary>
+        /// Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("can_record")]
+        public bool? CanRecord { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("health")]
         public ProviderHealth Health { get; set; } = new ProviderHealth();
@@ -4678,7 +4690,7 @@ namespace GetStream.VisionAgents.Models
         public SessionVideo? Video { get; set; } = default!;
 
         /// <summary>
-        /// Provider-specific voice id.
+        /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
@@ -9053,7 +9065,7 @@ namespace GetStream.VisionAgents.Models
         public string? Verbosity { get; set; } = default!;
 
         /// <summary>
-        /// The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+        /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
@@ -9938,6 +9950,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string? Url { get; set; } = default!;
 
+        /// <summary>
+        /// The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voice")]
+        public string? Voice { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]
@@ -9966,7 +9984,7 @@ namespace GetStream.VisionAgents.Models
         public string? ConfigId { get; set; } = default!;
 
         /// <summary>
-        /// Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+        /// Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("inline")]
         public bool? Inline { get; set; } = default!;
@@ -10686,6 +10704,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("video")]
         public SessionVideo? Video { get; set; } = default!;
 
+        /// <summary>
+        /// The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
 
@@ -11674,7 +11695,7 @@ namespace GetStream.VisionAgents.Models
         public string? Verbosity { get; set; } = default!;
 
         /// <summary>
-        /// The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+        /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;

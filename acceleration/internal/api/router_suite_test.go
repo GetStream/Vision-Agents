@@ -680,8 +680,18 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.ears = &quietSTT{emitter: stt.NewEmitter(64)}
 	hearing := sttrouter.NewRegistry()
 	hearing.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
+	hearing.Register("refusing", func(routing.Spec) (stt.STT, error) {
+		return &refusingSTT{emitter: stt.NewEmitter(64)}, nil
+	})
+	// Reached by name only: no shortcut asks for Latin.
+	heard := routableConfig()
+	// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
+	heard.Aliases["en-low-latency"] = routing.Alias{Title: "Low latency", Languages: []string{"en"}, RequireRealtime: true}
+	heard.Providers = append(heard.Providers, routing.ProviderConfig{
+		Provider: "refusing", Model: refusingModel, Languages: []string{"la"}, Realtime: true,
+	})
 	transcriber, err := sttrouter.New(sttrouter.Options{
-		Config: routableConfig(), Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
@@ -760,7 +770,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 
 	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
 	speaking := ttsrouter.NewRegistry()
-	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaking.Register("stub", func(spec routing.Spec) (tts.TTS, error) { return s.voice.opened(spec.Voice), nil })
 	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
 	ttsConfig := s.ttsConfig
 	if len(ttsConfig.Providers) == 0 {

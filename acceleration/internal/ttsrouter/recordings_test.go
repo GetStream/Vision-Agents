@@ -3,6 +3,7 @@ package ttsrouter
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -10,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 )
 
 // heldRecorder is the recorder ElevenLabs' own factory built, kept from speaking: what it
@@ -23,6 +25,20 @@ func (h heldRecorder) Record(_ context.Context, recording tts.Recording) (tts.Re
 	*h.asked = append(*h.asked, recording)
 	return tts.Recorded{Audio: []byte("audio")}, nil
 }
+
+// Voice is the voice the recorder ElevenLabs built speaks in.
+func (h heldRecorder) Voice() string { return h.Recorder.(tts.Voiced).Voice() }
+
+// unvoicedRecorder records and cannot say in which voice.
+type unvoicedRecorder struct{}
+
+func (unvoicedRecorder) Record(context.Context, tts.Recording) (tts.Recorded, error) {
+	return tts.Recorded{Audio: []byte("audio")}, nil
+}
+func (unvoicedRecorder) Start(context.Context) error { return nil }
+func (unvoicedRecorder) Close() error                { return nil }
+func (unvoicedRecorder) Provider() string            { return "elevenlabs" }
+func (unvoicedRecorder) Model() string               { return "eleven_v3" }
 
 // ownVoices is a customer with one voice of their own, founder, which ElevenLabs knows as
 // el-founder. Any other name is not theirs and comes back as asked.
@@ -169,4 +185,105 @@ func (s *RecordingsSuite) TestAStabilityOrSimilarityOutsideZeroToOneIsRefusedBef
 			s.Empty(s.asked, "nothing is recorded")
 		})
 	}
+}
+
+func (s *RecordingsSuite) TestARecordingWithAVoiceOnlyForAVendorWithNoRecorderIsRefused() {
+	// On b1e563f98 ElevenLabs v4 recorded this in its default voice: only ElevenLabs records.
+	_, _, err := s.newRecordings().Record(s.ctx, Recording{
+		CustomerID: "acme",
+		Options: options.TTS{Target: "tts-quality", Overwrites: map[string]json.RawMessage{
+			"cartesia": json.RawMessage(`{"voice_id":"db6b0ed5-cartesia"}`),
+		}},
+		Text: "hello",
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "a recording nothing here can speak in that voice is the caller's to change")
+	s.ErrorContains(err, "cartesia/sonic-preview has no factory registered here")
+	s.Empty(s.built, "ElevenLabs was never built without the voice")
+}
+
+// recordOn checks a recording and then records it, as RecordSpeech does, and says which
+// model spoke it.
+func (s *RecordingsSuite) recordOn(asked options.TTS) (string, error) {
+	recordings := s.newRecordings()
+	recording := Recording{CustomerID: "acme", Options: asked, Text: "hello"}
+	if err := recordings.Check(s.ctx, recording); err != nil {
+		return "", err
+	}
+	_, served, err := recordings.Record(s.ctx, recording)
+	return served.Name(), err
+}
+
+// elevenLabsModels is every ElevenLabs model in the built-in config, which is every model
+// a recording can go to.
+func (s *RecordingsSuite) elevenLabsModels() string {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	var models []string
+	for _, provider := range config[routing.TTS].Providers {
+		if provider.Provider == "elevenlabs" {
+			models = append(models, provider.Name())
+		}
+	}
+	return strings.Join(models, ", ")
+}
+
+func (s *RecordingsSuite) TestARecordingPinnedToAModelThatOnlyStreamsIsRefusedNamingTheModelsThatRecord() {
+	// On da97ee28 this failed once routed: "cartesia/sonic-preview: no factory registered".
+	_, err := s.recordOn(options.TTS{Target: "cartesia/sonic-preview"})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+	s.EqualError(err, "routing: cartesia/sonic-preview can only stream speech, not record it; models that record: "+
+		s.elevenLabsModels())
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfModelsThatOnlyStreamIsRefused() {
+	// mock is the one batch model in the built-in config with no recorder.
+	_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"mock"}})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "mock/mock-tts can only stream speech, not record it")
+}
+
+func (s *RecordingsSuite) TestAPriorityListWithOneModelThatRecordsIsServedByIt() {
+	// Probed on da97ee28: served by elevenlabs/eleven_v3.
+	served, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"mock", "elevenlabs"}})
+
+	s.Require().NoError(err)
+	s.Equal("elevenlabs/eleven_v3", served)
+}
+
+func (s *RecordingsSuite) TestARecordingOnTheQualityShortcutIsServedByElevenLabs() {
+	// Probed on da97ee28: served by elevenlabs/eleven_v4, the one of the six that records.
+	served, err := s.recordOn(options.TTS{Target: "tts-quality"})
+
+	s.Require().NoError(err)
+	s.Equal("elevenlabs/eleven_v4", served)
+}
+
+func (s *RecordingsSuite) TestARecordingSaysItWasSpokenInTheDefaultVoiceWhenNoneWasAsked() {
+	// Probed on b1e563f98: the recorder was built for elevenlabs.DefaultVoiceID.
+	recorded, _, err := s.newRecordings().Record(s.ctx, Recording{
+		CustomerID: "acme", Options: options.TTS{Target: "en-recorded"}, Text: "hello",
+	})
+	s.Require().NoError(err)
+
+	s.Equal(elevenlabs.DefaultVoiceID, recorded.Voice)
+}
+
+func (s *RecordingsSuite) TestARecorderThatCannotSayItsVoiceReportsNoneRatherThanTheOneAsked() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRecorderRegistry()
+	registry.Register("elevenlabs", func(routing.Spec) (tts.Recorder, error) { return unvoicedRecorder{}, nil })
+	recordings, err := NewRecordings(Options{Config: config[routing.TTS], Recorders: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(recordings.Close)
+
+	recorded, _, err := recordings.Record(s.ctx, Recording{
+		CustomerID: "acme", Options: options.TTS{Target: "en-recorded", Voice: "library-voice"}, Text: "hello",
+	})
+	s.Require().NoError(err)
+
+	s.Empty(recorded.Voice, "a voice the recorder may have dropped is not claimed")
 }

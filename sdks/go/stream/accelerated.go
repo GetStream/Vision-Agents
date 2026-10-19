@@ -50,7 +50,10 @@ type Config struct {
 	// TTS is the model that speaks.
 	TTS   string
 	Video *acceleration.SessionVideo
-	// Voice is a provider-specific voice id.
+	// Voice is a provider's own voice id, or one of your voices by id or by name. Prefix it
+	// with custom: to mean only yours: a name that is not one of yours is then refused
+	// instead of passed to the provider's library. A native (sts) agent takes the vendor's
+	// own voice name instead.
 	Voice string
 	// Language is a hint, which narrows the candidates in every modality.
 	Language string

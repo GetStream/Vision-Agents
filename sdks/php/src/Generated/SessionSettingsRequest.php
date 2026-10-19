@@ -25,7 +25,7 @@ final readonly class SessionSettingsRequest
         public ?string $thinking = null,
         public ?string $tts = null,
         public ?string $verbosity = null,
-        // The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+        // The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. P...
         public ?string $voice = null,
     ) {
     }
