@@ -47,7 +47,9 @@ class TTS(tts.TTS):
         Args:
             target: A `provider/model` name or a capability shortcut such as
                 `en-low-latency`. It may instead be held in the named config.
-            voice: A provider-specific voice id.
+            voice: A provider's own voice id, or one of your voices by id or by name.
+                Prefix it with `custom:` to mean only yours: a name that is not one of
+                yours is then refused instead of passed to the provider's library.
             language: A language hint, which narrows the candidates.
             tags: Cost labels carried onto every request.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.

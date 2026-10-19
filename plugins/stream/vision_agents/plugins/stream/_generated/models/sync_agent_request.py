@@ -105,7 +105,9 @@ class SyncAgentRequest:
             tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
             tts (str | Unset):
             video (SessionVideo | Unset):
-            voice (str | Unset):
+            voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
+                one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
+                voice name instead.
     """
 
     hash_: str

@@ -59,6 +59,7 @@ final readonly class AgentConfigPatch
         // Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match pattern...
         /** @var list<string>|null */
         public ?array $visibleTools = null,
+        // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
     ) {
     }

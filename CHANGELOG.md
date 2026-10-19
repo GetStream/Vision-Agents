@@ -622,6 +622,19 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
+
+`await router.tts.recording(text, inline=True)` speaks a short text while the request waits and
+returns the audio in the answer, storing neither a job nor the audio: the cheap way to check
+that synthesis works on an app. It takes at most 16000 characters and 90 seconds, and with a
+`callback` it raises `ValueError`, since the router refuses that pair. Without `inline` the
+request is the same as before. The `voice` of a session, an agent config and a session update,
+and of `stream.TTS`, `Accelerated` and `define_agent`, is now documented the way
+`TtsOptions.voice` is: a provider's own voice id, or one of your voices, with `custom:` to mean
+only yours, so a typo is refused instead of passed to the provider's library. A native (sts)
+session takes the vendor's own voice name instead. The `POST /v1/tts/recordings` docs now
+describe `inline` (AI-1414).
+
 ### `stream.STT` takes `keyterms`
 
 `stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,
@@ -2162,6 +2175,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 ## Bug Fixes
 
 - A live transcription pinned to a batch model, such as `deepgram/nova-3`, is refused before the vendor is called: `routing: deepgram/nova-3 is a batch model for recordings, not live calls; for a live call name deepgram/flux-general-en or deepgram/flux-general-multi or stt-fast or stt-accurate`. It was dialled at Deepgram's live endpoint and failed after about 4 s with `deepgram: connect failed`, recording a `start_failed` row against Nova-3. This is the `/v1/stt/stream` `error` frame, and for an agent the 400 that starting its voice session answers with (`agent: start stt: routing: ...`) rather than an `stt` error on every frame of the call; a priority list made only of batch models, and the recorded shortcuts `en-recorded` and `multilingual-recorded`, are refused the same way. A list with a live model in it is served by that model, a recording on Nova-3 is unchanged, and `mock/mock-stt` is now marked live so the load benchmark still streams at it (AI-1431).
+- `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
 - `GET /v1/agents/voices/library` lists every Cartesia voice. It stopped at the first 1,000 (ten pages of 100), and Cartesia had 1,049 on 2026-10-19. `provider=fish` now says Fish voices cannot be browsed through the router yet and to name one by its Fish model id, rather than `fish publishes no voice library`. A provider that will not list voices for the router's key (a 401 or 403) is reported as `the inworld key cannot list voices (http 403)` rather than as a refused voice (AI-1413).
 - A recording on a model that only streams, such as `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2`, is refused when it is sent, with a 400 that names the models that record: `routing: cartesia/sonic-preview can only stream speech, not record it; models that record: elevenlabs/...`. It was accepted and failed with `no factory registered`, in the job or in the inline answer. Only ElevenLabs records; a shortcut that reaches it, such as `tts-quality`, is served by it as before, and so is a priority list with it in. `GET /v1/tts/routes` and `/v1/tts/routes/{target}` now say per candidate whether a recording can use it (`Candidate.can_record`); STT and STS leave it out (AI-1412).
 

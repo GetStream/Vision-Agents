@@ -227,7 +227,10 @@ async def define_agent(
         video_max_frames: Number of retained frames to capture, from 1 to 8.
         stt: The model that transcribes, for a config a call will use.
         tts: The model that speaks, for a config a call will use.
-        voice: A provider-specific voice id.
+        voice: A provider's own voice id, or one of your voices by id or by name.
+            Prefix it with `custom:` to mean only yours: a name that is not one of
+            yours is then refused instead of passed to the provider's library.
+            A native (sts) agent takes the vendor's own voice name instead.
         greeting: Said on joining, without going through the model.
         skills: What the model may hand work to. A skill named here replaces a built-in
             of the same name.
