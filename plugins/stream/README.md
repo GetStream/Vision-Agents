@@ -292,6 +292,10 @@ agent = Agent(
 )
 ```
 
+`stream.STT("en-low-latency", keyterms=["metformin"])` sends up to 100 words the
+transcriber would otherwise get wrong. A model that takes none refuses them, and `start()`
+raises the router's refusal as a `RouterError`.
+
 `Router().resolve("sonic_36")` asks the backend which kind of model a name is and returns the
 plugin for it. That costs a request at startup, so naming the modality is better when you
 know it.

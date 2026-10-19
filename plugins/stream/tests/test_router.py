@@ -110,6 +110,8 @@ class Router:
             if frame.get("type") == "start":
                 self.started[modality] = frame
                 self._opened[modality].set()
+                # The router answers every start it takes with `started`.
+                await socket.send_json({"type": "started"})
             elif frame.get("type") == "speak":
                 await self.spoken.put(frame)
                 await socket.send_json(
