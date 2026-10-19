@@ -35,10 +35,10 @@ class Provider:
             deployment wrote none.
         price (ProviderPrice | Unset): What this deployment is billed for the model, in US dollars. A rate is absent
             when the model is not billed by that unit.
-        supports (list[str] | Unset): The options this model can be asked for, as the option names: keyterms, diarize,
-            similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never
-            routed to it, and is refused when nothing else could serve it. Left out when the model takes none. Example:
-            ['keyterms', 'diarize'].
+        supports (list[str] | Unset): The options this model can be asked for, as the terms a request's options turn on:
+            keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does
+            not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes
+            none. Example: ['keyterms', 'diarize'].
         usage_share (float | Unset): This model's share of the modality's requests over the last seven days, across
             every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment
             keeps no statistics.
