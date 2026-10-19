@@ -3,6 +3,7 @@ package ttsrouter
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -199,6 +200,65 @@ func (s *RecordingsSuite) TestARecordingWithAVoiceOnlyForAVendorWithNoRecorderIs
 	s.Require().ErrorIs(err, routing.ErrRequest, "a recording nothing here can speak in that voice is the caller's to change")
 	s.ErrorContains(err, "cartesia/sonic-preview has no factory registered here")
 	s.Empty(s.built, "ElevenLabs was never built without the voice")
+}
+
+// recordOn checks a recording and then records it, as RecordSpeech does, and says which
+// model spoke it.
+func (s *RecordingsSuite) recordOn(asked options.TTS) (string, error) {
+	recordings := s.newRecordings()
+	recording := Recording{CustomerID: "acme", Options: asked, Text: "hello"}
+	if err := recordings.Check(s.ctx, recording); err != nil {
+		return "", err
+	}
+	_, served, err := recordings.Record(s.ctx, recording)
+	return served.Name(), err
+}
+
+// elevenLabsModels is every ElevenLabs model in the built-in config, which is every model
+// a recording can go to.
+func (s *RecordingsSuite) elevenLabsModels() string {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	var models []string
+	for _, provider := range config[routing.TTS].Providers {
+		if provider.Provider == "elevenlabs" {
+			models = append(models, provider.Name())
+		}
+	}
+	return strings.Join(models, ", ")
+}
+
+func (s *RecordingsSuite) TestARecordingPinnedToAModelThatOnlyStreamsIsRefusedNamingTheModelsThatRecord() {
+	// On da97ee28 this failed once routed: "cartesia/sonic-preview: no factory registered".
+	_, err := s.recordOn(options.TTS{Target: "cartesia/sonic-preview"})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+	s.EqualError(err, "routing: cartesia/sonic-preview can only stream speech, not record it; models that record: "+
+		s.elevenLabsModels())
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfModelsThatOnlyStreamIsRefused() {
+	// mock is the one batch model in the built-in config with no recorder.
+	_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"mock"}})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "mock/mock-tts can only stream speech, not record it")
+}
+
+func (s *RecordingsSuite) TestAPriorityListWithOneModelThatRecordsIsServedByIt() {
+	// Probed on da97ee28: served by elevenlabs/eleven_v3.
+	served, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"mock", "elevenlabs"}})
+
+	s.Require().NoError(err)
+	s.Equal("elevenlabs/eleven_v3", served)
+}
+
+func (s *RecordingsSuite) TestARecordingOnTheQualityShortcutIsServedByElevenLabs() {
+	// Probed on da97ee28: served by elevenlabs/eleven_v4, the one of the six that records.
+	served, err := s.recordOn(options.TTS{Target: "tts-quality"})
+
+	s.Require().NoError(err)
+	s.Equal("elevenlabs/eleven_v4", served)
 }
 
 func (s *RecordingsSuite) TestARecordingSaysItWasSpokenInTheDefaultVoiceWhenNoneWasAsked() {

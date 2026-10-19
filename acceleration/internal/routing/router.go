@@ -342,6 +342,10 @@ func (r *Router[P]) Config() ModalityConfig { return r.config }
 // Recorder is where a modality's session writes its stat rows.
 func (r *Router[P]) Recorder() *Recorder { return r.recorder }
 
+// Builds reports whether this router can build a provider's models. A candidate it cannot
+// is one Select passes over.
+func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provider) }
+
 // Logger returns the router's logger.
 func (r *Router[P]) Logger() *slog.Logger { return r.logger }
 
