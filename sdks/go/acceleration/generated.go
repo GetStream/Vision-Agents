@@ -6701,6 +6701,9 @@ type Speech struct {
 
 	// Url Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
 	Url *string `json:"url,omitempty"`
+
+	// Voice The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say.
+	Voice *string `json:"voice,omitempty"`
 }
 
 // SpeechRequest defines model for SpeechRequest.

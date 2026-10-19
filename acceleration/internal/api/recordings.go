@@ -195,7 +195,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		audio, provider, failure := s.streams.Speech.Record(ctx, ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: job.Text})
-		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs})
+		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs, Voice: audio.Voice})
 		return &recordSpeechResponse{Body: speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
@@ -279,6 +279,7 @@ func (s *Server) record(job store.Recording, recording ttsrouter.Recording) {
 		Format:          recorded.Format,
 		AudioDurationMs: recorded.AudioDurationMs,
 		Characters:      recorded.Characters,
+		Voice:           recorded.Voice,
 	})
 	if err != nil {
 		s.finished(ctx, job, config.Provider, config.Model, nil, err)
@@ -365,6 +366,7 @@ type speechResult struct {
 	Format          string `json:"format,omitempty"`
 	AudioDurationMs int64  `json:"audio_duration_ms,omitempty"`
 	Characters      int64  `json:"characters,omitempty"`
+	Voice           string `json:"voice,omitempty"`
 }
 
 // transcriptionOf renders a transcription job for the wire, result and all when it has
@@ -418,6 +420,7 @@ func speechOf(job store.Recording) Speech {
 	}
 	rendered.Format = optional(result.Format)
 	rendered.Url = optional(result.URL)
+	rendered.Voice = optional(result.Voice)
 	if len(result.Audio) > 0 {
 		audio := result.Audio
 		rendered.Audio = &audio

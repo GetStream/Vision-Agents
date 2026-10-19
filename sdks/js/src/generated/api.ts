@@ -7511,6 +7511,8 @@ export type components = {
             readonly updated_at: string;
             /** @description Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead. */
             readonly url?: string;
+            /** @description The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say. */
+            readonly voice?: string;
         };
         readonly SpeechRequest: {
             /** @description A URL the finished job is POSTed to, so a caller does not have to poll. */

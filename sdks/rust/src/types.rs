@@ -9116,6 +9116,9 @@ pub struct Speech {
     ///Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub url: ::std::option::Option<::std::string::String>,
+    ///The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voice: ::std::option::Option<::std::string::String>,
 }
 ///`SpeechRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

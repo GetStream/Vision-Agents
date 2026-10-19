@@ -341,12 +341,17 @@ func (s *Server) streamTTS(
 	}
 	defer session.Close()
 
-	out.frame(frame{
+	started := frame{
 		"type":      "started",
 		"provider":  session.Provider(),
 		"model":     session.Model(),
 		"streaming": session.Streaming(),
-	})
+	}
+	// The voice speaking, its default included, so a caller can see one it did not ask for.
+	if voice := session.Voice(); voice != "" {
+		started["voice"] = voice
+	}
+	out.frame(started)
 
 	var writing sync.WaitGroup
 	writing.Add(1)
