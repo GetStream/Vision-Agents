@@ -21,7 +21,7 @@ SAMPLE_RATE = 16_000
 
 # START_TIMEOUT is how long start waits for the router to say it is transcribing or why it
 # is not. Our choice, not a vendor's: the router answers once a provider session is open,
-# which takes well under a second against every provider today.
+# and no vendor documents how long that may take.
 START_TIMEOUT = 10.0
 
 
