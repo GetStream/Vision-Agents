@@ -42,15 +42,12 @@ struct ChatScreen: View {
                                 message: message, reasoning: chat.reasoning,
                                 approver: approver(for: chat.session))
                         }
-                        if let indicator = chat.indicator {
-                            AITypingIndicatorView(text: indicator)
-                        }
                     }
                     if let asking, isEmpty {
                         PersonBubble(text: asking)
-                        if chat?.indicator == nil {
-                            AITypingIndicatorView(text: "Thinking")
-                        }
+                    }
+                    if let indicator {
+                        AITypingIndicatorView(text: indicator)
                     }
                 }
                 .padding()
@@ -73,22 +70,14 @@ struct ChatScreen: View {
                     .padding(.horizontal)
             }
             AIComposerView(
-                viewFactory: Composer(gmail: gmail),
+                viewFactory: Composer(onTalk: talk),
                 viewModel: composer,
                 onMessageSend: { send($0) },
                 onStopGenerating: { chat?.stop() })
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task {
-                        guard await open() != nil else { return }
-                        isVoiceShown = true
-                    }
-                } label: {
-                    Image(systemName: "waveform")
-                }
-                .accessibilityLabel("Talk to Juno")
+                GmailButton(gmail: gmail)
             }
         }
         .fullScreenCover(isPresented: $isVoiceShown) {
@@ -134,6 +123,12 @@ struct ChatScreen: View {
         isEmpty && asking == nil
     }
 
+    /// What the agent is doing, shown under the last message. A first question shows
+    /// "Thinking" before the session says anything, while its conversation is opened.
+    private var indicator: String? {
+        chat?.indicator ?? (asking != nil && isEmpty ? "Thinking" : nil)
+    }
+
     private func send(_ message: MessageData) {
         if isEmpty { asking = message.text }
         Task {
@@ -144,6 +139,14 @@ struct ChatScreen: View {
             chat.ask(
                 message.text, photos: message.attachments,
                 thinkHarder: message.chatOption?.id == Self.thinkHarder)
+        }
+    }
+
+    /// Switches to voice mode on this conversation, starting a session for a new one.
+    private func talk() {
+        Task {
+            guard await open() != nil else { return }
+            isVoiceShown = true
         }
     }
 
@@ -183,16 +186,22 @@ struct ChatScreen: View {
     }
 }
 
-/// The composer with the Gmail button beside the message box.
+/// The composer with the way into voice mode beside the message box.
 private final class Composer: AIComposerViewFactory {
-    let gmail: GmailAccount
+    let onTalk: () -> Void
 
-    init(gmail: GmailAccount) {
-        self.gmail = gmail
+    init(onTalk: @escaping () -> Void) {
+        self.onTalk = onTalk
     }
 
     func makeTrailingComposerView(options: AIComposerTrailingViewOptions) -> some View {
-        GmailButton(gmail: gmail)
+        Button(action: onTalk) {
+            Image(systemName: "waveform")
+                .fontWeight(.semibold)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel("Talk to Juno")
     }
 }
 
