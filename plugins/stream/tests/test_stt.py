@@ -152,6 +152,7 @@ class Router:
                 elif self.hanging_up:
                     await socket.close()
                 else:
+                    await asyncio.sleep(self.started_after)
                     await socket.send_json(
                         {"type": "started", "provider": "deepgram", "model": "nova-3"}
                     )
