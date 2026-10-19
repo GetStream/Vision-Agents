@@ -1,17 +1,25 @@
-# Kotlin SDKs
+# Kotlin SDK
 
-Four Gradle modules for talking to an agent from an Android app.
+One Android library for talking to an agent from an Android app: `io.getstream:vision-agents-core`,
+package `io.getstream.visionagents.android.core`. It holds sessions, responses, the event socket
+and the conversation as `StateFlow`; the Stream Chat channel a text conversation is kept in; and
+joining the call, so the conversation can be spoken. It depends on Stream Chat (7.15.0) and
+Stream Video (1.34.0), and needs minSdk 24 and compileSdk 37, which is what Stream's SDKs require.
 
-| Module | Artifact | Depends on | What it is |
-| --- | --- | --- | --- |
-| `core/` | `io.getstream:vision-agents-core` | coroutines, kotlinx.serialization, Ktor on OkHttp | Sessions, responses, the event socket and the conversation as `StateFlow`. Plain JVM |
-| `ui/` | `io.getstream:vision-agents-ui` | `core`, Compose | Compose views over that state |
-| `rtc/` | `io.getstream:vision-agents-rtc` | `core`, Stream Video 1.34.0 | Joining the call, so the conversation can be spoken |
-| `chat/` | `io.getstream:vision-agents-chat` | `core`, Stream Chat 7.12.0 | The Stream Chat channel a text conversation is kept in |
+It ships no views. Show a conversation with Stream Chat's AI components,
+`io.getstream:stream-chat-android-ai-compose`, which the app adds itself.
 
-`core` has nothing Android in it, so an app that only holds a text conversation does not pull
-in WebRTC, and its tests run on a plain JDK. `ui`, `rtc` and `chat` need minSdk 24 and
-compileSdk 37, which is what Stream's SDKs require.
+Stream Chat 7.15.0 is published to Stream's Maven repository rather than Maven Central:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://stream-io-repo.com")
+    }
+}
+```
 
 ## Using them
 
@@ -25,7 +33,7 @@ chat.responses.create("What are your opening hours?")
 // chat.conversation is a StateFlow: the question shows at once, the turns grow as the reply
 // streams in, and its state says what the agent is doing.
 
-// The Stream Chat channel the conversation is kept in, with vision-agents-chat.
+// The Stream Chat channel the conversation is kept in.
 val channel: ChannelClient = chat.chat(context)
 
 // Out loud. The agent joins a call and so does this device.
@@ -69,15 +77,9 @@ talks to and is handed the user's token by its own backend.
 `AgentSession` owns a coroutine scope and `close()` ends it, so the usual home is a `ViewModel`
 that closes it in `onCleared`. Closing stops the session and keeps what it recorded and
 remembered; `delete()` (or `agents.sessions.delete(id)`) deletes it, turns and memories
-included. With `vision-agents-ui` a whole conversation is one composable:
-
-```kotlin
-ConversationView(session = chat)
-```
-
-`TranscriptView`, `Composer` and `AgentStatusView` are public and work on their own, so a host
-that wants a different arrangement takes them apart rather than fighting `ConversationView`.
-`VoiceCallView` and `AgentVideoView` in `rtc` are the call's controls and its video.
+included. The channel from `chat(context)` is what Stream Chat's AI components show: the reply
+streaming in, its reasoning and tool calls, and the approvals waiting on the person. On a call,
+`voice.call` is the Stream `Call` that Stream Video's Compose views render.
 
 ### A tool that runs on the phone
 
@@ -195,28 +197,24 @@ directory rather than a volume, so a second run starts warm.
 ```bash
 cd <repo>
 
-# core: unit tests against a real loopback router, no mocks
-docker run --rm -v "$PWD":/repo -v ~/.cache/vision-agents-kotlin/gradle:/gradle-home \
-  -e GRADLE_USER_HOME=/gradle-home -w /repo/sdks/kotlin gradle:jdk21 \
-  ./gradlew -PcoreOnly :core:test
-
-# the same, plus the live tests against a running router
-docker run --rm -v "$PWD":/repo -v ~/.cache/vision-agents-kotlin/gradle:/gradle-home \
-  -e GRADLE_USER_HOME=/gradle-home -e VISION_AGENTS_URL=http://host.docker.internal:8091 \
-  -e VISION_AGENTS_CUSTOMER_ID=examples -w /repo/sdks/kotlin gradle:jdk21 \
-  ./gradlew -PcoreOnly :core:test
-
-# the same, plus a device token's 403s against a router in api_key mode
-docker run --rm -v "$PWD":/repo -v ~/.cache/vision-agents-kotlin/gradle:/gradle-home \
-  -e GRADLE_USER_HOME=/gradle-home -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
-  -e INTEGRATION_ROUTER_KEY=vak_live_… -e INTEGRATION_ROUTER_SECRET=vas_live_… \
-  -w /repo/sdks/kotlin gradle:jdk21 ./gradlew -PcoreOnly :core:test
-
-# ui, rtc and chat: built rather than tested, since they are views and wrappers over Stream's SDKs
+# unit tests against a real loopback router, no mocks, and the release build
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
   -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 \
-  ./gradlew :ui:assembleRelease :rtc:assembleRelease :chat:assembleRelease
+  ./gradlew :core:testDebugUnitTest :core:assembleRelease
+
+# the same, plus the live tests against a running router
+docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
+  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -e VISION_AGENTS_URL=http://host.docker.internal:8091 -e VISION_AGENTS_CUSTOMER_ID=examples \
+  -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest
+
+# the same, plus a device token's 403s against a router in api_key mode
+docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
+  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
+  -e INTEGRATION_ROUTER_KEY=vak_live_… -e INTEGRATION_ROUTER_SECRET=vas_live_… \
+  -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest
 ```
 
 `StreamClientsTest` is what keeps a second Stream connection from being opened: sessions asking
@@ -226,8 +224,5 @@ fails if any is one the spec does not mark `x-client-accessible`. `KeyedRouterPo
 only with `INTEGRATION_ROUTER_KEY` set; the router it needs is set up as in the
 [JavaScript README](../js/README.md#working-on-this-package).
 
-Run the Android build and `:core:test` one after the other, not at once: both lock the same
-`.gradle` directory.
-
-`-PcoreOnly` leaves the Android modules out of the build, so the JDK image needs no Android
-SDK. `cimg/android` publishes no arm64 image, hence `--platform linux/amd64`.
+The unit tests are plain JVM tests, run by the Android Gradle plugin with no emulator.
+`cimg/android` publishes no arm64 image, hence `--platform linux/amd64`.

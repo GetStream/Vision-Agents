@@ -61,6 +61,18 @@ too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from 
 declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
 updates.
 
+### The Kotlin SDK is one module, and its views are Stream Chat's AI components
+
+`vision-agents-core` is the only Android artifact, and everything in it is in
+`io.getstream.visionagents.android.core`. `vision-agents-ui`, `vision-agents-rtc` and
+`vision-agents-chat` are gone: `VoiceSession` and `session.chat()` moved into core, which is
+now an Android library depending on Stream Chat (7.15.0+) and Stream Video. `ConversationView`,
+`TranscriptView`, `Composer`, `AgentStatusView`, `VoiceCallView` and `AgentVideoView` are gone
+too; show a conversation with Stream Chat's AI components (`stream-chat-android-ai-compose`).
+`ChatFailed` and `CallFailed` are now `AgentsException.ChatFailed` and
+`AgentsException.CallFailed`. Stream Chat 7.15.0 is published to `https://stream-io-repo.com`,
+not Maven Central, so add that repository.
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,
