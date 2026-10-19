@@ -29,7 +29,7 @@ go run ./configure
 
 `configure` syncs the directory with the Go SDK, then patches on `visible_tools` and `skills`,
 which `agent.yaml` has no field for: the first shows a step for the phone's own tools on a reply,
-and the second adds `vision`, which looks at the picture `look_at_latest_photo` returns.
+and the second adds `vision`, which looks through the phone's camera on a call.
 
 Leave the backend running. It signs the Stream token the phone is its user with, as the Swift
 demo's does, and does what only a server may with the person's Gmail connection: start its
@@ -111,10 +111,8 @@ Without the client, the button says so: the router answers that it has no OAuth 
   Try it on a phone: the simulator has no camera.
 - **Tools on the phone**: `get_local_context` (date, time, timezone), `get_location` (asks
   first), `list_events` (EventKit), `add_reminder` (asks first), `send_email` (asks first,
-  showing who it goes to), `look_at_latest_photo` (asks first, then shows the agent the newest
-  picture in the library). Calendar, reminders, location and photos each need the phone's
-  permission too. On a call the router hands the photo tool's picture to the `vision` skill; in a
-  chat Grok, which sees images, is shown it with its next reply.
+  showing who it goes to). Calendar, reminders and location each need the phone's permission
+  too.
 
 ## What does not work yet
 

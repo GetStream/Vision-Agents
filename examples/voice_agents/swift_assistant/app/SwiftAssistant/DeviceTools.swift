@@ -3,15 +3,15 @@ import EventKit
 import Foundation
 import VisionAgentsCore
 
-/// What the agent can ask this phone: the time and place, the calendar and reminders, the
-/// newest photo, and to send an email from the person's Gmail.
+/// What the agent can ask this phone: the time and place, the calendar and reminders, and to
+/// send an email from the person's Gmail.
 ///
 /// The agent runs in the backend and knows none of this. Each tool runs here, when the model
 /// calls it, and only its answer leaves the phone. The two that share something personal ask
 /// first: the call waits in the session's `approvals` until the person answers, on the reply's
 /// step in a chat or on a card over a call.
 enum DeviceTools {
-    static let all = [localContext, location, events, reminder, sendEmail, latestPhoto]
+    static let all = [localContext, location, events, reminder, sendEmail]
 
     /// The date, time and timezone, which a model in a data centre has no way to know.
     ///
@@ -174,33 +174,6 @@ enum DeviceTools {
         }
         _ = try await GmailAccount.send(to: to, subject: subject, body: body)
         return "Sent \"\(subject)\" to \(to) from their Gmail."
-    }
-
-    /// The newest picture in the person's photo library, which the agent is shown. It asks
-    /// first, since it is one of their photos.
-    ///
-    /// On a call the router hands a tool's pictures to the agent's vision skill; in a chat
-    /// Grok, which sees images, is shown it with its next reply.
-    private static let latestPhoto = AgentTool(
-        name: "look_at_latest_photo",
-        description: "Look at the newest photo in the person's photo library. Call it when they "
-            + "ask about a photo they just took or their latest picture.",
-        parameters: .strings(
-            ["reason": "why you want to see it, in a few words they would recognise"],
-            required: ["reason"]),
-        displayTitle: "Looking at your latest photo",
-        approval: .init(
-            title: "Show Juno your latest photo?",
-            message: "Juno sees the newest picture in your library, once.",
-            reasonArgument: "reason",
-            allowTitle: "Show",
-            declineTitle: "Not now")
-    ) { _ in
-        guard let latest = try await Photos.latest() else {
-            return ToolOutput(text: "Their photo library has no pictures.")
-        }
-        let when = latest.taken.map { ", taken " + $0.formatted(date: .abbreviated, time: .shortened) }
-        return ToolOutput(text: "Their newest photo\(when ?? "").", images: [latest.image])
     }
 
     private static let isoDay = Date.ISO8601FormatStyle(timeZone: .current).year().month().day()

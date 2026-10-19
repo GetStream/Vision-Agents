@@ -51,12 +51,12 @@ func run(ctx context.Context, dir string) error {
 	// so both are patched on after the sync, which leaves a field it does not mention as it
 	// is. Naming any tools replaces the default of search and web_search, so those are named
 	// again beside the phone's own; naming skills replaces the built-in think, recall and
-	// explain, so those stay beside vision, which looks at what look_at_latest_photo returns.
+	// explain, so those stay beside vision, which looks through the phone's camera on a call.
 	client, err := agent.Client()
 	if err != nil {
 		return err
 	}
-	visible := []string{"search", "web_search", "get_location", "list_events", "add_reminder", "send_email", "look_at_latest_photo", "gmail__*"}
+	visible := []string{"search", "web_search", "get_location", "list_events", "add_reminder", "send_email", "gmail__*"}
 	skills := []string{"think", "recall", "explain", "vision"}
 	patched, err := client.PatchAgentConfigWithResponse(ctx, config.Id,
 		acceleration.PatchAgentConfigJSONRequestBody{VisibleTools: &visible, Skills: &skills})

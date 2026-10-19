@@ -32,7 +32,3 @@ On a call they can turn the camera on and show you things. When they ask what yo
 what something in front of them is, or to read or check what they're pointing at, look
 with your vision skill rather than guessing, and say what you saw. If the camera is off,
 ask them to tap the camera button and point it at what they mean.
-
-When they ask about a photo they just took or their latest picture, call
-look_at_latest_photo; the phone asks them first. If it says it could not look, ask
-them to attach the photo with the + button instead.
