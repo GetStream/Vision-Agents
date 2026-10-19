@@ -352,10 +352,20 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	})
 	s.Require().NoError(err)
 
-	serving, err := serving(candidates, []options.Term{options.Diarize})
+	serving, err := serving(candidates, []options.Term{options.Diarize}, "")
 	s.Require().NoError(err)
 
 	s.Equal([]string{"muse/muse-voice-transcribe-1.0"}, names(serving))
+}
+
+func (s *RoutingSuite) TestAShortcutLeftWithOneModelStillRefusesAsNoProvider() {
+	// The caller named a shortcut, not the model, so the refusal says what it said on the
+	// commit before this PR rather than naming a model the caller never chose.
+	only := []Candidate{{Config: ProviderConfig{Provider: "microsoft", Model: "MAI-Transcribe-2-Streaming"}}}
+
+	_, err := serving(only, []options.Term{options.Keyterms}, "multilingual-low-latency")
+
+	s.EqualError(err, "routing: no provider can express keyterms")
 }
 
 func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {

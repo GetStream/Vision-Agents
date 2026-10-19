@@ -501,6 +501,36 @@ func (s *STTRouterSuite) TestKeytermsReachTheProviderTheRouterBuilt() {
 	s.Equal([]string{"Vision Agents", "Stream"}, built.Keyterms)
 }
 
+func (s *STTRouterSuite) TestKeytermsOnAModelThatTakesNoneAreRefusedNamingTheModel() {
+	// Microsoft declares no keyterms in router.yaml. On the commit before this PR the
+	// refusal read "no provider can express keyterms", as if the router had looked
+	// further than the one model the caller named.
+	terms := []string{"Vision Agents"}
+	_, err := s.newRouter().Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "microsoft/MAI-Transcribe-2-Streaming",
+		Keyterms:   terms,
+		Options:    options.STT{Keyterms: terms},
+	})
+
+	s.ErrorContains(err, "routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms")
+}
+
+func (s *STTRouterSuite) TestKeytermsOnATargetAmongSeveralProvidersAreRefusedWithoutNamingIt() {
+	// The request targets Microsoft but lists parakeet too, so parakeet was considered:
+	// naming Microsoft alone would claim the router looked at no other model.
+	terms := []string{"Vision Agents"}
+	_, err := s.newRouter().Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "microsoft/MAI-Transcribe-2-Streaming",
+		Keyterms:   terms,
+		Options: options.STT{Keyterms: terms, Providers: []string{
+			"microsoft/MAI-Transcribe-2-Streaming", "parakeet/parakeet-tdt-0.6b-v3"}},
+	})
+
+	s.EqualError(err, "routing: no provider can express keyterms")
+}
+
 // quietSTT transcribes nothing, so a test can watch what the router built without
 // reaching a provider.
 type quietSTT struct {

@@ -359,6 +359,20 @@ func (s *ServerSuite) TestAModelThatServedRequestsHasAShareOfThem() {
 	}
 }
 
+func (s *ServerSuite) TestAModelListsTheOptionsItCanBeAskedFor() {
+	var providers []Provider
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/stt/providers", nil, &providers))
+
+	var supports []string
+	for _, provider := range providers {
+		if provider.Model == "stub-model" {
+			supports = provider.Supports
+		}
+	}
+	s.Contains(supports, "keyterms", "the stub declares every term")
+}
+
 func (s *ServerSuite) TestNobodyIsToldWhatAnAppSpentWithoutCredentials() {
 	s.Equal(http.StatusUnauthorized, s.unauthenticatedClient.do(http.MethodGet,
 		"/v1/stats/spend?granularity=daily&from="+s.from()+"&to="+s.to(24*time.Hour), nil, nil))

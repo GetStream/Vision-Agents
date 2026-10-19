@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -136,6 +137,37 @@ func (s *StreamsSuite) TestAnOptionNothingRecognisesIsRefusedRatherThanIgnored()
 	refused := s.nextFrame(listening)
 	s.Equal("error", refused["type"])
 	s.Equal("closed", s.nextFrame(listening)["type"], "the socket says it is done")
+}
+
+func (s *StreamsSuite) TestMoreKeytermsThanASessionMayNameAreRefusedAtTheStart() {
+	keyterms := make([]string, stt.MaxKeyterms+1)
+	for i := range keyterms {
+		keyterms[i] = fmt.Sprintf("term %d", i)
+	}
+	listening := s.start("/v1/stt/stream", frame{
+		"target": "stub/stub-model", "stt": frame{"keyterms": keyterms}})
+
+	refused := s.nextFrame(listening)
+	s.Equal("error", refused["type"])
+	s.Equal("stt: at most 100 keyterms may be named, and this asks for 101", refused["error"])
+	s.Equal("closed", s.nextFrame(listening)["type"])
+}
+
+func (s *StreamsSuite) TestAsManyKeytermsAsASessionMayNameGetPastTheCap() {
+	keyterms := make([]string, stt.MaxKeyterms)
+	for i := range keyterms {
+		keyterms[i] = fmt.Sprintf("term %d", i)
+	}
+	// A blank one is dropped before counting, as a session's are.
+	keyterms = append(keyterms, "   ")
+	// A target nothing serves gets past the cap and no further, so no session is opened on
+	// the suite's one transcriber.
+	listening := s.start("/v1/stt/stream", frame{
+		"target": "nobody/nothing", "stt": frame{"keyterms": keyterms}})
+
+	refused := s.nextFrame(listening)
+	s.Equal("error", refused["type"])
+	s.Equal(`routing: unknown target "nobody/nothing"`, refused["error"])
 }
 
 func (s *StreamsSuite) TestWhatIsSentToBeSpokenReachesTheVoice() {
