@@ -109,10 +109,12 @@ def sync_detailed(
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
     (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
-    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
-    works afterwards in the same session. While that step-up is open, calls refused for the same access
-    send no second event.
+    handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url: the launch page takes the handoff from that origin only,
+    and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps
+    working until the step-up succeeds, and the same call works afterwards in the same session. While
+    that step-up is open, calls refused for the same access send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -123,8 +125,10 @@ def sync_detailed(
     the message is sent again with the attachment's status set to connected. A connector_authorization
     attachment asks the end user to connect a connector binding the reply needed with their own account,
     with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
-    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. Once the user finishes that login the message is sent again with status
+    handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url, and the consent goes back to the session's return_url, or
+    else to the dashboard. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
@@ -226,10 +230,12 @@ def sync(
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
     (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
-    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
-    works afterwards in the same session. While that step-up is open, calls refused for the same access
-    send no second event.
+    handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url: the launch page takes the handoff from that origin only,
+    and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps
+    working until the step-up succeeds, and the same call works afterwards in the same session. While
+    that step-up is open, calls refused for the same access send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -240,8 +246,10 @@ def sync(
     the message is sent again with the attachment's status set to connected. A connector_authorization
     attachment asks the end user to connect a connector binding the reply needed with their own account,
     with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
-    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. Once the user finishes that login the message is sent again with status
+    handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url, and the consent goes back to the session's return_url, or
+    else to the dashboard. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
@@ -338,10 +346,12 @@ async def asyncio_detailed(
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
     (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
-    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
-    works afterwards in the same session. While that step-up is open, calls refused for the same access
-    send no second event.
+    handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url: the launch page takes the handoff from that origin only,
+    and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps
+    working until the step-up succeeds, and the same call works afterwards in the same session. While
+    that step-up is open, calls refused for the same access send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -352,8 +362,10 @@ async def asyncio_detailed(
     the message is sent again with the attachment's status set to connected. A connector_authorization
     attachment asks the end user to connect a connector binding the reply needed with their own account,
     with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
-    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. Once the user finishes that login the message is sent again with status
+    handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url, and the consent goes back to the session's return_url, or
+    else to the dashboard. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
@@ -453,10 +465,12 @@ async def asyncio(
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
     (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
-    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
-    works afterwards in the same session. While that step-up is open, calls refused for the same access
-    send no second event.
+    handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url: the launch page takes the handoff from that origin only,
+    and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps
+    working until the step-up succeeds, and the same call works afterwards in the same session. While
+    that step-up is open, calls refused for the same access send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -467,8 +481,10 @@ async def asyncio(
     the message is sent again with the attachment's status set to connected. A connector_authorization
     attachment asks the end user to connect a connector binding the reply needed with their own account,
     with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
-    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
-    for createAuthorization. Once the user finishes that login the message is sent again with status
+    handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a
+    session created without one, opens launch_url in a popup and posts it handoff_token, as for a
+    createAuthorization with that return_url, and the consent goes back to the session's return_url, or
+    else to the dashboard. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;

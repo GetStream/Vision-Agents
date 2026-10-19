@@ -402,7 +402,7 @@ func (s *RouterOpenedConnectorsSuite) echoed(agent, userID string) int {
 	ran := 0
 	for _, session := range s.sessionsOf(agent, userID) {
 		var count int
-		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		s.Require().NoError(s.store.ShardDB().QueryRowContext(context.Background(),
 			"SELECT count(*) FROM agent_response_items WHERE session_id = ? AND kind = ? AND tool_name = ? AND text = ?",
 			session.ID, store.ItemToolResult, connectorEcho, connectorEchoText).Scan(&count))
 		ran += count

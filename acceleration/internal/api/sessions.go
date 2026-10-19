@@ -502,7 +502,10 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
 	spec.ConnectorSelections = selectionsOf(*row)
-	return spec, nil
+	// And so do their consents, back to the page the chat was opened with.
+	spec.ReturnURL = row.ReturnURL
+	// The row keeps the call voice was last on, which voice goes back to once started.
+	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }
 
 // selectionsOf are the connections a stored session's caller chose for its session bindings.
@@ -576,6 +579,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	// A phone call is a call from the start. Anything else is held in writing until voice
 	// is started, which start_voice does as the session opens.
 	spec.Text = !value(request.StartVoice) && request.Phone == nil
+	if request.Call != nil {
+		spec.CallType, spec.CallID = request.Call.Type, request.Call.Id
+	}
 	// The conversation is kept in Stream Chat unless it is incognito, which Normalize turns
 	// off, so any Chat client can read it back, typed and spoken.
 	spec.PersistConversation = true
@@ -587,6 +593,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 
 	spec.Incognito = value(request.Incognito)
+	if value(request.Instructions) != "" {
+		spec.Instructions = *request.Instructions
+	}
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
 	spec.Project = override(spec.Project, request.ProjectId)
@@ -627,6 +636,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.ConnectorSelections = append(spec.ConnectorSelections,
 			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
 	}
+	spec.ReturnURL = value(request.ReturnUrl)
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
 	if request.Tags != nil {
@@ -888,7 +898,8 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	case parent.Live != nil:
 		// A fork is held in writing whatever the parent is doing: one person talks to one
 		// agent, and voice is started on the fork when it is wanted there.
-		spec = parent.Live.Spec().Written()
+		// The fork's own call is agent:<fork id>, never the call the parent was on.
+		spec = parent.Live.Spec().Written().Holding(session.Call{})
 		spec.Phone, spec.Edge = nil, nil
 		parentID = parent.Live.ID()
 		if spec.Incognito {
@@ -907,6 +918,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Text: true,
 		}
 		spec.ConnectorSelections = selectionsOf(*row)
+		spec.ReturnURL = row.ReturnURL
 		parentID = row.ID
 		if row.ConversationID != "" {
 			recall = &session.Recall{AgentID: row.AgentID, ConversationID: row.ConversationID}
@@ -931,6 +943,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.ConnectorSelections = spec.ConnectorSelections
+		fresh.ReturnURL = spec.ReturnURL
 		spec = fresh
 	}
 
@@ -1265,7 +1278,7 @@ func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema)
 }
 
 // ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
-// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 type ModelOverwrites struct {
 	Llm             *string                   `json:"llm,omitempty" doc:"A provider/model or a capability shortcut, in place of the config's."`
 	MaxOutputTokens *int                      `json:"max_output_tokens,omitempty" doc:"Caps the reply, reasoning included. Omitted leaves the provider's default."`
@@ -1280,7 +1293,7 @@ type ModelOverwrites struct {
 
 func (*ModelOverwrites) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["max_output_tokens"].Format = ""
-	schema.Description = "What to change about the models for one session, over whatever its agent config decided.\nIt is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent."
+	schema.Description = "What to change about the models for one session, over whatever its agent config decided.\nIt is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send."
 	return schema
 }
 

@@ -18,3 +18,13 @@ type TogetherIntegrationSuite struct {
 func TestTogetherIntegrationSuite(t *testing.T) {
 	suite.Run(t, &TogetherIntegrationSuite{hosttest.Live(t, Host, New, "zai-org/GLM-5.3-Flash")})
 }
+
+// TogetherNemotronIntegrationSuite runs Nemotron 3.5 Super VL, which also answers the
+// image tests the text-only GLM above skips.
+type TogetherNemotronIntegrationSuite struct {
+	llmsuite.Suite
+}
+
+func TestTogetherNemotronIntegrationSuite(t *testing.T) {
+	suite.Run(t, &TogetherNemotronIntegrationSuite{hosttest.Live(t, Host, New, "nvidia/NVIDIA-Nemotron-3.5-Super-VL")})
+}

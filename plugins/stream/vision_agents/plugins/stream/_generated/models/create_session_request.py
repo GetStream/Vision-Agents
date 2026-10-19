@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
+    from ..models.session_call import SessionCall
     from ..models.session_connector_binding import SessionConnectorBinding
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
@@ -35,6 +36,7 @@ class CreateSessionRequest:
             since there is no sensible answer when they disagree.
         agent_id (str | Unset): Keys transcripts and statistics. Empty means the call id.
         backchannel (bool | Unset): Murmur while a participant is still talking, the way a person does. Default: False.
+        call (SessionCall | Unset): An existing Stream call for the agent to join, by its type and id.
         config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
             config says, so a caller can reuse a configuration and still change one thing about this call.
         connector_bindings (list[SessionConnectorBinding] | Unset): The connection to use for each of the agent config's
@@ -67,6 +69,13 @@ class CreateSessionRequest:
             transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
             simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork
             from. Default: False.
+        instructions (str | Unset): What the agent is told to be for this session alone, in place of its config's
+            instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored
+            config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's,
+            as a config's instructions have none. They are held only by the running session: a session carried on in writing
+            after it ended in another process, a fork of a session no longer running and a fork naming a config run on the
+            config's instructions again. Server-side only: a device sending them is refused with a 403, because what the
+            agent is told decides who it is, and a device could make it impersonate a different agent.
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
             terms, and providers that cannot be told about vocabulary ignore them.
         languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.
@@ -83,16 +92,26 @@ class CreateSessionRequest:
             It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides
             the config, and a caller reading a session back wants to see what they changed in one place rather than diffed
             against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
-            a caller able to rewrite those could make a session impersonate a different agent.
+            a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's
+            instructions with the instructions of CreateSessionRequest instead, which a device may not send.
         navigating (bool | Unset): The agent placed this call, so let recordings finish and answer their menus. Default:
             False.
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
         project_id (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
             breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+        return_url (str | Unset): The app's own page a login or step-up the chat asks for goes back to, as
+            createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the
+            browser comes back to it with connection_id and status added to its query. The same rules as
+            createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the
+            rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is
+            kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device
+            may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller
+            alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent
+            lands.
         search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
         start_voice (bool | Unset): Start voice as the session opens, as startSessionVoice does: the agent joins the
-            call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held
-            in writing until voice is started. Default: False.
+            call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the
+            conversation is held in writing until voice is started. Default: False.
         sts (str | Unset): A speech-to-speech target. Naming one makes the session native once voice is started: the
             model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the
             config decides.
@@ -114,6 +133,7 @@ class CreateSessionRequest:
     agent: str | Unset = UNSET
     agent_id: str | Unset = UNSET
     backchannel: bool | Unset = False
+    call: SessionCall | Unset = UNSET
     config_id: str | Unset = UNSET
     connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
     context_truncated: bool | Unset = UNSET
@@ -123,6 +143,7 @@ class CreateSessionRequest:
     history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
     incognito: bool | Unset = False
+    instructions: str | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     languages: list[str] | Unset = UNSET
     llm: str | Unset = UNSET
@@ -133,6 +154,7 @@ class CreateSessionRequest:
     navigating: bool | Unset = False
     phone: SessionPhone | Unset = UNSET
     project_id: str | Unset = UNSET
+    return_url: str | Unset = UNSET
     search: str | Unset = UNSET
     start_voice: bool | Unset = False
     sts: str | Unset = UNSET
@@ -154,6 +176,10 @@ class CreateSessionRequest:
         agent_id = self.agent_id
 
         backchannel = self.backchannel
+
+        call: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.call, Unset):
+            call = self.call.to_dict()
 
         config_id = self.config_id
 
@@ -187,6 +213,8 @@ class CreateSessionRequest:
 
         incognito = self.incognito
 
+        instructions = self.instructions
+
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
             keyterms = self.keyterms
@@ -216,6 +244,8 @@ class CreateSessionRequest:
             phone = self.phone.to_dict()
 
         project_id = self.project_id
+
+        return_url = self.return_url
 
         search = self.search
 
@@ -261,6 +291,8 @@ class CreateSessionRequest:
             field_dict["agent_id"] = agent_id
         if backchannel is not UNSET:
             field_dict["backchannel"] = backchannel
+        if call is not UNSET:
+            field_dict["call"] = call
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
         if connector_bindings is not UNSET:
@@ -279,6 +311,8 @@ class CreateSessionRequest:
             field_dict["id"] = id
         if incognito is not UNSET:
             field_dict["incognito"] = incognito
+        if instructions is not UNSET:
+            field_dict["instructions"] = instructions
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if languages is not UNSET:
@@ -299,6 +333,8 @@ class CreateSessionRequest:
             field_dict["phone"] = phone
         if project_id is not UNSET:
             field_dict["project_id"] = project_id
+        if return_url is not UNSET:
+            field_dict["return_url"] = return_url
         if search is not UNSET:
             field_dict["search"] = search
         if start_voice is not UNSET:
@@ -335,6 +371,7 @@ class CreateSessionRequest:
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
+        from ..models.session_call import SessionCall
         from ..models.session_connector_binding import SessionConnectorBinding
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
@@ -347,6 +384,13 @@ class CreateSessionRequest:
         agent_id = d.pop("agent_id", UNSET)
 
         backchannel = d.pop("backchannel", UNSET)
+
+        _call = d.pop("call", UNSET)
+        call: SessionCall | Unset
+        if isinstance(_call, Unset):
+            call = UNSET
+        else:
+            call = SessionCall.from_dict(_call)
 
         config_id = d.pop("config_id", UNSET)
 
@@ -392,6 +436,8 @@ class CreateSessionRequest:
 
         incognito = d.pop("incognito", UNSET)
 
+        instructions = d.pop("instructions", UNSET)
+
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
         languages = cast(list[str], d.pop("languages", UNSET))
@@ -426,6 +472,8 @@ class CreateSessionRequest:
             phone = SessionPhone.from_dict(_phone)
 
         project_id = d.pop("project_id", UNSET)
+
+        return_url = d.pop("return_url", UNSET)
 
         search = d.pop("search", UNSET)
 
@@ -474,6 +522,7 @@ class CreateSessionRequest:
             agent=agent,
             agent_id=agent_id,
             backchannel=backchannel,
+            call=call,
             config_id=config_id,
             connector_bindings=connector_bindings,
             context_truncated=context_truncated,
@@ -483,6 +532,7 @@ class CreateSessionRequest:
             history=history,
             id=id,
             incognito=incognito,
+            instructions=instructions,
             keyterms=keyterms,
             languages=languages,
             llm=llm,
@@ -493,6 +543,7 @@ class CreateSessionRequest:
             navigating=navigating,
             phone=phone,
             project_id=project_id,
+            return_url=return_url,
             search=search,
             start_voice=start_voice,
             sts=sts,

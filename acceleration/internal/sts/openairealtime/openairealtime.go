@@ -84,7 +84,7 @@ var (
 	OpenAI = Vendor{
 		Provider:         "openai",
 		URL:              "wss://api.openai.com/v1/realtime",
-		Model:            "gpt-realtime-2",
+		Model:            "gpt-realtime-2.1",
 		APIKeyEnvVar:     "OPENAI_API_KEY",
 		InputSampleRate:  24_000,
 		OutputSampleRate: 24_000,
@@ -93,7 +93,7 @@ var (
 	XAI = Vendor{
 		Provider:         "xai",
 		URL:              "wss://api.x.ai/v1/realtime",
-		Model:            "grok-voice-think-fast-2.0",
+		Model:            "grok-voice-3.0",
 		APIKeyEnvVar:     "XAI_API_KEY",
 		InputSampleRate:  24_000,
 		OutputSampleRate: 24_000,

@@ -1,5 +1,7 @@
 package phone
 
+import "github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+
 // StreamSuite covers what can be checked without an account: that nothing half-described
 // reaches Stream, and that a trunk address a vendor is given is dialable.
 
@@ -84,4 +86,41 @@ func (s *PhoneSuite) stream() *Stream {
 	stream, err := NewStream(StreamOptions{APIKey: "key", APISecret: "secret"})
 	s.Require().NoError(err)
 	return stream
+}
+
+func (s *PhoneSuite) TestATrunkWithNeitherAPasswordNorAddressesGetsARandomPassword() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+
+	trunkID, bridge, err := stream.CreateTrunk(s.ctx, Trunk{Name: "call", Numbers: []string{"+15125550100"}})
+	s.Require().NoError(err)
+
+	password, _ := fake.TrunkAuth(trunkID)
+	s.NotEmpty(password)
+	s.Equal(password, bridge.Password)
+}
+
+func (s *PhoneSuite) TestATrunkWithAddressesGetsNoPassword() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+
+	trunkID, _, err := stream.CreateTrunk(s.ctx, Trunk{
+		Name: "call", Numbers: []string{"+15125550100"}, AllowedIPs: []string{"192.0.2.0/24"},
+	})
+	s.Require().NoError(err)
+
+	password, allowed := fake.TrunkAuth(trunkID)
+	s.Empty(password, "Stream would challenge a vendor that has no way to answer")
+	s.Equal([]string{"192.0.2.0/24"}, allowed)
+}
+
+func (s *PhoneSuite) TestATrunkGivenAPasswordKeepsIt() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+
+	trunkID, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "call", Numbers: []string{"+15125550100"}, Password: "chosen"})
+	s.Require().NoError(err)
+
+	password, _ := fake.TrunkAuth(trunkID)
+	s.Equal("chosen", password)
 }

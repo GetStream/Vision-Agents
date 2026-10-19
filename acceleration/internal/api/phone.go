@@ -763,6 +763,13 @@ func (s *Server) callApp(ctx context.Context, customerID, callType, callID strin
 			}
 		}
 	}
+	return s.callPinApp(ctx, customerID, callType, callID)
+}
+
+// callPinApp is the Stream app a call no session is running in is in: the app its lines were
+// made in, else the customer's own. It is the app the session manager acts in for a new
+// session joining the call.
+func (s *Server) callPinApp(ctx context.Context, customerID, callType, callID string) (int64, error) {
 	if s.store != nil {
 		pin, found, err := s.store.CallPin(ctx, customerID, callType, callID)
 		if err != nil || found {
@@ -852,7 +859,8 @@ func (s *Server) registerPhone(api huma.API) {
 		Path:        "/v1/phone/numbers/{e164}/attach",
 		Summary:     "Point a number at a Stream call",
 		Description: "Creates the SIP inbound trunk and routing rule and tells the vendor to send calls " +
-			"there. This is what turns a bought number into one that reaches an agent.",
+			"there. This is what turns a bought number into one that reaches an agent. Attaching a " +
+			"number that is already attached in this app changes nothing and answers what it has.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The number now reaches a call"},
 		},

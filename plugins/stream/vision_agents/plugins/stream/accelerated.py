@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import aiortc
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
@@ -33,6 +34,7 @@ from ._generated.models import (
     Greeting,
     GreetingMode,
     Session,
+    SessionCall,
     SessionMemory,
     SessionMemoryFilter,
     SessionTool,
@@ -324,13 +326,25 @@ class Accelerated(OmniLLM):
             backchannel=self.backchannel,
         )
         if call.call_id:
+            request.start_voice = True
+        if call.call_id and call.call_type == "agent":
             # A session's call is agent:<session id>, so holding the session by the call's
             # id puts the backend's agent in the call this one joined.
             request.id = call.call_id
-            request.start_voice = True
+        elif call.call_id:
+            # Any other call is named as it is. The router picks the session id, since a
+            # session id is never used twice and a second session on this call is not refused.
+            request.call = SessionCall(type_=call.call_type, id=call.call_id)
         # Anything named here wins over the stored config, so a field this agent does not
         # decide is left out rather than sent empty: sending it would replace what the
         # config says with nothing.
+        # The agent's instructions play for this session, over the config's. The default an
+        # agent gets when nobody says is no instruction: next to a config it would replace
+        # what the config says, so it stays home.
+        if call.instructions and not (
+            self.config and call.instructions == DEFAULT_INSTRUCTIONS
+        ):
+            request.instructions = call.instructions
         if self.greeting:
             request.greeting = Greeting(text=self.greeting)
             if self.greeting_mode:

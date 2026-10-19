@@ -716,6 +716,8 @@ type AgentSuite struct {
 	// speculates starts replies before the flow controller has ruled, off unless a test
 	// says otherwise.
 	speculates bool
+	// unified has the reply rule on its own turn in place of the flow controller.
+	unified bool
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -768,6 +770,7 @@ func (s *AgentSuite) SetupTest() {
 	s.toolPolicy = nil
 	s.duplex = DuplexOptions{}
 	s.speculates = false
+	s.unified = false
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -973,6 +976,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,
+		UnifiedReplies:     s.unified,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
@@ -1275,6 +1279,37 @@ func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyRepl
 		"a clarifying ruling should ask for a reply of its own")
 	s.Contains(s.model.requests()[1].Instructions, "ambiguous")
 	s.NotContains(s.model.requests()[0].Instructions, "ambiguous")
+}
+
+func (s *AgentSuite) TestAUnifiedReplyRulesOnItsTurnWithoutTheFlowController() {
+	s.unified = true
+	s.join(true)
+	s.model.reply = []string{"[respond] Hello", " there."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never spoken")
+	s.Empty(s.flow.requests(), "the reply rules on its own words, so nobody else is asked")
+	s.Contains(s.model.requests()[0].Instructions, "[respond]")
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the exchange was never kept")
+	s.Equal("Hello there.", s.agent.History()[1].Content, "the tag is never part of what was said")
+}
+
+func (s *AgentSuite) TestAUnifiedReplyThatIgnoresItsTurnIsNeverHeard() {
+	s.unified = true
+	s.join(true)
+	s.model.reply = []string{"[ignore]"}
+	participant := stt.Participant{ID: "child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"words the agent was not meant to answer must never be answered")
+	s.Empty(s.agent.History())
 }
 
 func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
@@ -1704,6 +1739,22 @@ func (s *AgentSuite) TestADirectionIsSpokenButNeverRead() {
 	s.Equal("That is a good one.", history[1].Content)
 }
 
+func (s *AgentSuite) TestADirectionWithNothingToSayIsNeverSentToTheVoice() {
+	// Gemma answered "[short pause] <ask skill=...>", and ElevenLabs refused the bare
+	// "[short pause]" as empty text, which cost the call its voice for two seconds.
+	s.performing = "You may write stage directions in square brackets."
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`[short pause] <ask skill="think">15% of 84.20</ask>`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+	s.NotContains(said(s.voice.spoken()), "[short pause]")
+}
+
 func (s *AgentSuite) TestANameBothSidesHaveSaidIsExpectedFromThenOn() {
 	// Flux heard "Chen" once, the agent said it back, and the caller's next "Yes, Chen" came
 	// back as "Yes. Ten". Once both have said it, the transcriber is told to expect it.
@@ -1993,7 +2044,7 @@ func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedInTheNameOfWhoeverType
 	s.speculates = true
 	s.ownsTools("order 12 ships tomorrow")
 	s.join(false)
-	s.model.reply = []string{"Let me check."}
+	s.model.reply = []string{"Hello."}
 	s.model.then = []string{"It ships tomorrow."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
 	s.model.callsOn = 2
@@ -2861,6 +2912,66 @@ func (s *AgentSuite) TestBargeInThrowsAwaySpeechNotHeardYet() {
 		"the rest of the abandoned reply is still on its way to the caller")
 }
 
+func (s *AgentSuite) TestBargeInDropsQueuedSpeechBeforeTheVoiceInterruptReturns() {
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = nil
+	s.model.then = []string{"I heard you. I will stop."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) == 1 && s.model.script(requests[0].ID) != nil
+	}, "the first reply never started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "The old reply is still in flight.")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the old reply never reached the edge")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s.voice.mu.Lock()
+	s.voice.interruptStarted = started
+	s.voice.interruptRelease = release
+	s.voice.mu.Unlock()
+	var releaseOnce sync.Once
+	openVoice := func() { releaseOnce.Do(func() { close(release) }) }
+	defer openVoice()
+
+	s.says(participant, "actually, stop")
+	select {
+	case <-started:
+	case <-time.After(settleFor):
+		s.FailNow("the voice interruption never reached its blocking gate")
+	}
+
+	s.False(s.edge.SpeechPending(), "queued speech must be dropped before a blocking voice interruption returns")
+	s.Empty(s.edge.heard(), "audio queued before the interruption must be removed")
+	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+		100*time.Millisecond, 5*time.Millisecond, "the replacement reply must wait for the voice interruption")
+
+	s.synthesises(turnID)
+	s.Require().Never(func() bool { return len(s.edge.heard()) > 0 },
+		100*time.Millisecond, 5*time.Millisecond, "late audio from the abandoned reply must stay unheard")
+
+	openVoice()
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the interrupted reply was not reported")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller's reply did not resume after interruption")
+	secondTurnID := s.model.requests()[1].ID
+	s.eventually(func() bool {
+		var text strings.Builder
+		for _, request := range s.voice.spoken() {
+			if request.ID == secondTurnID {
+				text.WriteString(request.Text)
+			}
+		}
+		return strings.Contains(text.String(), "I heard you.") && strings.Contains(text.String(), "I will stop.")
+	}, "the queued caller reply was not spoken")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the queued caller reply produced no audio")
+	s.Equal(1, countOf[Interrupted](s.reported()), "the old reply is interrupted once")
+	s.Equal(2, countOf[Responding](s.reported()), "the replacement reply starts once after interruption")
+}
+
 func (s *AgentSuite) TestShorteningLeavesSpeechAlreadyOnItsWayOut() {
 	// Shortening is the softer answer to an overlap: the model stops adding to the reply,
 	// but what has already been said is still worth hearing, so nothing that has been
@@ -2921,6 +3032,181 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.eventually(func() bool { return s.spokenText("Both came back") },
 		"the caller was left in silence after the second tool stole the floor")
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
+}
+
+func (s *AgentSuite) TestAPromiseToCheckThatCalledNothingIsKept() {
+	// Gemma told Voicebench callers "one moment, checking..." and stopped there, so the
+	// caller waited on a lookup that was never made.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Order twelve, one moment, checking..."}
+	s.model.then = []string{}
+	s.model.callsOn = 2
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the promised lookup was never made")
+	kept := s.model.requests()[1]
+	s.True(strings.HasPrefix(kept.ID, toolPrefix))
+	s.Contains(kept.Instructions, keepPromise)
+	s.Empty(kept.ToolChoice, "a hold phrase may come before what the call needs is known")
+}
+
+func (s *AgentSuite) TestAClaimThatSomethingIsDoneWithNoCallMustCallATool() {
+	// Chased up with a note alone, Gemma told a Voicebench caller "You're all set!" and then
+	// "Is there anything else?", and the booking was never made.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Order twelve, you're all set."}
+	s.model.then = []string{}
+	s.model.callsOn = 2
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the claimed action was never made")
+	s.Equal("required", s.model.requests()[1].ToolChoice)
+}
+
+func (s *AgentSuite) TestAForcedChaseThatWritesNothingIsAskedAgainUnforced() {
+	// Constrained to a call, Gemma on vLLM wrote only whitespace and the caller was left
+	// with a booking that was never made.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Order twelve, you're all set."}
+	s.model.then = []string{" "}
+	s.model.callsOn = 3
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the empty forced chase was not asked again")
+	s.Equal("required", s.model.requests()[1].ToolChoice)
+	s.Empty(s.model.requests()[2].ToolChoice)
+}
+
+func (s *AgentSuite) TestAGoAheadAnsweredWithAQuestionIsChasedUp() {
+	// After "Yes, that's right. Please go ahead." Gemma asked Voicebench callers for a phone
+	// number instead of booking, and the call ended with nothing booked.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Shall I look up order twelve?"}
+	s.model.then = []string{"Could I get a phone number first?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is order twelve")
+	s.eventually(func() bool { return s.spokenText("Shall I look up") }, "the first reply was not spoken")
+
+	s.says(participant, "yes, please go ahead")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the go-ahead was left unacted on")
+	s.Contains(s.model.requests()[2].Instructions, actOnGoAhead)
+}
+
+func (s *AgentSuite) TestAPromiseHandedToTheSubagentIsNotChasedUp() {
+	// Gemma met "please go ahead" with "<ask skill=...>", and asking it again for a call
+	// superseded the work it had just handed over.
+	s.delegates()
+	s.ownsTools("order 12 ships tomorrow")
+	held := make(chan struct{})
+	defer close(held)
+	s.join(false)
+	s.subagent.holdCreate = held
+	s.model.reply = []string{`One moment, checking. <ask skill="think">where order twelve is</ask>`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "yes, please go ahead")
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+	s.never(func() bool { return len(s.model.requests()) > 1 }, "the handed-over work was chased up")
+}
+
+func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() {
+	// After a result, Gemma often asked for the same call again: a second dispatch, a second
+	// booking.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return m.Role == llm.ToolResult && strings.Contains(m.Content, "order 12 ships tomorrow") &&
+				strings.HasPrefix(m.Content, alreadyCalled)
+		})
+	}, "the repeated call was not answered from the first")
+	s.Len(s.runner.asked(), 1, "the same call ran twice")
+}
+
+func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
+	for said, heard := range map[string]string{
+		"One moment, checking... I've checked the outage map and there are no outages.": "One moment, checking...",
+		"You're all set for Saturday.":                     "",
+		"Let me look. Your table is ready, you're booked.": "Let me look.",
+		"I can help with that. What time would you like?":  "I can help with that. What time would you like?",
+	} {
+		s.Equal(heard, unsaid(said), said)
+	}
+}
+
+func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
+	for said, asked := range map[string]bool{
+		"What time would you like?":                         true,
+		"Is there anything else you need help with?":        false,
+		"Is there anything else I can help you with today?": false,
+		"Anything else?":                                    false,
+		"Your table is booked.":                             false,
+		"I can help with that. To get started, I'll need your date of birth and your member ID.": true,
+		"I'll need your name. Your table is booked.":                                             false,
+	} {
+		s.Equal(asked, owesAnAnswer(said), said)
+	}
+}
+
+func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
+	cases := []struct {
+		said   string
+		backed bool
+		owes   bool
+	}{
+		{"Order twelve, one moment, checking...", false, true},
+		{"One moment, checking to see if we can finalize that, Patel, you're booked: 8 at 8:15.", false, true},
+		{"Patel, you're booked for eight at 8:15.", false, true},
+		{"I've checked the outage map and there are no outages.", false, true},
+		{"Alvarez, you're booked: 4 at 7:30.", true, false},
+		{"Checking orders is what I do. Which order is it?", false, false},
+		{"Is there anything else I can help you with?", false, false},
+	}
+	for _, c := range cases {
+		s.Equal(c.owes, owesACall(c.said, c.backed), c.said)
+	}
+}
+
+func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Checking orders is what I do. Which order is it?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "can you check an order")
+
+	s.eventually(func() bool { return s.spokenText("Which order is it") }, "the reply was not spoken")
+	s.Never(func() bool { return len(s.model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
+		"a question to the caller owes no tool")
 }
 
 func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
@@ -3595,4 +3881,144 @@ func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
 		}
 	}
 	s.Equal("The user greets; greet back.", thought.String())
+}
+
+func TestCountedDigitsArePausedBeforeTheyAreSpoken(t *testing.T) {
+	cases := map[string]string{
+		"Verified, last four 9821 on file.": "Verified, last four digits, 9821 on file.",
+		"The last 4 9821 match.":            "The last 4 digits, 9821 match.",
+		"Last four digits, please.":         "Last four digits, please.",
+		"Party of four 7:30 on the patio.":  "Party of four 7:30 on the patio.",
+	}
+	for in, want := range cases {
+		if got := pauseCounted(in); got != want {
+			t.Errorf("%q = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestADescribedStepIsTheToolNotYetCalled(t *testing.T) {
+	tools := harness.Tools{Tools: []harness.Tool{{Name: "walk_reboot"}, {Name: "check_outage"}, {Name: "create_ticket"}}}
+	checked := []llm.Message{{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{Name: "check_outage"}}}}
+	cases := []struct {
+		said string
+		want string
+	}{
+		{"No outages. Let's try walking through a reboot of your gateway.", "walk_reboot"},
+		{"Would you like me to walk you through a reboot?", ""},
+		{"Let me check the outage map for you.", ""},
+		{"Rebooting usually helps.", ""},
+		{"I'll create a ticket for that error.", "create_ticket"},
+		{"Since the reboot didn't work, I'll need to walk you through a formal reboot process.", "walk_reboot"},
+		{"To walk you through a reboot, I'll need your account PIN.", ""},
+	}
+	for _, c := range cases {
+		if got := describedStep(c.said, tools, checked); got != c.want {
+			t.Errorf("describedStep(%q) = %q, want %q", c.said, got, c.want)
+		}
+	}
+}
+
+func (s *AgentSuite) TestAFailureThatNamesAnotherToolsStepNamesThatTool() {
+	tools := []harness.Tool{{Name: "dispatch_tech"}, {Name: "walk_reboot"}, {Name: "check_outage"}}
+	called := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "dispatch_tech"}}}
+	failed := llm.Message{Role: llm.ToolResult, ToolCallID: "1",
+		Content: `{"error": "reboot the gateway before dispatching a truck"}`}
+	s.Equal("walk_reboot", stepNamed([]llm.Message{called, failed}, tools))
+
+	worked := llm.Message{Role: llm.ToolResult, ToolCallID: "1", Content: `{"ok": true, "note": "reboot done"}`}
+	s.Empty(stepNamed([]llm.Message{called, worked}, tools), "a result that did not fail names no step")
+	s.Empty(stepNamed([]llm.Message{called, failed, {Role: llm.User, Content: "ok"}}, tools),
+		"the caller spoke since")
+}
+
+func (s *AgentSuite) TestACallThatLeavesARequiredArgumentEmptyIsNotRun() {
+	tool := harness.Tool{Name: "verify_account", Parameters: map[string]any{
+		"required": []any{"pin", "last4", "address"},
+	}}
+	s.Equal([]string{"last4", "address"}, blankRequired(tool, `{"pin": "4471", "last4": "", "address": " "}`))
+	s.Empty(blankRequired(tool, `{"pin": "4471", "last4": "9821", "address": "14 Cedar Lane"}`))
+	s.Empty(blankRequired(harness.Tool{Name: "check_outage"}, `{}`), "a tool that requires nothing")
+}
+
+func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke() {
+	booked := llm.ToolCall{ID: "1", Name: "create_reservation", Arguments: `{"time": "7:30"}`}
+	history := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booked}},
+		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"time": "7:30"}`},
+		{Role: llm.User, Content: "Thanks."},
+	}
+	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "create_reservation", Arguments: `{"time":"7:30"}`})
+	s.True(repeated)
+
+	failed := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "lookup_appointment", Arguments: `{}`}}},
+		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"error": "identity not verified"}`},
+		{Role: llm.User, Content: "My member ID is ABC123456."},
+	}
+	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`})
+	s.False(repeated, "a call that failed may be tried again")
+}
+
+func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {
+	s.JSONEq(`{"name": "Patel", "party_size": 4}`, unspelled(`{"name": "Patel P A T E L", "party_size": 4}`))
+	s.JSONEq(`{"name": "Ana Lopez"}`, unspelled(`{"name": "Ana Lopez L-O-P-E-Z"}`))
+	s.JSONEq(`{"pin": "4471", "address": "14 Cedar Lane"}`, unspelled(`{"pin": "four four seven one", "address": "one four Cedar Lane"}`))
+	s.JSONEq(`{"address": "14 Cedar Lane", "reason": "down since 6, error 840"}`, unspelled(`{"address": "fourteen Cedar Lane", "reason": "down since 6, error 840"}`))
+	s.JSONEq(`{"address": "42 Elm Street"}`, unspelled(`{"address": "forty-two Elm Street"}`))
+	s.JSONEq(`{"notes": "one high chair"}`, unspelled(`{"notes": "one high chair"}`), "a lone number word")
+	s.Equal(`{"address": "14 Cedar Lane A B"}`, unspelled(`{"address": "14 Cedar Lane A B"}`), "letters that spell nothing before them")
+}
+
+func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
+	s.True(fillsIn(`{"name": "Alvarez", "phone": ""}`, `{"name": "Alvarez", "phone": "512-550-1422"}`))
+	s.False(fillsIn(`{"party_size": 4, "phone": ""}`, `{"party_size": 6, "phone": ""}`))
+	s.True(fillsIn(`{"name": "Alvarez"}`, `{"name": "Alvarez", "phone": "512-550-1422"}`), "a text argument the first call left out")
+	s.False(fillsIn(`{"party_size": 6}`, `{"party_size": 6, "patio": true}`), "a choice the first call never made")
+	s.True(fillsIn(`{"party_size": 2}`, `{"party_size": 2, "high_chair": false}`), "a choice left at its default")
+}
+
+func (s *AgentSuite) TestAToolIsNotRunBeforeTheStepItsDescriptionNeeds() {
+	tools := []harness.Tool{
+		{Name: "verify_account", Description: "Required before tickets."},
+		{Name: "walk_reboot", Description: "Must run before dispatch_tech."},
+		{Name: "create_ticket", Description: "Open a support ticket. Identity required."},
+		{Name: "dispatch_tech", Description: "Dispatch a technician. Identity required."},
+		{Name: "check_outage", Description: "Check the outage map."},
+	}
+	result := func(name, content string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: name, Name: name}}},
+			{Role: llm.ToolResult, ToolCallID: name, Content: content},
+		}
+	}
+	s.Equal("verify_account", unmetPrerequisite(tools[2], tools, nil))
+	s.Equal("verify_account", unmetPrerequisite(tools[2], tools, result("verify_account", `{"ok": false}`)))
+	s.Empty(unmetPrerequisite(tools[2], tools, result("verify_account", `{"ok": true}`)))
+	verified := result("verify_account", `{"ok": true}`)
+	s.Equal("walk_reboot", unmetPrerequisite(tools[3], tools, verified))
+	s.Empty(unmetPrerequisite(tools[3], tools, append(verified, result("walk_reboot", `{"ok": false, "error_code": "840"}`)...)),
+		"a reboot that failed is the one a dispatch needs")
+	s.Empty(unmetPrerequisite(tools[4], tools, nil))
+	s.Equal("verify_account", stepNamed(append(result("create_ticket", fmt.Sprintf(runFirst, "create_ticket", "verify_account", "verify_account"))), tools))
+}
+
+func (s *AgentSuite) TestAGoAheadToWorkAlreadyDoneHasNothingToDo() {
+	booked := []llm.Message{
+		{Role: llm.User, Content: "That's all. Thanks."},
+		{Role: llm.Assistant, Content: "Alvarez, you're booked: 4 at 7:30."},
+		{Role: llm.User, Content: "Yes, that's right. Please go ahead."},
+	}
+	s.True(doneBeforeGoAhead(booked))
+	booked[1].Content = "Shall I book it?"
+	s.False(doneBeforeGoAhead(booked))
+}
+
+func (s *AgentSuite) TestAHoldOrADoneClaimOwesACall() {
+	s.True(owesACall("One moment, checking. Let me verify your PIN 4471. Is that correct?", false),
+		"a hold that ends in a question")
+	s.False(owesACall("Checking orders is what I do. Which order is it?", false))
+	s.True(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", false))
+	s.False(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", true),
+		"a claim a tool backs")
 }

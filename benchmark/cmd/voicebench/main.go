@@ -122,6 +122,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	frozen := fs.Bool("frozen", false, "run only the frozen scenario set used for the trend line")
 	short := fs.Bool("short", false, "run only the short scenario set, for quick iteration")
 	supershort := fs.Bool("supershort", false, "run only the supershort scenario set, one scenario a pack")
+	basics := fs.Bool("basics", false, "run only the basics scenario set, one scenario for each basic behavior")
 	extended := fs.Bool("extended", false, "run only the extended scenario set, outside the frozen one")
 	storeBaseline := fs.Bool("store-baseline", false, "copy summary.json and manifest.json to baselines/<target>/<commit>/")
 	if err := fs.Parse(args); err != nil {
@@ -166,6 +167,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		Frozen:            *frozen,
 		Short:             *short,
 		Supershort:        *supershort,
+		Basics:            *basics,
 		Extended:          *extended,
 		Logger:            slog.Default(),
 		Progress:          os.Stderr,

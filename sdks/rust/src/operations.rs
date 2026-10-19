@@ -586,7 +586,11 @@ impl Client {
     /// Start a consent
     ///
     /// `POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`).
-    pub async fn create_authorization(&self, id: &str) -> Result<types::Authorization> {
+    pub async fn create_authorization(
+        &self,
+        id: &str,
+        body: Option<&types::AuthorizationRequest>,
+    ) -> Result<types::Authorization> {
         self.send(
             Method::POST,
             &format!(
@@ -594,7 +598,7 @@ impl Client {
                 id = segment(id)
             ),
             None::<&()>,
-            None::<&()>,
+            body,
             "createAuthorization",
         )
         .await
@@ -1738,12 +1742,16 @@ impl Client {
     /// Start voice on a session
     ///
     /// `POST /v1/agents/sessions/{id}/voice` (`startSessionVoice`).
-    pub async fn start_session_voice(&self, id: &str) -> Result<types::Session> {
+    pub async fn start_session_voice(
+        &self,
+        id: &str,
+        body: Option<&types::StartSessionVoiceRequest>,
+    ) -> Result<types::Session> {
         self.send(
             Method::POST,
             &format!("/v1/agents/sessions/{id}/voice", id = segment(id)),
             None::<&()>,
-            None::<&()>,
+            body,
             "startSessionVoice",
         )
         .await

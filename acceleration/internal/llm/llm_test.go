@@ -329,6 +329,18 @@ func (s *LLMSuite) TestStreamAssemblesToolCallsInTheOrderTheModelAskedForThem() 
 		calls[1])
 }
 
+func (s *LLMSuite) TestAToolCallCutOffMidArgumentsIsDropped() {
+	// Shortening a reply stopped Gemma inside check_availability{"party_size": 4, and the
+	// call kept in the history had Baseten refuse every later turn of the call.
+	stream := s.stream(
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "check_availability", `{"party_size": 4`, "") },
+		func(w *ResponseWriter) { w.Cancelled() },
+	)
+	s.drain(stream)
+
+	s.Empty(stream.Response().ToolCalls)
+}
+
 func (s *LLMSuite) TestAToolCallTheProviderDidNotIdentifyGetsAnID() {
 	stream := s.stream(func(w *ResponseWriter) { w.FunctionCall(0, "", "transfer", "{}", "") })
 	s.drain(stream)
@@ -460,6 +472,18 @@ func (s *LLMSuite) TestCapabilitiesRefuseReasoningFromAModelThatDoesNotReason() 
 	s.Contains(err.Error(), "does not reason")
 }
 
+func (s *LLMSuite) TestCapabilitiesRefuseAToolChoiceTheModelWouldNotHonour() {
+	model := Capabilities{ToolChoices: []string{"auto"}}
+
+	err := model.Validate(ResponseParams{ToolChoice: "required"})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), `"required" is not one of auto`)
+	s.NoError(model.Validate(ResponseParams{ToolChoice: "auto"}))
+	s.NoError(model.Validate(ResponseParams{}))
+	s.NoError(Capabilities{}.Validate(ResponseParams{ToolChoice: "required"}), "a model that lists none honours them all")
+}
+
 func (s *LLMSuite) TestCapabilitiesRefuseAConversationAndAPreviousResponseTogether() {
 	err := Capabilities{}.Validate(ResponseParams{
 		Conversation:       "conv_1",
@@ -538,4 +562,25 @@ func (s *LLMSuite) TestParseDataURIRefusesAURL() {
 
 	s.Require().Error(err)
 	s.Contains(err.Error(), "data URI")
+}
+
+func (s *LLMSuite) TestALeadingTagIsTrimmedFromTheDeltasAndTheResponse() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("[res") },
+		func(w *ResponseWriter) { w.OutputText("pond] Sure") },
+		func(w *ResponseWriter) { w.OutputText(", what time?") },
+	)
+
+	lead := stream.Lead(func(text string) bool { return len(text) >= len("[respond]") })
+	s.Equal("[respond] Sure", lead)
+	stream.Cut(0, len("[respond] "))
+
+	var spoken string
+	for _, event := range s.drain(stream) {
+		if delta, ok := event.(OutputTextDelta); ok {
+			spoken += delta.Delta
+		}
+	}
+	s.Equal("Sure, what time?", spoken)
+	s.Equal("Sure, what time?", stream.Response().OutputText)
 }

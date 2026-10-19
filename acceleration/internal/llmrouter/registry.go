@@ -4,7 +4,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/moondream"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/atlascloud"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baidu"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baseten"
@@ -23,8 +22,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/ionet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/meta"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/moondream"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/nextbit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/novita"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/ollama"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openweights"
@@ -124,6 +125,7 @@ func DefaultRegistry() *Registry {
 		ionet.ProviderName:        ionet.New,
 		nextbit.ProviderName:      nextbit.New,
 		novita.ProviderName:       novita.New,
+		ollama.ProviderName:       ollama.New,
 		parasail.ProviderName:     parasail.New,
 		phala.ProviderName:        phala.New,
 		sailresearch.ProviderName: sailresearch.New,

@@ -101,7 +101,7 @@ module GetStream
         "createAuthorization" => {
           method: :post, path: "/v1/agents/connections/{id}/authorizations",
           path_params: %w[id].freeze, query: [].freeze,
-          body: nil, body_required: false,
+          body: "AuthorizationRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "createCallToken" => {
@@ -1211,7 +1211,7 @@ module GetStream
         "startSessionVoice" => {
           method: :post, path: "/v1/agents/sessions/{id}/voice",
           path_params: %w[id].freeze, query: [].freeze,
-          body: nil, body_required: false,
+          body: "StartSessionVoiceRequest", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
         "stopSession" => {
@@ -1480,6 +1480,10 @@ module GetStream
         "Authorization" => {
           properties: %w[expires_at handoff_token id kind launch_url].freeze,
           required: %w[id kind launch_url handoff_token expires_at].freeze, open: false
+        }.freeze,
+        "AuthorizationRequest" => {
+          properties: %w[return_url].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "AuthorizePluginRequest" => {
           properties: %w[instance_url].freeze,
@@ -1766,7 +1770,7 @@ module GetStream
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel config_id connector_bindings context_truncated custom description greeting history id incognito keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id return_url search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -2145,6 +2149,10 @@ module GetStream
           properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
+        "SessionCall" => {
+          properties: %w[id type].freeze,
+          required: %w[type id].freeze, open: false
+        }.freeze,
         "SessionConnectorBinding" => {
           properties: %w[connection_id name].freeze,
           required: %w[name connection_id].freeze, open: false
@@ -2252,6 +2260,10 @@ module GetStream
         "SpendBucket" => {
           properties: %w[bucket cost_micros_total request_count value].freeze,
           required: %w[bucket cost_micros_total request_count value].freeze, open: false
+        }.freeze,
+        "StartSessionVoiceRequest" => {
+          properties: %w[call].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "StatsBucket" => {
           properties: %w[audio_ms_total bucket cached_input_tokens_total characters_total cost_micros_total error_count images_total input_tokens_total latency_p50_ms latency_p95_ms model output_tokens_total provider request_count uptime].freeze,

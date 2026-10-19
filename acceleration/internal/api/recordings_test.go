@@ -140,6 +140,44 @@ func (s *RecordingsSuite) TestARecordingTranscribedInlineComesBackInTheAnswer() 
 	s.NotEmpty(value(transcript.Text))
 }
 
+func (s *RecordingsSuite) TestARecordingThroughAConfigOnTheLiveShortcutIsServedByTheBatchModel() {
+	// What the dashboard's router test sends: a config whose STT is the live shortcut.
+	var config RouterConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/router/configs", map[string]any{
+		"name": "live-" + s.utils.uuid(), "stt": map[string]any{"target": "en-low-latency"},
+	}, &config))
+
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings", map[string]any{
+		"config_id": config.Id, "inline": true, "source": map[string]any{"audio": "YXVkaW8="},
+	}, &transcript))
+
+	s.Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
+	s.Equal("stub-batch", value(transcript.Model))
+}
+
+func (s *RecordingsSuite) TestARecordingPinnedToABatchModelIsServedByThatModel() {
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings", map[string]any{
+		"inline": true, "source": map[string]any{"audio": "YXVkaW8="},
+		"options": map[string]any{"target": "stub/stub-batch"},
+	}, &transcript))
+
+	s.Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
+	s.Equal("stub-batch", value(transcript.Model))
+}
+
+func (s *RecordingsSuite) TestARecordingInAnotherLanguageWithNoTargetGoesToTheMultilingualRecordedShortcut() {
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings", map[string]any{
+		"inline": true, "source": map[string]any{"audio": "YXVkaW8="},
+		"options": map[string]any{"languages": []string{"es"}},
+	}, &transcript))
+
+	s.Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
+	s.Equal("stub-batch-es", value(transcript.Model))
+}
+
 func (s *RecordingsSuite) TestNobodyIsCalledBackAboutSomethingAnsweredInline() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
 		map[string]any{"inline": true, "text": "hello", "callback": "https://example.test/done"})

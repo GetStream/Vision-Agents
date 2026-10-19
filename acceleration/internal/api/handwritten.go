@@ -58,8 +58,11 @@ func documentHandWritten(api huma.API) {
 			"own connection lacks access the provider asked for (insufficient_scope or a claims " +
 			"challenge), and a step-up consent was begun for it: name (the binding's alias), " +
 			"connector_id, connection_id, scopes (what the provider asked for, empty for a claims " +
-			"challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens " +
-			"launch_url in a popup and posts it handoff_token, as for createAuthorization. The old " +
+			"challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the " +
+			"session's return_url's origin, or the dashboard for a session created without one, " +
+			"opens launch_url in a popup and posts it handoff_token, as for a createAuthorization " +
+			"with that return_url: the launch page takes the handoff from that origin only, and the " +
+			"consent goes back to the session's return_url, or else to the dashboard. The old " +
 			"grant keeps working until the step-up succeeds, and the same call works afterwards in " +
 			"the same session. While that step-up is open, calls refused for the same access send " +
 			"no second event.\n" +
@@ -74,8 +77,11 @@ func documentHandWritten(api huma.API) {
 			"the message is sent again with the attachment's status set to connected. " +
 			"A connector_authorization attachment asks the end user to connect a connector binding " +
 			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
-			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a " +
-			"client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. " +
+			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page " +
+			"of the session's return_url's origin, or the dashboard for a session created without " +
+			"one, opens launch_url in a popup and posts it handoff_token, as for a " +
+			"createAuthorization with that return_url, and the consent goes back to the session's " +
+			"return_url, or else to the dashboard. " +
 			"Once the user finishes that login the message is sent again with status connected and " +
 			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
@@ -149,7 +155,9 @@ func documentHandWritten(api huma.API) {
 			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
-			"`history` is server-side only.\n" +
+			"`history` and `call` are server-side only. A `call` is refused from a backend too, " +
+			"with an `error` frame carrying `code` and `error_type`: the socket carries the audio, " +
+			"so the session joins no Stream call.\n" +
 			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
 			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
 			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
@@ -300,10 +308,11 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        connectorLaunchPath + "{id}",
 		Summary:     "The page a consent starts on",
-		Description: "The launch_url of an authorization, opened in a popup by the dashboard. The page " +
-			"waits for the dashboard's origin to post the handoff token, trades it for the provider's " +
-			"authorize URL and goes there. Unauthenticated because a browser opens it; the page " +
-			"names no attempt and is the same for every one.",
+		Description: "The launch_url of an authorization, opened in a popup by a page of the " +
+			"return_url's origin, or by the dashboard when the consent has none. The page waits for " +
+			"that origin to post the handoff token, trades it for the provider's authorize URL and " +
+			"goes there. Unauthenticated because a browser opens it; the page names no attempt, and " +
+			"one unknown, expired or finished is the dashboard's page.",
 		Security: []map[string][]string{},
 		Parameters: []*huma.Param{
 			{Name: "id", In: "path", Description: "The authorization.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
@@ -339,8 +348,9 @@ func documentHandWritten(api huma.API) {
 		Summary:     "Finish a consent",
 		Description: "The redirect URI a provider sends the browser back to. The state must name an " +
 			"open consent, the browser must hold the cookie the handoff set, and the consent is " +
-			"used once. The router then exchanges the code and sends the browser to the dashboard " +
-			"with connection_id and status: connected, denied, failed, or account_mismatch when a " +
+			"used once. The router then exchanges the code and sends the browser to the consent's " +
+			"return_url, or else to the dashboard, with connection_id and status added to its " +
+			"query: connected, denied, failed, or account_mismatch when a " +
 			"reconnect came back with another provider account and the old grant was kept. " +
 			"Unauthenticated because the browser arrives from the provider.",
 		Security: []map[string][]string{},

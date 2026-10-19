@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -512,7 +513,19 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 	// complete never competes with the reply being streamed to the voice. It routes to a
 	// non-thinking model of its own, since a decision this small has nothing to think about
 	// and thinking would only add latency to every turn the caller waits through.
-	if prep.controller, err = a.startLLM(s.controller()); err != nil {
+	var judge harness.Judge
+	if a.options.Judge != nil && a.options.JudgeTarget != "" {
+		if judge, err = a.options.Judge.Start(a.ctx, decisionrouter.Request{
+			CustomerID: a.options.CustomerID,
+			AgentID:    a.options.AgentID,
+			CallID:     a.options.CallID,
+			Tags:       a.options.Tags,
+			Target:     a.options.JudgeTarget,
+		}); err != nil {
+			prep.close()
+			return nil, stack.Wrap(fmt.Errorf("agent: start flow judge: %w", err))
+		}
+	} else if prep.controller, err = a.startLLM(s.controller()); err != nil {
 		prep.close()
 		return nil, stack.Wrap(fmt.Errorf("agent: start flow controller: %w", err))
 	}
@@ -520,6 +533,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 		Text:         a.options.Text,
 		Model:        prep.llm,
 		Controller:   prep.controller,
+		Judge:        judge,
 		OpenSubagent: a.openSubagent(s.SubagentTarget),
 		Capture:      a.captureVideo,
 		Skills:       a.options.Skills,

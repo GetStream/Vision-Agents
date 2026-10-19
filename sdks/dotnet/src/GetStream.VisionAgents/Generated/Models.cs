@@ -1383,7 +1383,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset ExpiresAt { get; set; } = default!;
 
         /// <summary>
-        /// Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+        /// Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("handoff_token")]
         public string HandoffToken { get; set; } = default!;
@@ -1398,10 +1398,31 @@ namespace GetStream.VisionAgents.Models
         public string Kind { get; set; } = default!;
 
         /// <summary>
-        /// The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+        /// The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("launch_url")]
         public string LaunchUrl { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AuthorizationRequest
+    {
+
+        /// <summary>
+        /// The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&amp;a=2&amp;b becomes ?a=1&amp;a=2&amp;b=&amp;connection_id=...&amp;status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("return_url")]
+        public string? ReturnUrl { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -2898,7 +2919,7 @@ namespace GetStream.VisionAgents.Models
         public string? Label { get; set; } = default!;
 
         /// <summary>
-        /// What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+        /// What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("last_validation")]
         public ConnectionLastValidation? LastValidation { get; set; } = default!;
@@ -3096,13 +3117,13 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// When the validate ran.
+        /// When the validate ran, or the provider refused the consent.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("checked_at")]
         public System.DateTimeOffset CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string? Code { get; set; } = default!;
@@ -4474,6 +4495,12 @@ namespace GetStream.VisionAgents.Models
         public bool? Backchannel { get; set; } = default!;
 
         /// <summary>
+        /// An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:&lt;session id&gt;. Left out, the agent joins agent:&lt;session id&gt;, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer's own Stream app: app tenancy with an app of its own, or the deployment's own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) is refused with a 403, since a call there could be another customer's. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent's Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call")]
+        public SessionCall? Call { get; set; } = default!;
+
+        /// <summary>
         /// An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("config_id")]
@@ -4545,6 +4572,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm")]
         public string? Llm { get; set; } = default!;
 
+        /// <summary>
+        /// What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
+        public string? Instructions { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("max_tokens")]
         public int? MaxTokens { get; set; } = default!;
 
@@ -4576,13 +4609,19 @@ namespace GetStream.VisionAgents.Models
         public string? ProjectId { get; set; } = default!;
 
         /// <summary>
+        /// The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("return_url")]
+        public string? ReturnUrl { get; set; } = default!;
+
+        /// <summary>
         /// Omit it and the config decides, or search-fast when there is no config.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("search")]
         public string? Search { get; set; } = default!;
 
         /// <summary>
-        /// Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:&lt;session id&gt;, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+        /// Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:&lt;session id&gt;, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("start_voice")]
         public bool? StartVoice { get; set; } = default!;
@@ -6598,7 +6637,7 @@ namespace GetStream.VisionAgents.Models
 
     /// <summary>
     /// What to change about the models for one session, over whatever its agent config decided.
-    /// <br/>It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+    /// <br/>It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ModelOverwrites
@@ -8528,7 +8567,7 @@ namespace GetStream.VisionAgents.Models
         public string AgentId { get; set; } = default!;
 
         /// <summary>
-        /// The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+        /// The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("call_id")]
         public string CallId { get; set; } = default!;
@@ -8682,6 +8721,36 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice")]
         public string? Voice { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// An existing Stream call for the agent to join, by its type and id.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionCall
+    {
+
+        /// <summary>
+        /// The call id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// The call type, such as default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -10030,6 +10099,27 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("uptime")]
         public double? Uptime { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class StartSessionVoiceRequest
+    {
+
+        /// <summary>
+        /// An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:&lt;session id&gt;, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call")]
+        public SessionCall? Call { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

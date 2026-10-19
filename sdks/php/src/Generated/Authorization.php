@@ -17,12 +17,12 @@ final readonly class Authorization
     public function __construct(
         // When the attempt ends, 10 minutes after it began. A callback after that is refused.
         public \DateTimeImmutable $expiresAt,
-        // Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser tha...
+        // Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a U...
         public string $handoffToken,
         // The attempt.
         public string $id,
         public AuthorizationKind|string $kind,
-        // The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then send...
+        // The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the...
         public string $launchUrl,
     ) {
     }

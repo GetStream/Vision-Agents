@@ -153,7 +153,10 @@ type RouterSuite struct {
 	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
 	// written nowhere.
 	appRefuses bool
-	server     *httptest.Server
+	// deploymentKnown has the suite's Stream say which app is the deployment's own, as a
+	// deployment-mode router that was given its app id does.
+	deploymentKnown bool
+	server          *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
@@ -168,6 +171,10 @@ type RouterSuite struct {
 	// kept apart by, so this is the only thing stopping one suite's nodes from reading
 	// another's sessions.
 	relayPrefix string
+	// shard and otherShard are the shards of the suite's node and of otherNode, for a suite
+	// about shards to set before it starts the harness. Nodes in two shards have a relay
+	// each. Empty is one deployment of one shard.
+	shard, otherShard string
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
 	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
@@ -222,6 +229,12 @@ type RouterSuite struct {
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
 	connectorsOff bool
+	// ttsVoices resolves the voice of every text-to-speech request, live and recorded, for a
+	// suite about voices to set before it starts the harness. Nil passes each one through.
+	ttsVoices routing.VoiceResolver
+	// ttsConfig is what the text-to-speech routers, live and recorded, route over, for a
+	// suite about voices to set before it starts the harness. Empty is routableConfig.
+	ttsConfig routing.ModalityConfig
 	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
 	// the connection proxy to set before it starts the harness. Zero caps nothing.
 	proxyCallsPerMinute int64
@@ -352,7 +365,13 @@ func (s *RouterSuite) SetupSuite() {
 		logger = slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
-	pgStore, err := store.Open(testDatabase(s.T(), dsn))
+	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
+	// place and the calls, sessions and requests in another.
+	options := store.Options{DSN: testDatabase(s.T(), dsn)}
+	if shardDSN := os.Getenv("ROUTER_POSTGRES_SHARD_DSN"); shardDSN != "" {
+		options.ShardDSN = testDatabase(s.T(), shardDSN)
+	}
+	pgStore, err := store.OpenShards(options)
 	s.Require().NoError(err)
 	pgStore.DB().SetMaxOpenConns(suiteConnections)
 	migrated.Do(func() { migrated.err = pgStore.Migrate(ctx) })
@@ -360,7 +379,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
 
-	liveClient, err := live.New(live.Options{Address: redisAddr})
+	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	s.Require().NoError(err)
 	s.live = liveClient
 	s.T().Cleanup(liveClient.Close)
@@ -374,6 +393,9 @@ func (s *RouterSuite) SetupSuite() {
 		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
+	if s.deploymentKnown {
+		s.stream = streamapp.NewClients(knownApps{s.apps}, streamapp.ClientsOptions{})
+	}
 	if s.appMode {
 		mint, err := streamapp.NewMint(s.gatewayMint().URL, suiteMintBearer)
 		s.Require().NoError(err)
@@ -401,7 +423,7 @@ func (s *RouterSuite) SetupSuite() {
 	// Built before it is served on, because a node says where it is before it has
 	// anything to say it is running.
 	listener := httptest.NewUnstartedServer(nil)
-	directory := s.nodeDirectory(listener, logger)
+	directory := s.nodeDirectory(listener, s.shard, logger)
 	// Before the sessions, whose dispatcher shares the transports with the validate
 	// endpoint, as cmd/router builds them.
 	credentials, err := pgsealed.New(pgStore, s.sealer)
@@ -480,7 +502,7 @@ func (s *RouterSuite) SetupSuite() {
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
 		Streams:   streams,
-		Relay:     s.relayBus(logger),
+		Relay:     s.relayBus(s.shard, logger),
 		Directory: directory,
 		Sessions:  sessions,
 		Store:     pgStore,
@@ -739,14 +761,20 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
 	speaking := ttsrouter.NewRegistry()
 	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	ttsConfig := s.ttsConfig
+	if len(ttsConfig.Providers) == 0 {
+		ttsConfig = routableConfig()
+	}
 	speaker, err := ttsrouter.New(ttsrouter.Options{
-		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Config: ttsConfig, Registry: speaking, Store: s.store, Live: s.live, Voices: s.ttsVoices, Gate: gate,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
 	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
-		Config:       routableConfig(),
+		Config:       recordingConfig(),
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
@@ -756,10 +784,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.T().Cleanup(transcriptions.Close)
 
 	recordings, err := ttsrouter.NewRecordings(ttsrouter.Options{
-		Config:    routableConfig(),
+		Config:    ttsConfig,
 		Recorders: recorderRegistry(),
 		Store:     s.store,
 		Live:      s.live,
+		Voices:    s.ttsVoices,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -970,7 +999,7 @@ func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Ser
 func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Server) {
 	logger := slog.New(slog.DiscardHandler)
 	other := httptest.NewUnstartedServer(nil)
-	directory := s.nodeDirectory(other, logger)
+	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           s.streams.LLM,
 		STT:           s.streams.STT,
@@ -990,10 +1019,10 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
-	bus := s.relayBus(logger)
+	bus := s.relayBus(s.otherShard, logger)
 	var everyWorker *node.Workers
 	if workers != nil {
-		everyWorker = s.deploymentWorkers(workers, directory, bus)
+		everyWorker = s.deploymentWorkers(workers, directory, s.workBus(logger))
 	}
 	server, err := NewServer(Options{
 		Routers:           s.modalities,
@@ -1034,11 +1063,12 @@ func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.
 // The address is the listener's, which is known before anything is served on it, and the
 // prefix is the suite's, because every suite in the run shares one Redis and a node of
 // another suite is a node that is not there.
-func (s *RouterSuite) nodeDirectory(listener *httptest.Server, logger *slog.Logger) *node.Directory {
+func (s *RouterSuite) nodeDirectory(listener *httptest.Server, shard string, logger *slog.Logger) *node.Directory {
 	directory, err := node.NewDirectory(node.DirectoryOptions{
 		Redis:   s.live.Redis(),
 		Address: listener.Listener.Addr().String(),
 		Prefix:  s.relayPrefix,
+		Shard:   shard,
 		Logger:  logger,
 	})
 	s.Require().NoError(err)
@@ -1046,8 +1076,17 @@ func (s *RouterSuite) nodeDirectory(listener *httptest.Server, logger *slog.Logg
 	return directory
 }
 
-// relayBus is one node's end of the suite's relay.
-func (s *RouterSuite) relayBus(logger *slog.Logger) *relay.Bus {
+// relayBus is one node's end of its shard's relay.
+func (s *RouterSuite) relayBus(shard string, logger *slog.Logger) *relay.Bus {
+	bus, err := relay.New(relay.Options{
+		Redis: s.live.ShardRedis(), Prefix: s.relayPrefix + shard, Logger: logger,
+	})
+	s.Require().NoError(err)
+	return bus
+}
+
+// workBus is one node's end of the bus its workers take work on, which every shard shares.
+func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 	bus, err := relay.New(relay.Options{
 		Redis: s.live.Redis(), Prefix: s.relayPrefix, Logger: logger,
 	})
@@ -1559,6 +1598,11 @@ func (a *suiteApps) ForAppReading(ctx context.Context, customer string, app int6
 	}
 	return a.deployment.ForApp(ctx, customer, app)
 }
+
+// knownApps are the suite's apps saying which one is the deployment's own.
+type knownApps struct{ *suiteApps }
+
+func (a knownApps) App() int64 { return a.deployment.App() }
 
 // set changes how the suite's apps answer for a customer, and forgets what they said.
 func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {

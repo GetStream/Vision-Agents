@@ -1156,12 +1156,12 @@ impl ::std::convert::TryFrom<::std::string::String> for AuditSource {
 pub struct Authorization {
     ///When the attempt ends, 10 minutes after it began. A callback after that is refused.
     pub expires_at: ::std::string::String,
-    ///Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+    ///Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
     pub handoff_token: ::std::string::String,
     ///The attempt.
     pub id: ::std::string::String,
     pub kind: AuthorizationKind,
-    ///The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+    ///The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
     pub launch_url: ::std::string::String,
 }
 ///consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
@@ -1214,6 +1214,13 @@ impl ::std::convert::TryFrom<::std::string::String> for AuthorizationKind {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`AuthorizationRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AuthorizationRequest {
+    ///The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub return_url: ::std::option::Option<::std::string::String>,
 }
 ///`AuthorizePluginRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -2381,7 +2388,7 @@ pub struct Connection {
     pub inputs: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub label: ::std::option::Option<::std::string::String>,
-    ///What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+    ///What the last validate (POST .../validate) of the connection's current credentials found, or, for a connection that was not connected, why the provider refused its last consent (code connector_consent_refused). Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub last_validation: ::std::option::Option<ConnectionLastValidation>,
     ///What the provider said about the account when it was connected, such as a workspace id. Empty until then.
@@ -2509,9 +2516,9 @@ pub struct ConnectionInvocationPage {
 ///What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ConnectionLastValidation {
-    ///When the validate ran.
+    ///When the validate ran, or the provider refused the consent.
     pub checked_at: ::std::string::String,
-    ///The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+    ///The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
     ///Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
@@ -2765,7 +2772,7 @@ pub struct ConnectionValidationRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
 }
-///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
+///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3747,6 +3754,9 @@ pub struct CreateSessionRequest {
     ///Murmur while a participant is still talking, the way a person does.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub backchannel: ::std::option::Option<bool>,
+    ///An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:<session id>. Left out, the agent joins agent:<session id>, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer's own Stream app: app tenancy with an app of its own, or the deployment's own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) is refused with a 403, since a call there could be another customer's. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent's Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call: ::std::option::Option<SessionCall>,
     ///An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_id: ::std::option::Option<::std::string::String>,
@@ -3783,6 +3793,9 @@ pub struct CreateSessionRequest {
     ///A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_tokens: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -3800,10 +3813,13 @@ pub struct CreateSessionRequest {
     ///What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub project_id: ::std::option::Option<::std::string::String>,
+    ///The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub return_url: ::std::option::Option<::std::string::String>,
     ///Omit it and the config decides, or search-fast when there is no config.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search: ::std::option::Option<::std::string::String>,
-    ///Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+    ///Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub start_voice: ::std::option::Option<bool>,
     ///A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -6098,7 +6114,7 @@ pub struct ModelCallTiming {
     pub ttft_ms: ::std::option::Option<f64>,
 }
 /**What to change about the models for one session, over whatever its agent config decided.
-It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.*/
+It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.*/
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct ModelOverwrites {
     ///A provider/model or a capability shortcut, in place of the config's.
@@ -7614,7 +7630,7 @@ pub struct Session {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent: ::std::option::Option<::std::string::String>,
     pub agent_id: ::std::string::String,
-    ///The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+    ///The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
     pub call_id: ::std::string::String,
     pub call_type: ::std::string::String,
     ///When the session ended. Absent while it is still running.
@@ -7692,6 +7708,15 @@ pub struct Session {
     ///The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///An existing Stream call for the agent to join, by its type and id.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct SessionCall {
+    ///The call id.
+    pub id: ::std::string::String,
+    ///The call type, such as default.
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 ///The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -9123,6 +9148,13 @@ pub struct SpendBucket {
     pub request_count: i64,
     ///The modality or label value this row is for. "other" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part.
     pub value: ::std::string::String,
+}
+///`StartSessionVoiceRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct StartSessionVoiceRequest {
+    ///An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer's own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call: ::std::option::Option<SessionCall>,
 }
 ///`StatsBucket`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

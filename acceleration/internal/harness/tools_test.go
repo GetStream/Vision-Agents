@@ -87,6 +87,22 @@ func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
 	s.Contains(usePolicy, "call the tool in the same turn")
 }
 
+func (s *ToolsSuite) TestAGoAheadIsActedOnWithoutAskingForOptionalDetails() {
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "A yes or go-ahead after a read-back means call the tool now with what "+
+			"you have, without asking for anything optional again.")
+	}
+}
+
+func (s *ToolsSuite) TestAReadBackThatWaitsForAgreementEndsTheTurn() {
+	// Voicebench operators say to read details back and wait for agreement before acting,
+	// and Gemma read them back and called the tool in the same breath.
+	for _, prompt := range []string{testTools().Prompt(), testTools().TextPrompt()} {
+		s.Contains(prompt, "If your instructions say to wait for agreement after a read-back, "+
+			"end your turn after it, with no hold phrase and no call, until they agree.")
+	}
+}
+
 func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIntoTheReadBack() {
 	// A read-back takes seconds to say, so a hold phrase after it, or after the result, is
 	// heard once the wait is over. It opens the sentence and the sentence carries on, because
@@ -218,4 +234,26 @@ func (s *ToolsSuite) TestLookupMissesWhatWasNeverDeclared() {
 	_, known := testTools().Lookup("hang_up")
 
 	s.False(known)
+}
+
+func (s *ToolsSuite) TestAToolWithOptionalArgumentsNamesTheOnesItNeeds() {
+	tools := Tools{Tools: []Tool{{
+		Name:        "create_reservation",
+		Description: "Book the table.",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"time": map[string]any{}, "name": map[string]any{}, "phone": map[string]any{}},
+			"required":   []any{"time", "name"},
+		},
+	}, {
+		Name:        "check_outage",
+		Description: "Check for an outage.",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+	}}}
+
+	requests := tools.Requests()
+	s.Equal("Book the table. Only time, name are needed to call it; ask for the others only if "+
+		"your instructions say to collect or verify them, and pass every one the caller gave.",
+		requests[0].Description)
+	s.Equal("Check for an outage.", requests[1].Description, "a tool with nothing optional says nothing more")
 }

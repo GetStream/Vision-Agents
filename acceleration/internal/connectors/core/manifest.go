@@ -199,11 +199,40 @@ type SourceRule struct {
 // ToolRule is what a manifest says about one tool of a source.
 type ToolRule struct {
 	Name string `yaml:"name" json:"name"`
-	// NeedsScopes are the scopes a call of the tool needs, each one of scopes.list. A
-	// validate compares the connection's granted scopes with what its tools need (architecture
-	// doc on connectors/planning, «Add» item 11, and the stress test's row 12: «a per-tool
-	// needs_scopes on the ToolSpec so the check is possible»).
+	// NeedsScopes are the scopes a call of the tool needs. A validate compares the
+	// connection's granted scopes with what its tools need (architecture doc on
+	// connectors/planning, «Add» item 11, and the stress test's row 12: «a per-tool
+	// needs_scopes on the ToolSpec so the check is possible»). A tool that needs a scope
+	// scopes.list does not hold is never asked for at consent, so the source leaves it out
+	// (AI-1394).
 	NeedsScopes []string `yaml:"needs_scopes" json:"needs_scopes"`
+}
+
+// SourceKindMCP is the sources[].kind of the mcp source.
+const SourceKindMCP = "mcp"
+
+// MCPSource is the first mcp source of sources, or nil. The mcp source and a config save pick
+// the source whose tool rules leave a tool out through it, so they never pick different ones.
+func MCPSource(sources []SourceRule) *SourceRule {
+	index := slices.IndexFunc(sources, func(rule SourceRule) bool { return rule.Kind == SourceKindMCP })
+	if index < 0 {
+		return nil
+	}
+	return &sources[index]
+}
+
+// UnaskedScopes are the scopes a call of tool needs that asked, the manifest's scopes.list,
+// does not hold. No consent grants them, so a tool needing any is left out: the mcp source
+// drops it from what it lists (asked in sources/mcp/source.go), and a config save refuses a
+// binding that grants it (leftOutGrant in internal/api/configs.go).
+func (r SourceRule) UnaskedScopes(asked []string, tool string) []string {
+	index := slices.IndexFunc(r.Tools, func(rule ToolRule) bool { return rule.Name == tool })
+	if index < 0 {
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(r.Tools[index].NeedsScopes), func(scope string) bool {
+		return slices.Contains(asked, scope)
+	})
 }
 
 // CaptureRule reads one public value at connect time into the connection's metadata.
@@ -626,11 +655,6 @@ func (m Manifest) Validate() error {
 			named[tool.Name] = true
 			if len(tool.NeedsScopes) == 0 {
 				fail(field+".needs_scopes", "is required: a tool that needs no scope is left out")
-			}
-			for _, scope := range tool.NeedsScopes {
-				if !slices.Contains(m.Scopes.List, scope) {
-					fail(field+".needs_scopes", "%q is not in scopes.list", scope)
-				}
 			}
 		}
 	}

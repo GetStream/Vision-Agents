@@ -53,9 +53,18 @@ func (s *StoreSuite) TestSeedingNotionLeavesEveryOtherBuiltInsLatestRevisionAsIt
 	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("notion")
 }
 
+// AI-1381: bigquery.yaml and metabase.yaml are new files too.
+func (s *StoreSuite) TestSeedingBigQueryLeavesEveryOtherBuiltInsLatestRevisionAsItWas() {
+	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("bigquery")
+}
+
+func (s *StoreSuite) TestSeedingMetabaseLeavesEveryOtherBuiltInsLatestRevisionAsItWas() {
+	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("metabase")
+}
+
 // seedingANewBuiltInLeavesTheOthersAsTheyWere seeds every shipped built-in but id, as the
-// build before id's file did, then every one, and checks id lands at revision 1 and no other
-// built-in's latest revision moves.
+// build before id's file did, then every one, and checks id lands at the revision its file
+// names and no other built-in's latest revision moves.
 func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 	before := fstest.MapFS{}
 	files, err := fs.ReadDir(providers.FS, ".")
@@ -85,7 +94,55 @@ func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 	s.Equal(was, latest())
 	added, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, id)
 	s.Require().NoError(err)
-	s.Equal(1, added.Revision)
+	raw, err := fs.ReadFile(providers.FS, id+".yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Equal(manifest.Revision, added.Revision)
+}
+
+// TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored: revision 2 names the
+// tools that need a scope revision 1 never asks for (AI-1394). testdata/metabase-revision-1.yaml
+// is the file a database already holds. Revision 1 stays, unmarked, for the connections pinned
+// to it until they consent again, and every other built-in stays.
+func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored() {
+	one, err := os.ReadFile("testdata/metabase-revision-1.yaml")
+	s.Require().NoError(err)
+	before := fstest.MapFS{}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		before[file.Name()] = &fstest.MapFile{Data: raw}
+	}
+	before["metabase.yaml"] = &fstest.MapFile{Data: one}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
+	latest := func() map[string]int {
+		revisions := map[string]int{}
+		for name := range before {
+			definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, strings.TrimSuffix(name, ".yaml"))
+			s.Require().NoError(err)
+			revisions[definition.ID] = definition.Revision
+		}
+		return revisions
+	}
+	was := latest()
+	s.Require().Equal(1, was["metabase"])
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+
+	now := latest()
+	s.Equal(2, now["metabase"])
+	delete(was, "metabase")
+	delete(now, "metabase")
+	s.Equal(was, now)
+	first, err := s.store.ConnectorDefinition(s.ctx, "app_1", "metabase", 1)
+	s.Require().NoError(err)
+	s.Empty(first.Manifest.Sources[0].Tools, "revision 1 names no tool")
+	_, broken, err := s.store.BrokenConnectorRevision(s.ctx, "metabase", 1)
+	s.Require().NoError(err)
+	s.False(broken)
 }
 
 // AI-816: slack.yaml at revision 5 reads the user from $.user_id. A router that ships it,
@@ -312,8 +369,8 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 
 	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(listed, 21)
-	for i, id := range []string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"} {
+	s.Require().Len(listed, 23)
+	for i, id := range []string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"} {
 		s.Equal(id, listed[i].ID)
 		s.Equal(BuiltinCustomer, listed[i].CustomerID)
 		s.Equal(shipped[i].Revision, listed[i].Revision, "stored at the revision its file names")
@@ -510,11 +567,11 @@ func (s *StoreSuite) TestACustomDefinitionIsOnlyItsOwnCustomers() {
 
 	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"}, definitionIDs(theirs), "another customer sees the built-ins alone")
+	s.Equal([]string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"}, definitionIDs(theirs), "another customer sees the built-ins alone")
 
 	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
+	s.Equal([]string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
 }
 
 func (s *StoreSuite) TestAnUnknownRevisionIsNoDefinition() {

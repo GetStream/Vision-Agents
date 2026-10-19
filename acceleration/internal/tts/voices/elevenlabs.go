@@ -1,11 +1,15 @@
 package voices
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +21,11 @@ import (
 // elevenLabsBaseURL is the production endpoint. The streaming provider's is a WebSocket
 // URL, so this one is its own rather than shared.
 const elevenLabsBaseURL = "https://api.elevenlabs.io"
+
+// elevenLabsVoiceID is the shape of an ElevenLabs voice id: 20 letters and digits.
+// ElevenLabs does not document the format; it is what every id observed live on 2026-10-16
+// has: 21m00Tcm4TlvDq8ikWAM, NOpBlnGInO9m6vDvFkFC, pNInz6obpgDQGcFmaJgB, IKne3meq5aSn9XLyUdCD.
+var elevenLabsVoiceID = regexp.MustCompile(`^[0-9A-Za-z]{20}$`)
 
 // ElevenLabsOptions configures the cloner. APIKey falls back to ELEVENLABS_API_KEY.
 type ElevenLabsOptions struct {
@@ -198,6 +207,87 @@ func (e *ElevenLabs) Preview(ctx context.Context, id string) (Speech, error) {
 		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs has published no sample of %s", id))
 	}
 	return fetchPreview(ctx, e.client, elevenlabs.ProviderName, voice.PreviewURL, nil, "audio/mpeg")
+}
+
+// Exists reports whether ElevenLabs will speak in a voice.
+//
+// A voice in this account is found by id. A voice from the public Voice Library is not,
+// yet it speaks (ElevenLabs adds it to the account the first time it does), so a voice the
+// account lacks is searched for there too, whose search matches ids as well as names. Both
+// live on 2026-10-16: GET /v1/voices/cVOjvbxC2c4mOyGcx3AH answered voice_not_found and
+// /v1/shared-voices?search= of the same id returned it.
+func (e *ElevenLabs) Exists(ctx context.Context, id string) (bool, error) {
+	base := strings.TrimSuffix(e.options.BaseURL, "/")
+	response, err := e.get(ctx, base+"/v1/voices/"+url.PathEscape(id))
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return true, nil
+	}
+
+	// The code is what says the voice is missing, not the status: the same lookup answered
+	// it with a 404 and, later on 2026-10-16, a 400, which is also what a bad key gets.
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+	var failure struct {
+		Detail struct {
+			Code   string `json:"code"`
+			Status string `json:"status"`
+		} `json:"detail"`
+	}
+	decoded := json.Unmarshal(body, &failure) == nil
+	// Live on 2026-10-16, GET /v1/voices/5619d38c-cf51-4d8e-9575-48f61a280413 (a Cartesia
+	// voice) answered 400 with detail.code bad_request and detail.status invalid_uid.
+	if decoded && failure.Detail.Status == "invalid_uid" {
+		return false, stack.Wrap(errNotAVoiceID)
+	}
+	if !decoded || failure.Detail.Code != "voice_not_found" {
+		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup (http %d): %s",
+			response.StatusCode, bytes.TrimSpace(body)))
+	}
+
+	shared, err := e.get(ctx, base+"/v1/shared-voices?search="+url.QueryEscape(id))
+	if err != nil {
+		return false, err
+	}
+	defer shared.Body.Close()
+	if shared.StatusCode < 200 || shared.StatusCode >= 300 {
+		return false, refused(elevenlabs.ProviderName, shared)
+	}
+	var listed struct {
+		Voices []struct {
+			VoiceID string `json:"voice_id"`
+		} `json:"voices"`
+	}
+	if err := json.NewDecoder(shared.Body).Decode(&listed); err != nil {
+		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs library search: decode: %w", err))
+	}
+	// The search also matches names, so only the id itself counts.
+	for _, voice := range listed.Voices {
+		if voice.VoiceID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Shaped reports an id with the shape of an ElevenLabs voice id.
+func (*ElevenLabs) Shaped(id string) bool {
+	return elevenLabsVoiceID.MatchString(id)
+}
+
+func (e *ElevenLabs) get(ctx context.Context, address string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	request.Header.Set("xi-api-key", e.options.APIKey)
+	response, err := e.client.Do(request)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup: %w", err))
+	}
+	return response, nil
 }
 
 // Delete takes the voice back off ElevenLabs.

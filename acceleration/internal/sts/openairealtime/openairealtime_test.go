@@ -89,8 +89,8 @@ func (s *RealtimeSuite) TestNewRefusesWhatTheVendorCannotDo() {
 func (s *RealtimeSuite) TestCapabilitiesDifferPerVendor() {
 	s.True(CapabilitiesFor(OpenAI, "gpt-realtime-2").SemanticTurns)
 	s.True(CapabilitiesFor(OpenAI, "gpt-realtime-2").Accepts(options.ModalityImage))
-	s.False(CapabilitiesFor(XAI, "grok-voice-think-fast-2.0").SemanticTurns)
-	s.False(CapabilitiesFor(XAI, "grok-voice-think-fast-2.0").Accepts(options.ModalityImage))
+	s.False(CapabilitiesFor(XAI, "grok-voice-3.0").SemanticTurns)
+	s.False(CapabilitiesFor(XAI, "grok-voice-3.0").Accepts(options.ModalityImage))
 	s.False(CapabilitiesFor(Qwen, "qwen3.5-omni-plus-realtime").Text, "Qwen takes no typed turns")
 	s.False(CapabilitiesFor(Qwen, "qwen3.5-omni-plus-realtime").Tools, "Qwen calls no tools")
 	s.Equal(60*time.Minute, CapabilitiesFor(OpenAI, "gpt-realtime-2").MaxDuration)
@@ -126,7 +126,7 @@ func (s *RealtimeSuite) TestQwenAudioIsSpelledItsOwnWay() {
 
 func (s *RealtimeSuite) TestTheEndpointCarriesTheModel() {
 	provider := s.newProvider(OpenAI)
-	s.Equal(OpenAI.URL+"?model=gpt-realtime-2", provider.endpoint())
+	s.Equal(OpenAI.URL+"?model=gpt-realtime-2.1", provider.endpoint())
 	s.Equal(24_000, provider.SampleRate())
 }
 

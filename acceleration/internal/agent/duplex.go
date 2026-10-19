@@ -34,6 +34,10 @@ const (
 	// there is anything else. Long enough to let somebody think, short enough that they
 	// are not left wondering whether the agent is still on the line.
 	defaultIdleGap = 30 * time.Second
+	// answerIdleGap is the same wait after the agent asked something. A caller who owes an
+	// answer and says nothing for this long has stepped away, gone looking for something or
+	// lost the line, and thirty seconds of nothing sounds like the agent hung up.
+	answerIdleGap = 6 * time.Second
 	// idleAsks is how often one silence is asked about before the agent lets it stand.
 	// Somebody who has not answered twice is not going to answer a third time, and
 	// asking again is nagging a caller who has walked away.
@@ -172,12 +176,17 @@ func (d *duplex) Presence(participant stt.Participant, lastSpokeAt time.Time, qu
 // not so much as greeted anyone.
 //
 // Like Update, and unlike a murmur, it is not tied to the backchannel option: leaving
-// somebody in silence until they hang up is never what was wanted.
-func (d *duplex) Idle(lastActivity time.Time, quiet bool) bool {
+// somebody in silence until they hang up is never what was wanted. Asked says the agent's
+// last words were a question, which is asked about sooner.
+func (d *duplex) Idle(lastActivity time.Time, quiet, asked bool) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
+	gap := defaultIdleGap
+	if asked {
+		gap = answerIdleGap
+	}
+	if !quiet || lastActivity.IsZero() || time.Since(lastActivity) < gap {
 		return false
 	}
 	if d.asked >= idleAsks {

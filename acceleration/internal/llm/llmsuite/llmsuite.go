@@ -105,6 +105,15 @@ func (s *Suite) AskOn(provider llm.LLM, params llm.ResponseParams) (llm.Response
 	return stream.Response(), events
 }
 
+// forcedTool is the tool choice that makes the suite's model call a tool: required where
+// it honours that, and auto where it does not, which leaves it to the instructions.
+func (s *Suite) forcedTool() string {
+	if s.LLM.Capabilities().Validate(llm.ResponseParams{ToolChoice: "required"}) != nil {
+		return "auto"
+	}
+	return "required"
+}
+
 // Reasons reports whether the suite's model thinks before it answers, which a small token
 // budget can be spent on entirely.
 func (s *Suite) Reasons() bool {

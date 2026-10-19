@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -169,6 +173,247 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 	a.executeTool(ctx, cancel, requested)
 }
 
+// alreadyCalled opens the result a repeated call is given instead of being run again.
+const alreadyCalled = "You already made this exact call and it returned the following. " +
+	"Answer the caller from it and do not call it again: "
+
+// didNotWork opens the result of a call that failed.
+const didNotWork = "That did not work: "
+
+// answeredSinceCaller returns the result of an identical call, the same tool with the same
+// arguments, that already succeeded in this conversation. After a result Gemma often asks
+// for the same call again, and run twice a dispatch or a booking is made twice; a forced
+// chase made Qwen book the same table again after the caller thanked it, and the second
+// booking failed. A call that failed may be tried again, since what failed may not fail twice.
+func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool) {
+	same := func(other llm.ToolCall) bool {
+		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != llm.ToolResult || strings.HasPrefix(history[i].Content, didNotWork) ||
+			strings.Contains(history[i].Content, `"error"`) || strings.Contains(history[i].Content, notRun) {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
+				return asked.ID == history[i].ToolCallID && same(asked)
+			}) {
+				return history[i].Content, true
+			}
+		}
+	}
+	return "", false
+}
+
+// fillsIn reports whether a later call's arguments are an earlier call's with at most the
+// text arguments it left empty or out filled in, and the others it left out given their
+// zero value. create_reservation went out without the phone, then again with it and
+// "high_chair": false, and the second booking failed against the first.
+func fillsIn(earlier, later string) bool {
+	if sameArguments(earlier, later) {
+		return true
+	}
+	var before, after map[string]any
+	if json.Unmarshal([]byte(earlier), &before) != nil || json.Unmarshal([]byte(later), &after) != nil {
+		return false
+	}
+	for key, value := range before {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		if !reflect.DeepEqual(value, after[key]) {
+			return false
+		}
+	}
+	for key, value := range after {
+		if _, ok := before[key]; !ok {
+			if _, text := value.(string); !text && !reflect.ValueOf(value).IsZero() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// sameArguments compares two calls' arguments as JSON, so spacing and key order do not count.
+func sameArguments(a, b string) bool {
+	var left, right any
+	if json.Unmarshal([]byte(a), &left) != nil || json.Unmarshal([]byte(b), &right) != nil {
+		return strings.TrimSpace(a) == strings.TrimSpace(b)
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+// notRun marks a result that was never run, so it is not taken for an answer.
+const notRun = " was not run: "
+
+// leftBlank is the result of a call that was not run because it left required arguments
+// empty.
+const leftBlank = "%s was not run: %s left empty. Take them from what the caller has said and " +
+	"call it again, or ask the caller for them."
+
+// blankRequired returns the arguments a tool's schema requires that a call left out or empty.
+// Made to call, Qwen fills the schema with whatever it has, and verify_account went out
+// with the PIN alone although the caller had just given the last four and the address.
+func blankRequired(tool harness.Tool, arguments string) []string {
+	required, _ := tool.Parameters["required"].([]any)
+	if len(required) == 0 {
+		return nil
+	}
+	var given map[string]any
+	if json.Unmarshal([]byte(arguments), &given) != nil {
+		return nil
+	}
+	var blank []string
+	for _, name := range required {
+		key, _ := name.(string)
+		value, present := given[key]
+		if text, isText := value.(string); !present || value == nil || isText && strings.TrimSpace(text) == "" {
+			blank = append(blank, key)
+		}
+	}
+	return blank
+}
+
+// runFirst is what a call made before the step its tool needs is answered with.
+const runFirst = "%s" + notRun + "error, %s has not succeeded yet in this call. Call %s first, " +
+	"with what the caller has already given."
+
+// needsIdentity is how a tool's description says it may run only for a verified caller.
+var needsIdentity = regexp.MustCompile(`(?i)identity required|after identity|verified (patient|caller|customer|account)`)
+
+// runsBefore is how a tool's description names the tool it must run before.
+var runsBefore = regexp.MustCompile(`(?i)must run before (\w+)`)
+
+// unmetPrerequisite names the tool that has to succeed in this call before tool may run,
+// read from the tools' descriptions, or "" when nothing is missing. Qwen opened a ticket
+// for "123 Main St" before verifying the caller, and the bench counts the order however
+// the call recovers.
+func unmetPrerequisite(tool harness.Tool, tools []harness.Tool, history []llm.Message) string {
+	if strings.HasPrefix(tool.Name, "verify") {
+		return ""
+	}
+	for _, other := range tools {
+		if other.Name == tool.Name {
+			continue
+		}
+		identity := strings.HasPrefix(other.Name, "verify") && needsIdentity.MatchString(tool.Description)
+		before := false
+		if match := runsBefore.FindStringSubmatch(other.Description); match != nil {
+			before = match[1] == tool.Name
+		}
+		if identity && !succeeded(history, other.Name, true) || before && !succeeded(history, other.Name, false) {
+			return other.Name
+		}
+	}
+	return ""
+}
+
+// succeeded reports whether a call to the named tool has come back, and if passed is set,
+// come back without an error and without "ok": false. walk_reboot coming back "ok": false
+// is the failed reboot dispatch_tech needs.
+func succeeded(history []llm.Message, name string, passed bool) bool {
+	for i, message := range history {
+		if message.Role != llm.ToolResult {
+			continue
+		}
+		content := strings.ReplaceAll(message.Content, " ", "")
+		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) ||
+			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if slices.ContainsFunc(history[j].ToolCalls, func(call llm.ToolCall) bool {
+				return call.ID == message.ToolCallID && call.Name == name
+			}) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// digitWords are the digits as a caller reads them out, in order.
+var digitWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
+
+// spokenDigits is two or more digits read out as words, as in "four four seven one".
+var spokenDigits = regexp.MustCompile(`(?i)\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[ -]+(?:zero|one|two|three|four|five|six|seven|eight|nine))+\b`)
+
+// spokenNumbers are the numbers from ten to ninety read out as one word, as the house
+// number in "fourteen Cedar Lane" that failed verify_account.
+var spokenNumbers = map[string]string{
+	"ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
+	"fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19",
+	"twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60",
+	"seventy": "70", "eighty": "80", "ninety": "90",
+}
+
+// spokenNumber is a number from ten to ninety-nine read out in words.
+var spokenNumber = regexp.MustCompile(`(?i)\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[ -](one|two|three|four|five|six|seven|eight|nine))?\b`)
+
+// spelledOut is a word followed by its letters, as in "Patel P A T E L".
+var spelledOut = regexp.MustCompile(`\b([A-Za-z]{2,})((?:[ ,.-]+[A-Za-z]\b){2,})`)
+
+// unspelled drops the letters a caller spelled a name out with from a call's string
+// arguments, which a model copies in after the name, and writes digits read out as words
+// as digits: verify_account went out with the address "one four Cedar Lane" and failed.
+func unspelled(arguments string) string {
+	var values map[string]any
+	if json.Unmarshal([]byte(arguments), &values) != nil {
+		return arguments
+	}
+	changed := false
+	for key, value := range values {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		cleaned := spokenDigits.ReplaceAllStringFunc(text, func(match string) string {
+			var digits strings.Builder
+			for word := range strings.FieldsFuncSeq(strings.ToLower(match), func(r rune) bool { return r == ' ' || r == '-' }) {
+				digits.WriteByte(byte('0' + slices.Index(digitWords, word)))
+			}
+			return digits.String()
+		})
+		cleaned = spokenNumber.ReplaceAllStringFunc(cleaned, func(match string) string {
+			parts := spokenNumber.FindStringSubmatch(strings.ToLower(match))
+			number := spokenNumbers[parts[1]]
+			if parts[2] != "" && strings.HasSuffix(number, "0") {
+				return number[:1] + strconv.Itoa(slices.Index(digitWords, parts[2]))
+			}
+			if parts[2] != "" {
+				return number + " " + parts[2]
+			}
+			return number
+		})
+		cleaned = spelledOut.ReplaceAllStringFunc(cleaned, func(match string) string {
+			parts := spelledOut.FindStringSubmatch(match)
+			letters := strings.Map(func(r rune) rune {
+				if unicode.IsLetter(r) {
+					return r
+				}
+				return -1
+			}, parts[2])
+			if !strings.EqualFold(letters, parts[1]) {
+				return match
+			}
+			return parts[1]
+		})
+		if cleaned != text {
+			values[key] = cleaned
+			changed = true
+		}
+	}
+	if !changed {
+		return arguments
+	}
+	rendered, err := json.Marshal(values)
+	if err != nil {
+		return arguments
+	}
+	return string(rendered)
+}
+
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
@@ -210,6 +455,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
+	requested.Call.Arguments = unspelled(requested.Call.Arguments)
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
 	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
@@ -223,7 +469,14 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	var files []sandbox.Attachment
 	var left bool
 	var err error
-	if requested.Call.Name == sandbox.ToolName && a.runsCode() {
+	tool, _ := a.availableTools().Lookup(requested.Call.Name)
+	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
+		parts = llm.TextParts(alreadyCalled + earlier)
+	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, a.History()); first != "" {
+		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
+	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
+		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
+	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
@@ -241,7 +494,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 	}
 	if err != nil {
-		parts = llm.TextParts(fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err))
+		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. If it names a step one of your "+
+			"tools does, call that tool and try again; otherwise tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()

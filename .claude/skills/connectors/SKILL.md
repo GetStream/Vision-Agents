@@ -41,7 +41,7 @@ binding on agent config "support": name linear, connection.type session, tools [
 | `ROUTER_CONNECTORS_ENABLED=true` | Off by default |
 | `ROUTER_AUTH_KEK` (or `ROUTER_AUTH_KEK_V<n>` + `ROUTER_AUTH_KEK_VERSION`) | Seals the credentials. The router refuses to start without it when connectors are on. Changing it makes stored credentials unreadable |
 | `ROUTER_PUBLIC_URL` | The provider sends the browser back to `<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback`. The dashboard shows this redirect URI on each OAuth connector |
-| `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin. Unset, it reports to the wrong place and the dashboard waits forever |
+| `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin, unless the consent was started with a `return_url` (`createAuthorization`'s, or for a login or step-up the chat asks for, the session's own from `createSession`), which then replaces it. Unset, a consent without one reports to the wrong place and the dashboard waits forever |
 | `ROUTER_CORS_ORIGINS` | The dashboard origin, when the browser calls the router directly |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | Stream's own OAuth client for a connector whose manifest lists `operator` (for example `SLACK_MCP_CLIENT_ID` for `slack`, `SLACK_BOT_MCP_CLIENT_ID` for `slack_bot`). Without it, the app must set its own client |
 
@@ -103,6 +103,14 @@ tools:
    that callback URL.
 3. Give the router its client id and secret: `PUT /v1/agents/connectors/linear_app/oauth-client`.
 4. Create a `linear_app` connection and run its OAuth consent as for any connector.
+
+Gong needs its tech admin first. In Gong: **Admin center › Settings › MCP** (under Ecosystem) **› MCP
+servers › New MCP server integration**
+([Gong's guide](https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server)).
+Set the redirect URI to the connector's `redirect_uri`, and the registration type to
+**Automatic** for `dcr` (Manual issues your own client id and secret; the type cannot be changed later). Until then Gong refuses every consent with
+`unauthorized_client`, «This MCP client is not authorized for your company». The connection
+stays pending, and its last validation says why.
 
 A `linear` connection stays as it is; it does not move to `linear_app`. A connection keeps
 the revision it was made on, so a `github` connection made before revision 4 takes direct calls
@@ -206,6 +214,7 @@ Check the router log first (`docker compose logs -f router` locally).
 | The events request gets 200, but no reply. The router you expect logs nothing, and the router the hook points at logs «an arriving message's channel names a config nobody in its app holds» | The Stream message hook points at another router. Read it in **Chat › Settings › Webhooks**, or `GET` the app's `event_hooks`. Do not wait for a startup warning: in app tenancy it is skipped | Point the hook (step 4.5). Also check that two configs do not bind the connection, and that the mention did not come from an app (steps 4.4, 4.6) |
 | A `session` binding opens with no tools | The user has no connected connection, or the caller is not a verified end user | Connect from Playground; check the user header |
 | Validate says failed | The provider refused the credential | Replace the token, or Reconnect for OAuth |
+| The consent fails, and the connection's last validation has code `connector_consent_refused` with `unauthorized_client` | The provider does not let this client sign in for the organization. For Gong, its tech admin has not added the router as an MCP integration | An admin at the provider allows the client with the router's redirect URI (for Gong, see step 2), then consent again |
 
 Every tool call is listed under the connection's **Invocations**. Every grant, refresh and
 revoke is under its **Audit**.

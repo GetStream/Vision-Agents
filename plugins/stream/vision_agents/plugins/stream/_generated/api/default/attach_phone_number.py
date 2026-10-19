@@ -94,7 +94,8 @@ def sync_detailed(
     """Point a number at a Stream call
 
      Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is
-    what turns a bought number into one that reaches an agent.
+    what turns a bought number into one that reaches an agent. Attaching a number that is already
+    attached in this app changes nothing and answers what it has.
 
     Args:
         e164 (str):
@@ -129,7 +130,8 @@ def sync(
     """Point a number at a Stream call
 
      Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is
-    what turns a bought number into one that reaches an agent.
+    what turns a bought number into one that reaches an agent. Attaching a number that is already
+    attached in this app changes nothing and answers what it has.
 
     Args:
         e164 (str):
@@ -159,7 +161,8 @@ async def asyncio_detailed(
     """Point a number at a Stream call
 
      Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is
-    what turns a bought number into one that reaches an agent.
+    what turns a bought number into one that reaches an agent. Attaching a number that is already
+    attached in this app changes nothing and answers what it has.
 
     Args:
         e164 (str):
@@ -192,7 +195,8 @@ async def asyncio(
     """Point a number at a Stream call
 
      Creates the SIP inbound trunk and routing rule and tells the vendor to send calls there. This is
-    what turns a bought number into one that reaches an agent.
+    what turns a bought number into one that reaches an agent. Attaching a number that is already
+    attached in this app changes nothing and answers what it has.
 
     Args:
         e164 (str):

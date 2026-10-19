@@ -778,9 +778,9 @@ internal struct Client: APIProtocol {
     }
     /// Start voice on a session
     ///
-    /// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+    /// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
     ///
-    /// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+    /// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/voice`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/voice/post(startSessionVoice)`.
@@ -804,7 +804,18 @@ internal struct Client: APIProtocol {
                     in: &request.headerFields,
                     contentTypes: input.headers.accept
                 )
-                return (request, nil)
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
             },
             deserializer: { response, responseBody in
                 switch response.status.code {

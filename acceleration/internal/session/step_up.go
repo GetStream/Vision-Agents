@@ -15,9 +15,10 @@ import (
 
 // ConnectorScopeRequired is a connector tool call the provider refused because the grant
 // lacks access it needs (core.OutcomeScopeRequired), and the step-up consent begun for it on
-// the caller's own connection (AI-854). A client opens LaunchURL in a popup and posts it
-// HandoffToken, as for a consent the backend begins. The old grant keeps working until that
-// consent succeeds.
+// the caller's own connection (AI-854). A page of the session's return_url's origin (Spec.ReturnURL),
+// or the dashboard for a session created without one, opens LaunchURL in a popup and posts it
+// HandoffToken, as for a consent the backend begins with that return_url. The old grant keeps
+// working until that consent succeeds.
 type ConnectorScopeRequired struct {
 	// Name is the binding's alias.
 	Name         string
@@ -93,6 +94,7 @@ func (d *dispatcher) stepUp(ctx context.Context, r route, turnID string, asked c
 	consent, err := s.consents(ctx, ConsentRequest{
 		CustomerID: d.spec.CustomerID, ConnectorID: r.binding.ConnectorID,
 		UserID: d.spec.Caller.UserID, ConnectionID: r.connection.ID, StepUp: &asked,
+		ReturnURL: d.spec.ReturnURL,
 	})
 	if err != nil {
 		s.logger.Warn("could not begin a step-up consent", "connector", r.binding.Name, "error", err)

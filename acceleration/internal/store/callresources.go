@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
+
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -26,7 +29,7 @@ func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) 
 		resource.CreatedAt = time.Now().UTC()
 	}
 
-	if _, err := s.db.NewInsert().Model(resource).Exec(ctx); err != nil {
+	if _, err := s.shard.NewInsert().Model(resource).Exec(ctx); err != nil {
 		return stack.Wrap(fmt.Errorf("store: record call resource: %w", err))
 	}
 	return nil
@@ -37,40 +40,57 @@ func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) 
 // about it releases only what that app holds; unpinned also takes the rows written before
 // apps had identities, which were all made in the deployment's own app.
 func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, scope AppScope, callType, callID string) ([]CallResource, error) {
-	var released []CallResource
-	err := s.db.NewDelete().Model((*CallResource)(nil)).
-		Where("call_type = ?", callType).
-		Where("call_id = ?", callID).
-		ApplyQueryBuilder(scope.where).
-		Returning("*").
-		Scan(ctx, &released)
+	// A call's legs may have been dialled from more than one shard.
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]CallResource, error) {
+		var released []CallResource
+		err := db.NewDelete().Model((*CallResource)(nil)).
+			Where("call_type = ?", callType).
+			Where("call_id = ?", callID).
+			ApplyQueryBuilder(scope.where).
+			Returning("*").
+			Scan(ctx, &released)
+		return released, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("store: release call resources: %w", err)
 	}
-	return released, nil
+	return slices.Concat(lists...), nil
 }
 
 // CallPin is the Stream app a customer's call has its lines in: the app the trunk carrying
 // it was made in, whether an outbound leg's or an attached number's. A session joining the
 // call has to be in that app. Found is false for a call with no lines of its own.
 func (s *Store) CallPin(ctx context.Context, customerID, callType, callID string) (int64, bool, error) {
+	type pinned struct {
+		Pin       sql.NullInt64 `bun:"stream_app_pk"`
+		CreatedAt time.Time     `bun:"created_at"`
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]pinned, error) {
+		var newest []pinned
+		err := db.NewSelect().Model((*CallResource)(nil)).Column("stream_app_pk", "created_at").
+			Where("customer_id = ?", customerID).
+			Where("call_type = ?", callType).
+			Where("call_id = ?", callID).
+			OrderExpr("created_at DESC").
+			Limit(1).
+			Scan(ctx, &newest)
+		return newest, err
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("store: call pin: %w", err)
+	}
+	if newest := merged(lists, func(a, b pinned) int { return b.CreatedAt.Compare(a.CreatedAt) }, 1); len(newest) > 0 {
+		return newest[0].Pin.Int64, true, nil
+	}
+
 	var pin sql.NullInt64
-	err := s.db.NewSelect().Model((*CallResource)(nil)).Column("stream_app_pk").
+	err = s.db.NewSelect().Model((*PhoneNumber)(nil)).Column("stream_app_pk").
 		Where("customer_id = ?", customerID).
-		Where("call_type = ?", callType).
-		Where("call_id = ?", callID).
-		OrderExpr("created_at DESC").
+		Where("stream_call_type = ?", callType).
+		Where("stream_call_id = ?", callID).
+		Where("released_at IS NULL").
 		Limit(1).
 		Scan(ctx, &pin)
-	if errors.Is(err, sql.ErrNoRows) {
-		err = s.db.NewSelect().Model((*PhoneNumber)(nil)).Column("stream_app_pk").
-			Where("customer_id = ?", customerID).
-			Where("stream_call_type = ?", callType).
-			Where("stream_call_id = ?", callID).
-			Where("released_at IS NULL").
-			Limit(1).
-			Scan(ctx, &pin)
-	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}

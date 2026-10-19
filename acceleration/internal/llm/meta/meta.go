@@ -1,4 +1,4 @@
-// Package meta serves Muse Spark through Meta's hosted Model API.
+// Package meta serves Meta's Muse models through their hosted Model API.
 package meta
 
 import (
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -17,6 +18,10 @@ const ProviderName = "meta"
 const DefaultModel = "muse-spark-1.3"
 const apiKeyEnvVar = "META_API_KEY"
 const defaultBaseURL = "https://api.meta.ai/v1"
+
+// models are the Standard-tier ids, which Meta do not train on. The contributor variants
+// do, and are refused.
+var models = []string{DefaultModel, "muse-wonder-1.0"}
 
 type Options struct {
 	APIKey          string
@@ -41,7 +46,7 @@ func New(options Options) (*LLM, error) {
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
-	if options.Model != DefaultModel {
+	if !slices.Contains(models, options.Model) {
 		return nil, stack.Wrap(fmt.Errorf("meta: unsupported model %q", options.Model))
 	}
 	if options.BaseURL == "" {
@@ -51,7 +56,7 @@ func New(options Options) (*LLM, error) {
 		options.ReasoningEffort = "low"
 	}
 	capabilities := llm.Capabilities{
-		// max is Standard-tier 1.3 only; the contributor models answer it with a 400.
+		// max is Standard-tier only; the contributor models answer it with a 400.
 		ReasoningEfforts: []string{"minimal", "low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    options.ReasoningEffort,
 		InputModalities:  []string{llm.ModalityImage},

@@ -280,6 +280,9 @@ func (c flowCase) turn(id string, contracts map[string]string) FlowTurn {
 		Reply:        c.AgentSaid,
 		Unfinished:   c.Unfinished,
 		AnotherVoice: c.AnotherVoice,
+		// A case is a moment the words have settled, which a written transcript cannot
+		// time, so it is judged as the end of the turn.
+		Ended: !c.Unfinished,
 	}
 }
 

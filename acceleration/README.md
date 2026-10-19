@@ -523,7 +523,7 @@ the answer.
 
 Speech to speech has three shortcuts of its own. `sts-fast` is the model quickest to answer,
 pinned to `gemini/gemini-3.8-live`; `sts-vision` is a conversation the model can watch as
-well as hear, pinned to `openai/gpt-realtime-2`; and `sts-duplex` requires a model that can
+well as hear, pinned to `openai/gpt-realtime-2.1`; and `sts-duplex` requires a model that can
 listen while producing audio. Realtime transport, barge-in or asynchronous tools alone do
 not establish full duplex. A native speech model owns transcription, turn-taking and speech,
 so it takes the place of the separate STT, conversation LLM and TTS pipeline. A session asks
@@ -574,8 +574,10 @@ target. The agent's `llm` field and its optional `subagent` do not select that b
 | `gemini/gemini-3.8-live`                  | low-latency  | tokens: $3.00 in, $12.00 out per million     |
 | `gemini/gemini-3.1-flash-live-preview`    | low-latency  | tokens: $3.00 in, $12.00 out per million     |
 | `gemini/gemini-3.8-live-extended-thinking` | high-quality | tokens: $3.00 in, $12.00 out per million    |
+| `xai/grok-voice-3.0`                      | low-latency  | the caller's audio: $4.80 an hour            |
 | `xai/grok-voice-think-fast-2.0`           | low-latency  | the caller's audio: $3.00 an hour            |
 | `qwen/qwen3.5-omni-plus-realtime`         | low-latency  | the caller's audio: $0.03 an hour            |
+| `openai/gpt-realtime-2.1`                 | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 | `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 
 These are estimates, and `router.yaml` says why: the vendors price audio in, audio out and
@@ -1092,6 +1094,48 @@ one of its sessions is answered with a 502 rather than a 404: the conversation e
 the node holding it has gone, which is a different thing from a session that was never
 there.
 
+### Shards
+
+One node with one Postgres and one Redis is a whole deployment, and needs nothing below:
+
+```yaml
+postgres:
+  dsn: postgres://localhost/router
+redis:
+  addr: localhost:6379
+```
+
+A hosted deployment runs one shard per region. Every shard shares a global Postgres and
+Redis (tenancy, agents, connectors, phone numbers, the request log, quotas, the node
+register and the worker bus) and keeps its own for what it runs: calls, sessions,
+responses, requests and their rollups in Postgres, provider health and the session relay
+in Redis. Any shard serves any app.
+
+```yaml
+shard: us-west1
+postgres:
+  dsn: postgres://global/router
+  shard_dsn: postgres://usw1/router
+  shards: # every shard's, this one's included
+    us-east4: postgres://use4/router
+    us-west1: postgres://usw1/router
+    europe-west4: postgres://euw4/router
+redis:
+  addr: global:6379
+  shard:
+    addr: usw1:6379
+```
+
+Writes go to this shard's database. Reads of one call, session or recording look in every
+shard, and lists merge every shard's rows, so a session carried on in another region is
+still one session. Migrations run on every database. A socket for a session held in
+another shard is proxied to the node holding it, since that shard's relay is not this
+one's. Empty shard settings fall back to the global ones, which is the single-node setup.
+
+Two things are approximate across shards: percentiles merged from several shards' rollups
+are weighted by request count rather than recomputed, and a data move replicates the
+changes of the global tables only, so a customer's calls and sessions are moved by export.
+
 ## Agents that are configured rather than spelled out
 
 A session can be created from a stored configuration instead of a caller repeating the
@@ -1582,6 +1626,17 @@ docker run -d --name va-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=model_ro
   -p 55432:5432 postgres:16-alpine
 docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 ```
+
+The API suites run as one database by default. To run them as a shard does, against a
+second database and Redis:
+
+```bash
+docker run -d --name va-redis-shard -p 56380:6379 redis:7-alpine
+ROUTER_POSTGRES_SHARD_DSN='postgres://postgres:postgres@localhost:55432/model_router_shard?sslmode=disable' \
+ROUTER_REDIS_SHARD_ADDR=localhost:56380 go test -tags integration ./internal/api
+```
+
+`internal/store` runs its suite both ways in every run.
 
 ## Regenerate the HTTP layer
 

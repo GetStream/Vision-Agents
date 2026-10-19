@@ -552,9 +552,40 @@ func (s *ManifestSuite) TestTheScopesAToolNeedsReachTheResolvedManifest() {
 	s.Equal([]SourceRule{{Kind: "mcp", Endpoint: "mcp", Tools: []ToolRule{{Name: "list_channels", NeedsScopes: []string{"channels:read"}}}}}, resolved.Sources)
 }
 
-func (s *ManifestSuite) TestAToolNeedingAScopeTheManifestNeverAsksForIsRejected() {
-	_, err := ParseManifest(toolSource("      - name: list_channels\n        needs_scopes: [channels:history]\n"))
-	s.ErrorContains(err, `sources[0].tools[0].needs_scopes: "channels:history" is not in scopes.list`)
+// TestAToolMayNeedAScopeTheManifestNeverAsksFor: the source leaves such a tool out (AI-1394),
+// so saying so is how a manifest hides a tool no consent can grant.
+func (s *ManifestSuite) TestAToolMayNeedAScopeTheManifestNeverAsksFor() {
+	m, err := ParseManifest(toolSource("      - name: delete_channel\n        needs_scopes: [channels:read, channels:manage]\n"))
+	s.Require().NoError(err)
+
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+
+	s.Require().NoError(err)
+	s.Equal([]ToolRule{{Name: "delete_channel", NeedsScopes: []string{"channels:read", "channels:manage"}}}, resolved.Sources[0].Tools)
+}
+
+// TestUnaskedScopesAreTheOnesScopesListLeavesOut: what both the mcp source and a config save
+// read to leave a tool out.
+func (s *ManifestSuite) TestUnaskedScopesAreTheOnesScopesListLeavesOut() {
+	m, err := ParseManifest(toolSource("      - name: delete_channel\n        needs_scopes: [channels:read, channels:manage]\n" +
+		"      - name: list_channels\n        needs_scopes: [channels:read]\n"))
+	s.Require().NoError(err)
+	rule := m.Sources[0]
+
+	s.Equal([]string{"channels:manage"}, rule.UnaskedScopes(m.Scopes.List, "delete_channel"))
+	s.Empty(rule.UnaskedScopes(m.Scopes.List, "list_channels"), "every scope it needs is asked for")
+	s.Empty(rule.UnaskedScopes(m.Scopes.List, "post_message"), "the manifest does not name it")
+}
+
+// TestTheMCPSourceIsTheFirstOfThatKind: a source of another kind is not the one whose tool rules
+// leave a tool out, wherever it sits.
+func (s *ManifestSuite) TestTheMCPSourceIsTheFirstOfThatKind() {
+	other := SourceRule{Kind: "rest", Tools: []ToolRule{{Name: "t", NeedsScopes: []string{"a"}}}}
+	first := SourceRule{Kind: SourceKindMCP, Endpoint: "first"}
+	second := SourceRule{Kind: SourceKindMCP, Endpoint: "second"}
+
+	s.Equal(&first, MCPSource([]SourceRule{other, first, second}))
+	s.Nil(MCPSource([]SourceRule{other}))
 }
 
 func (s *ManifestSuite) TestAToolNamedTwiceIsRejected() {

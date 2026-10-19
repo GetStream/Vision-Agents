@@ -64,6 +64,44 @@ func TestCreateReservationRequiresAllergen(t *testing.T) {
 	}
 }
 
+func TestPlaceholderReservationNameDoesNotConsumeTable(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+	srv.Seed(scenario.Scenario{
+		ID: "x", Pack: "restaurant",
+		Seed: map[string]any{
+			"slots": []any{map[string]any{"time": "19:30", "patio": true, "available": true, "capacity": 4}},
+		},
+	})
+
+	args := map[string]any{
+		"time": "19:30", "party_size": 2, "allergen": "none", "name": " Unknown ",
+	}
+	resp := postToolRaw(t, srv.Addr, "create_reservation", args)
+	if resp["error"] != "guest name is required" {
+		t.Fatalf("expected missing-name error, got %v", resp)
+	}
+
+	snapshot := srv.Snapshot()
+	if snapshot.State["reservation"] != nil {
+		t.Fatalf("placeholder created a reservation: %v", snapshot.State["reservation"])
+	}
+	slots := snapshot.State["slots"].([]any)
+	if !truthy(slots[0].(map[string]any)["available"]) {
+		t.Fatal("placeholder reservation consumed the table")
+	}
+
+	args["name"] = "Alvarez"
+	postTool(t, srv.Addr, "create_reservation", args)
+	if got := srv.Snapshot().State["reservation"].(map[string]any)["name"]; got != "Alvarez" {
+		t.Fatalf("reservation name = %v, want Alvarez", got)
+	}
+}
+
 func TestTelecomRebootBeforeDispatch(t *testing.T) {
 	srv := New(nil)
 	srv.ListenAndServe("127.0.0.1:0")

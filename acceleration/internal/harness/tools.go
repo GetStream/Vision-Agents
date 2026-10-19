@@ -83,7 +83,7 @@ func (t Tools) Requests() []llm.Tool {
 	for _, tool := range t.Tools {
 		rendered = append(rendered, llm.Tool{
 			Name:        tool.Name,
-			Description: tool.Description,
+			Description: strings.TrimSpace(tool.Description + " " + requiredOnly(tool.Parameters)),
 			Parameters:  tool.Parameters,
 		})
 	}
@@ -156,8 +156,31 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 // phrase before a call can say the outcome instead: in Voicebench Gemma told a caller
 // "You're all set" for a booking it never made. It sits beside the use policy rather than in
 // it, so that stays short.
+//
+// A go-ahead is acted on there too: in Voicebench the caller said "Please go ahead" with every
+// required argument known, and Gemma asked for a phone number or a seating preference instead,
+// so the call ended with nothing booked.
+//
+// Waiting for agreement is the exception to calling once the arguments are known: Voicebench
+// operators ask for it, and Gemma read the details back and called in the same breath, so a
+// correction the caller made a moment later never reached the call.
 const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
-	"tool result in this conversation shows it; if you have not called that tool, call it now."
+	"tool result in this conversation shows it, nor that you are doing it now (logging, " +
+	"booking, opening a ticket) unless you call the tool in that same reply; if you have " +
+	"not called that tool, call it now. Never tell the caller what a tool would find (an " +
+	"outage, a free slot, a record) without its result in this conversation: call it first. " +
+	"If your instructions say to wait for agreement after a read-back, end your turn after " +
+	"it, with no hold phrase and no call, until they agree. " +
+	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
+	"asking for anything optional again. When a tool does the step you would describe, such " +
+	"as walking the caller through something, call it instead of describing the step, " +
+	"even if the caller says they already tried that step themselves: the tool records " +
+	"that it was done and later steps may need it. " +
+	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
+	"it, first call the tool that lists them. " +
+	"When you read details back or confirm a change, say each value whole, exactly as you " +
+	"pass it to the tool. When the caller spells a name letter by letter, use their " +
+	"spelling, not what the name sounded like."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
@@ -268,4 +291,29 @@ func parseTools(raw []byte) (Tools, error) {
 		return Tools{}, err
 	}
 	return tools, nil
+}
+
+// requiredOnly names the arguments a tool cannot be called without when it also takes
+// optional ones. Said beside the tool rather than only in the use policy, because that is
+// where a small model looks when it decides whether it has enough to call: Gemma held a
+// booking back for a phone number and a first name the schema never asked for.
+func requiredOnly(parameters map[string]any) string {
+	properties, _ := parameters["properties"].(map[string]any)
+	var required []string
+	switch listed := parameters["required"].(type) {
+	case []string:
+		required = listed
+	case []any:
+		for _, name := range listed {
+			if text, ok := name.(string); ok {
+				required = append(required, text)
+			}
+		}
+	}
+	if len(required) == 0 || len(properties) <= len(required) {
+		return ""
+	}
+	return "Only " + strings.Join(required, ", ") + " are needed to call it; ask for the " +
+		"others only if your instructions say to collect or verify them, and pass every one " +
+		"the caller gave."
 }
