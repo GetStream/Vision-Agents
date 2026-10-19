@@ -27,8 +27,11 @@ class ErrorDetail:
             connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth
             client for the connector, and the message names each way the connector lets the app give it one), and
             <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document,
-            knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added,
-            so a client should expect one it does not know.
+            knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A
+            scheduled task also has schedule_in_past, schedule_too_far (a one-shot more than a year ahead),
+            invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one),
+            invalid_repeat, interval_too_short (occurrences less than 15 minutes apart) and too_many_tasks (a 409: the user
+            is at their active-task limit). More may be added, so a client should expect one it does not know.
         doc_url (str): Where the code is explained.
         message (str): What went wrong, for a person to read. Its wording may change; branch on code.
         type_ (ErrorType): The kind of failure, which decides the status it is answered with: invalid_request 400,
