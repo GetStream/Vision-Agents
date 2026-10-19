@@ -622,6 +622,17 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### The reply model is told who is speaking once a second person talks
+
+A hosted voice agent on a call with several people now sends each new turn to the model as
+`<name>: <words>` once a second participant has had a turn answered, and adds one line to the
+instructions saying several people are talking and that a reply never opens with a name. The
+name is the participant's display name, else their user id. Turns from before the second person
+spoke stay as they were, words typed into the session are the caller's and never count as a
+second person, and with one person on the call nothing changes. A speech-to-speech model taking
+over the call reads the same names in place of `Caller`. The session history, the timeline and
+the flow controller keep the words as said. Python LLM plugins follow (AI-1420).
+
 ### A session can join a Stream call that already exists
 
 `POST /v1/agents/sessions` (with `start_voice`) and `POST /v1/agents/sessions/{id}/voice` take

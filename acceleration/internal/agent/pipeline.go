@@ -828,6 +828,9 @@ func transcript(history []llm.Message, calls map[string]llm.ToolCall) string {
 		switch message.Role {
 		case llm.User:
 			speaker = "Caller"
+			if message.Speaker != "" {
+				speaker = message.Speaker
+			}
 		case llm.Assistant:
 			speaker = "You"
 		case llm.ToolResult:
