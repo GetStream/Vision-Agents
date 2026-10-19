@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -1035,6 +1036,48 @@ func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0], "the words the agent answered with are the words carried out")
 	s.True(s.model().heard("<scheduled_task"), "the follow-up ran in the conversation")
+}
+
+// seedSMSLine gives the app a text line the way buying the number and
+// connecting it would, without Telnyx on the line to be pointed anywhere.
+func (s *ScheduledTasksSuite) seedSMSLine(number string) {
+	ctx := context.Background()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		CustomerID: s.customerID(), E164: number, Vendor: "telnyx",
+		Capabilities: []string{"sms"},
+	}))
+	sealed, err := s.router.sealChannelSecrets(s.customerID(), channels.Secrets{
+		Token: "telnyx-key", Signing: "a-public-key",
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SaveChannelAccount(ctx, &store.ChannelAccount{
+		CustomerID: s.customerID(), Kind: "sms", E164: number,
+		Token: "line-" + s.utils.uuid(), SecretsSealed: sealed,
+		SecretsKEKVersion: s.sealer.CurrentVersion(),
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.seedSMSLine(number)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Channels = &AgentChannels{Sms: &ChannelLineRequest{Number: number}}
+	})
+	user := s.data.createUser()
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: config, Kind: "sms",
+		Address: writer, UserID: user.userID,
+	}))
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"sms"})
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
+	s.Equal("Done.", s.sink.to(writer)[0])
 }
 
 func (s *ScheduledTasksSuite) TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation() {
