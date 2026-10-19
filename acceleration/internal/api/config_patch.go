@@ -17,7 +17,7 @@ type AgentConfigPatch struct {
 	Stt                *string                  `json:"stt,omitempty"`
 	Tts                *string                  `json:"tts,omitempty"`
 	Sts                *string                  `json:"sts,omitempty"`
-	Voice              *string                  `json:"voice,omitempty"`
+	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 	Llm                *string                  `json:"llm,omitempty"`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`

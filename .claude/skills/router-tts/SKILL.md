@@ -241,6 +241,12 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   router's. STT and STS leave the field out.
 - A new recorder is one `Register` in `DefaultRecorderRegistry`; the check and `can_record`
   follow from it.
+- `inline: true` on `POST /v1/tts/recordings` (Python `router.tts.recording(..., inline=True)`)
+  speaks the text while the request waits and returns the audio, base64, in the 202 body,
+  storing nothing: the cheap check that synthesis works on an app. `recordSpeech` refuses more
+  than 16000 characters or a callback with a 400 and gives it 90 seconds; `Check` runs first,
+  so a model that only streams is a 400 here too. A failed synthesis is still a 202, with
+  `status: failed`. `Speech.voice` says which voice spoke it.
 
 ## Adding an option
 

@@ -21,7 +21,9 @@ lately, so the config outlives any one of them being down.
 That is the whole block, and what is missing from it is the interesting part:
 
 - **A voice id belongs to one provider**, so naming one in a config that does not name a
-  provider is a contradiction. Left out, whichever answers uses its own default.
+  provider is a contradiction. Left out, whichever answers uses its own default. The
+  exception is one of your own voices, written with the `custom:` prefix: it is resolved
+  per provider, and a provider that was never given that voice is skipped for the call.
 - **`speed`, `emotion` and `stability` are terms**, and no live voice declares one. A
   provider that cannot express what was asked refuses rather than speaking flatly and
   hoping nobody minds, so a live request naming any of them has no candidates at all.

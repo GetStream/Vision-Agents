@@ -340,6 +340,9 @@ hits = await router.search("perioperative antibiotic guidance", results=5)
 
 A recording takes a URL, a path or the bytes, and waits for the job unless you pass a
 `callback`, in which case it returns as soon as the job is accepted.
+`router.tts.recording(text, inline=True)` instead speaks a short text (at most 16000
+characters) while the request waits and returns the audio, storing nothing: the cheap way to
+check that a voice works on an app. It takes no `callback`.
 
 An option a modality does not have is refused rather than sent and ignored, and so is one no
 provider behind that target can express: a transcript that was quietly not diarized is worse

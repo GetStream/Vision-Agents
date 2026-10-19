@@ -73,6 +73,7 @@ final readonly class SyncAgentRequest
         public ?AgentTools $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
+        // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
     ) {
     }
