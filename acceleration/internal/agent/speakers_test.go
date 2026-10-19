@@ -376,3 +376,30 @@ func (s *AgentSuite) TestAPersonFirstHeardWithoutANameTakesItOnceItIsKnown() {
 	s.Equal("Bob (2): it is Bob", input[10].Content)
 	s.Equal("Carol: Carol again", input[12].Content)
 }
+
+func (s *AgentSuite) TestAGivenDisplayNameStaysEvenWhenThePersonChangesIt() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice", UserID: "alice", Name: "Alice"}
+	bob := stt.Participant{ID: "bob", UserID: "bob", Name: "Bob"}
+	carol := stt.Participant{ID: "carol", UserID: "carol", Name: "Carol"}
+	renamed := stt.Participant{ID: "alice", UserID: "alice", Name: "Alicia"}
+	for _, participant := range []stt.Participant{alice, bob, carol} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{alice, "hello"}, {bob, "hi"}, {carol, "hey"}, {renamed, "call me Alicia"}, {bob, "ok"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	input := s.model.requests()[4].Input
+	s.Require().Len(input, 9)
+	s.Equal("Bob: hi", input[2].Content)
+	s.Equal("Carol: hey", input[4].Content)
+	s.Equal("Alice: call me Alicia", input[6].Content)
+	s.Equal("Bob: ok", input[8].Content)
+}
