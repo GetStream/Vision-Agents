@@ -145,6 +145,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.7.0 // indirect
+	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/thesyncim/gopus v0.1.1 // indirect
 	github.com/thesyncim/skipset v0.19.0 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
