@@ -27,8 +27,9 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples \
 go run ./configure
 ```
 
-`configure` syncs the directory with the Go SDK, then patches on `visible_tools`, which
-`agent.yaml` has no field for: that is what shows a step for the phone's own tools on a reply.
+`configure` syncs the directory with the Go SDK, then patches on `visible_tools` and `skills`,
+which `agent.yaml` has no field for: the first shows a step for the phone's own tools on a reply,
+and the second adds `vision`, which looks at the picture `look_at_latest_photo` returns.
 
 Leave the backend running. It signs the Stream token the phone is its user with, as the Swift
 demo's does, and does what only a server may with the person's Gmail connection: start its
@@ -106,8 +107,10 @@ Without the client, the button says so: the router answers that it has no OAuth 
   open and runs the tools; the call is followed by a second session with none.
 - **Tools on the phone**: `get_local_context` (date, time, timezone), `get_location` (asks
   first), `list_events` (EventKit), `add_reminder` (asks first), `send_email` (asks first,
-  showing who it goes to). Calendar, reminders and location each need the phone's permission
-  too.
+  showing who it goes to), `look_at_latest_photo` (asks first, then shows the agent the newest
+  picture in the library). Calendar, reminders, location and photos each need the phone's
+  permission too. The photo tool works in voice mode: the router hands a tool's pictures to the
+  `vision` skill, which runs on a call, and a chat has nowhere to send them yet.
 
 ## What does not work yet
 

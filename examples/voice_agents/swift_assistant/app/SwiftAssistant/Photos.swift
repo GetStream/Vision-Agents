@@ -1,3 +1,4 @@
+import Photos
 import UIKit
 import VisionAgentsCore
 
@@ -23,9 +24,41 @@ enum Photos {
         files.compactMap { UIImage(contentsOfFile: $0.path).map { resized($0, longestSide: shownSide) } }
     }
 
+    /// The newest picture in the photo library, ready to show the agent, and when it was taken.
+    /// Nil when the library has none.
+    static func latest() async throws -> (image: ImageSource, taken: Date?)? {
+        let access = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        guard access == .authorized || access == .limited else {
+            throw ToolFailure("They have not let Juno see their photos. It is in Settings.")
+        }
+        let newest = PHFetchOptions()
+        newest.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        newest.fetchLimit = 1
+        guard let asset = PHAsset.fetchAssets(with: .image, options: newest).firstObject else {
+            return nil
+        }
+        let options = PHImageRequestOptions()
+        // One answer, at full quality, even when the original is in iCloud.
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = true
+        let image = await withCheckedContinuation { (done: CheckedContinuation<UIImage?, Never>) in
+            PHImageManager.default().requestImage(
+                for: asset, targetSize: CGSize(width: longestSide, height: longestSide),
+                contentMode: .aspectFit, options: options
+            ) { image, _ in done.resume(returning: image) }
+        }
+        guard let image, let source = source(for: image) else {
+            throw ToolFailure("Their newest photo could not be read.")
+        }
+        return (image: source, taken: asset.creationDate)
+    }
+
     private static func source(for file: URL) -> ImageSource? {
-        guard let image = UIImage(contentsOfFile: file.path),
-            let jpeg = resized(image, longestSide: longestSide).jpegData(compressionQuality: 0.7)
+        UIImage(contentsOfFile: file.path).flatMap(source(for:))
+    }
+
+    private static func source(for image: UIImage) -> ImageSource? {
+        guard let jpeg = resized(image, longestSide: longestSide).jpegData(compressionQuality: 0.7)
         else { return nil }
         return ImageSource(url: "data:image/jpeg;base64," + jpeg.base64EncodedString())
     }

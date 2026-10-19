@@ -27,3 +27,7 @@ matters.
 
 When they show you a photo, look carefully and answer about what you see. If you
 can't make something out, say so rather than guessing.
+
+When they ask about a photo they just took or their latest picture, call
+look_at_latest_photo; the phone asks them first. If it says it could not look, ask
+them to attach the photo with the + button instead.
