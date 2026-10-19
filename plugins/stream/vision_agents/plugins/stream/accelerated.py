@@ -34,6 +34,7 @@ from ._generated.models import (
     Greeting,
     GreetingMode,
     Session,
+    SessionCall,
     SessionMemory,
     SessionMemoryFilter,
     SessionTool,
@@ -325,10 +326,15 @@ class Accelerated(OmniLLM):
             backchannel=self.backchannel,
         )
         if call.call_id:
+            request.start_voice = True
+        if call.call_id and call.call_type == "agent":
             # A session's call is agent:<session id>, so holding the session by the call's
             # id puts the backend's agent in the call this one joined.
             request.id = call.call_id
-            request.start_voice = True
+        elif call.call_id:
+            # Any other call is named as it is. The router picks the session id, since a
+            # session id is never used twice and a second session on this call is not refused.
+            request.call = SessionCall(type_=call.call_type, id=call.call_id)
         # Anything named here wins over the stored config, so a field this agent does not
         # decide is left out rather than sent empty: sending it would replace what the
         # config says with nothing.

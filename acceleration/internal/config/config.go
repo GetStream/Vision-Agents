@@ -252,6 +252,9 @@ type Agent struct {
 	// answer. It saves the ruling's round trip on every answered turn and pays for the
 	// replies a ruling throws away. Off by default.
 	SpeculativeReplies bool `koanf:"speculative_replies"`
+	// UnifiedReplies has the conversation model rule on a settled turn in the reply it
+	// writes to it, instead of asking the flow controller first. Off by default.
+	UnifiedReplies bool `koanf:"unified_replies"`
 	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
 	// chat channel, for a developer talking to the agent. Off by default: it is not something a
 	// caller should read.
@@ -261,6 +264,9 @@ type Agent struct {
 	// kept and the other is cancelled. It only applies to a target with more than one candidate.
 	// 1.2s by default; 0 turns it off.
 	ReplyHedge time.Duration `koanf:"reply_hedge"`
+	// FlowJudge routes the flow controller to a decision model, such as
+	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
+	FlowJudge string `koanf:"flow_judge"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -355,8 +361,10 @@ var variables = map[string]string{
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"agent.unified_replies":     "ROUTER_UNIFIED_REPLIES",
 	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
+	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -641,6 +649,7 @@ func (c Config) export() error {
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
+		"agent.unified_replies":         fmt.Sprint(c.Agent.UnifiedReplies),
 		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),

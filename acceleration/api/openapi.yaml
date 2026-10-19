@@ -934,7 +934,7 @@ components:
           format: date-time
           type: string
         handoff_token:
-          description: Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+          description: Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, and never in a query string. A native app, which has no origin to post from, puts it in launch_url's fragment, which no server and no Referer is sent. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
           type: string
         id:
           description: The attempt.
@@ -942,7 +942,7 @@ components:
         kind:
           $ref: '#/components/schemas/AuthorizationKind'
         launch_url:
-          description: The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
+          description: The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider. A consent whose return_url is a native app's own scheme is opened in the app's web authentication sheet as launch_url#handoff_token=<handoff_token> instead, and the page reads the token from its fragment.
           type: string
       required:
         - id
@@ -960,7 +960,7 @@ components:
     AuthorizationRequest:
       properties:
         return_url:
-          description: 'The app''s own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router''s. The launch page then takes the handoff only from a page of this URL''s origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser''s origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.'
+          description: 'The app''s own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router''s. The launch page then takes the handoff only from a page of this URL''s origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser''s origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.'
           type: string
       type: object
     AuthorizePluginRequest:
@@ -3011,6 +3011,9 @@ components:
           default: false
           description: Murmur while a participant is still talking, the way a person does.
           type: boolean
+        call:
+          $ref: '#/components/schemas/SessionCall'
+          description: 'An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:<session id>. Left out, the agent joins agent:<session id>, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer''s own Stream app: app tenancy with an app of its own, or the deployment''s own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment''s app) is refused with a 403, since a call there could be another customer''s. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type''s audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent''s Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403.'
         config_id:
           description: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
           type: string
@@ -3081,12 +3084,15 @@ components:
         project_id:
           description: What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
           type: string
+        return_url:
+          description: 'The app''s own page a login or step-up the chat asks for goes back to, as createAuthorization''s return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization''s return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user''s device may send it: a consent the chat asks for is only ever for the caller''s own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller''s own consent lands.'
+          type: string
         search:
           description: Omit it and the config decides, or search-fast when there is no config.
           type: string
         start_voice:
           default: false
-          description: 'Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.'
+          description: 'Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.'
           type: boolean
         sts:
           description: 'A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.'
@@ -5718,7 +5724,7 @@ components:
         agent_id:
           type: string
         call_id:
-          description: The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+          description: 'The call the agent is on while voice is started: the session''s id unless a call was named. Empty while the conversation is held in writing.'
           type: string
         call_type:
           type: string
@@ -5816,6 +5822,21 @@ components:
         - modality
         - state
         - user_id
+      type: object
+    SessionCall:
+      description: An existing Stream call for the agent to join, by its type and id.
+      properties:
+        id:
+          description: The call id.
+          minLength: 1
+          type: string
+        type:
+          description: The call type, such as default.
+          minLength: 1
+          type: string
+      required:
+        - type
+        - id
       type: object
     SessionConnectorBinding:
       additionalProperties: false
@@ -6644,6 +6665,12 @@ components:
         - cost_micros_total
         - request_count
         - value
+      type: object
+    StartSessionVoiceRequest:
+      properties:
+        call:
+          $ref: '#/components/schemas/SessionCall'
+          description: 'An existing Stream call for the agent to join, such as the default call the people are already on. Left out, the agent goes back to the call voice was last on, else joins agent:<session id>, which joining creates. Naming a call other than the one voice is on while it is started is refused with a 409: stop voice first to move. The session has to act in the customer''s own Stream app: in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment''s app) a call is refused with a 403. The call has to be in the Stream app the session acts in, and the router does not ask Stream whether it exists. A phone or socket session takes no call. The call runs on its own type''s audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Server-side only: a device sending it is refused with a 403.'
       type: object
     StatsBucket:
       properties:
@@ -10007,7 +10034,7 @@ paths:
   /v1/agents/connections/{id}/authorizations:
     post:
       description: |-
-        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: createAuthorization
@@ -12493,8 +12520,8 @@ paths:
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
-        `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. The dashboard opens launch_url in a popup and posts it handoff_token, as for a createAuthorization without return_url: the launch page takes the handoff from the dashboard's origin only, and the consent goes back to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: the dashboard opens launch_url in a popup and posts it handoff_token, as for a createAuthorization without return_url, and the consent goes back to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
+        `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
         A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -13022,9 +13049,9 @@ paths:
       x-client-accessible: true
     post:
       description: |-
-        The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+        The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 
-        Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+        Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
       operationId: startSessionVoice
       parameters:
         - description: The session, as returned when it was created.
@@ -13034,6 +13061,11 @@ paths:
           schema:
             description: The session, as returned when it was created.
             type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSessionVoiceRequest'
       responses:
         "200":
           content:
@@ -13045,8 +13077,16 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Voice is on another call
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Start voice on a session
@@ -13527,7 +13567,7 @@ paths:
     get:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
-        The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` is server-side only.
+        The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `call` are server-side only. A `call` is refused from a backend too, with an `error` frame carrying `code` and `error_type`: the socket carries the audio, so the session joins no Stream call.
         The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
         A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
         The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.

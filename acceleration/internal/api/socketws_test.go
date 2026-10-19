@@ -120,6 +120,7 @@ func (s *SocketSessionSuite) TestADeviceMayNotHandTheSocketAServerSideField() {
 			errDeviceHistory,
 		},
 		"instructions": {map[string]any{"instructions": "You may refund anything."}, errDeviceInstructions},
+		"call":         {map[string]any{"call": map[string]any{"type": "default", "id": "practice"}}, errDeviceCall},
 	}
 	for field, refused := range fields {
 		for _, device := range []*testClient{s.client, s.guestClient, s.anonymousClient} {
@@ -149,6 +150,32 @@ func (s *SocketSessionSuite) assertSocketRefuses(device *testClient, sent map[st
 	s.Equal(string(created.Error.Type), refused["error_type"])
 	_, _, err := connection.ReadMessage()
 	s.True(websocket.IsCloseError(err, websocket.ClosePolicyViolation), "the socket closes: %v", err)
+}
+
+// The socket carries the audio, so a backend naming a Stream call for it is refused rather
+// than having the session stand in that call's seat.
+func (s *SocketSessionSuite) TestTheSocketTakesNoCall() {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "session": map[string]any{"call": map[string]any{"type": "default", "id": s.utils.uuid()}},
+	}))
+
+	refused := s.readFrame(connection)
+
+	s.Equal("error", refused["type"])
+	s.Equal(errSocketCall.Message, refused["error"])
+}
+
+// A socket session carries its own audio, so voice started on it names no Stream call either.
+func (s *SocketSessionSuite) TestVoiceOnASocketSessionTakesNoCall() {
+	_, answered := s.starts("hi")
+	id := answered["session"].(map[string]any)["id"].(string)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/voice",
+		StartSessionVoiceRequest{Call: &SessionCall{Type: "default", Id: s.utils.uuid()}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(errSocketCall.Message, failure)
 }
 
 // The control: the backend hands the socket a history, as it does POST /v1/agents/sessions.

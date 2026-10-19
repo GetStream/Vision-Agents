@@ -3,9 +3,8 @@ import VisionAgentsCore
 
 /// The controls for a spoken conversation: mute and hang up.
 ///
-/// It draws no transcript: what was said comes off the same `session` the voice session
-/// holds, and is shown beside these. There is nothing here for playing the agent: joining
-/// the call is what does that.
+/// Whether the call is still being joined is the glow's to show, beside these. There is
+/// nothing here for playing the agent: joining the call is what does that.
 struct CallControls: View {
     let voice: VoiceSession
 
@@ -16,11 +15,6 @@ struct CallControls: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
-            } else if voice.call == nil {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("joining").font(.caption).foregroundStyle(.secondary)
-                }
             }
 
             HStack(spacing: 24) {

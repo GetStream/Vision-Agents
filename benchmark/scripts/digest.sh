@@ -44,6 +44,9 @@ parallel="${VOICEBENCH_PARALLEL:-1}"
 limit="${VOICEBENCH_PACK_TIMEOUT:-$((1500 * k))}"
 # 8000 is often taken on a laptop by a local stream-api.
 agent_port="${VOICEBENCH_AGENT_PORT_BASE:-8001}"
+# Moved together with the agent ports, two checkouts can bench side by side.
+router_port="${VOICEBENCH_ROUTER_PORT:-8080}"
+world_port="${VOICEBENCH_WORLD_PORT_BASE:-8090}"
 
 export CGO_ENABLED=1
 voicebench="$(mktemp -d)/voicebench"
@@ -62,7 +65,7 @@ else
   export ROUTER_AUTH_MODE="${ROUTER_AUTH_MODE:-noauth}"
   export ROUTER_RATE_LIMIT_MESSAGES_PER_DAY="${ROUTER_RATE_LIMIT_MESSAGES_PER_DAY:-0}"
   export ROUTER_RATE_LIMIT_TOKENS_PER_DAY="${ROUTER_RATE_LIMIT_TOKENS_PER_DAY:-0}"
-  export ROUTER_ADDR=127.0.0.1:8080
+  export ROUTER_ADDR="127.0.0.1:$router_port"
   export STREAM_ACCELERATION_URL="http://$ROUTER_ADDR"
   router="$(dirname "$voicebench")/router"
   (cd ../acceleration && go build -o "$router" ./cmd/router) || exit 1
@@ -139,7 +142,7 @@ run_packs() {
     echo "== $pack: $name"
     ports=()
     if [[ "$spawns" == 1 ]]; then
-      ports=(--target-url "http://127.0.0.1:$((agent_port + i))" --world-addr "127.0.0.1:$((8090 + i))")
+      ports=(--target-url "http://127.0.0.1:$((agent_port + i))" --world-addr "127.0.0.1:$((world_port + i))")
     fi
     if [[ "$parallel" == 1 ]]; then
       run_logged "$pack: $name" "$out/$pack-$name.log" \

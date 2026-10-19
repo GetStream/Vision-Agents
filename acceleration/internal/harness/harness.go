@@ -62,6 +62,9 @@ type Options struct {
 	// Controller is a second fast-model session that decides when evolving speech is
 	// complete, relevant, or interrupting. The harness takes ownership of it.
 	Controller *llmrouter.Session
+	// Judge is a decision model the flow controller asks in place of Controller, which it
+	// then ignores. The harness takes ownership of it.
+	Judge Judge
 	// Skills are what the fast model may hand over. They mean nothing without a subagent.
 	Skills Skills
 	// Tools are what the fast model may do rather than say. The harness offers them and
@@ -140,10 +143,18 @@ type Turn struct {
 	// Answers says the reply is offered no tools and must answer from what it has: the
 	// chain of tools before it has gone on as long as the caller can be kept waiting.
 	Answers bool
+	// MustCall has the model call one of its tools rather than answer in words.
+	MustCall bool
+	// OnlyTool narrows a turn that must call to the one tool it names. Made to call after
+	// dispatch_tech failed for want of a reboot, Qwen called dispatch_tech again.
+	OnlyTool string
 	// Asked is what the caller asked to change about this reply, written over the
 	// session's own overwrites.
 	Asked llmoptions.LLM
 }
+
+// mustCallTokens bounds a reply that must call a tool.
+const mustCallTokens = 256
 
 // answerNow is the note a reply that Answers is given.
 const answerNow = "There is no time for another tool: answer the caller now from what the " +
@@ -236,8 +247,9 @@ func New(options Options) (*Harness, error) {
 		h.running.Add(1)
 		go h.consumeTasks()
 	}
-	if options.Controller != nil {
+	if options.Controller != nil || options.Judge != nil {
 		h.flow = newFlow(options.Controller, h.emitter, h.logger)
+		h.flow.judge = options.Judge
 		h.flow.onModelCall = options.OnModelCall
 	}
 	return h, nil
@@ -364,15 +376,33 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		reasoning.Effort = toolReplyEffort
 	}
 
+	toolChoice := ""
+	maxTokens := h.options.MaxTokens
+	if turn.MustCall && turn.OnlyTool != "" {
+		if only := slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool { return tool.Name != turn.OnlyTool }); len(only) > 0 {
+			tools = only
+		}
+	}
+	if turn.MustCall && len(tools) > 0 {
+		toolChoice = "required"
+		// Constrained to a call, Gemma on vLLM once wrote nothing for 37 seconds while the
+		// caller waited; a call fits well inside this.
+		maxTokens = mustCallTokens
+		if h.options.MaxTokens > 0 {
+			maxTokens = min(h.options.MaxTokens, mustCallTokens)
+		}
+	}
+
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
+		ToolChoice:         toolChoice,
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,
 		Input:              input,
-		MaxOutputTokens:    h.options.MaxTokens,
+		MaxOutputTokens:    maxTokens,
 		Tools:              tools,
 		Store:              model.Store,
 		PreviousResponseID: previous,
@@ -487,10 +517,12 @@ func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 // agent's job, because a tool acts on the call and the harness does not know there is one.
 func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 	for _, call := range calls {
-		if _, known := h.options.Tools.Lookup(call.Name); !known {
+		tool, known := h.options.Tools.Lookup(call.Name)
+		if !known {
 			h.logger.Debug("the model asked for a tool that does not exist", "tool", call.Name)
 			continue
 		}
+		call.Arguments = Coerce(tool.Parameters, call.Arguments)
 		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call})
 	}
 }

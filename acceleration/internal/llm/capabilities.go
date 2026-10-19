@@ -28,6 +28,10 @@ type Capabilities struct {
 	// Verbosities are the text verbosity levels this model accepts. Empty means it takes
 	// none and the field is dropped.
 	Verbosities []string
+	// ToolChoices are the tool choices this model honours. Empty means it honours them all.
+	// A provider that would quietly answer required as auto lists only what it keeps, so
+	// a request that depends on the rest is refused rather than weakened.
+	ToolChoices []string
 	// Store reports whether the provider keeps a response for a later one to continue
 	// from, which is what makes PreviousResponseID mean anything.
 	Store bool
@@ -64,6 +68,10 @@ func (c Capabilities) Validate(params ResponseParams) error {
 			return stack.Wrap(fmt.Errorf("llm: text verbosity %q is not one of %s",
 				verbosity, strings.Join(c.Verbosities, ", ")))
 		}
+	}
+	if choice := params.ToolChoice; choice != "" && len(c.ToolChoices) > 0 && !slices.Contains(c.ToolChoices, choice) {
+		return stack.Wrap(fmt.Errorf("llm: tool choice %q is not one of %s",
+			choice, strings.Join(c.ToolChoices, ", ")))
 	}
 	if params.Conversation != "" && params.PreviousResponseID != "" {
 		return stack.Wrap(fmt.Errorf("llm: a response continues from a conversation or from a previous response, not both"))

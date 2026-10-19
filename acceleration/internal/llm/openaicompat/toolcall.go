@@ -23,7 +23,7 @@ const (
 )
 
 // toolCallPrefixes are what a call written as text starts with, ahead of the tool's name.
-var toolCallPrefixes = []string{"call:", "call_tool:", "call tool:"}
+var toolCallPrefixes = []string{"call:", "call_tool:", "call tool:", "call "}
 
 // toolCallSplitter moves tool calls written as text out of the answer as it streams. Like the
 // channel splitter, it holds back the end of what it has seen while that could still be the
@@ -121,6 +121,69 @@ func (c *toolCallSplitter) Flush() (text, unfinished string) {
 // opening marker, or a prefix and the spaces after it), and otherwise how much of the end to
 // hold back because it could still become one.
 func (c *toolCallSplitter) nextCall() (start, skip, partial int) {
+	start, skip, partial = c.nextMarkedCall()
+	if bare := c.nextBareCall(); bare >= 0 && (start < 0 || bare < start) {
+		return bare, 0, 0
+	}
+	if start < 0 {
+		partial = max(partial, c.bareSuffix())
+	}
+	return start, skip, partial
+}
+
+// nextBareCall finds an offered tool's name written straight into the answer with its
+// arguments, `check_outage{}` or `verify_account(pin=4471)`, with no marker or prefix ahead of
+// it: Voicebench heard a whole repair flow read out that way, and none of it was done. The name
+// has to start a word and be followed at once by its brace or parenthesis.
+func (c *toolCallSplitter) nextBareCall() int {
+	at := -1
+	for tool := range c.tools {
+		for from := 0; ; {
+			i := strings.Index(c.pending[from:], tool)
+			if i < 0 {
+				break
+			}
+			i += from
+			end := i + len(tool)
+			if (i == 0 || !isNameByte(c.pending[i-1])) && end < len(c.pending) &&
+				(c.pending[end] == '{' || c.pending[end] == '(') {
+				if at < 0 || i < at {
+					at = i
+				}
+				break
+			}
+			from = i + 1
+		}
+	}
+	return at
+}
+
+// bareSuffix is how much of the end of pending to hold back because it could still become a
+// bare call: the last word, while it is the start of an offered name or the whole name with
+// its bracket still to come.
+func (c *toolCallSplitter) bareSuffix() int {
+	word := len(c.pending)
+	for word > 0 && isNameByte(c.pending[word-1]) {
+		word--
+	}
+	tail := c.pending[word:]
+	if tail == "" {
+		return 0
+	}
+	for tool := range c.tools {
+		if strings.HasPrefix(tool, tail) {
+			return len(tail)
+		}
+	}
+	return 0
+}
+
+func isNameByte(b byte) bool {
+	return b == '_' || b == '-' || b == '.' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+}
+
+// nextMarkedCall is nextCall for calls that start with the opening marker or a prefix.
+func (c *toolCallSplitter) nextMarkedCall() (start, skip, partial int) {
 	open := strings.Index(c.pending, toolCallOpen)
 	for from := 0; ; {
 		at, prefix := nextPrefix(c.pending, from)

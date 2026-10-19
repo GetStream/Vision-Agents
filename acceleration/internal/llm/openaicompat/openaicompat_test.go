@@ -410,6 +410,9 @@ func (s *OpenAICompatSuite) TestABareChannelNameAfterWhitespaceIsNeverSpoken() {
 		{"\nthought\n", " You're all set!"},
 		{" thou", "ght \r\n You're all set!"},
 		{"thought\r", "\n You're all set!"},
+		// What Gemma 4 sent after a tool result in a later run, and the caller heard "thought".
+		{"thought:", " You're all set!"},
+		{"thought", ":\n You're all set!"},
 	} {
 		s.Run(frames[0], func() {
 			s.frames = []string{textFrame(frames[0]), textFrame(frames[1]), usageFrame(20, 0, 8, 0, "stop")}
@@ -540,6 +543,24 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 			name:      "check_availability",
 			arguments: `{"party_size":4,"time":"7:30"}`,
 		},
+		"bare python call with no prefix": {
+			frames:    []string{"One moment. Checking. check_avail", "ability(party_size=4, time=\"7:30\")"},
+			spoken:    "One moment. Checking. ",
+			name:      "check_availability",
+			arguments: `{"party_size":4,"time":"7:30"}`,
+		},
+		"call followed by a space": {
+			frames:    []string{"One moment, checking... call check_avail", "ability(party_size=4, time='7:30')"},
+			spoken:    "One moment, checking... ",
+			name:      "check_availability",
+			arguments: `{"party_size":4,"time":"7:30"}`,
+		},
+		"bare brace call with no prefix": {
+			frames:    []string{"Booking now. create_reservation{name: \"Alvarez\", party_size: 6}"},
+			spoken:    "Booking now. ",
+			name:      "create_reservation",
+			arguments: `{"name":"Alvarez","party_size":6}`,
+		},
 	}
 	for name, tc := range cases {
 		s.Run(name, func() {
@@ -637,6 +658,47 @@ func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAToolCallIsSpokenWhole(
 	s.Equal("Please call: me back, or call:check_weather{city:Austin} and call:check", response.OutputText,
 		"a name that is not offered is not a call")
 	s.Empty(response.ToolCalls)
+}
+
+func (s *OpenAICompatSuite) TestAnOfferedNameWithoutItsArgumentsIsSpoken() {
+	s.frames = []string{
+		textFrame("Let me check"),
+		textFrame(" that. I can check_availability for you, or precheck_availability(x=1). check"),
+		usageFrame(20, 0, 8, 0, "stop"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+
+	response, _ := s.ask(provider, withTools())
+
+	s.Equal("Let me check that. I can check_availability for you, or precheck_availability(x=1). check", response.OutputText,
+		"a bare name is a call only when its arguments follow it and it starts a word")
+	s.Empty(response.ToolCalls)
+}
+
+func (s *OpenAICompatSuite) TestAStrayControlTokenIsNeverSpoken() {
+	// What Gemma 4 sent in Voicebench beside a real call, and the caller heard as a turn.
+	s.frames = []string{
+		textFrame(`<|"|>`),
+		toolFrame(0, "call-1", "check_availability", `{"party_size":4}`),
+		textFrame("\ufffd\nOne <tool_call|>moment."),
+		usageFrame(20, 0, 8, 0, "tool_calls"),
+	}
+
+	for name, tools := range map[string]llm.ResponseParams{"with tools": withTools(), "without": hello()} {
+		provider := s.provider(Options{ToolCallText: true})
+		response, _ := s.ask(provider, tools)
+		s.Equal("\nOne moment.", response.OutputText, name)
+	}
+}
+
+func (s *OpenAICompatSuite) TestAStrayChannelMarkerIsNeverSpoken() {
+	// After a tool result in Voicebench the caller heard "<channel|> I found your appointment".
+	s.frames = []string{textFrame("<channel|> I found it."), usageFrame(20, 0, 8, 0, "stop")}
+	provider := s.provider(Options{ThoughtChannel: true})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal(" I found it.", response.OutputText)
 }
 
 func (s *OpenAICompatSuite) TestAToolCallThatNeverClosesIsNotSpoken() {
@@ -1312,4 +1374,19 @@ func (s *OpenAICompatSuite) TestImagesFollowAllToolResultsInABatch() {
 	s.Require().NoError(err)
 	s.Contains(string(encoded), "one.png")
 	s.Contains(string(encoded), "two.png")
+}
+
+func (s *OpenAICompatSuite) TestAForcedCallRequiresEveryArgument() {
+	offered := []llm.Tool{
+		{Name: "verify_account", Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"pin": map[string]any{}, "last4": map[string]any{}, "address": map[string]any{}},
+			"required":   []any{"pin"},
+		}},
+		{Name: "check_outage"},
+	}
+	required := everyArgumentRequired(offered)
+	s.Equal([]string{"address", "last4", "pin"}, required[0].Parameters["required"])
+	s.Nil(required[1].Parameters)
+	s.Equal([]any{"pin"}, offered[0].Parameters["required"], "the offered schema was changed")
 }

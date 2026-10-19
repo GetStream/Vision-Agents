@@ -622,6 +622,50 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A session can join a Stream call that already exists
+
+`POST /v1/agents/sessions` (with `start_voice`) and `POST /v1/agents/sessions/{id}/voice` take
+an optional `call: {type, id}`: an existing Stream call for the agent to join, such as the
+`default` call the people are already on. Left out, the agent joins `agent:<session id>` as
+before. A `call` without `start_voice` or together with `phone` is a 400. The call has to be in
+the Stream app the session acts in: one another session runs in another app is a 400. The
+router does not ask Stream whether the call exists. A device sending `call` is a 403, as with
+`history`, and the session socket's start frame takes none, since the socket carries its own
+audio.
+
+Voice stopped and started again goes back to the named call; naming a new call when voice is off
+moves it there, and naming a different one while voice is on is a 409. A session carried on from
+its row keeps the call; a fork does not. Two sessions joining one call as the same `user_id`
+leave the newest, as two sessions on `agent:<session id>` always did.
+
+A call runs on its own type's audio settings. The built-in `agent` type turns DTX and noise
+cancellation off so turn detection hears every word (AI-1291, GetStream/chat#18795); the
+`default` type has DTX on and noise cancellation on.
+
+Go takes it as `client.SessionOptions.Call` and `Session.Voice.Start(ctx, client.OnCall(type,
+id))`, and as `stream.Call.CallType`/`CallID`. `stream.Accelerated` (Python) now joins the call
+the agent was given: a call of any type but `agent` is sent as `call`, and the router chooses the
+session id, so a second session on the same call is not refused for reusing an id. An `agent`
+call is held by its call id as before. Other SDKs follow.
+
+### Grok Voice 3.0 and GPT-Realtime-2.1 for speech-to-speech
+
+`xai/grok-voice-3.0`, first on the Artificial Analysis speech-to-speech index, is in the
+low-latency tier at $4.80 an hour of caller audio, and `openai/gpt-realtime-2.1` is in the
+high-quality tier at GPT-Realtime-2's rates. `sts-vision` now prefers GPT-Realtime-2.1.
+`xai/grok-voice-think-fast-2.0`, which xAI have deprecated, and `openai/gpt-realtime-2`
+stay declared, so a config that names them keeps working. `openai/gpt-live-1` now lists
+German, French, Hindi, Japanese and Korean, the languages of OpenAI's new voices.
+
+### Nemotron 3.5 Super VL and Muse Wonder in the built-in LLM config
+
+`together/nvidia/NVIDIA-Nemotron-3.5-Super-VL`, the strongest US open-weight model, is in the
+low-latency tier with image input, so `vlm` can fall over to it; it answers without thinking.
+`meta/muse-wonder-1.0`, 52 on the Artificial Analysis Intelligence Index at max effort, is in
+the high-quality tier with image input at $4 in and $20 out per million tokens. It reuses
+`META_API_KEY`, and no shortcut prefers it. An open-weight model with `-VL` in its id now
+accepts images on any host.
+
 ### A backend can give one session instructions of its own
 
 `POST /v1/agents/sessions` and the session socket's start frame take `instructions`: what the
@@ -639,6 +683,21 @@ it has one. An agent with no config and no `instructions` now sends `DEFAULT_INS
 `Agent`'s docstring says it is told; before, the router ran it on none. An agent with a
 `config` and no `instructions` of its own is unchanged: the default is not sent over its
 folder's instructions.
+
+### A login the chat asks for can go back to the app's own page
+
+`POST /v1/agents/sessions` (`createSession`) and the session socket's `start` frame take an
+optional `return_url` (AI-1384): the app's own page that the logins and step-ups the chat asks
+for go back to, as `createAuthorization`'s `return_url` does for a consent the backend starts.
+A page of that URL's origin opens the `connector_authorization` attachment's or the
+`connector_scope_required` frame's `launch_url` and posts it `handoff_token`; the browser then
+comes back to the URL with `connection_id` and `status` added to its query. The same rules
+apply as on `createAuthorization`, and a URL they refuse is a 400 `invalid_request` starting
+`return_url:` (an error frame on the socket), with no session created. The session keeps it:
+a chat carried on after it ended, in this process or another, and a fork, go back to the same
+page. An end user's device may send it, since a consent the chat asks for is only ever for
+the caller's own connection and shown to the caller alone. The Go SDK's `SessionOptions` has
+`ReturnURL` and the Python SDK's has `return_url`. Without it, nothing changes: those consents go back to the dashboard.
 
 ### A connector consent can go back to the app's own page
 
@@ -658,8 +717,16 @@ replaced by the router's. A consent that has a `return_url` no longer sends the 
 reads one, so a body that is not a JSON object (`null`, `{`, a `text/plain` one) is a 400 or 415
 where it was a 201; no known caller sends one.
 Without it, nothing changes: the dashboard opens the launch page and the consent goes back to
-the dashboard, as does a consent the chat starts. The generated clients are regenerated: Go's
+the dashboard, as does a consent the chat starts (until AI-1384, above). The generated clients are regenerated: Go's
 `CreateAuthorization` and Rust's `create_authorization` now take the request body.
+
+### A native app can run a connector consent
+
+`return_url` on `createAuthorization` and `createSession` may now be a native app's own private-use scheme, in the reverse domain form RFC 8252 section 7.1 asks for, such as `com.example.app:/connected`. An app has no web page to open the launch page from and post it the token, so it opens `launch_url#handoff_token=<handoff_token>` in its web authentication sheet (`ASWebAuthenticationSession` on iOS, a Custom Tab on Android). The launch page of such a consent reads the token from its fragment, which no server is sent, and drops it from its history; the callback then hands the sheet back to the app's scheme with `connection_id` and `status`. A scheme with no dot, such as `myapp://`, is still refused, and so are a fragment, a user name and a query that is not key=value pairs. A consent that returns to a web page or to the dashboard gets the same launch page as before, byte for byte.
+
+### The Gmail connector writes drafts, and a backend can send mail through it
+
+The `gmail` connector's revision 3 asks for `gmail.compose` beside `gmail.readonly`, so the Gmail MCP server's `create_draft` works, and gives `https://gmail.googleapis.com` as its `api_base`, so a backend can send through the connection proxy: `POST /v1/agents/connections/{id}/proxy/gmail/v1/users/me/messages/send` with the RFC 5322 message base64url-encoded as `raw`. Google's Gmail MCP server has no tool that sends. A connection made on revision 2 asks for the new scope at its next consent.
 
 ### Built-in BigQuery and Metabase connectors
 
@@ -2061,7 +2128,15 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- Voicebench reply timing no longer reuses an answer to a later caller turn for earlier turns, and detects quiet speech on the isolated agent track. Methodology v10 separates missing post-caller replies from agent speech that already started while the caller was talking. Native-target diagnostics follow the explicitly selected router instead of a stale environment URL.
+
+- A chat that opened before its person connected an account uses the account once they have. A session binding with no connection chosen waits for a login; asked for the account after the person connected it outside the chat, from their app with a consent its backend began, it began a second consent and showed another `connector_authorization` card. It now opens on the caller's one connected connection, as a session opening then would have, with no second consent. With two connected, it still asks.
+- `stream.STT` credits each transcript to the participant whose audio it is of. It sent every participant's audio over one router socket and credited each transcript to whoever sent the last frame, so a line still arriving when the next person started talking went to them. Each participant now has a socket of their own: the one `start` opens goes to whoever speaks first, and the others open on a participant's first frame. A socket the router refuses for a later participant is reported once as an `STTErrorEvent` and that participant's audio is dropped; one participant still uses exactly one socket (AI-1403).
+- A Python `Agent` built by hand, without `AgentLauncher`, loads its components' models when it joins: the multi-speaker filter's Silero VAD, a local STT such as `fast_whisper`, a local turn detector or processor. It loaded none, so once two people spoke on the call the first frame failed with `warmup() must be called before process_audio()` and the agent took no more audio for the rest of the call, though the join had succeeded. A model that fails to load now fails the join before the agent enters the call. An agent from `AgentLauncher` keeps the models the launcher loaded, and `Agent.warmup(cache)` loads them ahead of the join (AI-1402).
+- A voice id ElevenLabs does not have is refused on a shortcut that also reaches Cartesia or Inworld, such as `tts-quality`. The router fell back to them, so the stream started and failed on the first line (`Unknown voice: … not found!`, `voice ID must be a valid UUID`). They now take such an id only when their own voice listing holds it, in whatever order the candidates are ranked. This covers a voice shaped like an ElevenLabs id (20 letters and digits); a Cartesia UUID or a name such as `Ashley` routes as before, and a mistyped name on such a shortcut still fails on the first line (AI-1395).
+- An ElevenLabs voice that ElevenLabs does not have is refused when the voice opens, naming the closest voice in its library: `elevenlabs has no voice "Sara"; the closest in its library is "Sarah - Mature, Reassuring, Confident" (EXAVITQu4vr4xnSDxMaL)`. Any id was passed on, so a wrong one failed on the first line spoken. The `/v1/tts/stream` socket answers it as its `error` frame, a session's voice with a 400, and a recording as a failed job. A voice in the account, a Voice Library voice and a legacy voice still speak; Cartesia and Inworld voices are not checked (AI-1395).
 - A connector tool that needs a scope the connector never asks for is no longer offered: it is left out of `GET /v1/agents/connections/{id}/tools`, out of a validate's scope check and out of a session's tools. A manifest says so with `sources[].tools[].needs_scopes`, which may now name a scope outside `scopes.list`. The `metabase` connector's revision 2 so leaves out `execute_sql` and its 11 tools that write or schedule, which Metabase refused with `403` for the read and query grant it asks for; a connection made on revision 1 lists them until it consents again and is validated (AI-1394).
+- An agent config granting a connector tool the connector leaves out is refused when it is saved (create, replace, patch and `POST /v1/agents/sync`), with a 400 naming the binding, the tool and the scope the connector never asks for, such as `metabase`'s `execute_sql`. It saved, and a session then failed a required binding with `tool_unavailable` or quietly lost the tool. A binding with `tool_patterns` is not affected (AI-1400).
 - A recording sent to a live STT shortcut (`POST /v1/stt/recordings` with `en-low-latency`, or a router config whose STT is one) is transcribed by the batch models of the recorded shortcut for the same languages (`en-recorded`, `multilingual-recorded`). It reached Deepgram's batch endpoint with Flux, which Deepgram refuses (`V2_MODEL_ON_V1_LISTEN_ENDPOINT`). A live shortcut that names no language, such as `stt-fast`, goes by the recording's language hints: none or English only, `en-recorded`; any other language, `multilingual-recorded`. A recording pinned to a live-only model such as `deepgram/flux-general-en` is refused before any vendor is asked, naming the recorded shortcuts (AI-1396).
 - SIP trunks the router makes in Stream for calls, transfers and attached numbers now accept a call only with a password the vendor sends, or only from the vendor's addresses. A transfer takes the vendor's addresses as a call does, so a transfer on a vendor with no declared addresses and no password (Sinch, Bandwidth) is refused before anything is made. A number attached before this release keeps its old trunk, and attaching it again changes nothing; releasing it removes the trunk, but the same number may not be available to buy again.
 - Attaching a number that is already attached in the same app answers what it has and changes nothing. It made a second SIP trunk for the number, which Stream refuses, so a Go, JavaScript or .NET program that waits for calls failed on every start after its first.

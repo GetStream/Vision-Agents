@@ -46,6 +46,9 @@ type ConsentRequest struct {
 	// outcome (step_up.go): the consent is a step-up that asks for that access. Nil for a
 	// login.
 	StepUp *core.Outcome
+	// ReturnURL is the session's (Spec.ReturnURL): where the consent goes back to. Empty is
+	// the dashboard.
+	ReturnURL string
 }
 
 // Consent is a consent begun for one connection, as a client is handed it.
@@ -85,8 +88,11 @@ type logins struct {
 	shows     func(authorizationID string) bool
 	connected func(authorizationID string) bool
 	// open is Manager.openBinding, which opens a binding once its connection is usable.
-	open   func(ctx context.Context, spec Spec, binding store.ConnectorBinding, selection string, d *dispatcher) (string, error)
-	logger *slog.Logger
+	open func(ctx context.Context, spec Spec, binding store.ConnectorBinding, selection string, d *dispatcher) (string, error)
+	// implied is Manager.impliedSelection: the caller's one connected connection, which a login
+	// with none chosen opens on once the person has connected one outside the conversation.
+	implied func(ctx context.Context, spec Spec, binding store.ConnectorBinding) (string, error)
+	logger  *slog.Logger
 }
 
 // login is one binding waiting for its person to log in, and once they have, the binding
@@ -141,7 +147,7 @@ func (m *Manager) offerLogin(spec Spec, binding store.ConnectorBinding, reason, 
 	}
 	if d.logins == nil {
 		d.logins = &logins{byAlias: map[string]*login{}, consents: m.options.Connectors.Consents,
-			open: m.openBinding, logger: m.logger}
+			open: m.openBinding, implied: m.impliedSelection, logger: m.logger}
 	}
 	d.logins.byAlias[binding.Name] = &login{binding: binding, connectionID: selection,
 		rejected: reason == unavailableCredentialRejected}
@@ -258,6 +264,17 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, stri
 			return l.opened, ""
 		}
 	}
+	// None chosen yet: the person may have connected an account since the session opened, from
+	// their app with a consent its backend began rather than in this chat. That one opens as it
+	// would have had it been connected when the session opened, with no second consent.
+	if l.connectionID == "" && d.logins.implied != nil {
+		id, err := d.logins.implied(ctx, d.spec, l.binding)
+		if err != nil {
+			d.logins.logger.Warn("could not read the caller's connections for a login", "connector", l.binding.Name, "error", err)
+		} else if id != "" && d.openLogin(ctx, l, id) {
+			return l.opened, ""
+		}
+	}
 	return nil, d.askToLogIn(ctx, l)
 }
 
@@ -312,7 +329,7 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
 	}
 	consent, err := d.logins.consents(ctx, ConsentRequest{
 		CustomerID: d.spec.CustomerID, ConnectorID: l.binding.ConnectorID,
-		UserID: d.spec.Caller.UserID, ConnectionID: l.connectionID,
+		UserID: d.spec.Caller.UserID, ConnectionID: l.connectionID, ReturnURL: d.spec.ReturnURL,
 	})
 	if err != nil {
 		d.logins.logger.Warn("could not begin a consent in the conversation", "connector", l.binding.Name, "error", err)

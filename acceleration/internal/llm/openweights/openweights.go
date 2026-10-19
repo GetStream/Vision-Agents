@@ -95,6 +95,9 @@ const (
 	FamilyQwen        Family = "qwen"
 	FamilyKimi        Family = "kimi"
 	FamilyMiniMax     Family = "minimax"
+	// FamilyNemotron is Nemotron 3.5, which thinks unless its template is told not to.
+	// Nemotron 3 Ultra has no switch, which is why the version is part of the match.
+	FamilyNemotron Family = "nemotron"
 	// FamilyNone is a model with no thinking to switch, and a model whose switch this
 	// deployment has not seen answer. Both are asked for nothing rather than told
 	// something the host may ignore.
@@ -121,6 +124,8 @@ func FamilyOf(model string) Family {
 		return FamilyKimi
 	case strings.Contains(id, "minimax"):
 		return FamilyMiniMax
+	case strings.Contains(id, "nemotron-3.5"), strings.Contains(id, "nemotron-3-5"):
+		return FamilyNemotron
 	default:
 		return FamilyNone
 	}
@@ -138,8 +143,16 @@ func Efforts(model string) []string {
 }
 
 // Thinks reports whether a family has a switch at all. A model that does not is left
-// alone: Nemotron answers without thinking already, and Gemma has nothing to turn off.
+// alone: Nemotron 3 Ultra answers without thinking already, and Gemma has nothing to
+// turn off.
 func Thinks(model string) bool { return FamilyOf(model) != FamilyNone }
+
+// Sees reports whether the weights take images. Every host keeps the VL that open-weight
+// vision models carry in their name, Qwen3-VL and Nemotron-3.5-Super-VL alike.
+func Sees(model string) bool {
+	id := strings.ToLower(model)
+	return strings.HasSuffix(id, "-vl") || strings.Contains(id, "-vl-")
+}
 
 // RequestFields builds the fields that carry the thinking switch, for a host that serves
 // the weights unchanged. It returns nil for a model with no switch, which is what
@@ -164,7 +177,7 @@ func RequestFields(model string, thinking bool) func(llm.ResponseParams, string)
 				fields["reasoning_effort"] = effort
 			}
 			return fields
-		case FamilyQwen:
+		case FamilyQwen, FamilyNemotron:
 			return map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": thinking}}
 		default:
 			return map[string]any{"chat_template_kwargs": map[string]any{"thinking": thinking}}
@@ -177,6 +190,9 @@ func RequestFields(model string, thinking bool) func(llm.ResponseParams, string)
 // cache key, so openaicompat forces those off whatever this says.
 func Capabilities(model string, thinking bool, effort string) llm.Capabilities {
 	capabilities := llm.Capabilities{StreamsReasoning: thinking}
+	if Sees(model) {
+		capabilities.InputModalities = []string{llm.ModalityImage}
+	}
 	if thinking {
 		capabilities.ReasoningEfforts = Efforts(model)
 		capabilities.DefaultEffort = effort

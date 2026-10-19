@@ -3011,7 +3011,7 @@ type Authorization struct {
 	// ExpiresAt When the attempt ends, 10 minutes after it began. A callback after that is refused.
 	ExpiresAt time.Time `json:"expires_at"`
 
-	// HandoffToken Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+	// HandoffToken Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, and never in a query string. A native app, which has no origin to post from, puts it in launch_url's fragment, which no server and no Referer is sent. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
 	HandoffToken string `json:"handoff_token"`
 
 	// Id The attempt.
@@ -3020,7 +3020,7 @@ type Authorization struct {
 	// Kind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
 	Kind AuthorizationKind `json:"kind"`
 
-	// LaunchUrl The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider.
+	// LaunchUrl The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider. A consent whose return_url is a native app's own scheme is opened in the app's web authentication sheet as launch_url#handoff_token=<handoff_token> instead, and the page reads the token from its fragment.
 	LaunchUrl string `json:"launch_url"`
 }
 
@@ -3029,7 +3029,7 @@ type AuthorizationKind string
 
 // AuthorizationRequest defines model for AuthorizationRequest.
 type AuthorizationRequest struct {
-	// ReturnUrl The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs.
+	// ReturnUrl The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.
 	ReturnUrl *string `json:"return_url,omitempty"`
 }
 
@@ -4310,6 +4310,9 @@ type CreateSessionRequest struct {
 	// Backchannel Murmur while a participant is still talking, the way a person does.
 	Backchannel *bool `json:"backchannel,omitempty"`
 
+	// Call An existing Stream call for the agent to join, by its type and id.
+	Call *SessionCall `json:"call,omitempty"`
+
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
@@ -4369,10 +4372,13 @@ type CreateSessionRequest struct {
 	// ProjectId What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
 	ProjectId *string `json:"project_id,omitempty"`
 
+	// ReturnUrl The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands.
+	ReturnUrl *string `json:"return_url,omitempty"`
+
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
 
-	// StartVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+	// StartVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
 	StartVoice *bool `json:"start_voice,omitempty"`
 
 	// Sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -6113,7 +6119,7 @@ type Session struct {
 	Agent   *string `json:"agent,omitempty"`
 	AgentId string  `json:"agent_id"`
 
-	// CallId The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
+	// CallId The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
 	CallId   string `json:"call_id"`
 	CallType string `json:"call_type"`
 
@@ -6192,6 +6198,15 @@ type Session struct {
 
 	// Voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// SessionCall An existing Stream call for the agent to join, by its type and id.
+type SessionCall struct {
+	// Id The call id.
+	Id string `json:"id"`
+
+	// Type The call type, such as default.
+	Type string `json:"type"`
 }
 
 // SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
@@ -6719,6 +6734,12 @@ type SpendBucket struct {
 	//
 	// Example: support
 	Value string `json:"value"`
+}
+
+// StartSessionVoiceRequest defines model for StartSessionVoiceRequest.
+type StartSessionVoiceRequest struct {
+	// Call An existing Stream call for the agent to join, by its type and id.
+	Call *SessionCall `json:"call,omitempty"`
 }
 
 // StatsBucket defines model for StatsBucket.
@@ -8378,6 +8399,9 @@ type SaySessionJSONRequestBody = SayRequest
 // SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
 type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
 
+// StartSessionVoiceJSONRequestBody defines body for StartSessionVoice for application/json ContentType.
+type StartSessionVoiceJSONRequestBody = StartSessionVoiceRequest
+
 // CreateSimulationJSONRequestBody defines body for CreateSimulation for application/json ContentType.
 type CreateSimulationJSONRequestBody = SimulationRequest
 
@@ -9294,7 +9318,7 @@ type ClientInterface interface {
 
 	// CreateAuthorizationWithBody Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9305,7 +9329,7 @@ type ClientInterface interface {
 
 	// CreateAuthorization Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -10248,14 +10272,27 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
 	StopSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartSessionVoice Start voice on a session
+	// StartSessionVoiceWithBody Start voice on a session
 	//
-	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-	StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	StartSessionVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartSessionVoice Start voice on a session
+	//
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoice(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
@@ -12498,7 +12535,7 @@ func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...Req
 
 // CreateAuthorizationWithBody Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12519,7 +12556,7 @@ func (c *Client) CreateAuthorizationWithBody(ctx context.Context, id string, con
 
 // CreateAuthorization Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -14448,15 +14485,38 @@ func (c *Client) StopSessionVoice(ctx context.Context, id string, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// StartSessionVoice Start voice on a session
+// StartSessionVoiceWithBody Start voice on a session
 //
-// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-func (c *Client) StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartSessionVoiceRequest(c.Server, id)
+func (c *Client) StartSessionVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSessionVoiceRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartSessionVoice Start voice on a session
+//
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *Client) StartSessionVoice(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSessionVoiceRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -22583,8 +22643,19 @@ func NewStopSessionVoiceRequest(server string, id string) (*http.Request, error)
 	return req, nil
 }
 
-// NewStartSessionVoiceRequest constructs an http.Request for the StartSessionVoice method
-func NewStartSessionVoiceRequest(server string, id string) (*http.Request, error) {
+// NewStartSessionVoiceRequest calls the generic StartSessionVoice builder with application/json body
+func NewStartSessionVoiceRequest(server string, id string, body StartSessionVoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartSessionVoiceRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewStartSessionVoiceRequestWithBody constructs an http.Request for the StartSessionVoice method, with any body, and a specified content type
+func NewStartSessionVoiceRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -22609,10 +22680,12 @@ func NewStartSessionVoiceRequest(server string, id string) (*http.Request, error
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -27766,7 +27839,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAuthorizationWithBodyWithResponse Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -27777,7 +27850,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAuthorizationWithResponse Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -28822,16 +28895,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
 	StopSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionVoiceResponse, error)
 
-	// StartSessionVoiceWithResponse Start voice on a session
+	// StartSessionVoiceWithBodyWithResponse Start voice on a session
 	//
-	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 	//
-	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-	StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
+	StartSessionVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
+
+	// StartSessionVoiceWithResponse Start voice on a session
+	//
+	// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoiceWithResponse(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
@@ -38728,8 +38812,12 @@ type StartSessionVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -38749,9 +38837,19 @@ func (r StartSessionVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r StartSessionVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -47077,7 +47175,7 @@ func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id 
 
 // CreateAuthorizationWithBodyWithResponse Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -47094,7 +47192,7 @@ func (c *ClientWithResponses) CreateAuthorizationWithBodyWithResponse(ctx contex
 
 // CreateAuthorizationWithResponse Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -48733,17 +48831,34 @@ func (c *ClientWithResponses) StopSessionVoiceWithResponse(ctx context.Context, 
 	return ParseStopSessionVoiceResponse(rsp)
 }
 
-// StartSessionVoiceWithResponse Start voice on a session
+// StartSessionVoiceWithBodyWithResponse Start voice on a session
 //
-// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
 //
-// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
-func (c *ClientWithResponses) StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
-	rsp, err := c.StartSessionVoice(ctx, id, reqEditors...)
+func (c *ClientWithResponses) StartSessionVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
+	rsp, err := c.StartSessionVoiceWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartSessionVoiceResponse(rsp)
+}
+
+// StartSessionVoiceWithResponse Start voice on a session
+//
+// The agent joins the call named in call, else the one voice was last on, else agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing, and naming another call while it is on is refused. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *ClientWithResponses) StartSessionVoiceWithResponse(ctx context.Context, id string, body StartSessionVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
+	rsp, err := c.StartSessionVoice(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -57893,12 +58008,26 @@ func ParseStartSessionVoiceResponse(rsp *http.Response) (*StartSessionVoiceRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

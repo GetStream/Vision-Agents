@@ -24,6 +24,17 @@ class DummyWarmable(Warmable[Resource]):
         self.resource = resource
 
 
+class AsyncDummyWarmable(Warmable[Resource]):
+    def __init__(self):
+        self.resource = None
+
+    async def on_warmup(self):
+        return Resource()
+
+    async def on_warmed_up(self, resource) -> None:
+        self.resource = resource
+
+
 class TestWarmable:
     async def test_warmup_cached(self):
         cache = WarmupCache()
@@ -42,6 +53,16 @@ class TestWarmable:
         assert warmable.on_warmup_calls_count == 1
         # on_warmed_up() sets the resource to the instance and must be called again
         assert warmable.on_warmed_up_calls_count == 2
+
+    async def test_warmup_cached_sets_the_resource_on_an_async_warmable(self):
+        cache = WarmupCache()
+        first = AsyncDummyWarmable()
+        second = AsyncDummyWarmable()
+        await first.warmup(cache)
+        await second.warmup(cache)
+
+        assert first.resource is not None
+        assert second.resource is first.resource
 
     async def test_warmup_no_cache(self):
         warmable = DummyWarmable()

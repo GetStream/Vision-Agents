@@ -470,6 +470,23 @@ class TestSessions:
             {"name": "crm", "connection_id": "connection-1"}
         ]
 
+    async def test_a_return_url_goes_over_as_the_sessions_return_url(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(return_url="https://app.example/connectors/done")
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["return_url"] == "https://app.example/connectors/done"
+
+    async def test_no_return_url_sends_none(self, api: stream.Client, router: Router):
+        session = await api.agent("docs").sessions.create(stream.SessionOptions())
+        await session.close()
+
+        assert "return_url" not in router.body("POST", "/v1/agents/sessions")
+
     async def test_querying_narrows_to_the_agent_and_the_filters_given(
         self, api: stream.Client, router: Router
     ):

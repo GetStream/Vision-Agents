@@ -80,7 +80,8 @@ func TestRouterBaseIsTheRouterTheRunTalksTo(t *testing.T) {
 	}{
 		{"acceleration target at its own URL", "", Config{TargetName: "acceleration", TargetURL: "http://127.0.0.1:9191/"}, "http://127.0.0.1:9191"},
 		{"acceleration target spawned on the default", "", Config{TargetName: "acceleration"}, "http://127.0.0.1:8080"},
-		{"the environment overrides the target URL", "http://router.example:7000", Config{TargetName: "acceleration", TargetURL: "http://127.0.0.1:9191"}, "http://router.example:7000"},
+		{"native target without an explicit URL uses the environment", "http://router.example:7000/", Config{TargetName: "acceleration"}, "http://router.example:7000"},
+		{"the explicit native target overrides the environment", "http://router.example:7000", Config{TargetName: "acceleration", TargetURL: "http://127.0.0.1:9191"}, "http://127.0.0.1:9191"},
 		{"accelerated target's URL is its Python agent", "", Config{TargetName: "accelerated", TargetURL: "http://127.0.0.1:8000"}, "http://127.0.0.1:8080"},
 		{"accelerated target's router is named by the environment", "http://127.0.0.1:9292/", Config{TargetName: "accelerated", TargetURL: "http://127.0.0.1:8000"}, "http://127.0.0.1:9292"},
 	} {
@@ -95,7 +96,7 @@ func TestRouterBaseIsTheRouterTheRunTalksTo(t *testing.T) {
 
 func TestCaptureRouterTimelineFollowsTheRunsTargetURL(t *testing.T) {
 	srv := fakeRouter(t, "vb-restaurant-golden-1")
-	t.Setenv("STREAM_ACCELERATION_URL", "")
+	t.Setenv("STREAM_ACCELERATION_URL", "http://127.0.0.1:1")
 	dir := t.TempDir()
 
 	stages, err := captureRouterTimeline(Config{TargetName: "acceleration", TargetURL: srv.URL}, "vb-restaurant-golden-1", dir)
@@ -112,7 +113,7 @@ func TestCaptureRouterTimelineFollowsTheRunsTargetURL(t *testing.T) {
 
 func TestCaptureAgentHeardFollowsTheRunsTargetURL(t *testing.T) {
 	srv := fakeRouter(t, "vb-restaurant-golden-1")
-	t.Setenv("STREAM_ACCELERATION_URL", "")
+	t.Setenv("STREAM_ACCELERATION_URL", "http://127.0.0.1:1")
 	dir := t.TempDir()
 
 	if err := captureAgentHeard(Config{TargetName: "acceleration", TargetURL: srv.URL}, "vb-restaurant-golden-1", dir); err != nil {

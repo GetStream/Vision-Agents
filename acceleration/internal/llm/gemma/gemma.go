@@ -32,6 +32,15 @@ const baseURLEnvVar = "GEMMA_BASE_URL"
 // routing config names the model alone, so the provider puts its owner back on.
 const modelOwner = "google/"
 
+// conversationTemperature is what a request that names none is answered at. The
+// deployment's own default is Gemma's 1.0, at which it announces a tool call and then skips
+// it, and rules differently on the same words.
+const conversationTemperature = 0.2
+
+// flowPurpose is the flow controller's requests, which are a classification and answered
+// at zero.
+const flowPurpose = "flow"
+
 // defaultModel is used when the caller names no model.
 const defaultModel = "gemma-4-26B-A4B-it"
 
@@ -72,10 +81,17 @@ func New(options Options) (*openaicompat.LLM, error) {
 		// The live path wants the first word, not a think-then-speak turn. The deployment
 		// also defaults thinking off; this pins it on every request so a client cannot
 		// enable it by accident.
-		RequestFields: func(_ llm.ResponseParams, _ string) map[string]any {
-			return map[string]any{
+		RequestFields: func(params llm.ResponseParams, _ string) map[string]any {
+			fields := map[string]any{
 				"chat_template_kwargs": map[string]any{"enable_thinking": false},
 			}
+			if params.Temperature == nil {
+				fields["temperature"] = conversationTemperature
+				if params.Purpose == flowPurpose {
+					fields["temperature"] = 0.0
+				}
+			}
+			return fields
 		},
 		// Thinking off still leaves an empty thought channel in some answers.
 		ThoughtChannel: true,

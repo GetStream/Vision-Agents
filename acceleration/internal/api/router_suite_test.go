@@ -153,7 +153,10 @@ type RouterSuite struct {
 	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
 	// written nowhere.
 	appRefuses bool
-	server     *httptest.Server
+	// deploymentKnown has the suite's Stream say which app is the deployment's own, as a
+	// deployment-mode router that was given its app id does.
+	deploymentKnown bool
+	server          *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
@@ -226,6 +229,12 @@ type RouterSuite struct {
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
 	connectorsOff bool
+	// ttsVoices resolves the voice of every text-to-speech request, live and recorded, for a
+	// suite about voices to set before it starts the harness. Nil passes each one through.
+	ttsVoices routing.VoiceResolver
+	// ttsConfig is what the text-to-speech routers, live and recorded, route over, for a
+	// suite about voices to set before it starts the harness. Empty is routableConfig.
+	ttsConfig routing.ModalityConfig
 	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
 	// the connection proxy to set before it starts the harness. Zero caps nothing.
 	proxyCallsPerMinute int64
@@ -384,6 +393,9 @@ func (s *RouterSuite) SetupSuite() {
 		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
+	if s.deploymentKnown {
+		s.stream = streamapp.NewClients(knownApps{s.apps}, streamapp.ClientsOptions{})
+	}
 	if s.appMode {
 		mint, err := streamapp.NewMint(s.gatewayMint().URL, suiteMintBearer)
 		s.Require().NoError(err)
@@ -749,8 +761,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
 	speaking := ttsrouter.NewRegistry()
 	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	ttsConfig := s.ttsConfig
+	if len(ttsConfig.Providers) == 0 {
+		ttsConfig = routableConfig()
+	}
 	speaker, err := ttsrouter.New(ttsrouter.Options{
-		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Config: ttsConfig, Registry: speaking, Store: s.store, Live: s.live, Voices: s.ttsVoices, Gate: gate,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
@@ -766,10 +784,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.T().Cleanup(transcriptions.Close)
 
 	recordings, err := ttsrouter.NewRecordings(ttsrouter.Options{
-		Config:    routableConfig(),
+		Config:    ttsConfig,
 		Recorders: recorderRegistry(),
 		Store:     s.store,
 		Live:      s.live,
+		Voices:    s.ttsVoices,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -1579,6 +1598,11 @@ func (a *suiteApps) ForAppReading(ctx context.Context, customer string, app int6
 	}
 	return a.deployment.ForApp(ctx, customer, app)
 }
+
+// knownApps are the suite's apps saying which one is the deployment's own.
+type knownApps struct{ *suiteApps }
+
+func (a knownApps) App() int64 { return a.deployment.App() }
 
 // set changes how the suite's apps answer for a customer, and forgets what they said.
 func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {

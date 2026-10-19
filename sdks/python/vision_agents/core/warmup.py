@@ -28,7 +28,7 @@ class WarmupCache:
         if (resource := self._cache.get(warmable_cls)) is not None:
             # The resource is already loaded.
             # Set it to the warmable instance and exit
-            warmable.on_warmed_up(resource)
+            await await_or_run(warmable.on_warmed_up, resource)
             return
 
         # When the resource is not loaded yet, use the lock to avoid loading it multiple times in parallel.

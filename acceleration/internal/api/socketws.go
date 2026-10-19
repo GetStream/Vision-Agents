@@ -25,6 +25,10 @@ type socketStart struct {
 	Session CreateSessionRequest `json:"session"`
 }
 
+// errSocketCall refuses a call named in a socket session's start frame: the socket carries
+// the audio, so the session joins no Stream call.
+var errSocketCall = invalidRequest("a socket session carries its own audio and joins no Stream call, so it takes no call")
+
 // openSocketSession holds a voice conversation over the socket itself rather than a call.
 //
 // The caller sends a `start` frame naming the session, the way POST /v1/agents/sessions
@@ -94,10 +98,14 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = connection.SetReadDeadline(time.Time{})
 
-	// The start frame carries POST /v1/agents/sessions's body, so a device is refused here
-	// what it is refused there.
-	if failure, refused := refuseServerSideFields(ctx, start.Session); refused {
+	// The start frame carries POST /v1/agents/sessions's body, so a request is refused here
+	// as it is refused there.
+	if failure, refused := refuseSessionRequest(ctx, start.Session); refused {
 		refuseWith(failure)
+		return
+	}
+	if start.Session.Call != nil {
+		refuseWith(errSocketCall)
 		return
 	}
 

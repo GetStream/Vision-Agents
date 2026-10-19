@@ -33,6 +33,9 @@ const (
 		"being worked on: tell them it is still going, in terms of what they asked for."
 	idlePurpose = "Nobody has said anything for a while: check whether they are still " +
 		"there or want anything else."
+	// answerPurpose is the same silence after a question the caller has not answered.
+	answerPurpose = "They have not answered your question: check they are still there, and " +
+		"offer to wait if they need a moment. Do not repeat the whole question."
 	// greetPurpose takes the greeting the agent was configured with.
 	greetPurpose = "The call has just started and nobody has spoken: greet them with your own " +
 		"variation of this greeting, keeping what it says and about as long: %s"

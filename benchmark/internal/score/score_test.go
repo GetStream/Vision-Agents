@@ -28,6 +28,110 @@ func TestPercentileAndPassK(t *testing.T) {
 	}
 }
 
+func TestALaterReplyDoesNotAnswerEarlierCallerTurns(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:  rate,
+		Agent: audio.Concat(audio.Silence(6*rate), audio.Tone(rate/2, 220, 12000)),
+		Events: []caller.Event{
+			{TurnID: "name", RecStartMs: 500, RecEndMs: 1000, Text: true},
+			{TurnID: "parking", RecStartMs: 2000, RecEndMs: 3000, Text: true},
+			{TurnID: "chair", RecStartMs: 4000, RecEndMs: 5000, Text: true},
+		},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 1 || got[0].TurnID != "chair" || got[0].V2VMS != 1000 {
+		t.Fatalf("only the latest caller turn drew a reply: %+v", got)
+	}
+	if len(dropped) != 2 || dropped[0] != (DroppedTurn{TurnID: "name", Reason: "no_reply_before_next_turn"}) || dropped[1] != (DroppedTurn{TurnID: "parking", Reason: "no_reply_before_next_turn"}) {
+		t.Fatalf("unanswered turns must be visible rather than inflated reply samples: %+v", dropped)
+	}
+}
+
+func TestAReplyStartingWithTheNextCallerIsNotTheEarlierAnswer(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:  rate,
+		Agent: audio.Concat(audio.Silence(3*rate/2), audio.Tone(rate, 220, 12000)),
+		Events: []caller.Event{
+			{TurnID: "earlier", RecEndMs: 1000, Text: true},
+			{TurnID: "next", RecStartMs: 1500, RecEndMs: 2000, Text: true},
+		},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 0 || len(dropped) != 2 || dropped[0].Reason != "no_reply_before_next_turn" {
+		t.Fatalf("speech at the next caller's start is outside the earlier reply window: %+v, dropped %+v", got, dropped)
+	}
+}
+
+func TestABackgroundSoundDoesNotEndTheReplyWindow(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:  rate,
+		Agent: audio.Concat(audio.Silence(3*rate), audio.Tone(rate/2, 220, 12000)),
+		Events: []caller.Event{
+			{TurnID: "question", RecEndMs: 1000, Text: true},
+			{TurnID: "cough", RecStartMs: 2000, RecEndMs: 2200, Text: true, Overlap: true, OverlapSound: "cough"},
+		},
+	}
+	got, _ := TimingFromRecording(rec)
+	if len(got) != 1 || got[0].TurnID != "question" || got[0].V2VMS != 2000 {
+		t.Fatalf("the question is still waiting through a background sound: %+v", got)
+	}
+}
+
+func TestALongWaitWithoutAnotherCallerTurnIsStillMeasured(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:   rate,
+		Agent:  audio.Concat(audio.Silence(21*rate), audio.Tone(rate/2, 220, 12000)),
+		Events: []caller.Event{{TurnID: "question", RecEndMs: 1000, Text: true}},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 1 || got[0].V2VMS != 20000 || len(dropped) != 0 {
+		t.Fatalf("a genuine long reply must not be capped or hidden: %+v, dropped %+v", got, dropped)
+	}
+}
+
+func TestSpeechDuringTheCallerIsNotReportedAsUnanswered(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:   rate,
+		Agent:  audio.Concat(audio.Silence(rate), audio.Tone(rate/2, 220, 12000), audio.Silence(2*rate)),
+		Events: []caller.Event{{TurnID: "question", RecStartMs: 500, RecEndMs: 2000, Text: true}},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 0 || len(dropped) != 1 || dropped[0].Reason != "agent_started_during_caller" {
+		t.Fatalf("early speech is a timing exclusion rather than a missing answer: %+v, dropped %+v", got, dropped)
+	}
+}
+
+func TestAnEarlyInterruptionDoesNotHideALaterReply(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:   rate,
+		Agent:  audio.Concat(audio.Silence(rate), audio.Tone(rate/2, 220, 12000), audio.Silence(3*rate/2), audio.Tone(rate/2, 220, 12000)),
+		Events: []caller.Event{{TurnID: "question", RecStartMs: 500, RecEndMs: 2000, Text: true}},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 1 || got[0].V2VMS != 1000 || len(dropped) != 0 {
+		t.Fatalf("the later post-caller reply still has a measurable gap: %+v, dropped %+v", got, dropped)
+	}
+}
+
+func TestAQuietAgentReplyUsesTheAgentTrackThreshold(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Rate:   rate,
+		Agent:  audio.Concat(audio.Silence(rate), audio.Tone(rate/2, 220, 400)),
+		Events: []caller.Event{{TurnID: "question", RecEndMs: 500, Text: true}},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 1 || got[0].V2VMS != 500 || len(dropped) != 0 {
+		t.Fatalf("quiet speech on the agent's isolated track is still a reply: %+v, dropped %+v", got, dropped)
+	}
+}
+
 func TestEntityInSpeech(t *testing.T) {
 	fails := EntityInSpeech("booked Saturday at seven thirty for Alvarez party of six", []scenario.Entity{
 		{Name: "name", Value: "Alvarez", InSpeech: true},
