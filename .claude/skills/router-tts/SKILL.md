@@ -142,8 +142,9 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
   has it). A Cartesia UUID, an Inworld name such as `Ashley`, a mistyped name such as
   `Rachell`, `custom:` and no voice are not asked about and route as #989 left them: a name
   ElevenLabs refuses on a shortcut that also reaches Cartesia or Inworld still starts there
-  and fails on the first line. Staging's Inworld key cannot list voices (403, 2026-10-16), so
-  leaving Inworld out for a name its listing does not vouch for would refuse every Inworld voice.
+  and fails on the first line. Staging's Inworld key could not list voices (403, 2026-10-16, until
+  its scopes were widened on 2026-10-19), so leaving Inworld out for a name its listing does
+  not vouch for would refuse every Inworld voice on any key like it.
 - ElevenLabs answers an id that cannot be one of its voices, such as a Cartesia UUID, with
   400 `detail.status: invalid_uid` (live 2026-10-16). `Exists` returns `errNotAVoiceID`, and
   `Check` lets the voice through without a warning and without turning the check off.
@@ -165,6 +166,25 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
   voice spoken (`routing.VoiceOverwritten`, `ttsrouter/registry.go` `voiceOr`), so the
   request's `voice` is never asked of the provider.
 - Not checked: Cartesia and Inworld voices on a target with no ElevenLabs candidate (their listers have no `Exists`), a router with no database (no resolver) and the standalone `cmd/agent` binary.
+
+`GET /v1/agents/voices/library` lists the libraries `buildLibrary` wires (`cmd/router/main.go`):
+ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached for
+`libraryTTL` (an hour), so a picker pays for a vendor's paging once an hour, not per request.
+
+- Cartesia is read in full: pages of 100 until `has_more` is false or `next_page` is empty,
+  with `next_page` sent back as `starting_after`
+  ([docs](https://docs.cartesia.ai/api-reference/voices/list); 1,049 voices over 11 pages on
+  2026-10-19). Past `cartesiaMaxPages` (100), or when a `next_page` comes back, the listing
+  is an error and the catalogue keeps the list it had: a shortened list is never cached.
+- Fish is not browsable. Its public `GET /model` stopped at 1,000 models (`window_limited`) at
+  2.78-2.93s a page of 100 on 2026-10-19, so `provider=fish` answers how to use a Fish voice
+  instead (`unbrowsable` in `library.go`): by its model id, which the router sends to Fish as
+  `reference_id` ([docs](https://docs.fish.audio/developer-guide/core-features/text-to-speech)).
+  Any other provider with no library still says it `publishes no voice library`.
+- A listing the vendor answers with a 401 or 403 says the key cannot list voices
+  (`listRefused`); a refused voice, a preview and a 5xx keep `refused`'s wording. That error
+  reaches the caller only when it asked for one provider; with several, the provider is in
+  `unavailable` and the error goes to a warn log (`internal/api/voices.go`).
 
 ## Three things that narrow candidates without being terms
 

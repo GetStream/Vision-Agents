@@ -433,7 +433,7 @@ func (s *TTSRouterSuite) TestAVoiceElevenLabsRefusedIsStillRefusedAfterACartesia
 type failingListing struct{ listed }
 
 func (failingListing) List(context.Context) ([]voices.Library, error) {
-	return nil, errors.New("inworld refused the voice (http 403): api key does not have required scopes")
+	return nil, errors.New("the inworld key cannot list voices (http 403): api key does not have required scopes")
 }
 
 func (s *TTSRouterSuite) TestAShortcutSpeaksAVoiceElevenLabsHasOnElevenLabs() {
