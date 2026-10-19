@@ -203,8 +203,10 @@ A voice that is not the customer's own is checked when the voice opens (`Resolve
 
 - A recording is built by `ttsrouter.DefaultRecorderRegistry` (`ttsrouter/recordings.go`), which
   has ElevenLabs alone. Every other vendor in `router.yaml` (Cartesia, Inworld, Breeze, Speechify,
-  Gemini, Fish, s2pro) only streams. Any ElevenLabs model records, its live ones included: on
-  staging on 2026-10-19 an inline recording on `elevenlabs/eleven_v4` returned audio, and one on
+  Gemini, Fish, s2pro) only streams. Any ElevenLabs model is offered as a recorder, but only
+  `eleven_v4` is verified (staging, 2026-10-19: an inline recording returned audio); the other
+  five in `router.yaml` (`eleven_flash_v2_5`, `eleven_v4_turbo`, `eleven_multilingual_v2`,
+  `eleven_v3_conversational`, `eleven_v3`) are `unverified`. On the same day a recording on
   `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2` failed with
   `no factory registered`.
 - `Recordings.Check` runs before a recording is accepted (`recordSpeech` in `api/recordings.go`).

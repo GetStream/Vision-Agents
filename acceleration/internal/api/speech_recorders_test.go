@@ -49,6 +49,16 @@ func (s *SpeechRecordersSuite) TestASpeechJobPinnedToAModelThatOnlyStreamsIsRefu
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, s.onlyStreams())
+	s.Zero(s.recordingRows(), "a refused job is not left queued")
+}
+
+func (s *SpeechRecordersSuite) TestASpeechJobWithACallbackIsRefusedBeforeItIsQueuedToo() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"text": "hello", "callback": "https://example.com/hook", "options": map[string]any{"target": s.live}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, s.onlyStreams())
+	s.Zero(s.recordingRows(), "a refused job is not left queued")
 }
 
 func (s *SpeechRecordersSuite) TestATextSpokenInlineOnAModelThatOnlyStreamsIsRefused() {
@@ -103,6 +113,39 @@ func (s *SpeechRecordersSuite) TestTheRoutesSayWhichTextToSpeechCandidatesCanRec
 	s.Equal(map[string]bool{"live": false}, canRecord(routes[offered].Candidates))
 }
 
+// The controls below take their expected values from da97ee28, the base: an unknown target
+// is not this change's to refuse. Check leaves it to Record, which says what it always has.
+func (s *SpeechRecordersSuite) TestAnUnknownTargetSpokenInlineStillFailsTheSpeech() {
+	var spoken Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": "nope/nope"}}, &spoken))
+
+	s.Equal(RecordingStatusFailed, spoken.Status)
+	s.Equal(`routing: unknown target "nope/nope"`, value(spoken.Error))
+}
+
+func (s *SpeechRecordersSuite) TestAnUnknownTargetAsAJobIsStillQueued() {
+	var queued Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"text": "hello", "options": map[string]any{"target": "nope/nope"}}, &queued))
+
+	s.Equal(RecordingStatusQueued, queued.Status)
+}
+
+func (s *SpeechRecordersSuite) TestSpeechToTextAndConversationRoutesSayNothingAboutRecording() {
+	for _, modality := range []string{"stt", "sts"} {
+		var routes []Route
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/"+modality+"/routes", nil, &routes))
+		s.Require().NotEmpty(routes, modality+" has a shortcut with a title, so it is listed")
+		for _, route := range routes {
+			s.Require().NotEmpty(route.Candidates, modality+"/"+route.Id)
+			for _, candidate := range route.Candidates {
+				s.Nil(candidate.CanRecord, modality+"/"+route.Id+" "+candidate.Provider)
+			}
+		}
+	}
+}
+
 func (s *SpeechRecordersSuite) TestSpeechToTextRoutesSayNothingAboutRecording() {
 	var resolved []Candidate
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/stt/routes/en-low-latency", nil, &resolved))
@@ -116,6 +159,14 @@ func (s *SpeechRecordersSuite) TestSpeechToTextRoutesSayNothingAboutRecording() 
 // onlyStreams is what a recording of live is told, which names the model that records.
 func (s *SpeechRecordersSuite) onlyStreams() string {
 	return s.live + " can only stream speech, not record it; models that record: stub/stub-model"
+}
+
+// recordingRows is how many recordings, queued or not, this test's app has.
+func (s *SpeechRecordersSuite) recordingRows() int {
+	count, err := s.store.DB().NewSelect().Model((*store.Recording)(nil)).Where("customer_id = ?", s.customerID()).
+		Count(context.Background())
+	s.Require().NoError(err)
+	return count
 }
 
 // speechStats are the text-to-speech rows written for this test's app.
