@@ -5,8 +5,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -148,10 +150,18 @@ func (m *schedulingModel) instructions() string {
 // when one comes due.
 type ScheduledTasksSuite struct {
 	RouterSuite
+	sink *channelSink
 }
 
 func TestScheduledTasksSuite(t *testing.T) {
 	runSuite(t, new(ScheduledTasksSuite))
+}
+
+func (s *ScheduledTasksSuite) SetupSuite() {
+	s.sink = &channelSink{sent: map[string][]string{}}
+	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.sink.serve))
+	s.T().Cleanup(s.channelAPI.Close)
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *ScheduledTasksSuite) SetupTest() {
@@ -913,4 +923,258 @@ func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {
 	asked := s.await(watching, "tool_call")
 	s.Equal("schedule_task", asked["name"])
 	s.Empty(s.tasksOf(user), "the caller's own tool was asked, not the router's")
+}
+
+// channelSink stands in for the channel providers' APIs, Meta's and
+// Telnyx's both, keeping the text of every message sent to it, by who it
+// was sent to.
+type channelSink struct {
+	mu   sync.Mutex
+	sent map[string][]string
+}
+
+func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		To   string          `json:"to"`
+		Text json.RawMessage `json:"text"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	text := ""
+	var meta struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(body.Text, &meta); err == nil {
+		text = meta.Body
+	} else {
+		_ = json.Unmarshal(body.Text, &text)
+	}
+	c.mu.Lock()
+	c.sent[body.To] = append(c.sent[body.To], text)
+	c.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprint(w, `{"messages":[{"id":"wamid.sent"}]}`)
+}
+
+// to is everything the sink was sent for one person, in order.
+func (c *channelSink) to(number string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.sent[number]...)
+}
+
+// connectWhatsApp hands the router a WhatsApp line's credentials.
+func (s *ScheduledTasksSuite) connectWhatsApp(number string) ChannelAccount {
+	var line ChannelAccount
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/channels",
+		ConnectChannelRequest{
+			Kind:      "whatsapp",
+			Number:    number,
+			AccountId: pointerTo(strings.TrimPrefix(number, "+")),
+			Token:     pointerTo("meta-token"),
+			Signing:   pointerTo(appSecret),
+			Challenge: pointerTo("verify-" + s.app.key),
+		}, &line))
+	return line
+}
+
+// lineNumber is a line nobody else in the run is using, and writerNumber a
+// person's phone, as the channel providers write them.
+func (s *ScheduledTasksSuite) lineNumber() string { return "+1555" + digits(s.utils.uuid()) }
+func (s *ScheduledTasksSuite) writerNumber() string {
+	return "+1347" + digits(s.utils.uuid())
+}
+
+// agentOnWhatsApp is a scheduling agent answering on a connected WhatsApp
+// number.
+func (s *ScheduledTasksSuite) agentOnWhatsApp(number string) string {
+	return s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Channels = &AgentChannels{Whatsapp: &ChannelLineRequest{Number: number}}
+	})
+}
+
+// seedWriter records the user as somebody who writes to the agent on
+// WhatsApp from address, just now, so WhatsApp's window stands open.
+func (s *ScheduledTasksSuite) seedWriter(user *testClient, configID, number, address string) {
+	ctx := context.Background()
+	s.Require().NoError(s.store.SaveChannelIdentity(ctx, &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: configID, Kind: "whatsapp",
+		Address: address, UserID: user.userID,
+	}))
+	account, err := s.store.ChannelAccount(ctx, s.customerID(), "whatsapp", number)
+	s.Require().NoError(err)
+	fresh, err := s.store.ClaimChannelMessage(ctx, account.ID, "wamid."+s.utils.uuid(), address)
+	s.Require().NoError(err)
+	s.Require().True(fresh)
+}
+
+// taskOn is a task the backend schedules for the user on the config,
+// following up in the session opened, delivered as deliverTo says.
+func (s *ScheduledTasksSuite) taskOn(user *testClient, configID, sessionID string, deliverTo []string) ScheduledTask {
+	body := taskRequest(configID)
+	body.SessionId = &sessionID
+	body.DeliverTo = deliverTo
+	return s.createTask(user, body)
+}
+
+func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := s.openScheduling(user, config, nil)
+	created := s.taskOn(user, config, opened.Id, []string{"whatsapp"})
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("whatsapp", run.DeliveredTo)
+	s.Equal(created.Id, run.TaskID)
+	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
+	s.Equal("Done.", s.sink.to(writer)[0], "the words the agent answered with are the words carried out")
+	s.True(s.model().heard("<scheduled_task"), "the follow-up ran in the conversation")
+}
+
+func (s *ScheduledTasksSuite) TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation() {
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	// The identity is there, but the person never wrote: no window.
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: config, Kind: "whatsapp",
+		Address: writer, UserID: user.userID,
+	}))
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"whatsapp", "conversation"})
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("conversation", run.DeliveredTo)
+	s.Empty(s.sink.to(writer), "nothing was texted outside the window")
+}
+
+func (s *ScheduledTasksSuite) TestAnUnreachablePhoneFallsBackToWhatsApp() {
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"phone", "whatsapp"})
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("whatsapp", run.DeliveredTo, "no call could be placed here, so the text carried it")
+	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+		10*time.Second, 50*time.Millisecond)
+}
+
+func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
+	retries := scheduling.DeliveryRetries
+	scheduling.DeliveryRetries = []time.Duration{time.Millisecond, time.Millisecond}
+	s.T().Cleanup(func() { scheduling.DeliveryRetries = retries })
+
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"phone"})
+	s.runWorker()
+	task := s.tasksOf(user)[0]
+	s.makeDue(task)
+
+	var runs []store.ScheduledTaskRun
+	s.Eventually(func() bool {
+		runs = s.runsOf(task)
+		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunFailed
+	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
+	s.Require().NotNil(runs[0].Error)
+	s.Contains(*runs[0].Error, "phone", "the run says the call is what could not be made")
+	s.Equal(1, s.taskReloaded(task).ConsecutiveFailures)
+}
+
+func (s *ScheduledTasksSuite) TestAQuietTaskIsHeldUntilItsQuietHoursEnd() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	now := time.Now().UTC()
+	body := taskRequest(config)
+	body.SessionId = &opened.Id
+	body.Schedule.Timezone = pointerTo("UTC")
+	body.QuietHours = &ScheduledTaskQuietHours{
+		Start: now.Add(-time.Hour).Format("15:04"),
+		End:   now.Add(2 * time.Hour).Format("15:04"),
+	}
+	created := s.createTask(user, body)
+	s.Require().NotNil(created.QuietHours)
+	s.runWorker()
+	task := s.tasksOf(user)[0]
+	s.makeDue(task)
+
+	s.Eventually(func() bool {
+		held := s.taskReloaded(task)
+		return held.LeaseUntil != nil && held.LeaseUntil.After(time.Now().Add(time.Hour))
+	}, 15*time.Second, 250*time.Millisecond, "the task was never held")
+	runs := s.runsOf(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunRunning, runs[0].State, "a held run is still running")
+	s.Require().NotNil(runs[0].PostponedUntil)
+	s.Equal(store.ScheduledTaskActive, s.taskReloaded(task).State)
+	s.False(s.model().heard("<scheduled_task"), "nothing was delivered into the quiet hours")
+}
+
+func (s *ScheduledTasksSuite) TestDeliverToAndQuietHoursReadBackAndCanBeChanged() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.DeliverTo = []string{"phone", "sms", "phone"}
+	body.QuietHours = &ScheduledTaskQuietHours{Start: "22:00", End: "07:00"}
+	created := s.createTask(user, body)
+
+	s.Equal([]string{"phone", "sms"}, created.DeliverTo, "each channel once, in the order written")
+	s.Require().NotNil(created.QuietHours)
+	s.Equal("22:00", created.QuietHours.Start)
+	s.Equal("07:00", created.QuietHours.End)
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{DeliverTo: pointerTo([]string{})}, &updated))
+	s.Equal([]string{"conversation"}, updated.DeliverTo, "an empty list is the conversation alone")
+
+	var cleared ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{QuietHours: &ScheduledTaskQuietHours{}}, &cleared))
+	s.Nil(cleared.QuietHours, "both boundaries empty is the hold cleared")
+}
+
+func (s *ScheduledTasksSuite) TestDeliverToAndQuietHoursThatDoNotReadAreRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+
+	body := taskRequest(config)
+	body.DeliverTo = []string{"carrier-pigeon"}
+	status, answered := s.taskFailure(s.serverClient.actingFor(user),
+		http.MethodPost, "/v1/agents/scheduled-tasks", body)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(answered.Error.Message, "deliver_to")
+
+	body = taskRequest(config)
+	body.QuietHours = &ScheduledTaskQuietHours{Start: "22:00", End: "22:00"}
+	status, answered = s.taskFailure(s.serverClient.actingFor(user),
+		http.MethodPost, "/v1/agents/scheduled-tasks", body)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(answered.Error.Message, "quiet_hours")
+
+	body = taskRequest(config)
+	body.QuietHours = &ScheduledTaskQuietHours{Start: "ten", End: "07:00"}
+	status, _ = s.taskFailure(s.serverClient.actingFor(user),
+		http.MethodPost, "/v1/agents/scheduled-tasks", body)
+	s.Equal(http.StatusBadRequest, status)
 }
