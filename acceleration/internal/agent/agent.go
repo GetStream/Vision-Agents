@@ -1249,16 +1249,19 @@ var errDeparted = errors.New("agent: participant left")
 // The frames that trail a leave were queued before it: at most audioBuffer (10 chunks of
 // 20 ms, streamedge/streamedge.go:41-43) on the channel, one held in each track's Send
 // (streamedge/streamedge.go:429) and what the track buffered behind it. consumeEdge hands
-// them over back to back, since a refused frame opens nothing, so they all come within
-// milliseconds of the first. A second covers that with room to spare, and is all a
+// them over back to back, since a dropped frame opens nothing, so they normally come within
+// milliseconds of the first. A stall after the first dropped frame (another participant's
+// first dial, or a slow ProcessAudio) can outlast the grace: a trailing frame after it
+// reopens a session, which then lives until the agent closes, as on base. A second covers
+// the normal case with room to spare, and is all a
 // participant still in the call loses when the SFU reports a leave that did not happen
 // (a migration keeps the session id: getstream-go-webrtc call.go:558-563).
 const departedGrace = time.Second
 
-// refuses reports whether listen must drop a participant's audio because they left, and
+// dropsDeparted reports whether listen must drop a participant's audio because they left, and
 // forgets the leave once departedGrace has passed: audio still coming then is somebody
 // who is still in the call. Called with a.mu held.
-func (a *Agent) refuses(participantID string) bool {
+func (a *Agent) dropsDeparted(participantID string) bool {
 	dropped, gone := a.departed[participantID]
 	if !gone {
 		return false
@@ -1282,7 +1285,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 		a.mu.Unlock()
 		return nil, errors.New("agent: closed")
 	}
-	if a.refuses(participant.ID) {
+	if a.dropsDeparted(participant.ID) {
 		a.mu.Unlock()
 		return nil, errDeparted
 	}
