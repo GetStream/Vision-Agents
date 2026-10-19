@@ -139,20 +139,29 @@ func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
 		return "", false
 	}
 	var description string
+	var properties map[string]any
 	for _, tool := range tools.Tools {
 		if tool.Name == call.Name {
 			description = " " + strings.ToLower(strings.Join(strings.FieldsFunc(tool.Description, func(r rune) bool {
 				return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 			}), " ")) + " "
+			properties, _ = tool.Parameters["properties"].(map[string]any)
 		}
 	}
-	keys := make([]string, 0, len(arguments))
+	// A string property left out is as empty as one sent as "": MiniMax left the address out.
+	keys := make([]string, 0, len(arguments)+len(properties))
 	for key := range arguments {
 		keys = append(keys, key)
 	}
+	for key, schema := range properties {
+		if kind, _ := schema.(map[string]any)["type"].(string); kind == "string" && !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
 	slices.Sort(keys)
 	for _, key := range keys {
-		if text, ok := arguments[key].(string); !ok || strings.TrimSpace(text) != "" {
+		value, given := arguments[key]
+		if text, ok := value.(string); given && (!ok || strings.TrimSpace(text) != "") {
 			continue
 		}
 		before, after, named := strings.Cut(description, " "+strings.ReplaceAll(key, "_", " ")+" ")
@@ -161,6 +170,12 @@ func emptyNamed(call llm.ToolCall, tools harness.Tools) (string, bool) {
 		}
 		words := strings.Fields(before)
 		if len(words) > 0 && words[len(words)-1] == "or" || strings.HasPrefix(after, "or ") {
+			continue
+		}
+		// One left out counts only where the description lists it among what the tool
+		// takes ("..., and service address"), not where it only names the thing ("Look up
+		// an order").
+		if !given && !slices.Contains(words[max(0, len(words)-3):], "and") {
 			continue
 		}
 		return key, true

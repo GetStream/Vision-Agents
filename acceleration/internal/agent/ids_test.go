@@ -152,13 +152,27 @@ func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 }
 
 func TestAnArgumentTheToolAsksForIsNotSentEmpty(t *testing.T) {
+	strings := func(names ...string) map[string]any {
+		properties := map[string]any{}
+		for _, name := range names {
+			properties[name] = map[string]any{"type": "string"}
+		}
+		return map[string]any{"type": "object", "properties": properties}
+	}
 	tools := harness.Tools{Tools: []harness.Tool{
-		{Name: "verify_account", Description: "Verify the account with PIN, last four of the card or account, and service address."},
-		{Name: "verify_identity", Description: "Verify a patient with name, DOB, and member ID or phone."},
+		{Name: "verify_account", Description: "Verify the account with PIN, last four of the card or account, and service address.",
+			Parameters: strings("pin", "last4", "address")},
+		{Name: "verify_identity", Description: "Verify a patient with name, DOB, and member ID or phone.",
+			Parameters: strings("name", "dob", "member_id", "phone")},
 	}}
 	key, empty := emptyNamed(llm.ToolCall{Name: "verify_account", Arguments: `{"address":"","last4":"9821","pin":"4471"}`}, tools)
 	assert.True(t, empty)
 	assert.Equal(t, "address", key)
+	key, empty = emptyNamed(llm.ToolCall{Name: "verify_account", Arguments: `{"pin":"4471","last4":"9821"}`}, tools)
+	assert.True(t, empty, "left out is empty too")
+	assert.Equal(t, "address", key)
+	_, empty = emptyNamed(llm.ToolCall{Name: "verify_identity", Arguments: `{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456"}`}, tools)
+	assert.False(t, empty, "phone left out beside a member ID")
 	_, empty = emptyNamed(llm.ToolCall{Name: "verify_account", Arguments: `{"address":"14 Cedar Lane","last4":"9821","pin":"4471"}`}, tools)
 	assert.False(t, empty)
 	_, empty = emptyNamed(llm.ToolCall{Name: "verify_identity", Arguments: `{"name":"Maya Chen","dob":"1987-03-04","member_id":"ABC123456","phone":""}`}, tools)
