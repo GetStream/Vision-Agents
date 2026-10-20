@@ -35,6 +35,22 @@ class RemotePipelineError(Exception):
 
 
 @dataclass
+class RemotePhone:
+    """The phone call a remote conversation is held on.
+
+    Attributes:
+        number: The number the agent is on: the one that rang for an inbound call, the one
+            that dialed for an outbound one.
+        vendor_call_id: The outbound leg at the vendor. Empty for an inbound call.
+        ring_timeout: How long an outbound call was told to ring, in seconds.
+    """
+
+    number: str
+    vendor_call_id: str = ""
+    ring_timeout: Optional[float] = None
+
+
+@dataclass
 class RemoteCall:
     """What a remote pipeline needs to know to run a conversation on the agent's behalf.
 
@@ -49,6 +65,8 @@ class RemoteCall:
         harness: How delegated work is configured, if at all.
         cost_tracking: Labels attributed to every request the call makes.
         memory_filter: Which memories this call may recall, keyed by scope.
+        phone: Set when the call is a phone call, so the pipeline can end it when nobody
+            answers.
     """
 
     call_type: str
@@ -59,6 +77,7 @@ class RemoteCall:
     harness: Optional[Harness] = None
     cost_tracking: Optional[dict[str, str]] = None
     memory_filter: Optional[dict[str, str]] = None
+    phone: Optional[RemotePhone] = None
 
 
 @dataclass
