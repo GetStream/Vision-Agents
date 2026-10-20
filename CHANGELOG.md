@@ -639,7 +639,8 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 `examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
 against `sdks/kotlin` as it is in the checkout. Its Chat screen shows the conversation with
 Stream Chat's AI components: the reply streaming in, its reasoning, each tool call, and the
-refund's question on the reply. CI builds it beside the Kotlin SDK.
+refund's question on the reply. Its Voice screen puts the agent on a call and writes out what
+was said, with the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
 
 ### A session can join a Stream call that already exists
 

@@ -6,7 +6,7 @@ phone's Stream token, are all swift_demo's. Only the app is here.
 
 ```
 settings.gradle.kts   builds the app against sdks/kotlin as it is in this checkout
-app/                  the phone half: chat, and tools that run on the device
+app/                  the phone half: chat, voice, and tools that run on the device
 ```
 
 ## Run it
@@ -22,7 +22,7 @@ sdk.dir=/path/to/Android/sdk
 demo.streamApiKey=<the router's STREAM_API_KEY>
 ```
 
-And run it on an emulator:
+And run it on an emulator, then ask about an order in the Chat tab or tap talk in the Voice tab:
 
 ```bash
 ./gradlew :app:installDebug
@@ -36,8 +36,8 @@ The app builds against `sdks/kotlin` through an included build, so a change to t
 up in the app without publishing it. Stream Chat 7.15.0 is on `https://stream-io-repo.com`
 rather than Maven Central, which `settings.gradle.kts` adds.
 
-The Chat screen asks for `xai/grok-4.7`, a model that streams its reasoning, so the router
-needs `XAI_API_KEY`.
+The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
+`XAI_API_KEY`; a call keeps the agent's faster model.
 
 ## What the app shows
 
@@ -49,11 +49,19 @@ needs `XAI_API_KEY`.
   reassembled from the live updates by `LiveReasoning`), each tool call as it runs
   (`AIMessageParts`), and what the agent is doing before it answers (`AITypingIndicator`).
   `ChatComposer` asks, dictates and stops a reply; `AISuggestions` starts a conversation.
+- **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
+  the user `setUser` named, with the token `backend` signed. It asks for the microphone first,
+  and only the microphone: the call runs Stream's audio-call service. What was said is written
+  out underneath as it happens, off the session's socket rather than out of the call, with
+  "Listening", "Thinking" or "Working on refund decision" while there is nothing to read yet.
+  The call carries on while the Chat tab is shown, and ends with the hang-up button or when the
+  agent leaves.
 - **`lookup_order`** is a tool the model calls that runs in `Demo.kt`. Its data never leaves
   the phone; the agent asks, and only sees the answer. Ask about order `A-1042` or `A-1043`.
 - **`issue_refund`** asks first. Ask for a refund on `A-1042`: once the refund skill says it is
-  owed, the agent calls it, and the call waits for you with a question on the reply
-  (`AIToolApprover`). Refund and the tool runs; Not now and the agent is told you declined.
+  owed, the agent calls it, and the call waits for you. In Chat the question is on the reply
+  (`AIToolApprover`); on a call it is a card above the controls (`AIToolApprovalCard`). Refund
+  and the tool runs; Not now and the agent is told you declined.
 
 What the agent is doing before it writes, "Thinking" or "Working on refund decision", comes
 off the session's socket rather than Stream's AI indicator events: Stream Chat 7.15.0 cannot
