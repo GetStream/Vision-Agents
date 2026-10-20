@@ -10075,7 +10075,8 @@ type ClientInterface interface {
 	// CreateRunWithBody Run an agent on one input and wait for its answer
 	//
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
 	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes any type of body and a specified content type.
@@ -10086,7 +10087,8 @@ type ClientInterface interface {
 	// CreateRun Run an agent on one input and wait for its answer
 	//
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
 	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes a body of the `application/json` content type.
@@ -14020,7 +14022,8 @@ func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors 
 // CreateRunWithBody Run an agent on one input and wait for its answer
 //
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
 // A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes any type of body and a specified content type.
@@ -14041,7 +14044,8 @@ func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body
 // CreateRun Run an agent on one input and wait for its answer
 //
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
 // A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes a body of the `application/json` content type.
@@ -28792,7 +28796,8 @@ type ClientWithResponsesInterface interface {
 	// CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
 	//
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
 	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -28803,7 +28808,8 @@ type ClientWithResponsesInterface interface {
 	// CreateRunWithResponse Run an agent on one input and wait for its answer
 	//
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
 	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -48673,7 +48679,8 @@ func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, plu
 // CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
 //
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
 // A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -48690,7 +48697,8 @@ func (c *ClientWithResponses) CreateRunWithBodyWithResponse(ctx context.Context,
 // CreateRunWithResponse Run an agent on one input and wait for its answer
 //
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
-// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
 // A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).

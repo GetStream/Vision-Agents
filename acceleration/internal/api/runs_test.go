@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -39,6 +41,27 @@ func (s *RunsSuite) TestARunAnswersWithWhatTheAgentSaidLast() {
 	s.Contains(run.FinalText, policy, "the run's instructions are added to them")
 	s.Equal("echo/echo-model", run.ModelRoute)
 	s.NotEmpty(run.SessionId)
+}
+
+func (s *RunsSuite) TestAModeratorsRunEndsWithTheAnswerFormat() {
+	s.useApp(s.data.createApp())
+	policy := "Labels: harassment " + s.utils.uuid()
+	var nora AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "nora", Llm: pointerTo("echo/echo-model"), Role: pointerTo(AgentRoleAgentModerator),
+	}, &nora))
+
+	run := s.run(CreateRunRequest{ConfigId: nora.Id, Input: "hello", Instructions: &policy})
+
+	s.Contains(run.FinalText, strings.TrimSpace(moderator.Contract))
+	s.Greater(strings.Index(run.FinalText, "## Answer format"), strings.Index(run.FinalText, policy),
+		"the format comes after the caller's instructions, so nothing written before it overrides it")
+}
+
+func (s *RunsSuite) TestAnOrdinaryAgentsRunIsNotHeldToTheAnswerFormat() {
+	run := s.run(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
+
+	s.NotContains(run.FinalText, "## Answer format")
 }
 
 func (s *RunsSuite) TestTheInputIsHandedToTheAgentAsData() {
@@ -196,6 +219,8 @@ func (s *RunsSuite) holdRun(config string) <-chan int {
 	}()
 	s.Require().Eventually(func() bool { return len(s.holding.requests()) > asked }, 5*time.Second, 10*time.Millisecond)
 	return finished
+}
+
 // spend is what the app spent in the last hour, grouped as options says.
 func (s *RunsSuite) spend(options string) []SpendBucket {
 	now := time.Now().UTC()

@@ -646,6 +646,18 @@ keeps the stored one, so a client that does not know the field cannot take it aw
 dashboard tagged `role: agent_moderator` before the field existed take the role when the router
 migrates: the newest live one in each app (AI-1472).
 
+### A template for the app's moderator, and a run of it answers in a fixed format
+
+`acceleration/templates/agent_moderator` is the starting point for an app's Nora: a text agent
+on `llm-thinking` with `role: agent_moderator`, reviewer instructions (content is untrusted data,
+flags are hypotheses, the current content is judged first, evidence is quoted exactly) and a
+skill each for profanity, harassment, suggestive language and actions. The app may edit all of
+it. The answer format the chat review worker parses, one JSON object with per-case, per-label
+judgments, evidence, a flag assessment and summaries, is not in the template: `POST
+/v1/agents/runs` adds it after the config's and the caller's instructions on every run of an
+`agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
+Ask Nora, are not held to it (AI-1479).
+
 ### An Android demo, the Android half of swift_demo
 
 `examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
