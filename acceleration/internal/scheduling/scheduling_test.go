@@ -470,7 +470,7 @@ func TestAMonthlyRepeatPastTheMonthsEndSaysItSkipsMonths(t *testing.T) {
 		{"2026-10-28T09:00", "FREQ=MONTHLY;BYMONTHDAY=1,31", "Monthly on day 1, 31 (day 31 is skipped in months without it)",
 			[]string{"Sat 2026-10-31", "Sun 2026-11-01", "Tue 2026-12-01", "Thu 2026-12-31"}},
 		{"2026-10-28T09:00", "FREQ=MONTHLY;BYMONTHDAY=15,30", "Monthly on day 15, 30 (day 30 is skipped in months without it)",
-			[]string{"Thu 2026-10-29", "Sun 2026-11-15", "Mon 2026-11-30", "Tue 2026-12-15"}},
+			[]string{"Fri 2026-10-30", "Sun 2026-11-15", "Mon 2026-11-30", "Tue 2026-12-15"}},
 		{"2026-10-28T09:00", "FREQ=MONTHLY;BYMONTHDAY=31,-1", "Monthly on day 31 and the last day (day 31 is skipped in months without it)",
 			[]string{"Sat 2026-10-31", "Mon 2026-11-30", "Thu 2026-12-31", "Sun 2027-01-31"}},
 		{"2026-10-28T09:00", "FREQ=MONTHLY", "Monthly",
