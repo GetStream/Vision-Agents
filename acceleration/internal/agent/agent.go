@@ -328,6 +328,9 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// opened is the line the agent opened the conversation with before anybody spoke, told
+	// to the model in its instructions rather than kept as a turn (Say).
+	opened string
 	// lateResults are lateResult messages, and lines said while a call ran, held back while
 	// the history ends in a call not yet answered (callsOpen), in the order they came.
 	lateResults []llm.Message
@@ -981,7 +984,7 @@ func (a *Agent) refuseWritten(turnID string, verdict guardrail.Verdict) string {
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
 // agent already knows what it wants to say, so a model would only add latency and cost.
 func (a *Agent) Say(ctx context.Context, text string) error {
-	turnID := fmt.Sprintf("say-%d", time.Now().UnixNano())
+	turnID := fmt.Sprintf("%s%d", sayPrefix, time.Now().UnixNano())
 
 	// A conversation in writing has no voice to say it with, so it is reported as said
 	// instead: what a caller would have heard is what a reader reads.
@@ -1002,9 +1005,61 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	}
 	a.speakingTurn = turnID
 	a.saying = text
+	// The model reads what the agent said from the history, so a line said without it has
+	// to be kept too, or the caller's answer to a greeting's question reaches it with no
+	// question. A line that opens the conversation is told to it instead: chat templates
+	// that need a user turn first refuse a conversation that opens on the assistant's.
+	said := llm.Message{Role: llm.Assistant, Content: text}
+	opening := len(a.history) == 0
+	switch {
+	case opening:
+		a.opened = text
+	case callsOpen(a.history):
+		a.lateResults = append(a.lateResults, said)
+	default:
+		a.history = append(a.history, said)
+	}
 	a.mu.Unlock()
 
-	return a.speakWhole(turnID, text)
+	// Announced like a reply, so the line is in the session's responses and its transcript.
+	// Before speaking, because the transcript stores a turn's text when its voice finishes and
+	// only if it was told the text first, and a voice may finish before Synthesize returns.
+	a.emitter.Send(Responding{TurnID: turnID})
+	a.emitter.Send(Responded{TurnID: turnID, Text: text})
+	if err := a.speakWhole(turnID, text); err != nil {
+		// Never heard, so the model must not be told it was said, and the transcript must not
+		// keep it as said.
+		a.mu.Lock()
+		a.forgetSaidLocked(opening, said)
+		a.mu.Unlock()
+		a.emitter.Send(Interrupted{TurnID: turnID})
+		return err
+	}
+	return nil
+}
+
+// sayPrefix starts the turn id of a line said as written, without the model.
+const sayPrefix = "say-"
+
+// Scripted reports whether a turn is a line the agent said as written rather than a reply
+// the model wrote, such as the greeting.
+func Scripted(turnID string) bool { return strings.HasPrefix(turnID, sayPrefix) }
+
+// forgetSaidLocked takes back a line Say kept for the model, when the voice never said it.
+// The caller holds a.mu.
+func (a *Agent) forgetSaidLocked(opening bool, said llm.Message) {
+	if opening {
+		if a.opened == said.Content {
+			a.opened = ""
+		}
+		return
+	}
+	for _, kept := range []*[]llm.Message{&a.lateResults, &a.history} {
+		if last := len(*kept) - 1; last >= 0 && (*kept)[last].Role == said.Role && (*kept)[last].Content == said.Content {
+			*kept = (*kept)[:last]
+			return
+		}
+	}
 }
 
 // Greet opens the call with a greeting. Unvaried, it is said word for word without asking
@@ -2069,6 +2124,9 @@ func (a *Agent) instructions() string {
 	}
 	if a.prompt != "" {
 		parts = append(parts, a.prompt)
+	}
+	if a.opened != "" {
+		parts = append(parts, fmt.Sprintf("You opened the call by saying: %q", a.opened))
 	}
 	// How to write for the voice comes last, because it is about the delivery rather than
 	// about who the agent is.
@@ -3929,11 +3987,13 @@ func (a *Agent) Continue(previous *Agent) {
 	// A copy: the old agent can still keep a turn between this and its Close, and would
 	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
+	opened := previous.opened
 	previous.mu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = history
 	a.speakers = speakers
+	a.opened = opened
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.
