@@ -759,6 +759,10 @@ type AgentSuite struct {
 	agentID string
 	// voiceAsked is what the voice was opened with.
 	voiceAsked routing.Spec
+	// logs is where the agent's log lines are written, when a test reads them.
+	logs *logLines
+	// callID is the call the agent serves, empty unless a test names one.
+	callID string
 
 	agent  *Agent
 	events *collector
@@ -791,6 +795,7 @@ func (s *AgentSuite) SetupTest() {
 	s.unified = false
 	s.performing = ""
 	s.voiceName = ""
+	s.logs = nil
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -908,6 +913,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	s.flow.reply = []string{`{"disposition":"respond","floor":"stop"}`}
 
 	logger := slog.New(slog.DiscardHandler)
+	if s.logs != nil {
+		logger = slog.New(slog.NewJSONHandler(s.logs, nil))
+	}
 
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
@@ -987,6 +995,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		AgentID:            s.agentID,
 		AppID:              "router",
 		SessionID:          "session-1",
+		CallID:             s.callID,
 		Incognito:          s.incognito,
 		Store:              s.records,
 		Live:               s.live,

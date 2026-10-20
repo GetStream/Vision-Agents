@@ -227,6 +227,10 @@ func (e *Edge) SpeechPending() bool { return e.speaker.pending() }
 // agent.Playout.
 func (e *Edge) DropSpeech() { e.speaker.drop() }
 
+// PlayoutStats counts what the outgoing queue has done with the agent's speech, satisfying
+// agent.PlayoutCounter.
+func (e *Edge) PlayoutStats() agent.PlayoutStats { return e.speaker.stats() }
+
 // Leave releases the call. It is safe to call more than once.
 func (e *Edge) Leave() error {
 	var err error

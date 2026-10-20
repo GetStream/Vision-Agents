@@ -634,6 +634,28 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### The router serves Prometheus metrics, and warns when the agent talks over itself
+
+`metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
+on a listener of its own, never the public one; it is empty by default, which serves none.
+When a voice publishes the audio of two utterances of one session interleaved, which the
+caller hears as the agent speaking over itself, the router logs one warning for the pair
+naming both syntheses and turns, and counts it in `router_agent_speech_overlaps_total` and
+`router_agent_speech_overlap_seconds_total` (label `provider`). The agent's log lines now
+carry `session` and `call`. What is spoken is unchanged (AI-1550).
+
+### The router logs which turn a turn follows, each tool call and each utterance
+
+`voice turn timing` names what started the turn (`kind`: `caller`, `tool`, `chase`) and, for a
+turn the agent started on its own, the caller turn it follows (`parent`). Each tool call the
+model makes logs one INFO line when it comes back, with its tool, call, turn, `duration_ms` and
+`outcome` (`ok`, `error`, `still-running`, `cancelled`, `refused` for a call the router turned back itself, before the tool ran), and is counted in
+`router_agent_tool_call_seconds` (label `outcome`). An utterance's start and end, a line the
+agent chose to say (a hold line, an update, a check-in) and a chase for a call a reply owed are
+logged at INFO, without what is said. `router_agent_open_utterances` (label `provider`) counts,
+for each chunk published, how many of the agent's utterances were open. What is spoken is
+unchanged (AI-1551).
+
 ### An agent config has a `role`, and the app's moderator agent is found by it
 
 `AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
@@ -658,6 +680,16 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
 
+### Simulations for the moderator template
+
+`acceleration/templates/agent_moderator/simulations/moderation.yaml` holds eight reviews Nora
+must get right, ported from the Nora prototype's evals: casual profanity in an adult market and
+the same words in an education app, an educational quotation, targeted abuse, repeat confirmed
+harassment, an overturned incident that must not escalate, an innocent message from a user with
+prior bans, and an instruction injected into the message. A simulation talks to Nora in chat
+rather than through a run, so each one hands over the policy with its cases, and its assertion
+judges the verdicts rather than the answer format. Run them after editing the agent with
+`getstream agents simulate nora` (AI-1506).
 ### The app's moderator reads the app's moderation data
 
 A session or run of an `agent_moderator` config is offered six read-only tools on the app's
@@ -2304,6 +2336,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- An OpenAI Realtime agent with `interrupt_response: false` answers a caller whose turn ends while it is still speaking. The server refused its own reply with `conversation_already_has_active_response`, which the agent logged as an error, and the caller's question was never answered. The agent now asks for that reply once the one in flight is done, and does the same for a refused prompt, text or tool result; a caller who speaks again or barges in gets the server's answer to their next turn instead (AI-1548).
 - A phone session ends on its own: 10 seconds after the last person leaves the call, and when a phone call is never answered (90 seconds for an outbound call, 30 seconds for an inbound one). The agent stops talking and leaves rather than finishing its sentence to an empty call. The Python SDK now tells the router a session is a phone call, as the Go SDK does, so a Python agent on a phone call can also transfer the caller to a person. Sessions that are not phone calls are unchanged.
 
 ### A Kotlin voice call asks only for the microphone
@@ -2344,6 +2377,7 @@ own `StreamVideo` is left as it is.
 - A request that names one model and asks it for an option it does not take is refused naming that model: `routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms`. It read `routing: no provider can express keyterms`, as if the router had looked beyond the model the caller chose. This is the `/v1/stt/stream`, `/v1/tts/stream` and `/v1/sts/stream` `error` frame and every other refusal of a term; a shortcut keeps the old message (#1014, AI-1419).
 - The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (#1014, AI-1419).
 - A live transcription whose vendor fails for good mid-call, such as ElevenLabs refusing an account that has not accepted its terms (`unaccepted_terms`), reports it once: `/v1/stt/stream` sent one more `error` frame per frame of audio after it (779 in one call). The stat row keeps the vendor's reason as its `error_message`, and the model is unavailable in `GET /v1/stt/providers` and ranked last for the next five minutes, however many turns it served before (AI-1417).
+- A live transcription whose vendor closes the socket with a refusal code, such as Muse's `1008` "Ingress below real-time", marks the model unavailable as any other refusal does. It was counted as a dropped connection, which leaves the model available. The refusal codes are `1002`, `1003`, `1007` to `1010` and `4000` to `4999`; every other close (`1005`, `1006`, `1011` to `1014`, `3xxx`) and a network error is still a drop. A stat recorded after the router began shutting down is dropped instead of panicking (AI-1436).
 - A `/v1/stt/stream`, `/v1/tts/stream`, `/v1/llm/stream` or `/v1/sts/stream` socket the router ends now closes with a close frame after its last frame: `1000` after a clean end, `1011` after a failure with the failure as the reason (cut to 123 bytes). It dropped the connection instead, so a caller saw `1006`, and a caller still sending audio after a refused start was reset and could lose the `error` frame itself, as `stream.STT(...).start()` did in 2 of 5 runs on staging ("the router closed the socket before it started"). The router now reads and drops what the caller sends for up to a second after its close frame, until the caller answers it (AI-1425).
 
 - `stream.STT.start()` raises the router's refusal as a `RouterError`, such as a model that takes no keyterms or has no API key. It sent the start frame and returned at once, so a refusal arrived only as an `STTErrorEvent`, and an agent nobody subscribed to errors on got no `started`, no error and no transcripts. `start()` now waits for the router's `started` or `error` frame. An error after `started` is still an `STTErrorEvent`, and the sockets opened later for other participants work as before (AI-1422).
