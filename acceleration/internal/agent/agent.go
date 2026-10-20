@@ -981,12 +981,17 @@ func (a *Agent) refuseWritten(turnID string, verdict guardrail.Verdict) string {
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
 // agent already knows what it wants to say, so a model would only add latency and cost.
 func (a *Agent) Say(ctx context.Context, text string) error {
+	return a.sayFor(text, "")
+}
+
+// sayFor says words as they are, for purpose: PurposeGreeting, or empty for any other line.
+func (a *Agent) sayFor(text, purpose string) error {
 	turnID := fmt.Sprintf("say-%d", time.Now().UnixNano())
 
 	// A conversation in writing has no voice to say it with, so it is reported as said
 	// instead: what a caller would have heard is what a reader reads.
 	if a.options.Text {
-		a.emitter.Send(Responded{TurnID: turnID, Text: text})
+		a.emitter.Send(Responded{TurnID: turnID, Text: text, Purpose: purpose})
 		return nil
 	}
 	// A native model has no way to say exact words: it says what it makes of a prompt.
@@ -1004,7 +1009,22 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	a.saying = text
 	a.mu.Unlock()
 
-	return a.speakWhole(turnID, text)
+	// Said first, so a watcher has the line before any of its sound. A voice that will not
+	// take it leaves it unsaid, and it is closed as cut off rather than left coming.
+	a.emitter.Send(Said{TurnID: turnID, Text: text, Purpose: purpose})
+	if err := a.speakWhole(turnID, text); err != nil {
+		a.mu.Lock()
+		if a.speakingTurn == turnID {
+			a.abandoned[turnID] = struct{}{}
+			a.speakingTurn = ""
+			a.saying = ""
+		}
+		a.mu.Unlock()
+		a.turns.interrupt(turnID)
+		a.emitter.Send(Interrupted{TurnID: turnID})
+		return err
+	}
+	return nil
 }
 
 // Greet opens the call with a greeting. Unvaried, it is said word for word without asking
@@ -1026,7 +1046,7 @@ func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
 			greeting = line
 		}
 	}
-	return a.Say(ctx, greeting)
+	return a.sayFor(greeting, PurposeGreeting)
 }
 
 // Interrupt abandons the reply being spoken, the way a participant talking over the agent
@@ -2057,7 +2077,18 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 		a.fail(err, "tts")
 		return
 	}
-	a.emitter.Send(Responded{TurnID: turnID, Text: line})
+	a.emitter.Send(Responded{TurnID: turnID, Text: line, Purpose: composedFor(purpose)})
+}
+
+// composedFor names what a composed line is for, as a watcher is told it.
+func composedFor(purpose string) string {
+	switch purpose {
+	case idlePurpose:
+		return PurposeCheckIn
+	case updatePurpose:
+		return PurposeUpdate
+	}
+	return ""
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of
@@ -3680,7 +3711,12 @@ func (a *Agent) speakWhole(turnID, text string) error {
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
-	return voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true})
+	if err := voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
+		// Refused, it is never said, so it is not counted as being said either.
+		a.settle()
+		return err
+	}
+	return nil
 }
 
 // closeUtterance ends a streaming voice's utterance for a turn. A non-streaming one

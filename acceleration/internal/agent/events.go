@@ -81,6 +81,28 @@ type Heard struct {
 
 func (Heard) isAgentEvent() {}
 
+// Said is words the agent speaks as they are, without asking the model: a greeting, or
+// any other line it was told to say. A voice reports it in place of a Responded, which is
+// the model's answer to somebody, so nothing waiting on an answer takes the greeting for
+// one. A conversation in writing has no voice and reports the line as Responded instead.
+// It is reported so a transcript has the line, and a watcher sees what the caller hears.
+type Said struct {
+	TurnID string
+	Text   string
+	// Purpose is what the line is for, PurposeGreeting for the call's opening and empty
+	// for any other line the agent was told to say.
+	Purpose string
+}
+
+// What a line the agent says unasked is for, as Said and Responded name it.
+const (
+	PurposeGreeting = "greeting"
+	PurposeCheckIn  = "checkin"
+	PurposeUpdate   = "update"
+)
+
+func (Said) isAgentEvent() {}
+
 // Decided is one judgement the conversation made about how to handle the call: whether
 // the caller had finished, whether what they said was meant for the agent, who keeps the
 // floor when both are talking, and when a silence needs filling.
@@ -145,6 +167,9 @@ type Responded struct {
 	PendingWork bool
 	TurnID      string
 	Text        string
+	// Purpose is why the agent said it unasked, empty for an answer: PurposeCheckIn or
+	// PurposeUpdate. A watcher tells the caller why the agent spoke up.
+	Purpose string
 	// TimeToFirstTokenMs is how long the participant waited for the model to start.
 	TimeToFirstTokenMs float64
 }
