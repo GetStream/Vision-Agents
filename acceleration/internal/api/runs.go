@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +22,17 @@ import (
 // defaultRunTimeout is how long a run that names no timeout may take: long enough for a few
 // tool calls, short enough that a stuck model frees the caller's worker.
 const defaultRunTimeout = 2 * time.Minute
+
+// runSlotsPrefix starts the key each app's runs in flight are counted under.
+const runSlotsPrefix = "runs:in_flight:"
+
+// runLeaseGrace is how long a run's slot outlives its timeout: the time closing its session
+// takes. A router that dies mid-run frees the slot when the lease ends.
+const runLeaseGrace = 30 * time.Second
+
+// runRetryAfter is the wait a run over the app's limit is told to take. A choice, not a
+// measurement: about as long as a short run takes to free its slot. # unverified
+const runRetryAfter = 5 * time.Second
 
 var (
 	// errRunTimedOut is a run that did not settle in its timeout.
@@ -55,6 +69,18 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	if failure != nil {
 		return nil, failure
 	}
+	timeout := defaultRunTimeout
+	if body.TimeoutMs != nil {
+		timeout = time.Duration(*body.TimeoutMs) * time.Millisecond
+	}
+	release, taken := s.runSlots.Take(ctx, runSlotsPrefix+url.QueryEscape(customerID), s.runsPerApp, timeout+runLeaseGrace)
+	defer release()
+	if !taken {
+		return nil, huma.ErrorWithHeaders(
+			APIError{Type: ErrorTypeRateLimited, Code: codeConcurrencyLimited, Message: fmt.Sprintf(
+				"the app already has %d runs in flight: retry after %ds", s.runsPerApp, int(runRetryAfter.Seconds()))},
+			http.Header{"Retry-After": {strconv.Itoa(int(runRetryAfter.Seconds()))}})
+	}
 
 	spec := session.FromConfig(*config)
 	spec.CustomerID = customerID
@@ -76,10 +102,6 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 
-	timeout := defaultRunTimeout
-	if body.TimeoutMs != nil {
-		timeout = time.Duration(*body.TimeoutMs) * time.Millisecond
-	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -150,11 +172,12 @@ func (r *runOutcome) see(event session.Event) {
 }
 
 // runFailed is err as the caller is told it: a spent budget and a run out of time say so, and
-// anything else is otherwise.
+// anything else is otherwise. A spent budget is a 403, not a 429: waiting does not refill it
+// before it resets, so a caller that retries 429s must not retry it.
 func runFailed(ctx context.Context, err error, otherwise APIError) APIError {
 	switch {
 	case errors.Is(err, policy.ErrBudgetSpent):
-		return APIError{Type: ErrorTypeRateLimited, Code: codeBudgetExceeded, Message: err.Error()}
+		return APIError{Type: ErrorTypePermission, Code: codeBudgetExceeded, Message: err.Error()}
 	case ctx.Err() != nil:
 		return errRunTimedOut
 	}
@@ -187,16 +210,19 @@ func (s *Server) registerRuns(api huma.API) {
 			"and ends with the request, so nothing is kept and no run sees another's input.\n" +
 			"The instructions are the caller's, trusted, and added to the config's for this run alone. " +
 			"The input is handed to the agent as JSON data, never as instructions.\n" +
-			"A config that does not start a session is a 400 invalid_config, a spent budget a 429 " +
-			"budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that " +
+			"A config that does not start a session is a 400 invalid_config, a spent budget a 403 " +
+			"budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may " +
+			"have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with " +
+			"Retry-After, a model that failed or said nothing a 503 model_failed, and a run that " +
 			"outlasts its timeout a 504.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "What the agent said last, and what the run spent"},
-			"429": errorResponse("The app's or organization's budget is spent"),
+			"403": errorResponse("Not the app's backend, or the app's or organization's budget is spent"),
+			"429": errorResponse("The app has as many runs in flight as it may: retry after Retry-After"),
 			"503": errorResponse("The model failed or gave no answer"),
 			"504": errorResponse("The run did not finish within its timeout"),
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
 	}, s.createRun)
 }
 

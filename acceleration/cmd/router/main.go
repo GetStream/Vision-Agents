@@ -1095,6 +1095,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		OpsKey:                settings.Auth.OpsKey,
 		Dispatch:              workers,
 		Quota:                 limiter,
+		RunsPerApp:            settings.Runs.ConcurrentPerApp,
 		Policies:              policies,
 		Connectors:            connectors,
 		ConnectorSecrets:      connectorSecrets,
