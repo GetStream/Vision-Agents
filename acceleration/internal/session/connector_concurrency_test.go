@@ -89,6 +89,32 @@ func (s *ConcurrencySuite) TestACallStillWaitingAtItsTimeoutIsNotSent() {
 	s.Equal("held by the router: in-flight limit 1 reached on the connection", row.ErrorMessage)
 }
 
+// TestTheWaitForASlotCountsAgainstTheBindingsTimeout: a call that waited for a slot is not
+// given its whole timeout again once sent. The first call holds the only slot for its 300 ms
+// timeout; the second, with 600 ms, ends 600 ms after it began, not 300 + 600.
+func (s *ConcurrencySuite) TestTheWaitForASlotCountsAgainstTheBindingsTimeout() {
+	const first, second = 300 * time.Millisecond, 600 * time.Millisecond
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	a := s.fixed("a", primary, "whoami")
+	a.TimeoutMs = int(first.Milliseconds())
+	b := s.fixed("b", primary, "whoami")
+	b.TimeoutMs = int(second.Milliseconds())
+	d := s.attachAll(a, b)
+	release := s.provider.hold()
+	defer release()
+	go func() { _, _ = s.call(d, "a__whoami", "{}") }()
+	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	start := time.Now()
+	said, err := s.call(d, "b__whoami", "{}")
+	took := time.Since(start)
+
+	s.Require().NoError(err)
+	s.Contains(said, "outcome_unknown", "it was sent once the first call's timeout freed the slot")
+	s.Less(took, second+first/2, "the wait for the slot is part of the timeout")
+}
+
 // TestACallInterruptedWhileWaitingIsNotSent: a turn that ends while the call waits ends the
 // wait, and the call never reaches the provider.
 func (s *ConcurrencySuite) TestACallInterruptedWhileWaitingIsNotSent() {

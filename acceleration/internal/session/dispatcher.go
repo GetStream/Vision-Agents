@@ -373,6 +373,9 @@ func (d *dispatcher) admit(ctx context.Context, deadline time.Time, r route, cal
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
 		return nil, llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied, message: heldByTheRouter(wait)}, nil
 	}
+	if r.maxInFlight == 0 {
+		return func() {}, nil, failure{}, nil
+	}
 	waiting, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	release, err := d.slots.take(waiting, r.connection.ID, r.maxInFlight)
@@ -381,9 +384,6 @@ func (d *dispatcher) admit(ctx context.Context, deadline time.Time, r route, cal
 			return nil, llm.TextParts(busy(call.Name, r.maxInFlight)), failure{kind: store.InvocationDenied, message: heldByTheCap(r.maxInFlight)}, nil
 		}
 		return nil, nil, failure{kind: store.InvocationClientTimeout}, stack.Wrap(fmt.Errorf("session: %s was not sent: %w", call.Name, err))
-	}
-	if r.maxInFlight == 0 {
-		return release, nil, failure{}, nil
 	}
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
 		release()
