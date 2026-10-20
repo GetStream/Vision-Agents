@@ -47,6 +47,16 @@ async def openrouter_api() -> AsyncIterator[tuple[str, list[dict]]]:
     await server.close()
 
 
+@pytest.fixture
+async def openrouter_llm(
+    openrouter_api: tuple[str, list[dict]],
+) -> AsyncIterator[LLM]:
+    base_url, _ = openrouter_api
+    llm = LLM(model="test", api_key="test", base_url=base_url)
+    yield llm
+    await llm.close()
+
+
 async def answer(
     llm: LLM, conversation: Conversation, participant: Participant, text: str
 ) -> None:
@@ -91,11 +101,11 @@ class TestOpenRouterLLM:
     """Test suite for OpenRouter LLM class."""
 
     async def test_who_spoke_is_named_once_a_second_person_has(
-        self, openrouter_api: tuple[str, list[dict]]
+        self, openrouter_llm: LLM, openrouter_api: tuple[str, list[dict]]
     ):
-        base_url, bodies = openrouter_api
+        _, bodies = openrouter_api
+        llm = openrouter_llm
         conversation = InMemoryConversation("", [])
-        llm = LLM(model="test", api_key="test", base_url=base_url)
         llm.set_conversation(conversation)
 
         await answer(llm, conversation, ALICE, "Hi")
@@ -109,7 +119,6 @@ class TestOpenRouterLLM:
 
         await answer(llm, conversation, BOB, "Me too")
         await answer(llm, conversation, ALICE, "Who is that?")
-        await llm.close()
         assert bodies[-1]["messages"][2:] == [
             {"role": "user", "content": "Are you there?"},
             {"role": "assistant", "content": "Ok"},

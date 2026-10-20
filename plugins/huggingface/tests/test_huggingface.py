@@ -81,6 +81,22 @@ async def huggingface_api() -> AsyncIterator[tuple[str, list[dict]]]:
     await server.close()
 
 
+@pytest.fixture
+async def http_llm(huggingface_api: tuple[str, list[dict]]) -> AsyncIterator[LLM]:
+    base_url, _ = huggingface_api
+    llm_ = LLM(model="test", base_url=base_url, api_key="test")
+    yield llm_
+    await llm_.close()
+
+
+@pytest.fixture
+async def http_vlm(huggingface_api: tuple[str, list[dict]]) -> AsyncIterator[VLM]:
+    base_url, _ = huggingface_api
+    vlm_ = VLM(model="test", base_url=base_url, api_key="test")
+    yield vlm_
+    await vlm_.close()
+
+
 async def answer(
     llm: BaseLLM, conversation: Conversation, participant: Participant, text: str
 ) -> None:
@@ -200,12 +216,10 @@ class VideoStreamTrackStub:
 
 class TestHuggingFaceVLM:
     async def test_who_spoke_is_named_once_a_second_person_has(
-        self, huggingface_api: tuple[str, list[dict]]
+        self, http_vlm: VLM, huggingface_api: tuple[str, list[dict]]
     ):
-        base_url, bodies = huggingface_api
-        vlm = VLM(model="test", base_url=base_url, api_key="test")
-        await assert_who_spoke_is_named(vlm, InMemoryConversation("", []), bodies)
-        await vlm.close()
+        _, bodies = huggingface_api
+        await assert_who_spoke_is_named(http_vlm, InMemoryConversation("", []), bodies)
 
     async def test_simple_response_success(
         self, vlm, conversation, huggingface_client_mock
@@ -259,12 +273,10 @@ class TestHuggingFaceVLM:
 
 class TestHuggingFaceLLM:
     async def test_who_spoke_is_named_once_a_second_person_has(
-        self, huggingface_api: tuple[str, list[dict]]
+        self, http_llm: LLM, huggingface_api: tuple[str, list[dict]]
     ):
-        base_url, bodies = huggingface_api
-        llm = LLM(model="test", base_url=base_url, api_key="test")
-        await assert_who_spoke_is_named(llm, InMemoryConversation("", []), bodies)
-        await llm.close()
+        _, bodies = huggingface_api
+        await assert_who_spoke_is_named(http_llm, InMemoryConversation("", []), bodies)
 
     async def test_simple_response_success(
         self, llm, conversation, huggingface_client_mock
