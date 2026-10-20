@@ -9,7 +9,9 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 func TestASettledTaskListsTheFilesItsCodeHandedBack(t *testing.T) {
@@ -103,4 +105,60 @@ func TestATimelineEntryCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 	require.Equal(t, &roundtrip, timeline[0].RoundtripMs, "the figure taken at the return is kept")
 	require.Nil(t, timeline[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
 	require.Nil(t, timeline[1].FirstAudibleFrameMs)
+}
+
+// flowCall is a flow decision's model call as the router reports it.
+func flowCall(success bool, errorCode string) llm.CallTiming {
+	return llm.CallTiming{OperationID: "op-1", Purpose: "flow", TurnID: "turn-1", Provider: "stub", Model: "fast",
+		TTFTMs: 80, DurationMs: 110, Success: success, ErrorCode: errorCode, InputTokens: 10, OutputTokens: 2}
+}
+
+func TestAServedModelCallIsTheFrameItAlwaysWas(t *testing.T) {
+	// The bytes base 7b510a431 sends for this call.
+	sent, ok := frameOf(agent.ModelCall{CallTiming: flowCall(true, "")})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"duration_ms":110,"model":"fast","operation_id":"op-1","provider":"stub","purpose":"flow","success":true,"ttft_ms":80,"turn_id":"turn-1","type":"model_call"}`,
+		string(raw))
+}
+
+func TestACancelledModelCallSaysItWasCancelled(t *testing.T) {
+	sent, ok := frameOf(agent.ModelCall{CallTiming: flowCall(false, "cancelled")})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `false`, string(mustField(t, raw, "success")))
+	require.JSONEq(t, `"cancelled"`, string(mustField(t, raw, "error_code")))
+}
+
+// timelineCall is the one model call a timeline lists for a turn that made only the request given.
+func timelineCall(t *testing.T, request store.Request) []byte {
+	t.Helper()
+	latency := 80.0
+	request.TurnID, request.OperationID, request.Purpose = "turn-1", "op-1", "flow"
+	request.StartedAt = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	request.Provider, request.Model, request.LatencyMs = "stub", "fast", &latency
+	request.InputTokens, request.OutputTokens = 10, 2
+	timeline := timelineOf([]live.Turn{{TurnID: "turn-1"}}, nil, []store.Request{request})
+	require.Len(t, timeline, 1)
+	require.NotNil(t, timeline[0].ModelCalls)
+	raw, err := json.Marshal(*timeline[0].ModelCalls)
+	require.NoError(t, err)
+	return raw
+}
+
+func TestAServedModelCallIsTheTimelineEntryItAlwaysWas(t *testing.T) {
+	// The bytes base 7b510a431 lists for this request.
+	require.Equal(t, `[{"input_tokens":10,"model":"fast","operation_id":"op-1","output_tokens":2,"provider":"stub","purpose":"flow","started_at":"2026-10-20T12:00:00Z","success":true,"ttft_ms":80}]`,
+		string(timelineCall(t, store.Request{Success: true})))
+}
+
+func TestACancelledModelCallOnTheTimelineSaysWhyAndWhatItCost(t *testing.T) {
+	raw := timelineCall(t, store.Request{Success: false, ErrorCode: store.ErrorCancelled})
+
+	require.JSONEq(t, `[{"input_tokens":10,"model":"fast","operation_id":"op-1","output_tokens":2,"provider":"stub","purpose":"flow","started_at":"2026-10-20T12:00:00Z","success":false,"error_code":"cancelled","ttft_ms":80}]`,
+		string(raw))
 }

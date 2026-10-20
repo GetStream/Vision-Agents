@@ -453,7 +453,7 @@ class Accelerated(OmniLLM):
                 self._pending_model_calls.setdefault(turn_id, []).append(frame)
             logger.info(
                 "model call timing call=%s turn=%s operation=%s purpose=%s provider=%s model=%s "
-                "ttft_ms=%s duration_ms=%s success=%s",
+                "ttft_ms=%s duration_ms=%s success=%s error_code=%s",
                 self.session.call_id if self.session else "",
                 frame.get("turn_id", ""),
                 frame.get("operation_id", ""),
@@ -463,6 +463,7 @@ class Accelerated(OmniLLM):
                 frame.get("ttft_ms", 0),
                 frame.get("duration_ms", 0),
                 frame.get("success", False),
+                frame.get("error_code", ""),
             )
             return
 
