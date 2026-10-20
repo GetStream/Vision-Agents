@@ -344,6 +344,9 @@ type Agent struct {
 	departed map[string]time.Time
 	// now is the clock departedGrace is measured on.
 	now func() time.Time
+	// hearings tally what each participant has been heard to say, kept for the whole call
+	// so a line at its end covers those who left.
+	hearings map[string]*hearing
 	// learnedTerms are names the caller said and the agent has said back, which the
 	// transcriber is told to expect for the rest of the call (keyterms.go).
 	learnedTerms []string
@@ -602,6 +605,7 @@ func New(options Options) (*Agent, error) {
 		listeners:        map[string]*sttrouter.Session{},
 		departed:         map[string]time.Time{},
 		now:              time.Now,
+		hearings:         map[string]*hearing{},
 		voices:           map[string]string{},
 		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
@@ -1221,6 +1225,7 @@ func (a *Agent) close() error {
 		p.running.Wait()
 	}
 	a.running.Wait()
+	a.logHeardFromEveryone("end")
 
 	// The writers are drained after the consumers have stopped, so a turn that finished
 	// on the way out is still recorded and still remembered.
@@ -1247,7 +1252,15 @@ func (a *Agent) close() error {
 func (a *Agent) consumeEdge() {
 	defer a.running.Done()
 
+	// Kept here as well as on the agent so a frame does not wait on the agent's lock.
+	tallies := map[string]*hearing{}
 	for inbound := range a.options.Edge.Audio() {
+		tally, ok := tallies[inbound.Participant.ID]
+		if !ok {
+			tally = a.heardFrom(inbound.Participant.ID)
+			tallies[inbound.Participant.ID] = tally
+		}
+		tally.heardAudio(inbound.Audio)
 		if a.switching.Load() {
 			continue
 		}
@@ -1442,6 +1455,9 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 	defer a.running.Done()
 	defer a.dropListener(participantID, session)
 
+	tally := a.heardFrom(participantID)
+	partials := sttPartials.WithLabelValues(session.Provider())
+	finals := sttFinals.WithLabelValues(session.Provider())
 	for event := range session.Events() {
 		switch typed := event.(type) {
 		case stt.Transcript:
@@ -1450,6 +1466,7 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
 				continue
 			}
+			tally.heardWords(typed, partials, finals)
 			a.logger.Debug("transcribed",
 				"provider", typed.Provider, "model", typed.Model,
 				"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
@@ -1499,6 +1516,7 @@ func (a *Agent) consumeCadence(p *pipeline) {
 			if gone {
 				continue
 			}
+			a.logHeard("turn", ready.Participant.ID, "turn", ready.ID)
 			a.act([]Action{a.converse.Settled(ready, a.floor())})
 		case <-p.ctx.Done():
 			return
@@ -2063,6 +2081,7 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 // A line that cannot be written is not worth failing the turn over: the caller hears
 // nothing, which is what they would have heard anyway.
 func (a *Agent) checkIn(participant stt.Participant, purpose string) {
+	a.logHeard("checkin", participant.ID, "purpose", purpose)
 	a.mu.Lock()
 	if a.composing || a.tts == nil {
 		a.mu.Unlock()
