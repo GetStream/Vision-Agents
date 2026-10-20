@@ -218,6 +218,21 @@ func (s *SessionSuite) TestASocketThatClosedWithoutAFrameLeavesTheModelAvailable
 	s.leftAvailable(stt.Error{Err: closed, Context: "read", Fatal: true})
 }
 
+func (s *SessionSuite) TestOnlyARefusalCloseCodeMarksTheModelUnavailable() {
+	refusals := []int{1002, 1003, 1007, 1008, 1009, 1010, 4000, 4503, 4999}
+	drops := []int{1005, 1011, 1012, 1013, 1014, 3006}
+	for _, code := range refusals {
+		s.Run(fmt.Sprintf("%d", code), func() {
+			s.False(transportDrop(stt.Error{Err: &websocket.CloseError{Code: code}, Context: "read", Fatal: true}))
+		})
+	}
+	for _, code := range drops {
+		s.Run(fmt.Sprintf("%d", code), func() {
+			s.True(transportDrop(stt.Error{Err: &websocket.CloseError{Code: code}, Context: "read", Fatal: true}))
+		})
+	}
+}
+
 func (s *SessionSuite) TestAConnectionResetLeavesTheModelAvailable() {
 	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 	s.leftAvailable(stt.Error{Err: reset, Context: "read", Fatal: true})

@@ -125,16 +125,35 @@ func (s *Session) observe(event stt.Event) {
 	}
 }
 
-// transportDrop is a read or write that failed without the vendor saying why. A close
-// frame with a code, such as Muse's 1008 "Ingress below real-time", is the vendor's
-// refusal. 1006 is the code gorilla reports for a connection that ended with no close
-// frame at all (RFC 6455 section 7.4.1).
+// transportDrop is a read or write that failed without the vendor refusing the session. A
+// close frame whose code says the vendor refused it, such as Muse's 1008 "Ingress below
+// real-time", is not a drop. Any other close, and any network error, is: the next session
+// can still reach the model.
+//
+// The refusal codes are RFC 6455 section 7.4.1 (IANA WebSocket Close Code registry): 1002
+// protocol error, 1003 unsupported data, 1007 invalid payload, 1008 policy violation, 1009
+// message too big, 1010 mandatory extension. 4000-4999 is private use, so the vendor
+// defines it; the only one documented by our vendors is Together's 4503 no_healthy_workers
+// (docs.together.ai/docs/inference/transcription/streaming.md:103, read 2026-10-20), a
+// refusal. The codes left out are drops: 1005 and 1006 (no frame), 1011 to 1014 (Muse's
+// "Max session duration reached" and "Rate limited", dev.meta.ai/docs/api-reference/voice/
+// realtime.md:119-120) and AssemblyAI's 3006 inactivity and 3008 3-hour limit, which are
+// the session ending, not the model refusing.
 func transportDrop(failure stt.Error) bool {
 	if failure.Context != "read" && failure.Context != "write" {
 		return false
 	}
 	var closed *websocket.CloseError
-	return !errors.As(failure.Err, &closed) || closed.Code == websocket.CloseAbnormalClosure
+	if !errors.As(failure.Err, &closed) {
+		return true
+	}
+	switch code := closed.Code; {
+	case code == websocket.CloseProtocolError, code == websocket.CloseUnsupportedData,
+		code >= websocket.CloseInvalidFramePayloadData && code <= websocket.CloseMandatoryExtension,
+		code >= 4000 && code <= 4999:
+		return false
+	}
+	return true
 }
 
 func errorCode(failure stt.Error) string {
