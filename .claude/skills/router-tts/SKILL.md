@@ -251,7 +251,7 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   as with a refused format, since a pinned live model's health is every customer's): the
   router does not cut it up, because mp3 and wav files cannot be joined byte for byte. `tl`
   is sent as `fil` (Inworld refuses `tl`, probed 2026-10-20), and `temperature` as 1.1, as
-  the live socket sends it. Speed (`speakingRate`) and temperature are not sent, so no Inworld entry declares
+  the live socket sends it. Speed (`speakingRate`) is not sent, so no Inworld entry declares
   `speed`.
 - `Recordings.Check` runs before a recording is accepted (`recordSpeech` in `api/recordings.go`).
   When no candidate's vendor has a recorder, such as a pinned `breeze/breeze-tts-2` or a
