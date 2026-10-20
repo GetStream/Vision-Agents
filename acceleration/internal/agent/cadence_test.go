@@ -207,6 +207,20 @@ func (s *CadenceSuite) TestLettersSpelledOutAreSaidWhole() {
 	s.Equal("my member ID is A B C 1 2 3", s.ready().Said())
 }
 
+func (s *CadenceSuite) TestOnlyAnEndTheTranscriberMarkedIsMarked() {
+	// A transcriber that never marks an end has every turn counted as ended, which is not
+	// the same as knowing the caller finished.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Text: "a table for"})
+	unmarked := s.ready()
+	s.True(unmarked.Ended)
+	s.False(unmarked.EndMarked)
+	s.Require().True(s.cadence.Resolve(unmarked.ID, false))
+
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "a table for four please"})
+	s.True(s.ready().EndMarked)
+}
+
 func (s *CadenceSuite) TestARunTheTranscriberDoesNotNumberIsSaidWhole() {
 	// Without a number the same words could be the caller starting again, so nothing is
 	// taken as already answered.
