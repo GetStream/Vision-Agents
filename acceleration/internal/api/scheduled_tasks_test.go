@@ -1195,6 +1195,25 @@ func (s *ScheduledTasksSuite) TestANextOrScheduleMovedUnderAQuarterHourIsRefused
 	s.WithinDuration(time.Now().Add(12*time.Minute), next, 2*time.Minute)
 }
 
+func (s *ScheduledTasksSuite) TestANextMovedWithTheScheduleIsCheckedAgainstTheRunBeforeTheUpdate() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.In = pointerTo("PT5M")
+	created := s.createTask(user, body)
+
+	// Ten minutes is later than the run due in five, though earlier than the
+	// twenty the same update gives the schedule.
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{In: pointerTo("PT20M")},
+			Next: &ScheduledTaskNext{In: pointerTo("PT10M")}}, &updated))
+	s.Require().NotNil(updated.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
+	s.Require().NoError(err)
+	s.WithinDuration(time.Now().Add(10*time.Minute), next, 2*time.Minute)
+}
+
 func (s *ScheduledTasksSuite) TestARepeatWrittenFromAPastDateStartsAtItsNextOccurrence() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
