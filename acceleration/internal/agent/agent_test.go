@@ -1209,6 +1209,28 @@ func (s *AgentSuite) TestSomebodyArrivingIsReportedBeforeTheySpeak() {
 	s.False(arrived.At.IsZero())
 }
 
+func (s *AgentSuite) TestThoseAlreadyInTheCallAreReportedBeforeJoined() {
+	// Joined is what a session takes to mean everyone already there has been reported, so
+	// a call that looks empty at that point is empty.
+	s.edgeFactory = func(edge *loopbackEdge) Edge {
+		edge.attending <- Attendance{Participant: stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}, Joined: true}
+		return edge
+	}
+	s.join(true)
+
+	s.eventually(func() bool { return countOf[Joined](s.reported()) == 1 }, "the agent never joined")
+	var order []string
+	for _, event := range s.reported() {
+		switch event.(type) {
+		case ParticipantJoined:
+			order = append(order, "participant")
+		case Joined:
+			order = append(order, "joined")
+		}
+	}
+	s.Equal([]string{"participant", "joined"}, order)
+}
+
 func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {
 	s.join(true)
 	participant := stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}

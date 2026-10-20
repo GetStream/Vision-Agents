@@ -733,6 +733,12 @@ func (a *Agent) Join(ctx context.Context) error {
 		// rather than required. Without it nothing is reported and the agent behaves as
 		// it did before, which is right for a loopback with nobody else on it.
 		if roster, ok := a.options.Edge.(Roster); ok {
+			// Those already in the call were queued while the edge joined. Reporting them
+			// here, before Joined, is what lets a reader take a call that is empty at
+			// Joined to be empty.
+			for range len(roster.Attendance()) {
+				a.attend(<-roster.Attendance())
+			}
 			a.running.Add(1)
 			go a.consumeRoster(roster)
 		}
@@ -1205,40 +1211,45 @@ func (a *Agent) consumeRoster(roster Roster) {
 	defer a.running.Done()
 
 	for attendance := range roster.Attendance() {
-		if attendance.Joined {
-			a.mu.Lock()
-			delete(a.departed, attendance.Participant.ID)
-			a.mu.Unlock()
-			a.logger.Debug("a participant joined",
-				"participant", attendance.Participant.UserID)
-			a.emitter.Send(ParticipantJoined{
-				Participant: attendance.Participant,
-				At:          time.Now(),
-			})
-			continue
-		}
-		a.unbind(attendance.Participant)
+		a.attend(attendance)
+	}
+}
+
+// attend reports one arrival or departure.
+func (a *Agent) attend(attendance Attendance) {
+	if attendance.Joined {
 		a.mu.Lock()
-		a.departed[attendance.Participant.ID] = time.Time{}
-		listener := a.listeners[attendance.Participant.ID]
+		delete(a.departed, attendance.Participant.ID)
 		a.mu.Unlock()
-		if listener != nil {
-			// A provider that fills silence never cuts an idle session, so a departed
-			// participant's would stay open until the agent closes.
-			// Closing waits on the final transcript, so it must not hold up the next roster event.
-			a.forgetListener(attendance.Participant.ID, listener)
-			a.running.Add(1)
-			go func() {
-				defer a.running.Done()
-				a.closeListener(listener)
-			}()
-		}
-		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
-		a.emitter.Send(ParticipantLeft{
+		a.logger.Debug("a participant joined",
+			"participant", attendance.Participant.UserID)
+		a.emitter.Send(ParticipantJoined{
 			Participant: attendance.Participant,
 			At:          time.Now(),
 		})
+		return
 	}
+	a.unbind(attendance.Participant)
+	a.mu.Lock()
+	a.departed[attendance.Participant.ID] = time.Time{}
+	listener := a.listeners[attendance.Participant.ID]
+	a.mu.Unlock()
+	if listener != nil {
+		// A provider that fills silence never cuts an idle session, so a departed
+		// participant's would stay open until the agent closes.
+		// Closing waits on the final transcript, so it must not hold up the next roster event.
+		a.forgetListener(attendance.Participant.ID, listener)
+		a.running.Add(1)
+		go func() {
+			defer a.running.Done()
+			a.closeListener(listener)
+		}()
+	}
+	a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
+	a.emitter.Send(ParticipantLeft{
+		Participant: attendance.Participant,
+		At:          time.Now(),
+	})
 }
 
 // errDeparted is listen refusing a participant who has left the call.
