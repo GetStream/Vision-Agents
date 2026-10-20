@@ -183,6 +183,33 @@ func (s *GeminiSuite) TestTheServerInterruptingSettlesTheReplyAsCutOff() {
 	s.Equal(2, starts, "audio after the interruption is the next reply")
 }
 
+// A caller who barges in is still being heard when the rest of the cut-off reply arrives.
+// None of it may settle their turn or open a reply.
+func (s *GeminiSuite) TestWhatRemainsOfACutOffReplyDoesNotEndTheBargeIn() {
+	remainders := map[string]serverMessage{
+		"words": {ServerContent: &serverContent{OutputTranscription: &transcription{Text: "and the rest"}}},
+		"audio": spoke(240),
+	}
+	for name, remainder := range remainders {
+		s.Run(name, func() {
+			provider := s.newProvider()
+			provider.participant = sts.Participant{ID: "alice"}
+
+			provider.handleMessage(spoke(240))
+			s.Require().NoError(provider.Interrupt(0))
+			s.drain(provider)
+			provider.handleMessage(heard("wait "))
+			provider.handleMessage(remainder)
+
+			var kinds []string
+			for _, event := range s.drain(provider) {
+				kinds = append(kinds, fmt.Sprintf("%T", event))
+			}
+			s.Equal([]string{"sts.SpeechStarted", "sts.InputTranscript"}, kinds, "the caller is still speaking")
+		})
+	}
+}
+
 func (s *GeminiSuite) TestALocalInterruptMutesTheRestOfTheTurn() {
 	provider := s.newProvider()
 

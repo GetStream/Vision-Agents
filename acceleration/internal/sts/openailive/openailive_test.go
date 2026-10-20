@@ -279,6 +279,25 @@ func (s *OpenAILiveSuite) TestALocalInterruptMutesTheRestOfTheReply() {
 	s.Equal(2, chunks[1].Generation)
 }
 
+// A caller who barges in is still being heard when the rest of the cut-off reply's words
+// arrive. They may not settle their turn or open a reply.
+func (s *OpenAILiveSuite) TestWhatRemainsOfACutOffReplyDoesNotEndTheBargeIn() {
+	provider := s.newProvider()
+	provider.participant = sts.Participant{ID: "alice"}
+
+	provider.handleMessage(s.frame(spoke(240)))
+	s.Require().NoError(provider.Interrupt(0))
+	s.drain(provider)
+	provider.handleMessage(s.frame(heard("wait ")))
+	provider.handleMessage(s.frame(said("and the rest")))
+
+	var kinds []string
+	for _, event := range s.drain(provider) {
+		kinds = append(kinds, fmt.Sprintf("%T", event))
+	}
+	s.Equal([]string{"sts.SpeechStarted", "sts.InputTranscript"}, kinds, "the caller is still speaking")
+}
+
 func (s *OpenAILiveSuite) TestAFinishedBackendFunctionCallIsAToolCall() {
 	provider := s.newProvider()
 

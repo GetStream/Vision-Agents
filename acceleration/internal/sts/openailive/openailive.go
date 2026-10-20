@@ -747,7 +747,12 @@ func (s *STS) handleMessage(event serverEvent) {
 			s.heard(event.Delta)
 		}
 	case eventOutputTranscript:
-		if event.Delta != "" {
+		// The rest of a reply the caller cut off is dropped, as in spoke, before it can
+		// end the caller's turn or open a reply.
+		s.mu.Lock()
+		muted := s.muted
+		s.mu.Unlock()
+		if event.Delta != "" && !muted {
 			turn := s.replying()
 			s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: event.Delta})
 		}

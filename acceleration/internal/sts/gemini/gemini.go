@@ -798,10 +798,16 @@ func (s *STS) handleContent(server serverContent) {
 	if server.OutputTranscription != nil && server.OutputTranscription.Text != "" {
 		// The words can come before the audio, so they settle the caller's turn first,
 		// as spoke and asked do: a reply opened while the caller is still heard would
-		// begin before their wait did and be timed from the turn before.
-		s.finishHearing()
-		turn := s.currentTurn()
-		s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: server.OutputTranscription.Text})
+		// begin before their wait did and be timed from the turn before. The rest of a
+		// reply the caller cut off is dropped first, as in spoke: it is not theirs to end.
+		s.mu.Lock()
+		muted := s.muted
+		s.mu.Unlock()
+		if !muted {
+			s.finishHearing()
+			turn := s.currentTurn()
+			s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: server.OutputTranscription.Text})
+		}
 	}
 	if server.ModelTurn != nil {
 		s.spoke(*server.ModelTurn)
@@ -883,6 +889,14 @@ func (s *STS) finishHearing() {
 // spoke forwards the audio in a model turn. Text parts are the model's thoughts and are
 // not spoken, so they are not forwarded as anything.
 func (s *STS) spoke(turn content) {
+	// The rest of a reply the caller cut off from this side is not a new reply, so it is
+	// dropped before it can end the caller's turn or open one.
+	s.mu.Lock()
+	muted := s.muted
+	s.mu.Unlock()
+	if muted {
+		return
+	}
 	s.finishHearing()
 
 	for _, piece := range turn.Parts {
@@ -895,14 +909,6 @@ func (s *STS) spoke(turn content) {
 			continue
 		}
 
-		// The rest of a reply the caller cut off from this side is not a new reply, so
-		// it is dropped before it can open one.
-		s.mu.Lock()
-		muted := s.muted
-		s.mu.Unlock()
-		if muted {
-			continue
-		}
 		current := s.currentTurn()
 		s.emitter.Send(current.Chunk(audio.FromBytes(raw, OutputSampleRate, 1)))
 	}
