@@ -464,6 +464,43 @@ func (s *TelnyxSuite) TestAFailureFromTelnyxSaysWhatTelnyxSaid() {
 	s.ErrorContains(err, "no such number")
 }
 
+// Telnyx's real answer for an area code with nothing left, such as 212.
+func (s *TelnyxSuite) TestAnAreaCodeWithNoNumbersLeftIsAnEmptySearchThatIsLogged() {
+	logged := s.logged()
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10031","title":"Invalid request filter",` +
+			`"detail":"No numbers found for the given filters. Please try again with best_effort=true."}]}`))
+	}
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "212"})
+
+	s.Require().NoError(err)
+	s.Empty(offered)
+	s.Contains(logged.String(), "level=INFO")
+	s.Contains(logged.String(), "code=10031")
+	s.Contains(logged.String(), "No numbers found")
+	s.Contains(logged.String(), "country=US")
+	s.Contains(logged.String(), "area_code=212")
+}
+
+// The same code also means a filter Telnyx does not accept, which is a bug here, not an
+// empty search.
+func (s *TelnyxSuite) TestAnInvalidFilterIsStillAFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10031","title":"Invalid request filter",` +
+			`"detail":"The request filter filter[national_destination_code] is invalid."}]}`))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "212"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusBadRequest, vendorErr.Status)
+	s.Equal("10031", vendorErr.Code)
+}
+
 func (s *TelnyxSuite) TestARefusalIsAVendorErrorWithTelnyxsCode() {
 	s.respond = func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)

@@ -135,6 +135,14 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 
 	var response envelope[[]availableNumber]
 	if err := p.do(ctx, http.MethodGet, "/v2/available_phone_numbers", query, nil, &response); err != nil {
+		if refused, ok := errors.AsType[*phone.VendorError](err); ok && nothingForSale(refused) {
+			// The digit filters are left out: the log keeps numbers out of it.
+			p.logger.Info("telnyx has no numbers for this search", "country", search.Country,
+				"area_code", search.AreaCode, "locality", search.Locality,
+				"administrative_area", search.AdministrativeArea, "type", search.Type,
+				"code", refused.Code, "message", refused.Message)
+			return []phone.Available{}, nil
+		}
 		return nil, err
 	}
 
@@ -423,6 +431,13 @@ func refusal(vendor, path string, status int, body []byte) *phone.VendorError {
 		}
 	}
 	return refused
+}
+
+// nothingForSale is Telnyx refusing a search because nothing matches it. Telnyx sends
+// that as code 10031, which also means a filter it does not accept, so the message is what
+// tells the two apart: a rejected filter is a bug here and stays an error.
+func nothingForSale(refused *phone.VendorError) bool {
+	return refused.Code == "10031" && strings.HasPrefix(refused.Message, "No numbers found")
 }
 
 // features maps Telnyx's feature names onto capabilities, ignoring the ones that do not
