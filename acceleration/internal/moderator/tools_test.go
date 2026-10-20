@@ -95,6 +95,12 @@ func (s *ToolsSuite) TestTheReviewQueueIsQueriedWithTheModelsFilterAndNeverLocke
 	s.NotContains(s.bodies[0], "lock_items", "reading the queue takes no item from a person reviewing it")
 }
 
+func (s *ToolsSuite) TestALimitPastTheSchemasIsCut() {
+	s.run(QueryModerationLogsTool, `{"limit":500}`)
+
+	s.EqualValues(maxLimit, s.bodies[0]["limit"])
+}
+
 func (s *ToolsSuite) TestAnItemIsReadWithItsFlagsAndActions() {
 	answer := s.run(GetReviewQueueItemTool, `{"id":"item-1"}`)
 

@@ -91,11 +91,15 @@ func queryParameters(filter string) map[string]any {
 					},
 				},
 			},
-			"limit": map[string]any{"type": "integer", "description": "How many to return, at most 25.", "minimum": 1, "maximum": 25},
+			"limit": map[string]any{"type": "integer", "description": "How many to return, at most 25.", "minimum": 1, "maximum": maxLimit},
 			"next":  map[string]any{"type": "string", "description": "The next cursor a previous page returned."},
 		},
 	}
 }
+
+// maxLimit is the most a query returns at once. A model may ask past what its schema says,
+// and a page of review queue items that size would fill the context it answers from.
+const maxLimit = 25
 
 // arguments is what any of the tools may be called with.
 type arguments struct {
@@ -132,6 +136,10 @@ func (r *Runner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		if err := json.Unmarshal([]byte(raw), &args); err != nil {
 			return nil, stack.Wrap(fmt.Errorf("moderator: %s arguments: %w", call.Name, err))
 		}
+	}
+	if args.Limit != nil && *args.Limit > maxLimit {
+		limit := maxLimit
+		args.Limit = &limit
 	}
 	moderation := r.client.Moderation()
 	var (

@@ -7,6 +7,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
@@ -22,6 +23,8 @@ type ModerationToolsSuite struct {
 	suite.Suite
 	own    streamapp.Bound
 	caller *callerTools
+	// nora is a session the customer's backend opened on its moderator.
+	nora Spec
 }
 
 func (s *ModerationToolsSuite) SetupTest() {
@@ -29,6 +32,7 @@ func (s *ModerationToolsSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.own = streamapp.Bound{Identity: streamapp.Identity{StreamApp: 77, Registered: true}, Client: client}
 	s.caller = &callerTools{}
+	s.nora = Spec{Role: store.RoleAgentModerator, CallerKind: auth.KindServer}
 }
 
 func (s *ModerationToolsSuite) names(tools []harness.Tool) []string {
@@ -40,29 +44,40 @@ func (s *ModerationToolsSuite) names(tools []harness.Tool) []string {
 }
 
 func (s *ModerationToolsSuite) TestTheModeratorIsOfferedTheModerationReads() {
-	tools, _ := moderationTools(Spec{Role: store.RoleAgentModerator}, s.own, nil, s.caller)
+	tools, _ := moderationTools(s.nora, s.own, nil, s.caller)
 
 	s.Equal(s.names(moderator.Tools()), s.names(tools))
 }
 
 func (s *ModerationToolsSuite) TestAnOrdinaryAgentIsOfferedNone() {
-	tools, runner := moderationTools(Spec{}, s.own, nil, s.caller)
+	tools, runner := moderationTools(Spec{CallerKind: auth.KindServer}, s.own, nil, s.caller)
 
 	s.Empty(tools)
 	s.Same(s.caller, runner)
+}
+
+func (s *ModerationToolsSuite) TestAnEndUsersDeviceIsOfferedNone() {
+	for _, kind := range []auth.Kind{auth.KindAuthenticated, auth.KindGuest, auth.KindAnonymous} {
+		device := s.nora
+		device.CallerKind = kind
+
+		tools, _ := moderationTools(device, s.own, nil, s.caller)
+
+		s.Empty(tools, "a %s caller would read every user's reports", kind)
+	}
 }
 
 func (s *ModerationToolsSuite) TestTheDeploymentsSharedAppIsNeverRead() {
 	shared := s.own
 	shared.Identity.Registered = false
 
-	tools, _ := moderationTools(Spec{Role: store.RoleAgentModerator}, shared, nil, s.caller)
+	tools, _ := moderationTools(s.nora, shared, nil, s.caller)
 
 	s.Empty(tools, "the shared app holds every other customer's moderation data")
 }
 
 func (s *ModerationToolsSuite) TestASessionWithNoStreamAppIsOfferedNone() {
-	tools, _ := moderationTools(Spec{Role: store.RoleAgentModerator}, streamapp.Bound{}, nil, s.caller)
+	tools, _ := moderationTools(s.nora, streamapp.Bound{}, nil, s.caller)
 
 	s.Empty(tools)
 }
@@ -70,7 +85,7 @@ func (s *ModerationToolsSuite) TestASessionWithNoStreamAppIsOfferedNone() {
 func (s *ModerationToolsSuite) TestANameTheCallerDeclaredStaysTheCallers() {
 	declared := []harness.Tool{{Name: moderator.ListBlocklistsTool, Description: "The caller's own"}}
 
-	tools, runner := moderationTools(Spec{Role: store.RoleAgentModerator}, s.own, declared, s.caller)
+	tools, runner := moderationTools(s.nora, s.own, declared, s.caller)
 	parts, err := runner.Run(context.Background(), llm.ToolCall{ID: "1", Name: moderator.ListBlocklistsTool})
 
 	s.Require().NoError(err)
