@@ -3958,6 +3958,9 @@ type Connector struct {
 	// Revision The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
 	Revision *int64 `json:"revision,omitempty"`
 
+	// Sandbox How code in an agent's sandbox reaches the provider's API with a connection's credential.
+	Sandbox *ConnectorSandbox `json:"sandbox,omitempty"`
+
 	// Schemes How a connection may authenticate, such as oauth2_code.
 	Schemes *[]string `json:"schemes"`
 
@@ -4232,6 +4235,15 @@ type ConnectorProviderAppRequest struct {
 
 	// Name The app's name in the customer's workspace.
 	Name string `json:"name"`
+}
+
+// ConnectorSandbox How code in an agent's sandbox reaches the provider's API with a connection's credential.
+type ConnectorSandbox struct {
+	// Env The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox's egress puts the connection's credential in its place, only in a request header and only to one of hosts.
+	Env string `json:"env"`
+
+	// Hosts The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it.
+	Hosts []string `json:"hosts"`
 }
 
 // ConnectorSetup What a person does at the provider before the first consent.
