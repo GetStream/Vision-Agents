@@ -140,7 +140,7 @@ func (r *repeatRule) phrase(start time.Time) string {
 
 // monthDays says days of the month: "day 1, 15" when all count from the start,
 // "day 1 and the last day" when some count from the end. A day past the 28th
-// adds that months without it are skipped.
+// adds that it is skipped in months without it.
 func monthDays(days []int) string {
 	fromEnd := slices.ContainsFunc(days, func(day int) bool { return day < 0 })
 	names := make([]string, 0, len(days))
@@ -169,8 +169,12 @@ func monthDays(days []int) string {
 	default:
 		text = strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 	}
-	if len(short) > 0 {
-		text += " (months without day " + strings.Join(short, " or ") + " are skipped)"
+	switch len(short) {
+	case 0:
+	case 1:
+		text += " (day " + short[0] + " is skipped in months without it)"
+	default:
+		text += " (days " + strings.Join(short[:len(short)-1], ", ") + " and " + short[len(short)-1] + " are skipped in months without them)"
 	}
 	return text
 }
