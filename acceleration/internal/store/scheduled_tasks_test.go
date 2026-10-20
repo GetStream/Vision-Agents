@@ -196,7 +196,9 @@ func (s *StoreSuite) TestARenewalExtendsOnlyTheClaimItHolds() {
 
 func (s *StoreSuite) TestAFinishUnderAStolenClaimDoesNotAdvanceTheTask() {
 	due := s.base.Add(-time.Minute)
-	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	// A repeat, whose edit keeps its next run (an edited one-shot comes due
+	// again at the edit instead).
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt, task.RRule = &due, "FREQ=DAILY" })
 
 	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
 	s.Require().NoError(err)
