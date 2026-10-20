@@ -257,10 +257,7 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		return nil, err
 	}
 	s.kickScheduled()
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &createScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -301,10 +298,7 @@ func (s *Server) getScheduledTask(ctx context.Context, request *getScheduledTask
 	if err != nil {
 		return nil, err
 	}
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &getScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -386,10 +380,7 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		return nil, err
 	}
 	s.kickScheduled()
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &updateScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -483,10 +474,7 @@ func (s *Server) pauseScheduledTask(ctx context.Context, request *pauseScheduled
 			return nil, err
 		}
 	}
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &pauseScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -531,10 +519,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		}
 		s.kickScheduled()
 	}
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &resumeScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -627,13 +612,17 @@ func (s *Server) listScheduledTaskRuns(ctx context.Context, request *listSchedul
 	return &listScheduledTaskRunsResponse{Body: listed}, nil
 }
 
-// scheduledTaskOf renders one task, as scheduledTasksOf does.
-func (s *Server) scheduledTaskOf(ctx context.Context, task store.ScheduledTask) (ScheduledTask, error) {
-	rendered, err := s.scheduledTasksOf(ctx, task.CustomerID, []store.ScheduledTask{task})
+// scheduledTaskOf renders one task, as scheduledTasksOf does. It answers a
+// change already saved, so a failed read of when the task last ran leaves
+// last_run_at out rather than failing a change that stands, which a client
+// retrying a create would make twice.
+func (s *Server) scheduledTaskOf(ctx context.Context, task store.ScheduledTask) ScheduledTask {
+	last, err := s.store.LastScheduledTaskRunsAt(ctx, task.CustomerID, []string{task.ID})
 	if err != nil {
-		return ScheduledTask{}, err
+		s.logger.Error("could not read when a scheduled task last ran", "task", task.ID,
+			"customer", task.CustomerID, "error", err)
 	}
-	return rendered[0], nil
+	return scheduledTaskRendered(task, last[task.ID])
 }
 
 // scheduledTasksOf renders tasks, reading when each last ran in one query.
