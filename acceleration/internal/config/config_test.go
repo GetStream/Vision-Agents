@@ -540,3 +540,14 @@ func (s *ConfigSuite) TestShardsListingThisOneElsewhereAreRefused() {
 	_, _, err := Load("")
 	s.ErrorContains(err, "another DSN")
 }
+
+func (s *ConfigSuite) TestMetricsAreNotServedUnlessAnAddressIsSet() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.MetricsAddr)
+
+	s.T().Setenv("ROUTER_METRICS_ADDR", ":9091")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(":9091", config.MetricsAddr)
+}
