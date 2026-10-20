@@ -323,7 +323,7 @@ func TestARepeatFromAnInListsDistinctOccurrences(t *testing.T) {
 }
 
 func TestAnInBeyondAYearIsRefusedBeforeItOverflows(t *testing.T) {
-	for _, in := range []string{"P367D", "P99999999999D", "P9999999999999999999D", "PT99999999999H", "P53W"} {
+	for _, in := range []string{"P367D", "P99999999999D", "P9999999999999999999D", "PT99999999999H", "P53W", "P366DT1S"} {
 		for _, repeat := range []string{"", "FREQ=DAILY"} {
 			require.Equal(t, CodeScheduleTooFar, codeOf(t, Input{In: in, Repeat: repeat, Timezone: "UTC"}), "%s %q", in, repeat)
 		}
@@ -332,4 +332,8 @@ func TestAnInBeyondAYearIsRefusedBeforeItOverflows(t *testing.T) {
 		_, err := Parse(Input{In: "P364D", Repeat: repeat, Timezone: "UTC"}, monday)
 		require.NoError(t, err, repeat)
 	}
+	// A one-shot is also held to a calendar year after the in-bound; a repeat
+	// is held only to the in-bound, so exactly 366 days passes with one.
+	_, err := Parse(Input{In: "P366D", Repeat: "FREQ=DAILY", Timezone: "UTC"}, monday)
+	require.NoError(t, err)
 }
