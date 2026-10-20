@@ -1319,8 +1319,8 @@ func (s *STS) fail(event serverEvent) {
 // owe answers a reply the server refused to open: after the reply in flight, or now when
 // that reply is already done, because the refusal can arrive after its response.done (live,
 // gpt-realtime-2.1, 2026-10-20). A caller already speaking again is answered at their next
-// stop by the server itself, also when the reply is still open. A refusal of ours with no reply open is not owed: it reports
-// false, and the caller reports it as an error.
+// stop by the server itself, also when the reply is still open. A refusal of ours with no
+// reply open is not owed: it reports false, and the caller reports it as an error.
 func (s *STS) owe(eventID string) bool {
 	s.mu.Lock()
 	open, speaking := s.turn != nil, s.speaking

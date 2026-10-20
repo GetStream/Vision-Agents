@@ -473,6 +473,24 @@ func (s *RealtimeSocketSuite) TestARefusalWhileTheCallerSpeaksAndTheReplyIsOpenA
 	s.nothingAsked(provider, conn)
 }
 
+func (s *RealtimeSocketSuite) TestARefusedPromptWhileTheCallerSpeaksAndTheReplyIsOpenIsStillAsked() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventSpeechStarted})
+	s.Require().NoError(provider.Prompt("Say: one moment."))
+	s.refusedOurs(conn)
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+
+	asked := s.nextFrame(conn)
+	s.Require().NotNil(asked.Response, "our prompt is not the caller's turn: the server will not answer it")
+	s.Equal("Say: one moment.", asked.Response.Instructions)
+	s.nothingAsked(provider, conn)
+}
+
 func (s *RealtimeSocketSuite) TestRefusalsDuringOneReplyAreAnsweredOnce() {
 	fake := newFakeRealtime(false)
 	defer fake.close()
