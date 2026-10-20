@@ -200,6 +200,35 @@ func (s *RateLimitSuite) TestA429WithoutRetryAfterHoldsNothing() {
 	s.Equal(2, s.provider.calls("primary"))
 }
 
+// TestACallWaitingForASlotIsHeldByThe429OfTheCallItWaitedBehind: with a cap of one, the call
+// in flight is answered 429 and frees its slot; the call that waited for the slot reads the
+// hold then, and is not sent into the 429 (D8; reviewer probe P1 on 19910d6eb: 2 calls).
+func (s *RateLimitSuite) TestACallWaitingForASlotIsHeldByThe429OfTheCallItWaitedBehind() {
+	s.limitAndCapPer(core.RateLimitPerApp, 1)
+	primary := s.connection("", "primary")
+	d := s.attachWith(s.limitedManager(nil), s.fixed("crm", primary, "whoami"))
+	s.provider.limit("primary", "30")
+	release := s.provider.hold()
+	defer release()
+	var wg sync.WaitGroup
+	var first string
+	wg.Go(func() { first, _ = s.call(d, "crm__whoami", "{}") })
+	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
+	var waited string
+	var waitedErr error
+	wg.Go(func() { waited, waitedErr = s.call(d, "crm__whoami", "{}") })
+	s.Require().Eventually(func() bool { return d.slots.users(primary) == 2 }, 5*time.Second, 10*time.Millisecond)
+	release()
+	wg.Wait()
+
+	s.Contains(first, "connector_rate_limited")
+	s.Require().NoError(waitedErr)
+	s.Contains(waited, "connector_rate_limited")
+	s.Contains(waited, heldFor30)
+	s.Equal(1, s.provider.calls("primary"), "the waiting call reached a provider that had just answered 429")
+	s.ElementsMatch([]string{store.InvocationExternalServer, store.InvocationDenied}, s.logged(primary, 2))
+}
+
 // TestAConnectorThatNamesNoRateLimitBehavesAsWithoutALimiter: the control. A manifest with
 // no rate_limit, as every connector before this change could be, answers a 429 exactly as a
 // router with no limiter does, and the next call is sent.
@@ -225,6 +254,11 @@ func (s *RateLimitSuite) TestAConnectorThatNamesNoRateLimitBehavesAsWithoutALimi
 // limitPer makes the next revision of the test's connector limited per scope, its accounts
 // named by the account input, and has the test's connections pin it.
 func (s *RateLimitSuite) limitPer(per core.RateLimitScope) {
+	s.limitAndCapPer(per, 0)
+}
+
+// limitAndCapPer is limitPer with at most calls in flight on each connection, 0 for no cap.
+func (s *RateLimitSuite) limitAndCapPer(per core.RateLimitScope, calls int) {
 	manifest, err := core.ParseManifest([]byte(fmt.Sprintf(`
 id: %s
 revision: 1
@@ -238,10 +272,11 @@ schemes: [bearer]
 identity: [account]
 rate_limit:
   per: %s
+  max_concurrent_calls: %d
 sources:
   - kind: mcp
     endpoint: mcp
-`, s.connectorID, s.provider.URL, per)))
+`, s.connectorID, s.provider.URL, per, calls)))
 	s.Require().NoError(err)
 	definition, err := s.store.CreateConnectorDefinition(s.ctx, s.customerID, manifest)
 	s.Require().NoError(err)

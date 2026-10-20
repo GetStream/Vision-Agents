@@ -110,8 +110,37 @@ func (s *ConcurrencySuite) TestACallInterruptedWhileWaitingIsNotSent() {
 	s.Equal(1, s.provider.calls("primary"))
 }
 
-// TestACallThatFailsGivesItsSlotBack: a call the timeout cut off frees its slot, so the next
-// call on the connection is sent rather than held.
+// TestANonCancellableCallInterruptedWhileWaitingIsNotSent: cancellable: false leaves a call
+// running only once it was sent. One still waiting for a slot at the interruption is not
+// sent, and its row says so (client_timeout), not outcome_unknown (reviewer probe P3 on
+// 19910d6eb: 2 calls).
+func (s *ConcurrencySuite) TestANonCancellableCallInterruptedWhileWaitingIsNotSent() {
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	no := false
+	held := s.fixed("held", primary, "whoami")
+	held.Policy = &store.BindingPolicy{Cancellable: &no}
+	d := s.attachAll(s.fixed("crm", primary, "whoami"), held)
+	release := s.provider.hold()
+	defer release()
+	first := s.callAtOnce(d, "crm__whoami", 1)
+	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	turn, interrupt := context.WithTimeout(s.ctx, 100*time.Millisecond)
+	defer interrupt()
+	_, err := d.Run(turn, llm.ToolCall{ID: uuid.NewString(), Name: "held__whoami", Arguments: "{}"})
+	release()
+
+	s.ErrorIs(err, context.DeadlineExceeded)
+	s.ErrorContains(err, "held__whoami was not sent")
+	s.Equal([]string{"primary"}, first())
+	s.Never(func() bool { return s.provider.calls("primary") > 1 }, 500*time.Millisecond, 10*time.Millisecond,
+		"the interrupted call was sent after its turn ended")
+	s.Equal(store.InvocationClientTimeout, s.rowOf(primary, "held").ErrorType)
+}
+
+// TestACallThatFailsGivesItsSlotBack: a call the timeout cut off frees its slot, so the call
+// waiting behind it is sent rather than held to its own timeout.
 func (s *ConcurrencySuite) TestACallThatFailsGivesItsSlotBack() {
 	s.capAt(1)
 	primary := s.connection("", "primary")
@@ -123,14 +152,18 @@ func (s *ConcurrencySuite) TestACallThatFailsGivesItsSlotBack() {
 	release := s.provider.hold()
 	defer release()
 
-	cut, err := s.call(d, "quick__whoami", "{}")
-	s.Require().NoError(err)
+	var wg sync.WaitGroup
+	var cut string
+	var cutErr error
+	wg.Go(func() { cut, cutErr = s.call(d, "quick__whoami", "{}") })
+	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
+	waiting := s.callAtOnce(d, "crm__whoami", 1)
+	wg.Wait()
+	s.Require().NoError(cutErr)
 	s.Require().Contains(cut, "outcome_unknown")
 	release()
-	said, err := s.call(d, "crm__whoami", "{}")
 
-	s.Require().NoError(err)
-	s.Equal("primary", said)
+	s.Equal([]string{"primary"}, waiting())
 }
 
 // TestTheCapIsPerConnection: a cap of one on one connection holds nothing of another
@@ -150,6 +183,28 @@ func (s *ConcurrencySuite) TestTheCapIsPerConnection() {
 
 	s.Equal([]string{"primary"}, first())
 	s.Equal([]string{"secondary"}, other())
+}
+
+// TestTwoSessionsOfOneRouterShareTheCapOfAConnection: the cap is the router's, not a
+// session's, so sessions on one fixed connection (an app's, or Nessy's per user) share it.
+func (s *ConcurrencySuite) TestTwoSessionsOfOneRouterShareTheCapOfAConnection() {
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	quick := s.fixed("crm", primary, "whoami")
+	quick.TimeoutMs = 300
+	one, other := s.attachAll(s.fixed("crm", primary, "whoami")), s.attachAll(quick)
+	release := s.provider.hold()
+	defer release()
+	first := s.callAtOnce(one, "crm__whoami", 1)
+	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	said, err := s.call(other, "crm__whoami", "{}")
+	release()
+
+	s.Require().NoError(err)
+	s.Contains(said, "connector_busy: crm__whoami was not run")
+	s.Equal([]string{"primary"}, first())
+	s.Equal(1, s.provider.calls("primary"))
 }
 
 // capAt stores a revision of the test's connector capped at limit calls in flight, which the
@@ -204,4 +259,14 @@ func (s *ConcurrencySuite) rowOf(connection, binding string) store.ConnectorInvo
 		return len(found) == 1
 	}, 5*time.Second, 20*time.Millisecond)
 	return found[0]
+}
+
+// users is how many calls on connection are waiting or in flight.
+func (c *callSlots) users(connection string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s := c.byConnection[connection]; s != nil {
+		return s.users
+	}
+	return 0
 }

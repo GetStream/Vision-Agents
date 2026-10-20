@@ -312,7 +312,9 @@ func (d *dispatcher) Close() {
 // binding's call does not see it, and the turn waits for its answer. A binding that is not
 // cancellable stops waiting at the interruption and leaves the call running to its answer or
 // deadline, so the interruption never sends the provider the cancel; the binding's timeout
-// still does, as for every call. A binding with no policy is the paragraph above.
+// still does, as for every call. That holds for a call already sent: one still waiting for a
+// slot (below) is not sent, whatever the binding says (Kanat, 2026-10-20, AI-1540 review). A
+// binding with no policy is the paragraph above.
 //
 // A provider that answered a call on the same rate limit key with 429 and Retry-After is not
 // sent the call until that passes, on any router sharing the limiter's Redis: the model reads
@@ -323,17 +325,25 @@ func (d *dispatcher) Close() {
 // A connection whose manifest caps its calls in flight (rate_limit.max_concurrent_calls)
 // sends a call over the cap once one of them ends (callSlots). The wait is part of the
 // binding's timeout: a call still waiting when it runs out is not sent, and the model reads
-// connector_busy, so a runaway loop slows down instead of reaching the provider.
+// connector_busy, so a runaway loop slows down instead of reaching the provider. A call that
+// waited reads the limiter again once it has its slot: the call it waited behind may have
+// been answered 429.
 //
 // It also says how the call failed, for its row and its log line: no kind when it answered,
 // else one of the store.Invocation* values.
 func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
 	policy := r.binding.Policy
-	switch {
-	case policy == nil || policy.OnInterrupt != store.InterruptWait && (policy.Cancellable == nil || *policy.Cancellable):
-		return d.send(ctx, r, call)
-	case policy.OnInterrupt == store.InterruptWait:
-		return d.send(context.WithoutCancel(ctx), r, call)
+	if policy != nil && policy.OnInterrupt == store.InterruptWait {
+		ctx = context.WithoutCancel(ctx)
+	}
+	deadline := time.Now().Add(r.timeout)
+	release, parts, how, err := d.admit(ctx, deadline, r, call)
+	if release == nil {
+		return parts, how, err
+	}
+	if policy == nil || policy.OnInterrupt == store.InterruptWait || policy.Cancellable == nil || *policy.Cancellable {
+		defer release()
+		return d.send(ctx, deadline, r, call)
 	}
 	type answer struct {
 		parts []llm.ContentPart
@@ -342,7 +352,8 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	}
 	answered := make(chan answer, 1)
 	go func() {
-		parts, how, err := d.send(context.WithoutCancel(ctx), r, call)
+		defer release()
+		parts, how, err := d.send(context.WithoutCancel(ctx), deadline, r, call)
 		answered <- answer{parts, how, err}
 	}()
 	select {
@@ -355,22 +366,37 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	}
 }
 
-// send runs one tool inside the provider's rate limit, the cap on calls in flight, the
-// binding's timeout and the result cap, cancelled with ctx.
-func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
+// admit waits until call may be sent: the provider holds no 429 on its rate limit key, and
+// the connection has a slot under its cap before deadline, or ctx ends. It returns what frees
+// the slot, or nil and the answer of a call that is not sent.
+func (d *dispatcher) admit(ctx context.Context, deadline time.Time, r route, call llm.ToolCall) (func(), []llm.ContentPart, failure, error) {
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
-		return llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied, message: heldByTheRouter(wait)}, nil
+		return nil, llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied, message: heldByTheRouter(wait)}, nil
 	}
-	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
+	waiting, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	release, err := d.slots.take(bounded, r.connection.ID, r.maxInFlight)
+	release, err := d.slots.take(waiting, r.connection.ID, r.maxInFlight)
 	if err != nil {
 		if ctx.Err() == nil {
-			return llm.TextParts(busy(call.Name, r.maxInFlight)), failure{kind: store.InvocationDenied, message: heldByTheCap(r.maxInFlight)}, nil
+			return nil, llm.TextParts(busy(call.Name, r.maxInFlight)), failure{kind: store.InvocationDenied, message: heldByTheCap(r.maxInFlight)}, nil
 		}
-		return nil, failure{kind: store.InvocationClientTimeout}, stack.Wrap(fmt.Errorf("session: %s was not sent: %w", call.Name, err))
+		return nil, nil, failure{kind: store.InvocationClientTimeout}, stack.Wrap(fmt.Errorf("session: %s was not sent: %w", call.Name, err))
 	}
-	defer release()
+	if r.maxInFlight == 0 {
+		return release, nil, failure{}, nil
+	}
+	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
+		release()
+		return nil, llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied, message: heldByTheRouter(wait)}, nil
+	}
+	return release, nil, failure{}, nil
+}
+
+// send runs one tool admit let go, inside the binding's deadline and the result cap,
+// cancelled with ctx.
+func (d *dispatcher) send(ctx context.Context, deadline time.Time, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
+	bounded, cancel := context.WithDeadline(d.correlated(ctx), deadline)
+	defer cancel()
 	observed, exchange := core.WithExchange(bounded)
 	result, err := r.toolset.Call(observed, call)
 	if err != nil {
