@@ -53,6 +53,7 @@ def _calls(calls: list[dict[str, Any]], purposes: set[str] | None) -> list[str]:
         purpose = call.get("purpose") or "model"
         timing = f"TTFT {call.get('ttft_ms', 0):,.0f} ms, full {call.get('duration_ms', 0):,.0f} ms"
         status = ""
+        # "cancelled" is the router's store.ErrorCancelled (acceleration/internal/store/store.go:298).
         if call.get("error_code") == "cancelled":
             status = " CANCELLED"
         elif not call.get("success", True):
