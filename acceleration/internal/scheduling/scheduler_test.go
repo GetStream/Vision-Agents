@@ -66,6 +66,20 @@ func (d *deliverer) deliver(ctx context.Context, claimed store.ClaimedScheduledT
 	return "conversation", claimed.Task.SessionID, nil
 }
 
+// callsFor is the deliveries made for one task, since a worker over a shared
+// test database may deliver the tasks other suites left due.
+func (d *deliverer) callsFor(taskID string) []store.ClaimedScheduledTask {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var calls []store.ClaimedScheduledTask
+	for _, call := range d.calls {
+		if call.Task.ID == taskID {
+			calls = append(calls, call)
+		}
+	}
+	return calls
+}
+
 func (d *deliverer) count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -79,12 +93,14 @@ func (s *SchedulerSuite) started(deliver DeliverFunc, tune func(*Scheduler)) *Sc
 	if tune != nil {
 		tune(scheduler)
 	}
-	scheduler.Start()
+	scheduler.Start(context.Background())
 	s.T().Cleanup(scheduler.Close)
 	return scheduler
 }
 
-// task stores a task that is due at due, once, for a user of its own.
+// task stores a task that is due at due, once, for a user of its own, and
+// deletes it after the test, so a task one test leaves due is not delivered
+// by the next test's worker.
 func (s *SchedulerSuite) task(due time.Time, change func(*store.ScheduledTask)) store.ScheduledTask {
 	task := store.ScheduledTask{
 		CustomerID:   "customer-" + uuid.NewString(),
@@ -103,6 +119,12 @@ func (s *SchedulerSuite) task(due time.Time, change func(*store.ScheduledTask)) 
 		change(&task)
 	}
 	s.Require().NoError(s.db.CreateScheduledTask(s.ctx, &task, 25))
+	t := s.T()
+	t.Cleanup(func() {
+		if err := s.db.DeleteScheduledTask(context.Background(), task.CustomerID, task.ID); err != nil {
+			t.Errorf("delete the test's task: %v", err)
+		}
+	})
 	return task
 }
 
@@ -219,11 +241,14 @@ func (s *SchedulerSuite) TestARecurringTaskSkipsOccurrencesOlderThanAnHour() {
 	s.started(deliver.deliver, nil)
 
 	s.Require().Eventually(func() bool {
-		return deliver.count() == 1
+		return len(deliver.callsFor(task.ID)) == 1
 	}, 10*time.Second, 10*time.Millisecond)
-	s.Equal(latest, deliver.calls[0].Run.ScheduledFor)
-	runs := s.runs(task)
-	s.Require().Len(runs, 2)
+	s.Equal(latest, deliver.callsFor(task.ID)[0].Run.ScheduledFor)
+	var runs []store.ScheduledTaskRun
+	s.Require().Eventually(func() bool {
+		runs = s.runs(task)
+		return len(runs) == 2 && runs[0].State != store.ScheduledTaskRunRunning && runs[1].State != store.ScheduledTaskRunRunning
+	}, 10*time.Second, 10*time.Millisecond)
 	states := []string{runs[0].State, runs[1].State}
 	s.Contains(states, store.ScheduledTaskRunMissed)
 	s.Contains(states, store.ScheduledTaskRunDelivered)
@@ -317,4 +342,156 @@ func (s *SchedulerSuite) TestAnOccurrenceSettledBeforeItsAdvanceIsNotDeliveredAg
 	}, 10*time.Second, 10*time.Millisecond)
 	s.Equal(0, deliver.count())
 	s.Len(s.runs(task), 1)
+}
+
+// stalling holds every delivery until its context ends, and records the
+// attempts and why the last one ended.
+type stalling struct {
+	mu       sync.Mutex
+	attempts int
+	cause    error
+}
+
+func (d *stalling) deliver(ctx context.Context, _ store.ClaimedScheduledTask) (string, string, error) {
+	d.mu.Lock()
+	d.attempts++
+	d.mu.Unlock()
+	<-ctx.Done()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cause = context.Cause(ctx)
+	return "", "", ctx.Err()
+}
+
+func (d *stalling) state() (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.attempts, d.cause
+}
+
+// save changes a stored task as an update through the API does.
+func (s *SchedulerSuite) save(task store.ScheduledTask, change func(*store.ScheduledTask)) {
+	stored := s.read(task)
+	change(&stored)
+	s.Require().NoError(s.db.SaveScheduledTask(s.ctx, &stored))
+}
+
+func (s *SchedulerSuite) TestPausingATaskStopsItsDeliveryInFlight() {
+	deliver := &stalling{}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	scheduler := s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.renewEvery = 20 * time.Millisecond
+	})
+	s.Require().Eventually(func() bool {
+		attempts, _ := deliver.state()
+		return attempts == 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	s.save(task, func(task *store.ScheduledTask) { task.State = store.ScheduledTaskPaused })
+
+	s.Require().Eventually(func() bool {
+		_, cause := deliver.state()
+		return errors.Is(cause, errClaimLost) && scheduler.Running() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+	attempts, _ := deliver.state()
+	s.Equal(1, attempts, "a stopped delivery is not tried again")
+	s.Equal(store.ScheduledTaskPaused, s.read(task).State, "the pause decides, not the worker")
+	for _, run := range s.runs(task) {
+		s.NotEqual(store.ScheduledTaskRunFailed, run.State, "a lost claim leaves the run alone")
+	}
+}
+
+func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
+	deliver := &deliverer{err: errors.New("the conversation would not take it")}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	scheduler := s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.renewEvery = 20 * time.Millisecond
+		scheduler.retries = []time.Duration{time.Hour}
+	})
+	s.Require().Eventually(func() bool {
+		return deliver.count() == 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	s.save(task, func(task *store.ScheduledTask) { task.Title = "Stretch twice" })
+
+	s.Require().Eventually(func() bool {
+		return scheduler.Running() == 0
+	}, 10*time.Second, 10*time.Millisecond, "the hour's wait ended with the claim")
+	s.Equal(1, deliver.count())
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskActive, read.State)
+	s.Equal(0, read.ConsecutiveFailures, "a lost claim is not a failure")
+	for _, run := range s.runs(task) {
+		s.NotEqual(store.ScheduledTaskRunFailed, run.State, "a lost claim leaves the run alone")
+	}
+}
+
+func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {
+	deliver := &stalling{}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.budget = 200 * time.Millisecond
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	_, cause := deliver.state()
+	s.ErrorIs(cause, errOutOfTime)
+	s.Equal(1, s.read(task).ConsecutiveFailures)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Contains(*runs[0].Error, "ran out of time after 200ms")
+}
+
+func (s *SchedulerSuite) TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelivery() {
+	deliver := &deliverer{delay: 500 * time.Millisecond}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	first := s.task(due, nil)
+	ctx, stop := context.WithCancel(s.ctx)
+	defer stop()
+	scheduler := NewScheduler(s.db, deliver.deliver, slog.New(slog.DiscardHandler))
+	scheduler.Start(ctx)
+	s.T().Cleanup(scheduler.Close)
+	s.Require().Eventually(func() bool {
+		return scheduler.Running() == 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	stop()
+	second := s.task(due, nil)
+	scheduler.Kick()
+
+	s.Require().Eventually(func() bool {
+		return s.read(first).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond, "the delivery in flight finishes")
+	s.Zero(scheduler.Running())
+	s.Never(func() bool {
+		return len(s.runs(second)) > 0
+	}, 2*poll, 50*time.Millisecond, "nothing new is claimed")
+	s.Equal(1, deliver.count())
+}
+
+func (s *SchedulerSuite) TestReplayingAMissedRunKeepsTheFailureStreak() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = 3
+	})
+	run := store.ScheduledTaskRun{
+		CustomerID: task.CustomerID, TaskID: task.ID, ScheduledFor: due,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunMissed, Attempts: 1, FinishedAt: &due,
+	}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &run))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Equal(3, s.read(task).ConsecutiveFailures)
+	s.Equal(0, deliver.count())
 }

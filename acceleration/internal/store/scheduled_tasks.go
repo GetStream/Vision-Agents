@@ -543,10 +543,11 @@ func (s *Store) PostponeScheduledTask(ctx context.Context, customerID, taskID, r
 	return held, nil
 }
 
-// RenewScheduledTaskLease extends a claim the worker still holds.
+// RenewScheduledTaskLease extends a claim the worker still holds. False is a
+// claim it no longer holds: an update, pause or delete took it.
 func (s *Store) RenewScheduledTaskLease(ctx context.Context, customerID, taskID, claimID string, lease time.Duration) (bool, error) {
 	result, err := s.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("lease_until = now() + ?", lease).
+		Set("lease_until = now() + make_interval(secs => ?)", lease.Seconds()).
 		Where("customer_id = ?", customerID).
 		Where("id = ?", taskID).
 		Where("claim_id = ?", claimID).
