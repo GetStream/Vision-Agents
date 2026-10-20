@@ -658,6 +658,15 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
 
+### The moderator template proposes configuration changes from Ask Nora
+
+`acceleration/templates/agent_moderator/skills/suggest_policy.md` moves the Nora proof of
+concept's configuration suggestions into the template. From the live policy, the last 7 days of
+reviews (or the days the moderator names) and where Nora disagreed with the first layer, it
+proposes up to 8 changes to label actions, LLM labels and severities, the app context, blocklists,
+rules and the flooding filter, each with the counts behind it, as the JSON the dashboard saves.
+It only proposes: nothing changes until the moderator confirms in the dashboard (AI-1505).
+
 ### A recording moves to the next model when the vendor fails it
 
 `POST /v1/tts/recordings` on a shortcut or a priority list no longer fails when the model chosen
