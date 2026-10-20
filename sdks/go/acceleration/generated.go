@@ -979,6 +979,7 @@ const (
 	ErrorTypePayloadTooLarge      ErrorType = "payload_too_large"
 	ErrorTypePermission           ErrorType = "permission"
 	ErrorTypeRateLimited          ErrorType = "rate_limited"
+	ErrorTypeTimeout              ErrorType = "timeout"
 	ErrorTypeUnavailable          ErrorType = "unavailable"
 	ErrorTypeUnsupportedMediaType ErrorType = "unsupported_media_type"
 )
@@ -1007,6 +1008,8 @@ func (e ErrorType) Valid() bool {
 	case ErrorTypePermission:
 		return true
 	case ErrorTypeRateLimited:
+		return true
+	case ErrorTypeTimeout:
 		return true
 	case ErrorTypeUnavailable:
 		return true
@@ -4305,6 +4308,24 @@ type CreateResponseRequest struct {
 	Videos *[]VideoSource `json:"videos,omitempty"`
 }
 
+// CreateRunRequest defines model for CreateRunRequest.
+type CreateRunRequest struct {
+	// ConfigId The agent config to run.
+	ConfigId string `json:"config_id"`
+
+	// Input What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions.
+	Input interface{} `json:"input"`
+
+	// Instructions What the agent is told for this run alone, added to its config's instructions.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Tags Cost labels, carried onto every request the run makes alongside the config's own.
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// TimeoutMs How long the run may take before it is given up as a 504. Two minutes when left out.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+}
+
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
 	// Agent The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
@@ -4714,7 +4735,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 429: the app or organization has spent its budget, and the message says which and when it resets), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -4723,7 +4744,7 @@ type ErrorDetail struct {
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
 
-	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 	Type ErrorType `json:"type"`
 }
 
@@ -4732,7 +4753,7 @@ type ErrorResponse struct {
 	Error ErrorDetail `json:"error"`
 }
 
-// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
@@ -6005,6 +6026,21 @@ type RouterConfigRequest struct {
 
 	// Tts How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
 	Tts *TtsOptions `json:"tts,omitempty"`
+}
+
+// Run defines model for Run.
+type Run struct {
+	// FinalText The last thing the agent said.
+	FinalText string `json:"final_text"`
+
+	// ModelRoute The provider/model routing picked to answer.
+	ModelRoute string `json:"model_route"`
+
+	// SessionId The session the run held. It ended with the run, and being incognito, it cannot be read back.
+	SessionId string `json:"session_id"`
+
+	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+	Usage CallUsage `json:"usage"`
 }
 
 // Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -8388,6 +8424,9 @@ type CreateCustomModelJSONRequestBody = CustomModelRequest
 // UpdateCustomModelJSONRequestBody defines body for UpdateCustomModel for application/json ContentType.
 type UpdateCustomModelJSONRequestBody = CustomModelRequest
 
+// CreateRunJSONRequestBody defines body for CreateRun for application/json ContentType.
+type CreateRunJSONRequestBody = CreateRunRequest
+
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
@@ -9999,6 +10038,28 @@ type ClientInterface interface {
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRunWithBody Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRunWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRun Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRun(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
 	//
@@ -13913,6 +13974,48 @@ func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditor
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRunWithBody Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRunRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRun Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *Client) CreateRun(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRunRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -21772,6 +21875,46 @@ func NewGetPluginLogoRequest(server string, pluginId string) (*http.Request, err
 	return req, nil
 }
 
+// NewCreateRunRequest calls the generic CreateRun builder with application/json body
+func NewCreateRunRequest(server string, body CreateRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateRunRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateRunRequestWithBody constructs an http.Request for the CreateRun method, with any body, and a specified content type
+func NewCreateRunRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/runs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateSessionRequest calls the generic CreateSession builder with application/json body
 func NewCreateSessionRequest(server string, body CreateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -28600,6 +28743,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
+
+	// CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRunWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRunResponse, error)
+
+	// CreateRunWithResponse Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRunWithResponse(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRunResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
@@ -37363,6 +37528,103 @@ func (r GetPluginLogoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPluginLogoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Run
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateRunResponse) GetJSON200() *Run {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateRunResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateRunResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateRunResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateRunResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CreateRunResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateRunResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateRunResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r CreateRunResponse) GetJSON504() *ErrorResponse {
+	return r.JSON504
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -48363,6 +48625,40 @@ func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, plu
 	return ParseGetPluginLogoResponse(rsp)
 }
 
+// CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *ClientWithResponses) CreateRunWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRunResponse, error) {
+	rsp, err := c.CreateRunWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRunResponse(rsp)
+}
+
+// CreateRunWithResponse Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *ClientWithResponses) CreateRunWithResponse(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRunResponse, error) {
+	rsp, err := c.CreateRun(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRunResponse(rsp)
+}
+
 // CreateSessionWithBodyWithResponse Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -56812,6 +57108,88 @@ func ParseGetPluginLogoResponse(rsp *http.Response) (*GetPluginLogoResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateRunResponse parses an HTTP response from a CreateRunWithResponse call
+func ParseCreateRunResponse(rsp *http.Response) (*CreateRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Run
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
 
 	}
 
