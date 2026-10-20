@@ -1797,6 +1797,23 @@ func (s *ScheduledTasksSuite) TestATaskForSomebodyWhoNeverTextedHasNoNumberToRin
 	s.Equal(scheduling.ReasonNoNumber, *s.failedRun(s.tasksOf(user)[0]).Error)
 }
 
+func (s *ScheduledTasksSuite) TestARunByHandThatFailsListsTheReasonItFailedUnder() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	created := s.taskOn(user, config, opened.Id, []string{"phone"})
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, path+"/run", nil, nil))
+
+	var page ScheduledTaskRunPage
+	s.Require().Eventually(func() bool {
+		s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path+"/runs", nil, &page))
+		return len(page.Items) == 1 && page.Items[0].State == store.ScheduledTaskRunFailed
+	}, 30*time.Second, 250*time.Millisecond, "the run by hand never finished failing")
+	s.Require().NotNil(page.Items[0].Error)
+	s.Equal(scheduling.ReasonNoNumber, *page.Items[0].Error)
+}
+
 func (s *ScheduledTasksSuite) TestATaskForAnAgentWithoutANumberHasNoLineToRingFrom() {
 	s.retryAtOnce()
 	config := s.agentWithScheduling(nil)

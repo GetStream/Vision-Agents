@@ -556,6 +556,24 @@ func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {
 	s.Equal(ReasonOutOfTime, *runs[0].Error)
 }
 
+func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetIsTimedOutEvenWhenDeliveryAnswersWithACodedFailure() {
+	deliver := func(ctx context.Context, _ store.ClaimedScheduledTask) (string, string, error) {
+		<-ctx.Done()
+		return "", "", &Failure{Reason: ReasonFailed, Err: ctx.Err()}
+	}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	s.started(deliver, func(scheduler *Scheduler) {
+		scheduler.budget = 200 * time.Millisecond
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(ReasonOutOfTime, *runs[0].Error)
+}
+
 func (s *SchedulerSuite) TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelivery() {
 	deliver := &deliverer{delay: 500 * time.Millisecond}
 	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
