@@ -3859,6 +3859,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -3911,6 +3912,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -3964,6 +3966,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
@@ -4113,6 +4116,11 @@ export type components = {
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
         };
+        /**
+         * @description What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+         * @enum {string}
+         */
+        readonly AgentRole: "agent_moderator";
         readonly AgentStats: {
             /**
              * Format: date-time
@@ -7838,6 +7846,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -9570,6 +9579,8 @@ export interface operations {
             readonly query?: {
                 /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
                 readonly name?: string;
+                /** @description Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set. */
+                readonly role?: components["schemas"]["AgentRole"];
             };
             readonly header?: never;
             readonly path?: never;
