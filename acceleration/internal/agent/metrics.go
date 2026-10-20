@@ -26,7 +26,7 @@ var (
 	playoutDroppedFrames = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "agent_playout_dropped_frames_total",
-		Help:      "Frames of the agent's speech thrown away from the edge's outgoing queue before the call took them, on an interruption or on leaving",
+		Help:      "Frames of the agent's speech thrown away from the edge's outgoing queue before the call took them, on an interruption",
 	}, []string{"provider"})
 	playoutQueuePeak = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",

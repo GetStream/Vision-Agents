@@ -176,6 +176,23 @@ func (s *AgentSuite) TestThePeakReadAtAnotherUtterancesStartCountsForTheOneOpen(
 	s.EqualValues(1, second["frames_queued"])
 	s.EqualValues(0, second["frames_sent"])
 	s.EqualValues(40, second["peak_queued_ms"], "tool-b queued behind the frame turn-a left")
+	s.EqualValues(40, second["queued_ms"], "what waits at the finish, not what tool-b added")
+	s.Equal(true, first["shared"])
+	s.Equal(true, second["shared"])
+}
+
+func (s *AgentSuite) TestAnUtteranceAloneInTheQueueIsNotShared() {
+	edge := s.joinCounted(0)
+
+	s.started(edge, "turn-a")
+	s.published("turn-a", 40)
+	s.voiceSends(1, tts.SynthesisComplete{SynthesisID: "turn-a"})
+	s.started(edge, "turn-b")
+	s.published("turn-b", 20)
+	s.voiceSends(2, tts.SynthesisComplete{SynthesisID: "turn-b"})
+
+	s.Equal(false, s.finishLine("turn-a")["shared"])
+	s.Equal(false, s.finishLine("turn-b")["shared"])
 }
 
 func (s *AgentSuite) TestDropsCountedBeforeTheVoiceWasTakenAreNotCountedAgain() {

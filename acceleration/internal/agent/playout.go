@@ -10,7 +10,8 @@ import (
 // finished also says what went out, what was thrown away, and how much speech was still
 // waiting behind it. It is used only from the goroutine consuming the voice.
 //
-// The counts are the queue's, not the utterance's: two utterances open at once share theirs.
+// The counts are the queue's, not the utterance's: two utterances open at once share theirs,
+// and the finish line says so with shared.
 type playout struct {
 	// counter is nil when the edge has no queue to count.
 	counter PlayoutCounter
@@ -28,6 +29,8 @@ type playout struct {
 type playoutSpan struct {
 	start PlayoutStats
 	peak  time.Duration
+	// shared is whether another utterance was open at any point while this one was.
+	shared bool
 }
 
 func newPlayout(edge Edge, provider string) *playout {
@@ -52,6 +55,12 @@ func (p *playout) started(synthesisID string) {
 		return
 	}
 	p.open[synthesisID] = playoutSpan{start: p.read()}
+	if len(p.open) > 1 {
+		for id, span := range p.open {
+			span.shared = true
+			p.open[id] = span
+		}
+	}
 }
 
 // finished returns what the queue did while the utterance was open, as log fields, or none
@@ -70,6 +79,7 @@ func (p *playout) finished(synthesisID string) []any {
 		"frames_dropped", stats.Dropped - span.start.Dropped,
 		"peak_queued_ms", span.peak.Milliseconds(),
 		"queued_ms", stats.Waiting.Milliseconds(),
+		"shared", span.shared,
 	}
 }
 

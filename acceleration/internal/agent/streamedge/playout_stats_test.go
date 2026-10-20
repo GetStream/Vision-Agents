@@ -78,6 +78,16 @@ func (s *StreamEdgeSuite) TestSpeechStillQueuedIsWaiting() {
 
 	s.Equal(80*time.Millisecond, stats.Waiting)
 	s.Equal(200*time.Millisecond, stats.Peak)
+	s.EqualValues(6, stats.Sent, "the four frames still waiting have not gone")
+}
+
+func (s *StreamEdgeSuite) TestChunksQueuedBeforeAnyIsTakenStackInThePeak() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
+	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
+
+	s.Equal(200*time.Millisecond, talker.stats().Peak, "the queue held both chunks, not the larger one")
 }
 
 func (s *StreamEdgeSuite) TestReadingTheStatsStartsTheNextPeakFromWhatIsQueued() {
