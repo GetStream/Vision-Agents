@@ -442,6 +442,23 @@ func (s *ScheduledTasksSuite) TestTheAgentIsToldWhatDayItIsForTheUser() {
 	s.Contains(s.model().instructions(), "(Europe/Amsterdam)")
 }
 
+func (s *ScheduledTasksSuite) TestAPaddedSessionZoneIsTrimmedAndTheRoutersOwnIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.Timezone = pointerTo(" Europe/Amsterdam ")
+	})
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "hello")
+	s.await(watching, "responded")
+	s.Contains(s.model().instructions(), "(Europe/Amsterdam)")
+
+	status, answered := s.taskFailure(user, http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{ConfigId: &config, Timezone: pointerTo("Local")})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeInvalidTimezone, answered.Error.Code)
+}
+
 func (s *ScheduledTasksSuite) TestGuestsAndAnonymousCallersAreNotOfferedTheTools() {
 	config := s.agentWithScheduling(nil)
 	for _, user := range []*testClient{s.guestClient, s.anonymousClient} {
@@ -862,6 +879,32 @@ func (s *ScheduledTasksSuite) TestADeviceMayChangeTitleScheduleAndNextButNotInst
 	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
 	s.Require().NoError(err)
 	s.WithinDuration(before.Add(30*time.Minute), next, 2*time.Minute)
+}
+
+func (s *ScheduledTasksSuite) TestARepeatWrittenFromAPastDateStartsAtItsNextOccurrence() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	nextOf := func(task ScheduledTask, clock string) {
+		s.Require().NotNil(task.NextRunAt)
+		next, err := time.Parse(time.RFC3339, *task.NextRunAt)
+		s.Require().NoError(err)
+		s.True(next.After(time.Now()), "the next run %s is not in the past", next)
+		s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
+		amsterdam, err := time.LoadLocation("Europe/Amsterdam")
+		s.Require().NoError(err)
+		s.Equal(clock, next.In(amsterdam).Format("15:04"))
+	}
+	body := taskRequest(config)
+	body.Schedule = ScheduledTaskSchedule{At: pointerTo("2026-01-01T09:00:00"), Repeat: pointerTo("FREQ=DAILY"),
+		Timezone: pointerTo("Europe/Amsterdam")}
+	created := s.createTask(user, body)
+	nextOf(created, "09:00")
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{At: pointerTo("2026-02-01T10:00:00"),
+			Repeat: pointerTo("FREQ=DAILY")}}, &updated))
+	nextOf(updated, "10:00")
 }
 
 func (s *ScheduledTasksSuite) TestPauseAndResumeCountsFromNow() {
