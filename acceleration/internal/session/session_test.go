@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -337,6 +338,8 @@ type SessionSuite struct {
 	// plugins is what the manager reaches plugins and MCP servers with, for a test whose
 	// server listens on loopback. Nil is the manager's default, as before.
 	plugins *plugins.Auth
+	// directory is where the manager says which sessions it runs, when a test reads that.
+	directory *node.Directory
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -354,6 +357,7 @@ func (s *SessionSuite) SetupTest() {
 	s.apps = nil
 	s.edgeApps = nil
 	s.plugins = nil
+	s.directory = nil
 	s.ears = nil
 	s.others = nil
 }
@@ -441,6 +445,7 @@ func (s *SessionSuite) manages() {
 		Stream:        s.apps,
 		DetachedGrace: s.grace,
 		PluginAuth:    s.plugins,
+		Directory:     s.directory,
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)

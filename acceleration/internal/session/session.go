@@ -177,6 +177,16 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// timeout is the timer that ends the session (SetTimeout), nil when it has none, and
+	// timeoutArmed counts the timers set, so one that was moved or cleared while it was
+	// firing does not end the session.
+	timeout      *time.Timer
+	timeoutArmed uint64
+	// closing is set once close has begun, after which the timeout stays as it is: the
+	// call's last leaves still arrive while the session closes.
+	closing bool
+	// end ends this session when its timeout is reached (Manager.end).
+	end func()
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
@@ -1189,6 +1199,11 @@ func (s *Session) Close() error {
 }
 
 func (s *Session) close() error {
+	s.mu.Lock()
+	s.closing = true
+	s.stopTimeout()
+	s.mu.Unlock()
+
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
 	s.tools.Close()
