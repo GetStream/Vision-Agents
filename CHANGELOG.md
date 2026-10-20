@@ -648,7 +648,8 @@ their own IANA timezone. `CreateSessionRequest` takes a `timezone`, remembered a
 user's for what follows. When a task comes due, a worker on every router claims it once
 and the agent carries it out in the user's own conversation, with its usual tools; a task
 that fires mid-call waits for the call to end rather than interrupting it. Scheduled runs
-are customer spend and never consume the end user's daily caps.
+are customer spend and never consume the end user's daily caps, the replies that finish
+them included; what the user types next is counted on their day as before.
 
 The same tasks are a REST resource, `/v1/agents/scheduled-tasks`: a backend schedules for
 the user it names with `X-Stream-User-Id`, and the owner reads, changes, pauses, resumes

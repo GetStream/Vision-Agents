@@ -16,12 +16,12 @@ T = TypeVar("T", bound="ScheduledTaskSchedule")
 class ScheduledTaskSchedule:
     """
     Attributes:
-        at (str | Unset): The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it
+        at (str | Unset): When it first runs, as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it
             is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
         description (str | Unset): What the schedule says, in one sentence. Read-only: written by the router, and the
             same sentence the model reads back. Example: Every weekday at 09:00 (Europe/Amsterdam).
-        in_ (str | Unset): How long from now instead, an ISO 8601 duration: PT20M, P1D. Resolved on write; a response
-            never carries it. Example: PT20M.
+        in_ (str | Unset): How long from now instead, an ISO 8601 duration: PT20M, P1D. Days are calendar days: P1D is
+            the same time tomorrow. Resolved on write; a response never carries it. Example: PT20M.
         repeat (str | Unset): Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY,
             FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1. Example: FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR.
         timezone (str | Unset): An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's

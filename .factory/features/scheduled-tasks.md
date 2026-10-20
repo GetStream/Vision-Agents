@@ -30,7 +30,8 @@ The same resource is REST: `/v1/agents/scheduled-tasks` (create for the user
 `X-Stream-User-Id` names, list, get, PATCH, pause, resume counted from now, run by hand,
 delete, runs), reached the way sessions are — the owner's device sees its backend-made
 tasks, anybody else's answer 404. Scheduled turns are customer spend: they never consume
-the end user's daily caps.
+the end user's daily caps. That is the follow-up turn and the replies that finish it; what
+the user types after it is theirs again.
 
 Delivery goes where the task says, in order (`deliver_to`, default the conversation
 alone). The agent's reply is written once in its conversation, under the run's command
@@ -48,7 +49,9 @@ they are REST-only.
 ## Decisions
 
 - **Customer spend, not user allowance.** A scheduled run is charged server-side
-  (`routing.WithScheduledTurn`); usage recording and policy budgets are untouched.
+  (`routing.WithScheduledTurn`). The agent keeps the mark with the turn, as it keeps the
+  turn's sender, so the model requests that answer it carry it to the daily limit
+  (`llmrouter.Session.charged`); usage recording and policy budgets are untouched.
 - **Fire-time tools are the user's full tools.** The woken agent runs in the real
   conversation with its connectors, which is what makes "should I keep reminding
   you?" work.
