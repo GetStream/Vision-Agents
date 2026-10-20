@@ -26,7 +26,11 @@ from vision_agents.core.agents.transcript import TranscriptStore
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
-from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.llm import (
+    SEVERAL_SPEAKERS,
+    LLMResponseDelta,
+    LLMResponseFinal,
+)
 from vision_agents.core.stt import STT
 from vision_agents.core.stt.stt import Transcript, TranscriptResponse
 from vision_agents.core.tts import TTS
@@ -680,18 +684,26 @@ class TestProcessSTTOutput:
         alice = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
         bob = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
         asked: list[str] = []
+        told: list[str] = []
+        called = asyncio.Event()
 
         async def llm(text: str, _participant: Participant | None = None):
             asked.append(text)
+            told.append(stub.instructions)
+            called.set()
             yield LLMResponseFinal(text="ok", item_id=f"r{len(asked)}")
 
-        flow = flow_factory(llm=LLMStub.from_callable(llm))
+        stub = LLMStub.from_callable(llm)
+        stub.set_conversation(conversation)
+        stub.set_instructions("be brief")
+        flow = flow_factory(llm=stub)
         stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()
         llm_out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
         stage = asyncio.create_task(flow.process_stt_output(stt_out, llm_out))
 
         async def say(participant: Participant, text: str, eager: bool) -> None:
             await stt_out.send(TurnStarted(participant=participant, confidence=0.5))
+            called.clear()
             if eager:
                 # An eager turn asks the LLM before the transcript is in the conversation.
                 await stt_out.send(
@@ -705,6 +717,7 @@ class TestProcessSTTOutput:
                 await stt_out.send(
                     TurnEnded(participant=participant, confidence=0.9, eager=True)
                 )
+                await asyncio.wait_for(called.wait(), timeout=2.0)
             await stt_out.send(
                 Transcript(
                     text=text,
@@ -727,6 +740,9 @@ class TestProcessSTTOutput:
         assert asked == ["hello", "Bob: hi there", "Alice: again"]
         users = [m for m in conversation.messages if m.role == "user"]
         assert [m.named_content for m in users] == asked
+        # Bob's first turn was asked before his words were kept, yet carries his name.
+        several = "be brief\n\n" + SEVERAL_SPEAKERS
+        assert told == ["be brief", several, several]
 
     async def test_simple_response_then_process_stt_output_no_td(
         self, transcripts, conversation, participant, events

@@ -7,7 +7,7 @@ from tests.test_agents.test_inference.stubs import LLMStub
 ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
 BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
-# The router agent's line, word for word (acceleration/internal/agent/agent.go:1848).
+# The router agent's line, word for word (`severalSpeakers` in acceleration/internal/agent/agent.go).
 SEVERAL_PEOPLE = (
     "Several people are talking in this call. Each of their messages starts with "
     "the name of who said it, then a colon. Never start your reply with such a label."

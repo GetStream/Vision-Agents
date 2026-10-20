@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -43,11 +44,19 @@ from .llm_types import NormalizedToolCallItem, ToolSchema
 T = TypeVar("T")
 
 # What the model is told once a second person has spoken, worded as the router's agent
-# words it (acceleration/internal/agent/agent.go:1848). A reply is spoken, so one that
+# words it (`severalSpeakers` in acceleration/internal/agent/agent.go). A reply is spoken, so one that
 # opened on a name the way their turns do would be heard saying it.
 SEVERAL_SPEAKERS = (
     "Several people are talking in this call. Each of their messages starts with "
     "the name of who said it, then a colon. Never start your reply with such a label."
+)
+
+# The speaker label of the turn the current task answers, None for an unlabelled one.
+# An eager turn is answered before its words are kept, so the second person's first
+# turn is labelled while the conversation still holds one person; the router's agent
+# tells the model about several people then too (acceleration/internal/agent/speculate.go).
+answered_speaker: ContextVar[Optional[str]] = ContextVar(
+    "answered_speaker", default=None
 )
 
 
@@ -240,7 +249,8 @@ class LLM(Component):
         The agent's instructions, and once a second person has spoken, how their names
         are written ahead of their words.
         """
-        if self._conversation is None or not self._conversation.several_speakers:
+        several = self._conversation is not None and self._conversation.several_speakers
+        if not several and answered_speaker.get() is None:
             return self._instructions
         return "\n\n".join(p for p in (self._instructions, SEVERAL_SPEAKERS) if p)
 
