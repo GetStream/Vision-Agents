@@ -700,7 +700,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
-	go created.consume(built, created.transcript)
+	go created.consume(built, created.transcript, created.track(built))
 
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request

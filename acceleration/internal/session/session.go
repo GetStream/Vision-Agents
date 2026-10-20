@@ -187,6 +187,13 @@ type Session struct {
 	closing bool
 	// end ends this session when its timeout is reached (Manager.end).
 	end func()
+	// runs are who is in the call, per agent run that can tell (presence). callerSeen is
+	// whether a phone caller has been in the session's call, and settledOnce whether any run
+	// has settled, which only the first may start a phone session's start timeout from.
+	presenceMu  sync.Mutex
+	runs        map[*agent.Agent]*presence
+	callerSeen  atomic.Bool
+	settledOnce atomic.Bool
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
@@ -988,7 +995,7 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 		transcript = s.transcribe(ctx, next)
 	}
 	s.running.Add(1)
-	go s.consume(fresh, transcript)
+	go s.consume(fresh, transcript, s.track(fresh))
 	if err := fresh.Join(context.WithoutCancel(ctx)); err != nil {
 		_ = fresh.Close()
 		return stack.Wrap(err)
@@ -1000,6 +1007,12 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 	}
 
 	s.held.Store(fresh)
+	// A run's joins and Joined arrive while it joins, before it is stored, so the old run is
+	// shut out rather than everything but the current one.
+	s.retire(old)
+	if !voice && s.phoneSession(s.Spec()) {
+		s.ClearTimeout()
+	}
 	s.labelMu.Lock()
 	s.spec.Text, s.spec.CallID, s.spec.CallType = next.Text, next.CallID, next.CallType
 	s.spec.STSTarget, s.spec.heldSTS = next.STSTarget, next.heldSTS
@@ -1253,8 +1266,9 @@ func (s *Session) close() error {
 //
 // In writing every event goes to the conversation. On a call the transcript writes what
 // was said, except a turn typed by a durable command, which the conversation writes.
-func (s *Session) consume(held *agent.Agent, transcript Transcript) {
+func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presence) {
 	defer s.running.Done()
+	defer s.untrack(held)
 	if transcript != nil {
 		defer transcript.Close()
 	}
@@ -1267,6 +1281,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript) {
 		if transcript != nil && !typed {
 			transcript.Record(event)
 		}
+		s.observe(run, event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)

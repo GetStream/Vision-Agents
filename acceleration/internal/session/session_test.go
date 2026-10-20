@@ -43,6 +43,8 @@ const settleFor = 3 * time.Second
 // needs from an edge is only that joining and leaving work.
 type quietEdge struct {
 	inbound chan agent.InboundAudio
+	// attending carries who comes and goes, read only through attendedEdge.
+	attending chan agent.Attendance
 
 	mu     sync.Mutex
 	joined bool
@@ -50,17 +52,60 @@ type quietEdge struct {
 	// unheard is speech that has been published but has not gone out yet, which is what a
 	// real edge holds while a reply is being spoken.
 	unheard bool
+	// present is who is in the call besides the agent, starting with whoever was there
+	// before it joined, and attended is whether the agent reads who comes and goes.
+	present  map[string]stt.Participant
+	attended bool
 }
 
-func newQuietEdge() *quietEdge {
-	return &quietEdge{inbound: make(chan agent.InboundAudio, 4)}
+func newQuietEdge(present ...stt.Participant) *quietEdge {
+	e := &quietEdge{
+		inbound:   make(chan agent.InboundAudio, 4),
+		attending: make(chan agent.Attendance, 64),
+		present:   map[string]stt.Participant{},
+	}
+	for _, p := range present {
+		e.present[p.ID] = p
+	}
+	return e
 }
 
+// attendedEdge is a quietEdge that says who comes and goes, as Stream's edge does.
+type attendedEdge struct{ *quietEdge }
+
+func (e attendedEdge) Attendance() <-chan agent.Attendance { return e.attending }
+
+// Join queues whoever is already in the call before it returns, as Stream's edge does.
 func (e *quietEdge) Join(context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.joined = true
+	for _, p := range e.present {
+		e.attending <- agent.Attendance{Participant: p, Joined: true}
+	}
 	return nil
+}
+
+// arrives reports somebody joining the call.
+func (e *quietEdge) arrives(p stt.Participant) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.left {
+		return
+	}
+	e.present[p.ID] = p
+	e.attending <- agent.Attendance{Participant: p, Joined: true}
+}
+
+// leaves reports somebody leaving the call.
+func (e *quietEdge) leaves(p stt.Participant) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.left {
+		return
+	}
+	delete(e.present, p.ID)
+	e.attending <- agent.Attendance{Participant: p}
 }
 
 func (e *quietEdge) Audio() <-chan agent.InboundAudio { return e.inbound }
@@ -87,14 +132,31 @@ func (e *quietEdge) holdSpeech(unheard bool) {
 	e.unheard = unheard
 }
 
+// Leave reports everyone still in the call leaving, as the edge sees them go on its way out.
+// It waits for the agent to take those leaves, so they reach the session before the agent
+// stops reporting.
 func (e *quietEdge) Leave() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.left {
+		e.mu.Unlock()
 		return nil
 	}
 	e.left = true
 	close(e.inbound)
+	reported := e.attended && e.joined && len(e.present) > 0
+	for _, p := range e.present {
+		e.attending <- agent.Attendance{Participant: p}
+	}
+	e.present = map[string]stt.Participant{}
+	e.mu.Unlock()
+	if reported {
+		deadline := time.Now().Add(settleFor)
+		for len(e.attending) > 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	close(e.attending)
 	return nil
 }
 
@@ -340,6 +402,10 @@ type SessionSuite struct {
 	plugins *plugins.Auth
 	// directory is where the manager says which sessions it runs, when a test reads that.
 	directory *node.Directory
+	// present is who is in the call before the next edge joins it, and unattended makes
+	// edges that say nobody comes or goes, as a socket does.
+	present    []stt.Participant
+	unattended bool
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -360,6 +426,9 @@ func (s *SessionSuite) SetupTest() {
 	s.directory = nil
 	s.ears = nil
 	s.others = nil
+	s.present = nil
+	s.unattended = false
+	s.shortensPhoneTimeouts()
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -449,9 +518,13 @@ func (s *SessionSuite) manages() {
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
-			edge := newQuietEdge()
+			edge := newQuietEdge(s.present...)
 			s.edges = append(s.edges, edge)
-			return edge, nil
+			if s.unattended {
+				return edge, nil
+			}
+			edge.attended = true
+			return attendedEdge{edge}, nil
 		},
 	})
 	s.Require().NoError(err)

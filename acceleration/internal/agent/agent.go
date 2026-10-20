@@ -750,6 +750,13 @@ func (a *Agent) Join(ctx context.Context) error {
 	return nil
 }
 
+// Attends reports whether the agent is on a call whose edge says who comes and goes
+// (Roster), so that a call with nobody reported by Joined is known to be empty.
+func (a *Agent) Attends() bool {
+	_, ok := a.options.Edge.(Roster)
+	return !a.options.Text && ok
+}
+
 // SimpleResponse answers a piece of text through the model, as though a participant had
 // said it. It returns once the request is on its way: the reply arrives on Events and is
 // spoken as it streams.
