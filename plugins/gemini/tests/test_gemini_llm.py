@@ -11,6 +11,7 @@ from google.genai.client import AsyncClient
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
+from vision_agents.plugins.gemini import tools
 from vision_agents.plugins.gemini.gemini_llm import (
     GeminiLLM,
 )
@@ -74,6 +75,23 @@ class TestGeminiLLM:
         # One person: what the base sha (9653cb696) sent; the chat keeps the instructions.
         assert told == ["be brief", "be brief", "be brief\n\n" + SEVERAL_SPEAKERS]
         assert bodies[-1]["contents"][-1]["parts"] == [{"text": "Bob: Me too"}]
+
+    async def test_each_request_carries_the_built_in_tools_once(
+        self, gemini_api: tuple[AsyncClient, list[dict]]
+    ):
+        client, bodies = gemini_api
+        conversation = InMemoryConversation("", [])
+        llm = GeminiLLM(
+            model="test", client=client, temperature=0.5, tools=[tools.GoogleSearch()]
+        )
+        llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
+
+        turns = ((ALICE, "Hi"), (ALICE, "Hello?"), (BOB, "Me too"), (ALICE, "And"))
+        for participant, text in turns:
+            await answer(llm, conversation, participant, text)
+
+        assert [len(body["tools"]) for body in bodies] == [1, 1, 1, 1]
 
     def test_message(self):
         messages = GeminiLLM._normalize_message("say hi")

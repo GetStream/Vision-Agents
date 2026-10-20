@@ -131,7 +131,8 @@ class GeminiLLM(LLM):
         if base_config is not None:
             config = base_config
         elif self._base_config is not None:
-            config = self._base_config
+            # A copy: every request builds its own, and the built-in tools go on each once.
+            config = self._base_config.model_copy(deep=True)
         else:
             config = GenerateContentConfig()
 
