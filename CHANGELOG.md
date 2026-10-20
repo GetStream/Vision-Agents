@@ -668,6 +668,24 @@ prior bans, and an instruction injected into the message. A simulation talks to 
 rather than through a run, so each one hands over the policy with its cases, and its assertion
 judges the verdicts rather than the answer format. Run them after editing the agent with
 `getstream agents simulate nora` (AI-1506).
+### The app's moderator reads the app's moderation data
+
+A session or run of an `agent_moderator` config is offered six read-only tools on the app's
+moderation data: `query_review_queue`, `get_review_queue_item` (with its flags and actions),
+`query_moderation_configs` (with their LLM labels), `query_moderation_rules`, `list_blocklists`
+and `query_moderation_logs`. They act with the Stream identity the router already holds for the
+app, so no secret is passed in. They are offered only to a session the customer's backend
+opens (a server-side caller), never one an end user's device opens, and only in an app of the
+customer's own: a session in the deployment's shared app is offered none. Reading the review queue never locks an item, and a
+tool the caller declares under the same name stays the caller's (AI-1504).
+### The moderator template proposes configuration changes from Ask Nora
+
+`acceleration/templates/agent_moderator/skills/suggest_policy.md` moves the Nora proof of
+concept's configuration suggestions into the template. From the live policy, the last 7 days of
+reviews (or the days the moderator names) and where Nora disagreed with the first layer, it
+proposes up to 8 changes to label actions, LLM labels and severities, the app context, blocklists,
+rules and the flooding filter, each with the counts behind it, as the JSON the dashboard saves.
+It only proposes: nothing changes until the moderator confirms in the dashboard (AI-1505).
 
 ### A recording moves to the next model when the vendor fails it
 
