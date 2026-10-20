@@ -425,17 +425,16 @@ func (s *StoreSuite) TestPausingATaskWritesItsHeldOccurrenceMissed() {
 	s.Equal(ScheduledTaskRunRunning, s.run(theirs.ID).State)
 }
 
-func (s *StoreSuite) TestAnEditKeepingTheNextRunSettlesTheOccurrenceRatherThanDeliveringItAgain() {
+func (s *StoreSuite) TestAnEditKeepingTheNextRunSettlesARepeatsOccurrenceRatherThanDeliveringItAgain() {
 	due := s.base.Add(-time.Minute)
-	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
-	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
-	s.Require().NoError(err)
-	s.Require().Len(claimed, 1)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt, task.RRule = &due, "FREQ=DAILY" })
+	claim := s.held("one", time.Now().Add(8*time.Hour))
 
 	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
 	s.Require().NoError(err)
 	task.Instructions = "Remind Sam to drink water."
 	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+	s.True(task.NextRunAt.Equal(due), "a repeat keeps its schedule")
 
 	// The edit cleared the claim and kept the next run, so the task is due
 	// again at once: its occurrence is only advanced past.
@@ -443,8 +442,60 @@ func (s *StoreSuite) TestAnEditKeepingTheNextRunSettlesTheOccurrenceRatherThanDe
 	s.Require().NoError(err)
 	s.Require().Len(again, 1)
 	s.True(again[0].AlreadySettled, "the old instructions are not delivered")
-	s.Equal(claimed[0].Run.ID, again[0].Run.ID)
+	s.Equal(claim.Run.ID, again[0].Run.ID)
 	s.Equal(ScheduledTaskRunMissed, again[0].Run.State)
+}
+
+func (s *StoreSuite) TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claim := s.held("one", time.Now().Add(8*time.Hour))
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.Instructions = "Remind Sam to drink water."
+	before := time.Now()
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskActive, stored.State)
+	s.Require().NotNil(stored.NextRunAt)
+	s.WithinDuration(before, *stored.NextRunAt, 5*time.Second, "due again at the save")
+	s.True(task.NextRunAt.Equal(*stored.NextRunAt), "the caller sees the next run that was saved")
+	s.Equal(ScheduledTaskRunMissed, s.run(claim.Run.ID).State, "the held occurrence is settled")
+
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(again, 1)
+	s.False(again[0].AlreadySettled, "the reminder is delivered, not lost")
+	s.NotEqual(claim.Run.ID, again[0].Run.ID)
+	s.Equal("Remind Sam to drink water.", again[0].Run.Prompt)
+	s.Nil(again[0].Run.PostponedUntil, "the new occurrence is held only if quiet hours hold it when it is delivered")
+}
+
+func (s *StoreSuite) TestAPausedOrMovedOneShotIsNotBroughtForwardBySettlingItsHeldOccurrence() {
+	due := s.base.Add(-time.Minute)
+	s.task("paused", func(task *ScheduledTask) { task.NextRunAt = &due })
+	s.held("paused", time.Now().Add(8*time.Hour))
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "paused")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+	stored, err := s.store.ScheduledTask(s.ctx, "acme", "paused")
+	s.Require().NoError(err)
+	s.True(stored.NextRunAt.Equal(due), "a pause decides what comes next, not the save")
+
+	s.task("moved", func(task *ScheduledTask) { task.NextRunAt = &due })
+	s.held("moved", time.Now().Add(8*time.Hour))
+	task, err = s.store.ScheduledTask(s.ctx, "acme", "moved")
+	s.Require().NoError(err)
+	later := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	task.NextRunAt = &later
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+	stored, err = s.store.ScheduledTask(s.ctx, "acme", "moved")
+	s.Require().NoError(err)
+	s.True(stored.NextRunAt.Equal(later), "a one-shot moved by the edit runs when it was moved to")
 }
 
 // lapse ages a run past the stale window and lets its task's lease run out,

@@ -1995,6 +1995,48 @@ func (s *ScheduledTasksSuite) TestAQuietTaskIsHeldUntilItsQuietHoursEnd() {
 	s.False(s.model().heard("<scheduled_task"), "nothing was delivered into the quiet hours")
 }
 
+func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNowReads() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	now := time.Now().UTC()
+	body := taskRequest(config)
+	body.SessionId = &opened.Id
+	body.Schedule.Timezone = pointerTo("UTC")
+	body.QuietHours = &ScheduledTaskQuietHours{
+		Start: now.Add(-time.Hour).Format("15:04"),
+		End:   now.Add(2 * time.Hour).Format("15:04"),
+	}
+	created := s.createTask(user, body)
+	s.runWorker()
+	task := s.tasksOf(user)[0]
+	s.makeDue(task)
+	held := func() bool {
+		stored := s.taskReloaded(task)
+		return stored.LeaseUntil != nil && stored.LeaseUntil.After(time.Now().Add(time.Hour))
+	}
+	s.Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
+	first := s.runsOf(task)[0]
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(user).do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Instructions: pointerTo("Remind them to drink water.")}, &updated))
+	s.Equal(store.ScheduledTaskActive, updated.State)
+
+	// The held occurrence is settled, and the one-shot comes due again as it
+	// now reads: quiet hours still hold, so it is held again, not delivered.
+	s.Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
+		15*time.Second, 250*time.Millisecond, "the edited one-shot was never taken up again")
+	runs := s.runsOf(task)
+	s.Equal(first.ID, runs[1].ID)
+	s.Equal(store.ScheduledTaskRunMissed, runs[1].State)
+	s.Equal(store.ScheduledTaskRunRunning, runs[0].State)
+	s.Equal("Remind them to drink water.", runs[0].Prompt)
+	s.Require().NotNil(runs[0].PostponedUntil, "the new occurrence is held through the quiet hours")
+	s.Equal(store.ScheduledTaskActive, s.taskReloaded(task).State)
+	s.False(s.model().heard("<scheduled_task"), "nothing was delivered into the quiet hours")
+}
+
 func (s *ScheduledTasksSuite) TestDeliverToAndQuietHoursReadBackAndCanBeChanged() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

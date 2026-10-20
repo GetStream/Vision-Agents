@@ -412,21 +412,31 @@ func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
 		return deliver.count() == 1
 	}, 10*time.Second, 10*time.Millisecond)
 
-	s.save(task, func(task *store.ScheduledTask) { task.Title = "Stretch twice" })
+	deliver.mu.Lock()
+	deliver.err = nil
+	deliver.mu.Unlock()
+	s.save(task, func(task *store.ScheduledTask) {
+		task.Title, task.Instructions = "Stretch twice", "Remind them to stretch twice."
+	})
 
-	s.Require().Eventually(func() bool {
-		return scheduler.Running() == 0
-	}, 10*time.Second, 10*time.Millisecond, "the hour's wait ended with the claim")
-	// The edit wrote the occurrence missed, so the one-shot is settled past it
-	// rather than delivered again with the instructions it had before.
+	// The edit wrote the occurrence missed and the one-shot came due again,
+	// so the reminder is delivered as it now reads rather than lost, and not
+	// with the instructions it had before.
 	s.Require().Eventually(func() bool {
 		return s.read(task).State == store.ScheduledTaskCompleted
 	}, 10*time.Second, 10*time.Millisecond)
-	s.Equal(1, deliver.count())
+	calls := deliver.callsFor(task.ID)
+	s.Require().Len(calls, 2)
+	s.Equal("Stretch twice", calls[1].Task.Title)
+	s.Equal("Remind them to stretch twice.", calls[1].Run.Prompt)
 	s.Equal(0, s.read(task).ConsecutiveFailures, "a lost claim is not a failure")
 	runs := s.runs(task)
-	s.Require().Len(runs, 1)
-	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
+	s.Require().Len(runs, 2)
+	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
+	s.Equal(store.ScheduledTaskRunMissed, runs[1].State)
+	s.Require().Eventually(func() bool {
+		return scheduler.Running() == 0
+	}, 10*time.Second, 10*time.Millisecond, "the hour's wait ended with the claim")
 }
 
 func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {

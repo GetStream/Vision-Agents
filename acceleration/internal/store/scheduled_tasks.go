@@ -267,8 +267,11 @@ func (s *Store) ScheduledTasks(ctx context.Context, customerID string, filter Sc
 // An occurrence still running (held by quiet hours, or cut short when its
 // worker lost the claim) is written missed: the change decides what happens
 // next, and the occurrence is neither left running for good nor taken up
-// later with the instructions it had before the change. The caller reads the
-// task, changes it, and saves it back.
+// later with the instructions it had before the change. An active one-shot
+// whose occurrence that was is due again at the save, so it is delivered as
+// it now reads (and held again if quiet hours still hold); a repeating task
+// goes on to its next occurrence. The caller reads the task, changes it, and
+// saves it back.
 func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	if task.CustomerID == "" || task.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a task id are required"))
@@ -280,6 +283,36 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 		task.Channels = []string{ScheduledTaskDeliveredConversation}
 	}
 	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// A run made by hand is left to the delivery that made it, which
+		// always records its outcome.
+		var settled []time.Time
+		if err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+			Set("state = ?", ScheduledTaskRunMissed).
+			Set("finished_at = now()").
+			Where("customer_id = ?", task.CustomerID).
+			Where("task_id = ?", task.ID).
+			Where("trigger = ?", ScheduledTaskTriggerSchedule).
+			Where("state = ?", ScheduledTaskRunRunning).
+			Returning("scheduled_for").
+			Scan(ctx, &settled); err != nil {
+			return fmt.Errorf("store: settle scheduled task runs: %w", err)
+		}
+		// The occurrence keeps its run, so a one-shot left at it would only
+		// be advanced past it: it comes due again at the save instead, on the
+		// database's clock, which the claim compares against.
+		if task.RRule == "" && task.State == ScheduledTaskActive && task.NextRunAt != nil {
+			for _, scheduledFor := range settled {
+				if !scheduledFor.Equal(*task.NextRunAt) {
+					continue
+				}
+				var again time.Time
+				if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&again); err != nil {
+					return fmt.Errorf("store: save scheduled task: %w", err)
+				}
+				task.NextRunAt = &again
+				break
+			}
+		}
 		result, err := tx.NewUpdate().Model(task).
 			ExcludeColumn("customer_id", "created_at").
 			Where("customer_id = ?", task.CustomerID).
@@ -294,18 +327,6 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 		}
 		if affected == 0 {
 			return fmt.Errorf("%w: %s", ErrNoScheduledTask, task.ID)
-		}
-		// A run made by hand is left to the delivery that made it, which
-		// always records its outcome.
-		if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
-			Set("state = ?", ScheduledTaskRunMissed).
-			Set("finished_at = now()").
-			Where("customer_id = ?", task.CustomerID).
-			Where("task_id = ?", task.ID).
-			Where("trigger = ?", ScheduledTaskTriggerSchedule).
-			Where("state = ?", ScheduledTaskRunRunning).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("store: settle scheduled task runs: %w", err)
 		}
 		return nil
 	}))
