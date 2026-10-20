@@ -35,8 +35,13 @@ type candidate struct {
 	Utterance int64
 	// Speaker is the voice the transcriber heard, for the ones that tell voices apart. It
 	// is how a second person at the caller's microphone is told from the caller.
-	Speaker      string
-	Text         string
+	Speaker string
+	// Text is the run of speech as the transcriber has it, which is what turn-taking
+	// compares revisions against.
+	Text string
+	// Answered is the start of Text the agent already answered, when the transcriber kept
+	// the run open after the answer and went on adding to it. Said is the rest.
+	Answered     string
 	Language     string
 	Confidence   float64
 	STTLatencyMs float64
@@ -490,6 +495,10 @@ func (c *cadence) emit(participantID string, generation int64) {
 		return
 	}
 	waited := time.Since(current.revisedAt)
+	var answered string
+	if current.utterance != 0 && current.utterance == current.committedUtterance {
+		answered = answeredPrefix(current.committed, current.text)
+	}
 	current.candidateID = replyPrefix + turnStamp()
 	current.timer = nil
 	c.grace = 0
@@ -499,6 +508,7 @@ func (c *cadence) emit(participantID string, generation int64) {
 		Utterance:    current.utterance,
 		Speaker:      current.speaker,
 		Text:         strings.TrimSpace(current.text),
+		Answered:     answered,
 		Language:     current.language,
 		Confidence:   current.confidence,
 		STTLatencyMs: current.latencyMs,
@@ -579,6 +589,60 @@ func growsTranscript(previous, next string) bool {
 	prev := strings.ToLower(words(previous))
 	nxt := strings.ToLower(words(next))
 	return prev != "" && nxt != prev && strings.HasPrefix(nxt, prev)
+}
+
+// answeredPrefix is what of text the agent already answered, when text is the answered
+// words with more words after them, and empty otherwise. A transcriber that keeps one run of
+// speech open across an answer (Deepgram Flux resuming a turn) sends the whole run every
+// time, and passing it on as said again repeats every earlier answer to the model and in
+// the transcript, more each turn.
+//
+// Words grown onto something being read out stay whole: "order 1 2" then "3 4" is one
+// order number, as are "one two" then "three" and "A B C" then "1 2", and a last token that
+// grew ("ABC12345" to "ABC123456") is not new words at all.
+func answeredPrefix(answered, text string) string {
+	before := strings.ToLower(words(answered))
+	now := strings.ToLower(words(text))
+	if before == "" || !strings.HasPrefix(now, before+" ") {
+		return ""
+	}
+	fields := strings.Fields(before)
+	if readingOut(fields[len(fields)-1]) {
+		return ""
+	}
+	return answered
+}
+
+// readingOut reports whether a word is a piece of something read out a piece at a time: a
+// number, a number said as a word (which Gemini commits a number as once the caller stops),
+// or a letter spelled out.
+func readingOut(word string) bool {
+	if strings.ContainsFunc(word, unicode.IsDigit) || len([]rune(word)) == 1 {
+		return true
+	}
+	_, digit := spokenDigits[word]
+	_, teen := spokenTeens[word]
+	_, tens := spokenTens[word]
+	return digit || teen || tens || word == "hundred" || word == "thousand" || word == "double" || word == "triple"
+}
+
+// Said is what the caller said this turn: Text without the words already answered.
+func (c candidate) Said() string {
+	if c.Answered == "" {
+		return c.Text
+	}
+	skip := len(strings.Fields(words(c.Answered)))
+	fields := strings.Fields(c.Text)
+	for i, field := range fields {
+		if skip == 0 {
+			return strings.Join(fields[i:], " ")
+		}
+		// Punctuation the transcriber set apart is not a word, and is not counted as one.
+		if words(field) != "" {
+			skip--
+		}
+	}
+	return c.Text
 }
 
 // incompleteIdentifier reports whether the last token still looks like a PIN, member ID,

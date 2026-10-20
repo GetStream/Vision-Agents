@@ -1639,7 +1639,7 @@ func (a *Agent) ask(ready candidate) {
 		Instructions: instructions,
 		History:      history,
 		Participant:  participant,
-		Text:         ready.Text,
+		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
 		Unfinished:   ready.Unfinished,
@@ -1752,7 +1752,7 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
 func (a *Agent) respondCandidate(ready candidate, note string) error {
-	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
+	return a.respondTurn(ready.ID, ready.Participant, ready.Said(), heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,

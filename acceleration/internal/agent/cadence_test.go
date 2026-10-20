@@ -133,6 +133,93 @@ func (s *CadenceSuite) TestWordsAddedToAnAnsweredUtteranceAreStillHeard() {
 	s.Equal("order 1 2 3 4", s.ready().Text)
 }
 
+func (s *CadenceSuite) TestWordsAddedToAnAnsweredRunAreSaidWithoutTheAnsweredOnes() {
+	// Deepgram Flux resumes a turn it already ended and sends the whole run each time, so
+	// passing the run on would hand the model every earlier answer again, more each turn.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "Sitting for a long time makes it worse.",
+	})
+	first := s.ready()
+	s.Equal("Sitting for a long time makes it worse.", first.Said())
+	s.Require().True(s.cadence.Resolve(first.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "Sitting for a long time makes it worse. Walking helps.",
+	})
+	second := s.ready()
+	s.Equal("Sitting for a long time makes it worse. Walking helps.", second.Text,
+		"turn-taking still compares the whole run")
+	s.Equal("Walking helps.", second.Said())
+	s.Require().True(s.cadence.Resolve(second.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "Sitting for a long time makes it worse. Walking helps. It wakes me up at night.",
+	})
+	s.Equal("It wakes me up at night.", s.ready().Said())
+}
+
+func (s *CadenceSuite) TestANumberReadOutInPiecesIsSaidWhole() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "order 1 2",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "order 1 2 3 4",
+	})
+
+	s.Equal("order 1 2 3 4", s.ready().Said(), "3 4 alone is not the order number the caller read out")
+}
+
+func (s *CadenceSuite) TestANumberSaidAsWordsIsSaidWhole() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 3, Text: "order one two",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 3, Text: "order one two three four",
+	})
+
+	s.Equal("order one two three four", s.ready().Said())
+}
+
+func (s *CadenceSuite) TestLettersSpelledOutAreSaidWhole() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 4, Text: "my member ID is A B C",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 4, Text: "my member ID is A B C 1 2 3",
+	})
+
+	s.Equal("my member ID is A B C 1 2 3", s.ready().Said())
+}
+
+func (s *CadenceSuite) TestARunTheTranscriberDoesNotNumberIsSaidWhole() {
+	// Without a number the same words could be the caller starting again, so nothing is
+	// taken as already answered.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Text: "yes"})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Text: "yes please"})
+
+	s.Equal("yes please", s.ready().Said())
+}
+
 func (s *CadenceSuite) TestAFinalThatGrowsAnAnsweredIdentifierIsStillHeard() {
 	// Healthcare golden lost the last digit of ABC123456 because Gemini's final of the
 	// same utterance was dropped as a restatement.
@@ -149,7 +236,9 @@ func (s *CadenceSuite) TestAFinalThatGrowsAnAnsweredIdentifierIsStillHeard() {
 		Text: "Maya Chen member ID ABC123456",
 	})
 
-	s.Equal("Maya Chen member ID ABC123456", s.ready().Text)
+	grown := s.ready()
+	s.Equal("Maya Chen member ID ABC123456", grown.Text)
+	s.Equal("Maya Chen member ID ABC123456", grown.Said(), "a longer last token is not new words")
 }
 
 func (s *CadenceSuite) TestSayingTheSameThingAgainLaterIsHeardAgain() {
