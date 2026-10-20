@@ -466,6 +466,48 @@ func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesAnOutdatedConnect
 	s.Equal("+12025551234", saved.AccountID, "the account revision 2's identity makes")
 }
 
+// TestSavingANoneConnectionAgainMovesAnOutdatedConnection: a none connection, which no consent
+// can move, reads the connector's latest revision once its empty credentials are saved again,
+// as a bearer one does, and stays connected.
+func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesAnOutdatedConnection() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	s.builtin(none.Name, 2, "")
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": s.get(id).Revision}, &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+}
+
+// TestSavingANoneConnectionAgainMovesItOffABrokenRevision: the same for a none connection whose
+// revision a later one marked broken. The move begins a new grant, as a bearer one's does.
+func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesItOffABrokenRevision() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	before := s.connectedAt(id)
+	s.builtin(none.Name, 2, brokenFirst)
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionBroken), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": s.get(id).Revision}, &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+	after := s.connectedAt(id)
+	s.Require().NotNil(before)
+	s.Require().NotNil(after)
+	s.True(after.After(*before), "a new grant began")
+}
+
 // TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt: a later revision that drops the
 // connection's scheme, or declares a required input it was not created with, cannot be read
 // by it, and its inputs cannot change. Its token saved again keeps the revision it reads, as

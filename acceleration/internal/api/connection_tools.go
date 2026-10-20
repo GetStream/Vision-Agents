@@ -19,6 +19,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -183,8 +184,8 @@ func (s *Server) registerConnectionTools(api huma.API) {
 			"must be the connection's revision as last read; a connection that moved past it is a " +
 			"409. The values are never shown again. Who may set them is who may read the " +
 			"connection.\n\n" +
-			"A bearer or api_key connection given its token or key again moves to its connector's " +
-			"latest revision, as a consent moves an OAuth one, when that revision takes the " +
+			"A bearer or api_key connection given its token or key again, or a none connection " +
+			"given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the " +
 			"connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says " +
 			"why when that one is marked broken.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
@@ -253,9 +254,11 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	// A token or key saved again is the static scheme's reconnect: no consent ever runs for one,
 	// so this write is what moves it to the connector's latest revision, off one marked broken
 	// since (AI-1002), as a consent moves an OAuth connection (begin, completeConsent). An
-	// imported OAuth grant stays on the revision it was made on.
+	// imported OAuth grant stays on the revision it was made on. none refuses a consent too
+	// (begin), so its empty save moves it the same way. It is not core.Static: a 4xx other
+	// than 401 on a validate (refusedStatic) says nothing of a credential it does not have.
 	revision := connection.DefinitionRevision
-	static := core.IsStatic(s.connectors.Schemes, connection.AuthScheme)
+	static := core.IsStatic(s.connectors.Schemes, connection.AuthScheme) || connection.AuthScheme == none.Name
 	var manifest core.ResolvedManifest
 	moved := false
 	if static {
