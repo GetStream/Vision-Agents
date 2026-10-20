@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -55,6 +56,21 @@ func (s *RunsSuite) TestARunReportsWhatItsModelCallsSpent() {
 	run := s.run(CreateRunRequest{ConfigId: s.config("counted/counted-model"), Input: "count me"})
 
 	s.Equal(CallUsage{InputTokens: 1000, CachedInputTokens: 400, OutputTokens: 20, CostMicros: 1000, Requests: 1}, run.Usage)
+}
+
+func (s *RunsSuite) TestARunsSpendIsBrokenDownByItsTags() {
+	s.useApp(s.data.createApp())
+	item := s.utils.uuid()
+	tags := map[string]string{"product": "moderation", "feature": "agent_review", "app": "1234", "review_item": item}
+
+	s.run(CreateRunRequest{ConfigId: s.config("counted/counted-model"), Input: "count me", Tags: &tags})
+
+	for key, value := range tags {
+		buckets := s.spend("group_by=" + key)
+		s.Require().Len(buckets, 1, key)
+		s.Equal(value, buckets[0].Value, key)
+		s.EqualValues(1000, buckets[0].CostMicrosTotal, key)
+	}
 }
 
 func (s *RunsSuite) TestARunKeepsNoSession() {
@@ -180,6 +196,14 @@ func (s *RunsSuite) holdRun(config string) <-chan int {
 	}()
 	s.Require().Eventually(func() bool { return len(s.holding.requests()) > asked }, 5*time.Second, 10*time.Millisecond)
 	return finished
+// spend is what the app spent in the last hour, grouped as options says.
+func (s *RunsSuite) spend(options string) []SpendBucket {
+	now := time.Now().UTC()
+	path := fmt.Sprintf("/v1/stats/spend?%s&from=%s&to=%s",
+		options, now.Add(-time.Hour).Format(time.RFC3339), now.Add(time.Minute).Format(time.RFC3339))
+	var buckets []SpendBucket
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, path, nil, &buckets))
+	return buckets
 }
 
 func (s *RunsSuite) run(body CreateRunRequest) Run {
