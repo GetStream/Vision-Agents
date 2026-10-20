@@ -19,6 +19,7 @@ type overlap struct {
 	logger    *slog.Logger
 	pairs     prometheus.Counter
 	seconds   prometheus.Counter
+	open      prometheus.Observer
 	// playing is each utterance with audio published and no completion yet.
 	playing map[string]struct{}
 	// warned is each pair of playing utterances already reported.
@@ -32,6 +33,7 @@ func newOverlap(provider string, abandoned func(turnID string) bool, logger *slo
 		logger:    logger,
 		pairs:     speechOverlaps.WithLabelValues(provider),
 		seconds:   speechOverlapSeconds.WithLabelValues(provider),
+		open:      openUtterances.WithLabelValues(provider),
 		playing:   map[string]struct{}{},
 		warned:    map[[2]string]struct{}{},
 	}
@@ -44,6 +46,7 @@ func (o *overlap) published(synthesisID string, durationMs float64) {
 		o.playing[synthesisID] = struct{}{}
 	}
 	if len(o.playing) == 1 {
+		o.open.Observe(1)
 		return
 	}
 	overlapping := false
@@ -71,6 +74,7 @@ func (o *overlap) published(synthesisID string, durationMs float64) {
 	if overlapping {
 		o.seconds.Add(durationMs / 1000)
 	}
+	o.open.Observe(float64(len(o.playing)))
 }
 
 // finished forgets a synthesis that has completed.

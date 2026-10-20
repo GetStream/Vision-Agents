@@ -659,7 +659,8 @@ func New(options Options) (*Agent, error) {
 
 // finishTurn reports a measured exchange and records it.
 func (a *Agent) finishTurn(turn Turn) {
-	a.logger.Info("voice turn timing", "turn", turn.TurnID,
+	started := a.turns.originOf(turn.TurnID)
+	a.logger.Info("voice turn timing", "turn", turn.TurnID, "kind", started.kind, "parent", started.parent,
 		"stt_ms", turn.STTLatencyMs, "cadence_ms", turn.CadenceMs,
 		"decision_ms", turn.DecisionMs, "model_to_first_text_ms", turn.ModelToFirstTextMs,
 		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
@@ -1033,6 +1034,7 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 		a.history = append(a.history, said)
 	}
 	a.mu.Unlock()
+	a.turns.started(turnID, kindSay)
 
 	// Announced like a reply, so the line is in the session's responses and its transcript.
 	// Before speaking, because the transcript stores a turn's text when its voice finishes and
@@ -1837,6 +1839,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	asked := a.asked
 	a.mu.Unlock()
 
+	a.turns.started(turnID, kindTool)
 	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
@@ -1891,6 +1894,7 @@ func (a *Agent) respondTurn(
 	instructions := a.instructions()
 	a.mu.Unlock()
 
+	a.turns.started(turnID, kindCaller)
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
@@ -2041,6 +2045,7 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 	a.speakingTurn = turnID
 	a.saying = phrase
 	a.mu.Unlock()
+	a.turns.started(turnID, kindBackchannel)
 
 	a.logger.Debug("murmuring while the caller talks",
 		"turn", turnID, "participant", participant.ID, "phrase", phrase)
@@ -2125,12 +2130,25 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 	}
 	a.mu.Unlock()
 
-	a.logger.Debug("saying a line the agent chose", "turn", turnID, "participant", participant.ID, "line", line)
+	kind := composedKind(purpose)
+	a.turns.started(turnID, kind)
+	a.logger.Info("saying a line the agent chose", "turn", turnID, "kind", kind, "participant", participant.ID)
 	if err := a.speakWhole(turnID, line); err != nil {
 		a.fail(err, "tts")
 		return
 	}
 	a.emitter.Send(Responded{TurnID: turnID, Text: line})
+}
+
+// composedKind is the kind of turn a line written for purpose is.
+func composedKind(purpose string) string {
+	switch purpose {
+	case holdPurpose:
+		return kindHold
+	case updatePurpose:
+		return kindUpdate
+	}
+	return kindCheckIn
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of
@@ -2884,7 +2902,9 @@ func (a *Agent) chaseAfter(promised, note string, mustCall bool, only string, wa
 	asked := a.asked
 	a.mu.Unlock()
 
-	a.logger.Debug("the reply owed a call and made none, asking for it", "turn", promised, "note", note)
+	a.logger.Info("the reply owed a call and made none, asking for it",
+		"turn", turnID, "chases", promised, "must_call", mustCall, "only", only)
+	a.turns.started(turnID, kindChase)
 	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: promised})
 	if err := a.generate(harness.Turn{
@@ -3416,15 +3436,17 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
 
 		case tts.SynthesisStarted:
-			a.logger.Debug("the voice took an utterance",
+			a.logger.Info("the voice took an utterance",
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
+				"kind", a.turns.originOf(turnOf(typed.SynthesisID)).kind,
 				"provider", typed.Provider, "voice", typed.Voice)
 
 		case tts.SynthesisComplete:
 			overlapping.finished(typed.SynthesisID)
 			a.settleVoice(voice)
-			a.logger.Debug("finished speaking",
+			a.logger.Info("finished speaking",
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
+				"kind", a.turns.originOf(turnOf(typed.SynthesisID)).kind,
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
 				"interrupted", typed.Interrupted)
 			a.respondQueued()
@@ -3639,6 +3661,7 @@ func (a *Agent) follow() error {
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
 	// finishing a sentence and hearing the answer start, and nobody said anything here.
+	a.turns.started(turnID, kindFollowUp)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{

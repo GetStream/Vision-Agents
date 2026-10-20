@@ -488,6 +488,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
+	began := time.Now()
 	requested.Call.Arguments = unspelled(requested.Call.Arguments)
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
@@ -554,7 +555,12 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if !left && !a.native() && ctx.Err() == nil && a.followsTool(requested) {
 		a.toolReply = true
 	}
+	outcome := toolOutcome(ctx.Err() != nil, err != nil, hold != nil && hold.answered)
 	a.mu.Unlock()
+	took := time.Since(began)
+	toolCallSeconds.WithLabelValues(outcome).Observe(took.Seconds())
+	a.logger.Info("a tool call came back", "tool", requested.Call.Name, "call", requested.Call.ID,
+		"turn", requested.TurnID, "duration_ms", took.Milliseconds(), "outcome", outcome)
 
 	a.emitter.Send(ToolRan{
 		ID:        requested.Call.ID,
@@ -616,6 +622,20 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			a.logger.Error("could not leave after transferring", "error", err)
 		}
 	}()
+}
+
+// toolOutcome names how a tool call ended: cancelled, failed, come back after it was
+// answered with stillRunning, or ok.
+func toolOutcome(cancelled, failed, answered bool) string {
+	switch {
+	case cancelled:
+		return "cancelled"
+	case failed:
+		return "error"
+	case answered:
+		return "still-running"
+	}
+	return "ok"
 }
 
 // followsTool reports whether what a tool returned earns a reply of its own.
@@ -883,6 +903,7 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 	a.mu.Lock()
 	a.speakingTurn = turnID
 	a.mu.Unlock()
+	a.turns.started(turnID, kindHandoff)
 
 	// A native model has no way to read the summary out, so it is asked to introduce the
 	// caller from it instead.

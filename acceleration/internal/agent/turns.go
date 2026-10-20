@@ -40,6 +40,37 @@ type turnTracker struct {
 	owner routing.Owner
 	// grace is how long a turn waits for the track to take its queued speech.
 	grace time.Duration
+	// origins is what started each turn of the call. Like Agent.abandoned it is kept for the
+	// call: an utterance may finish after its turn was measured, and a call has few turns.
+	origins map[string]origin
+	// caller is the latest caller turn, which every turn the agent starts after it follows.
+	caller string
+}
+
+// What starts a turn: the caller, or the agent on its own after a caller turn.
+const (
+	kindCaller = "caller"
+	// kindTool says what a tool returned.
+	kindTool = "tool"
+	// kindChase asks the model again for a call a reply promised and did not make.
+	kindChase = "chase"
+	// kindFollowUp says what delegated work came back with.
+	kindFollowUp    = "follow-up"
+	kindBackchannel = "backchannel"
+	// kindHold, kindUpdate and kindCheckIn are lines the model writes for a silence:
+	// while a tool runs, while delegated work runs, and when nobody has spoken.
+	kindHold    = "hold"
+	kindUpdate  = "update"
+	kindCheckIn = "checkin"
+	// kindSay is a line said as written, such as the greeting.
+	kindSay     = "say"
+	kindHandoff = "handoff"
+)
+
+// origin is what started a turn, and the caller turn it follows when it was not the caller.
+type origin struct {
+	kind   string
+	parent string
 }
 
 // openTurn is a turn that has not finished yet.
@@ -94,7 +125,26 @@ func (m *turnMarks) FirstFrameQueued(at time.Time)   { m.tracker.queued(m.turn, 
 func (m *turnMarks) FirstAudiblePulled(at time.Time) { m.tracker.pulled(m.turn, m.id, at) }
 
 func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
-	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace}
+	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace, origins: map[string]origin{}}
+}
+
+// started records what started a turn, before anything of it is measured or said.
+func (t *turnTracker) started(turnID, kind string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if kind == kindCaller {
+		t.caller = turnID
+		t.origins[turnID] = origin{kind: kind}
+		return
+	}
+	t.origins[turnID] = origin{kind: kind, parent: t.caller}
+}
+
+// originOf is what started a turn, zero for one never recorded.
+func (t *turnTracker) originOf(turnID string) origin {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.origins[turnID]
 }
 
 // begin opens a turn. The speech-to-text latency is the provider's own decode time for

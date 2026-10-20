@@ -644,6 +644,18 @@ naming both syntheses and turns, and counts it in `router_agent_speech_overlaps_
 `router_agent_speech_overlap_seconds_total` (label `provider`). The agent's log lines now
 carry `session` and `call`. What is spoken is unchanged (AI-1550).
 
+### The router logs which turn a turn follows, each tool call and each utterance
+
+`voice turn timing` names what started the turn (`kind`: `caller`, `tool`, `chase`) and, for a
+turn the agent started on its own, the caller turn it follows (`parent`). Each tool call the
+model makes logs one INFO line when it comes back, with its tool, call, turn, `duration_ms` and
+`outcome` (`ok`, `error`, `still-running`, `cancelled`), and is counted in
+`router_agent_tool_call_seconds` (label `outcome`). An utterance's start and end, a line the
+agent chose to say (a hold line, an update, a check-in) and a chase for a call a reply owed are
+logged at INFO, without what is said. `router_agent_open_utterances` (label `provider`) counts,
+for each chunk published, how many of the agent's utterances were open. What is spoken is
+unchanged (AI-1551).
+
 ### An agent config has a `role`, and the app's moderator agent is found by it
 
 `AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
