@@ -89,8 +89,12 @@ type Recorder struct {
 	queue chan queued
 	done  chan struct{}
 
+	// mu keeps a Record from sending on the queue once Close has closed it.
+	mu        sync.Mutex
+	closed    bool
 	closeOnce sync.Once
-	// dropped counts stats lost to a full queue, reported once on shutdown.
+	// dropped counts stats lost to a full queue or to a Record after Close, reported once on
+	// shutdown.
 	dropped atomic.Int64
 }
 
@@ -160,6 +164,13 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		request.DurationMs = &duration
 	}
 
+	// A caller still streaming at shutdown records after Close; that stat is dropped.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		r.dropped.Add(1)
+		return
+	}
 	select {
 	case r.queue <- queued{request: request, fatal: entry.Fatal}:
 	default:
@@ -170,10 +181,13 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 // Close drains the queue and stops the writer.
 func (r *Recorder) Close() {
 	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closed = true
 		close(r.queue)
+		r.mu.Unlock()
 		<-r.done
 		if dropped := r.dropped.Load(); dropped > 0 {
-			r.logger.Warn("dropped stats because the writer fell behind",
+			r.logger.Warn("dropped stats because the writer fell behind or they were recorded after Close",
 				"modality", r.modality, "count", dropped)
 		}
 	})
