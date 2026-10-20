@@ -901,6 +901,51 @@ func (s *ScheduledTasksSuite) TestDeletingAConfigPausesItsTasks() {
 		"a task of a deleted agent has nothing to run on, and stops counting against the user's limit")
 }
 
+func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	status, failure := user.failure(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotResumeATaskOfAConfigDeletedUnderItsSession() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.say(user, opened.Id, "turn it back on")
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotRescheduleAFailedTaskOfAConfigDeletedUnderItsSession() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+	failed := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	failed.State = store.ScheduledTaskFailed
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &failed))
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","in":"PT2H"}`})
+	s.say(user, opened.Id, "try it again in two hours")
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Equal(store.ScheduledTaskFailed, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
 func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 	// The user agreed to the task once, not to each time it runs: the turn it
 	// fires in their own conversation is the customer's spend, and the turn

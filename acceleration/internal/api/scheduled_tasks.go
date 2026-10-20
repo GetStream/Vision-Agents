@@ -507,7 +507,12 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 	}
 	if task.State == store.ScheduledTaskPaused || task.State == store.ScheduledTaskFailed {
 		maxActive := scheduling.MaxActivePerUser
-		if config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID); err == nil && config.Scheduling.MaxTasksPerUser > 0 {
+		// A deleted config leaves a task nothing to run on; any other failure to read it is not that.
+		config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID)
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return nil, errUnknownConfig
+		}
+		if err == nil && config.Scheduling.MaxTasksPerUser > 0 {
 			maxActive = config.Scheduling.MaxTasksPerUser
 		}
 		active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID)

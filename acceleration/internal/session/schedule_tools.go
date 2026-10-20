@@ -27,6 +27,7 @@ const (
 	tooManyTasks          = "too_many_tasks"
 	conflictCode          = "conflict"
 	serverSideOnly        = "server_side_only"
+	unknownConfig         = "unknown_config"
 )
 
 // scheduleTools are the scheduling tools a session may offer. The four names
@@ -530,10 +531,14 @@ func (r *scheduleRunner) snoozeTarget(task store.ScheduledTask, args updateArgs,
 }
 
 // room refuses the change when putting the task back among the active ones
-// would take its user over the limit.
+// would take its user over the limit, or when its agent config is deleted: a
+// session opened before the delete still runs, but the task has nothing to run on.
 func (r *scheduleRunner) room(ctx context.Context, task *store.ScheduledTask) ([]llm.ContentPart, error) {
 	if task.State == store.ScheduledTaskActive {
 		return nil, nil
+	}
+	if _, err := r.db.AgentConfig(ctx, r.spec.CustomerID, task.ConfigID); errors.Is(err, store.ErrNoAgentConfig) {
+		return refusal(unknownConfig, "this agent has been deleted, so the task cannot run again"), nil
 	}
 	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.spec.Caller.UserID)
 	if err != nil {
