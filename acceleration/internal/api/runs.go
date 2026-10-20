@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -92,6 +94,11 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	spec.Incognito = true
 	if instructions := strings.TrimSpace(value(body.Instructions)); instructions != "" {
 		spec.Instructions = strings.TrimSpace(spec.Instructions + "\n\n" + instructions)
+	}
+	// Last, after the app's instructions and the caller's, so no edit to the agent can change
+	// the shape the chat review worker parses.
+	if config.Role == store.RoleAgentModerator {
+		spec.Instructions = strings.TrimSpace(spec.Instructions + "\n\n" + moderator.Contract)
 	}
 	if len(tags) > 0 && spec.Tags == nil {
 		spec.Tags = routing.Tags{}
@@ -209,6 +216,8 @@ func (s *Server) registerRuns(api huma.API) {
 			"has nothing left to do, and answers with the last thing it said. The session is incognito " +
 			"and ends with the request, so nothing is kept and no run sees another's input.\n" +
 			"The instructions are the caller's, trusted, and added to the config's for this run alone. " +
+			"A config whose role is agent_moderator is then told the answer format the chat review " +
+			"worker parses, after both, so no edit to the agent can change it.\n" +
 			"The input is handed to the agent as JSON data, never as instructions.\n" +
 			"A config that does not start a session is a 400 invalid_config, a spent budget a 403 " +
 			"budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may " +
