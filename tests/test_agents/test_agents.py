@@ -1023,6 +1023,25 @@ class TestAgent:
         assert llm.joined is not None
         assert llm.joined.phone is None
 
+    async def test_phone_details_last_only_for_the_call_they_belong_to(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.answer(
+            InboundCall(call_id="phone-1", called_number="+15125551234"),
+            wait_for_end=False,
+        ):
+            pass
+        assert llm.joined is not None and llm.joined.phone is not None
+
+        agent._call_ended_event = None
+        async with agent.join(call, wait_for_end=False):
+            pass
+
+        assert llm.joined.phone is None
+
     async def test_an_outbound_call_without_a_phone_says_what_to_pass(self):
         agent = Agent(
             llm=DummyLLM(),

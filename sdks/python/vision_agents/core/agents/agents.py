@@ -690,6 +690,24 @@ class Agent:
         Returns:
 
         """
+        async with self._join(
+            call,
+            call_id=call_id,
+            participant_wait_timeout=participant_wait_timeout,
+            wait_for_end=wait_for_end,
+        ):
+            yield
+
+    @asynccontextmanager
+    async def _join(
+        self,
+        call: Call | InboundCall | str,
+        call_id: str = "",
+        participant_wait_timeout: Optional[float] = 10.0,
+        wait_for_end: bool = True,
+        phone: Optional[RemotePhone] = None,
+    ) -> AsyncIterator[None]:
+        """`join`, with the phone call the call is, which lasts only as long as this join."""
         join_started = time.perf_counter()
         if isinstance(call, str):
             # One name is a call of the default `agent` type; two are the type and the id,
@@ -705,7 +723,7 @@ class Agent:
                     "an inbound call has to name the call the caller is in"
                 )
             inbound = call
-            self._phone = RemotePhone(number=inbound.called_number)
+            phone = RemotePhone(number=inbound.called_number)
             call = await self.create_call(inbound.call_type or "agent", inbound.call_id)
             inbound._joined = self
             if participant_wait_timeout == 10.0:
@@ -715,6 +733,7 @@ class Agent:
 
         try:
             await self._join_lock.acquire()
+            self._phone = phone
             self._start_tracing(call)
             self.call = call
             self.conversation = None
@@ -806,6 +825,7 @@ class Agent:
             else:
                 raise
         finally:
+            self._phone = None
             await self.close()
             self._end_tracing()
             self._join_lock.release()
@@ -872,16 +892,18 @@ class Agent:
             )
         )
         self.logger.info("ringing %s from %s, call %s", to, from_, call.id)
-        self._phone = RemotePhone(
-            number=from_,
-            vendor_call_id=placed.vendor_call_id,
-            ring_timeout=ring_timeout,
-        )
 
         # Nobody is on the call until the phone is answered, so waiting for a participant
         # before starting would be waiting for the ringing to finish.
-        async with self.join(
-            call, participant_wait_timeout=0, wait_for_end=wait_for_end
+        async with self._join(
+            call,
+            participant_wait_timeout=0,
+            wait_for_end=wait_for_end,
+            phone=RemotePhone(
+                number=from_,
+                vendor_call_id=placed.vendor_call_id,
+                ring_timeout=ring_timeout,
+            ),
         ):
             yield placed
 
@@ -929,11 +951,11 @@ class Agent:
             call.called_number or "an unknown number",
             call.call_id,
         )
-        self._phone = RemotePhone(number=call.called_number)
-        async with self.join(
+        async with self._join(
             joined,
             participant_wait_timeout=participant_wait_timeout,
             wait_for_end=wait_for_end,
+            phone=RemotePhone(number=call.called_number),
         ):
             yield
 
