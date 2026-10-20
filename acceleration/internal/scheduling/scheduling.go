@@ -46,6 +46,21 @@ const (
 // MinInterval is the closest two occurrences of one task may be.
 const MinInterval = 15 * time.Minute
 
+// MinMove is the soonest a moved run (a snooze, or a next set by hand) may
+// land. Without it a caller re-arming a task a minute ahead, again and again,
+// buys a turn a minute per task: 25 tasks are 25 turns a minute for one user.
+// It is MinInterval, so a moved task runs no more often than a repeating one.
+const MinMove = MinInterval
+
+// CheckMove refuses a moved run that lands sooner than MinMove from now. Now is
+// read to the second, as a schedule holds its times, so in PT15M passes.
+func CheckMove(next, now time.Time) error {
+	if next.Sub(now.Truncate(time.Second)) < MinMove {
+		return fail(CodeIntervalTooShort, "a run can be moved to %d minutes from now at the soonest", int(MinMove/time.Minute))
+	}
+	return nil
+}
+
 // MaxActivePerUser is the default cap on a user's active tasks, used when the
 // agent config does not set one.
 const MaxActivePerUser = 25

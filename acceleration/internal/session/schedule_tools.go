@@ -26,6 +26,7 @@ const (
 	scheduledTaskNotFound = "scheduled_task_not_found"
 	tooManyTasks          = "too_many_tasks"
 	conflictCode          = "conflict"
+	serverSideOnly        = "server_side_only"
 )
 
 // scheduleTools are the scheduling tools a session may offer. The four names
@@ -55,9 +56,10 @@ func scheduleTools() []harness.Tool {
 			},
 		},
 		{
-			Name:        listScheduledTool,
-			Description: "List the tasks you have scheduled for this user with this agent, each with when it runs next.",
-			Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+			Name: listScheduledTool,
+			Description: "List the tasks you have scheduled for this user with this agent, each with when it runs next. " +
+				"Running and paused tasks come first; more says when there are others not shown.",
+			Parameters: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
 			Name: updateScheduledTool,
@@ -236,11 +238,7 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 }
 
 func (r *scheduleRunner) list(ctx context.Context) ([]llm.ContentPart, error) {
-	kinds := []string{string(r.spec.CallerKind), string(auth.KindServer)}
-	tasks, err := r.db.ScheduledTasks(ctx, r.spec.CustomerID, store.ScheduledTaskFilter{
-		Scope:    store.ScheduledTaskScope{UserID: r.spec.Caller.UserID, Kinds: kinds},
-		ConfigID: r.spec.ConfigID,
-	}, 25, nil)
+	tasks, more, err := r.listed(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -264,10 +262,45 @@ func (r *scheduleRunner) list(ctx context.Context) ([]llm.ContentPart, error) {
 	if display == nil {
 		display = r.displayZone()
 	}
-	return result(map[string]any{
+	listed := map[string]any{
 		"now":   localNow(now, display),
 		"tasks": items,
-	}), nil
+	}
+	if more {
+		listed["more"] = "the user has more tasks than these; the running and paused ones are listed first"
+	}
+	return result(listed), nil
+}
+
+// listedStates is the order list_scheduled_tasks gives tasks in: the ones that
+// will still run, then the paused, which can be resumed, before the finished.
+var listedStates = []string{store.ScheduledTaskActive, store.ScheduledTaskPaused,
+	store.ScheduledTaskFailed, store.ScheduledTaskCompleted}
+
+// listed is the user's tasks on this agent as list_scheduled_tasks shows them,
+// state by state in listedStates, at most as many as the user may have running
+// so every running one fits, and whether there are more than that.
+func (r *scheduleRunner) listed(ctx context.Context) ([]store.ScheduledTask, bool, error) {
+	limit := max(scheduling.MaxActivePerUser, r.maxActive())
+	filter := store.ScheduledTaskFilter{
+		Scope: store.ScheduledTaskScope{UserID: r.spec.Caller.UserID,
+			Kinds: []string{string(r.spec.CallerKind), string(auth.KindServer)}},
+		ConfigID: r.spec.ConfigID,
+	}
+	var tasks []store.ScheduledTask
+	for _, state := range listedStates {
+		filter.State = state
+		// The store answers one more than the limit, so a state that overflows it says so.
+		page, err := r.db.ScheduledTasks(ctx, r.spec.CustomerID, filter, limit, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		tasks = append(tasks, page...)
+		if len(tasks) > limit {
+			return tasks[:limit], true, nil
+		}
+	}
+	return tasks, false, nil
 }
 
 type updateArgs struct {
@@ -303,6 +336,11 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		task.Title = strings.TrimSpace(*args.Title)
 	}
 	if args.Instructions != nil {
+		// What a backend told the agent to do is the backend's to change, as over
+		// the API, where a device may not rewrite it either.
+		if task.CreatedBy != "agent" {
+			return refusal(serverSideOnly, "the instructions of a task the app scheduled are the app's to change; you may retitle or reschedule it"), nil
+		}
 		if refusal := checkInstructions(*args.Instructions); refusal != nil {
 			return refusal, nil
 		}
@@ -475,6 +513,10 @@ func (r *scheduleRunner) snoozeTarget(task store.ScheduledTask, args updateArgs,
 	target, ok := parsed.First()
 	if !ok {
 		return time.Time{}, refusal(scheduling.CodeScheduleInPast, "that time has passed; snooze to a time in the future")
+	}
+	if err := scheduling.CheckMove(target, now); err != nil {
+		parts, _ := refusalOf(err)
+		return time.Time{}, parts
 	}
 	return target, nil
 }

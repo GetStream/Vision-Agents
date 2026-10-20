@@ -215,3 +215,21 @@ func TestFromStoredRoundTrips(t *testing.T) {
 	require.Equal(t, schedule.Describe(), rebuilt.Describe())
 	require.Equal(t, schedule.Upcoming(monday, 3), rebuilt.Upcoming(monday, 3))
 }
+
+func TestAMoveLandsNoSoonerThanMinMove(t *testing.T) {
+	// A clock read mid-second, as a request's is: in PT15M still passes.
+	now := monday.Add(500 * time.Millisecond)
+	for in, refused := range map[string]bool{"PT1M": true, "PT14M": true, "PT15M": false, "PT2H": false} {
+		schedule, err := Parse(Input{In: in, Timezone: "UTC"}, now)
+		require.NoError(t, err)
+		next, _ := schedule.First()
+		err = CheckMove(next, now)
+		if !refused {
+			require.NoError(t, err, in)
+			continue
+		}
+		failure, ok := err.(*Error)
+		require.True(t, ok, "%s: refusal is not a scheduling.Error: %v", in, err)
+		require.Equal(t, CodeIntervalTooShort, failure.Code, in)
+	}
+}

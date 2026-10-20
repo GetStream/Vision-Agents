@@ -8172,7 +8172,7 @@ components:
           type: string
         next:
           $ref: '#/components/schemas/ScheduledTaskNext'
-          description: 'Moves the next occurrence only: a snooze, or a skip when it lands past the following one.'
+          description: 'Moves the next occurrence only: a snooze, or a skip when it lands past the following one. It lands 15 minutes from now at the soonest; sooner is refused with interval_too_short.'
         quiet_hours:
           $ref: '#/components/schemas/ScheduledTaskQuietHours'
           description: Replaces the part of the day an occurrence is held through. Both boundaries empty clears the hold.
