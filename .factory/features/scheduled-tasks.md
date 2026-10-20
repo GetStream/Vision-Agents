@@ -15,6 +15,9 @@ subset (`internal/scheduling`: FREQ, INTERVAL, BYDAY, BYMONTHDAY, COUNT and an i
 `until` date), with DST resolved explicitly — a 09:00 task stays at 09:00 across a
 clock change. The zone resolves from the tool call, the session, `users.timezone`, then
 the config's `default_timezone`, and is a refusal rather than a guess when none is known.
+A session opened with a zone sets `users.timezone` when the zone differs, except for an
+anonymous caller. Deleting a config pauses its active tasks. A data move (`router
+replicate`) carries the tasks and their runs.
 
 Every router runs the worker (`internal/scheduling.Scheduler`). Claims are one
 transaction under `FOR UPDATE SKIP LOCKED` with a lease and a `claim_id` fence, so each
