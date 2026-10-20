@@ -251,6 +251,7 @@ from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
+from .list_scheduled_tasks_state import ListScheduledTasksState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
 from .llm_options_format import LlmOptionsFormat
@@ -715,6 +716,7 @@ __all__ = (
     "LibraryVoices",
     "LinkChannelRequest",
     "ListAgentLogsSeverity",
+    "ListScheduledTasksState",
     "ListSimulationRunsState",
     "LlmOptions",
     "LlmOptionsFormat",

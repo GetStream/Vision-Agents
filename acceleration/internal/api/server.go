@@ -1110,9 +1110,9 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 	", " + clientHeader + ", " + actorIDHeader + ", " + actorNameHeader +
 	", " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
 
-// corsMethods are the methods this API serves. PUT belongs here because a live session's
-// instructions are replaced with one; PATCH does not, because the spec serves none.
-const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
+// corsMethods are the methods this API serves: every method an operation in the spec
+// uses, PATCH included for patchAgentConfig and updateScheduledTask, and OPTIONS.
+const corsMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 
 // corsExposedHeaders are the response headers a page's script may read.
 const corsExposedHeaders = "Server-Timing, " + RequestIDHeader + ", " + quotaLimitHeader + ", " +

@@ -232,9 +232,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
-	if request.Body.Scheduling == nil {
-		config.Scheduling = existing.Scheduling
-	}
+	// Field by field, as the doc says of an update: a block naming only the limit keeps
+	// enabled and the zone.
+	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -2015,10 +2015,19 @@ func schedulingOr(stored store.AgentScheduling, scheduling *AgentScheduling) sto
 	return stored
 }
 
-// renderedScheduling renders stored settings for the wire.
+// renderedScheduling renders stored settings for the wire, and nothing for a config that
+// never set any. A limit never set is left out rather than rendered as 0, which
+// max_tasks_per_user's minimum refuses: a client saving back what it read (the dashboard
+// does) would be refused.
 func renderedScheduling(stored store.AgentScheduling) *AgentScheduling {
-	enabled, maxTasks := stored.Enabled, stored.MaxTasksPerUser
-	rendered := &AgentScheduling{Enabled: &enabled, MaxTasksPerUser: &maxTasks}
+	if stored == (store.AgentScheduling{}) {
+		return nil
+	}
+	enabled := stored.Enabled
+	rendered := &AgentScheduling{Enabled: &enabled}
+	if stored.MaxTasksPerUser > 0 {
+		rendered.MaxTasksPerUser = &stored.MaxTasksPerUser
+	}
 	if stored.DefaultTimezone != "" {
 		rendered.DefaultTimezone = &stored.DefaultTimezone
 	}

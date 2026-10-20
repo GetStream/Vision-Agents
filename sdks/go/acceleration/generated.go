@@ -77,22 +77,22 @@ func (e AgentLogSeverity) Valid() bool {
 
 // Defines values for AgentLogSource.
 const (
-	AgentLogSourceAgent  AgentLogSource = "agent"
-	AgentLogSourceSystem AgentLogSource = "system"
-	AgentLogSourceTool   AgentLogSource = "tool"
-	AgentLogSourceUser   AgentLogSource = "user"
+	Agent  AgentLogSource = "agent"
+	System AgentLogSource = "system"
+	Tool   AgentLogSource = "tool"
+	User   AgentLogSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the AgentLogSource enum.
 func (e AgentLogSource) Valid() bool {
 	switch e {
-	case AgentLogSourceAgent:
+	case Agent:
 		return true
-	case AgentLogSourceSystem:
+	case System:
 		return true
-	case AgentLogSourceTool:
+	case Tool:
 		return true
-	case AgentLogSourceUser:
+	case User:
 		return true
 	default:
 		return false
@@ -2493,6 +2493,30 @@ func (e StreamAgentLogsParamsSeverity) Valid() bool {
 	case StreamAgentLogsParamsSeverityInfo:
 		return true
 	case StreamAgentLogsParamsSeverityWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListScheduledTasksParamsState.
+const (
+	ListScheduledTasksParamsStateActive    ListScheduledTasksParamsState = "active"
+	ListScheduledTasksParamsStateCompleted ListScheduledTasksParamsState = "completed"
+	ListScheduledTasksParamsStateFailed    ListScheduledTasksParamsState = "failed"
+	ListScheduledTasksParamsStatePaused    ListScheduledTasksParamsState = "paused"
+)
+
+// Valid indicates whether the value is a known member of the ListScheduledTasksParamsState enum.
+func (e ListScheduledTasksParamsState) Valid() bool {
+	switch e {
+	case ListScheduledTasksParamsStateActive:
+		return true
+	case ListScheduledTasksParamsStateCompleted:
+		return true
+	case ListScheduledTasksParamsStateFailed:
+		return true
+	case ListScheduledTasksParamsStatePaused:
 		return true
 	default:
 		return false
@@ -4903,7 +4927,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has schedule_in_past, schedule_too_far (a one-shot more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (occurrences less than 15 minutes apart) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (occurrences less than 15 minutes apart) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -6294,8 +6318,6 @@ type ScheduledTaskState string
 // ScheduledTaskNext defines model for ScheduledTaskNext.
 type ScheduledTaskNext struct {
 	// At The next occurrence as the user's clock reads it, in the task's zone.
-	//
-	// Example: 2026-10-20T09:15:00
 	At *string `json:"at,omitempty"`
 
 	// In How long from now instead, an ISO 8601 duration: PT15M.
@@ -6369,8 +6391,6 @@ type ScheduledTaskRunPage struct {
 // ScheduledTaskSchedule defines model for ScheduledTaskSchedule.
 type ScheduledTaskSchedule struct {
 	// At The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
-	//
-	// Example: 2026-10-20T09:00:00
 	At *string `json:"at,omitempty"`
 
 	// Description What the schedule says, in one sentence. Read-only: written by the router, and the same sentence the model reads back.
@@ -8457,8 +8477,8 @@ type ListScheduledTasksParams struct {
 	// Cursor The next_cursor of the previous page. Omitted is the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 
-	// State Only tasks in this state: active, paused, completed or failed.
-	State *string `form:"state,omitempty" json:"state,omitempty"`
+	// State Only tasks in this state.
+	State *ListScheduledTasksParamsState `form:"state,omitempty" json:"state,omitempty"`
 
 	// ConfigId Only tasks on this agent config.
 	ConfigId *string `form:"config_id,omitempty" json:"config_id,omitempty"`
@@ -8466,6 +8486,9 @@ type ListScheduledTasksParams struct {
 	// SessionId Only tasks following up in this session.
 	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
 }
+
+// ListScheduledTasksParamsState defines parameters for ListScheduledTasks.
+type ListScheduledTasksParamsState string
 
 // CreateScheduledTaskParams defines parameters for CreateScheduledTask.
 type CreateScheduledTaskParams struct {

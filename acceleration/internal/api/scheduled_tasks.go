@@ -27,11 +27,15 @@ var errUnknownScheduledTask = APIError{
 }
 
 // errTooManyScheduledTasks is a user at their active-task limit.
-func errTooManyScheduledTasks(maximum int) APIError {
-	return APIError{Type: ErrorTypeConflict, Code: codeTooManyTasks,
-		Message: "the user already has the most active scheduled tasks this agent allows; " +
-			"cancel or pause one first"}
-}
+var errTooManyScheduledTasks = APIError{Type: ErrorTypeConflict, Code: codeTooManyTasks,
+	Message: "the user already has the most active scheduled tasks this agent allows; " +
+		"cancel or pause one first"}
+
+// errUnkeptTaskSession is a create naming a session whose conversation is not kept: an
+// occurrence follows up by reopening the conversation, which an incognito session leaves
+// nothing of.
+var errUnkeptTaskSession = invalidRequest("session_id names a session whose conversation is not kept, " +
+	"such as an incognito one, so there is nothing to follow up in; leave session_id out and name the agent instead")
 
 // scheduleFailure renders a scheduling refusal with its own code, as the model is told it.
 func scheduleFailure(err error) error {
@@ -76,17 +80,22 @@ func (s *Server) loadScheduledTask(ctx context.Context, customerID, id string) (
 
 // scheduledTaskScope is who a list is of: a backend naming a user lists that user's
 // tasks, a backend naming nobody lists the customer's, and a device lists its own,
-// including the ones its backend made in its name.
-func (s *Server) scheduledTaskScope(ctx context.Context) store.ScheduledTaskScope {
+// including the ones its backend made in its name. A device naming nobody has no tasks
+// of its own, so ok is false and it is told about none, as session lists do
+// (session.Manager.find): an empty user id narrows nothing in the store.
+func (s *Server) scheduledTaskScope(ctx context.Context) (store.ScheduledTaskScope, bool) {
 	caller := CallerFrom(ctx)
 	if ServerSideFrom(ctx) {
-		return store.ScheduledTaskScope{UserID: caller.UserID}
+		return store.ScheduledTaskScope{UserID: caller.UserID}, true
+	}
+	if caller.UserID == "" {
+		return store.ScheduledTaskScope{}, false
 	}
 	kinds := []string{string(KindFrom(ctx))}
 	if KindFrom(ctx).Verified() {
 		kinds = append(kinds, string(auth.KindServer))
 	}
-	return store.ScheduledTaskScope{UserID: caller.UserID, Kinds: kinds}
+	return store.ScheduledTaskScope{UserID: caller.UserID, Kinds: kinds}, true
 }
 
 func (s *Server) listScheduledTasks(ctx context.Context, request *listScheduledTasksRequest) (*listScheduledTasksResponse, error) {
@@ -94,12 +103,9 @@ func (s *Server) listScheduledTasks(ctx context.Context, request *listScheduledT
 	if failure != nil {
 		return nil, failure
 	}
-	state := value(request.State.ptr())
-	switch state {
-	case "", store.ScheduledTaskActive, store.ScheduledTaskPaused,
-		store.ScheduledTaskCompleted, store.ScheduledTaskFailed:
-	default:
-		return nil, invalidRequest("state is one of active, paused, completed or failed")
+	scope, ok := s.scheduledTaskScope(ctx)
+	if !ok {
+		return &listScheduledTasksResponse{Body: ScheduledTaskPage{Items: []ScheduledTask{}}}, nil
 	}
 	after, err := decodeCursor[store.ScheduledTaskPosition](request.Cursor.ptr())
 	if err != nil {
@@ -107,8 +113,8 @@ func (s *Server) listScheduledTasks(ctx context.Context, request *listScheduledT
 	}
 	limit := store.ScheduledTaskLimit(value(request.Limit.ptr()))
 	rows, err := s.store.ScheduledTasks(ctx, customerID, store.ScheduledTaskFilter{
-		Scope:     s.scheduledTaskScope(ctx),
-		State:     state,
+		Scope:     scope,
+		State:     value(request.State.ptr()),
 		ConfigID:  value(request.ConfigId.ptr()),
 		SessionID: value(request.SessionId.ptr()),
 	}, limit, after)
@@ -148,6 +154,13 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		return nil, invalidRequest("name the user the task is for with X-Stream-User-Id")
 	}
 
+	// Huma's minLength counts spaces, which the stored task would not.
+	if strings.TrimSpace(body.Title) == "" {
+		return nil, invalidRequest("title cannot be empty")
+	}
+	if strings.TrimSpace(body.Instructions) == "" {
+		return nil, invalidRequest("instructions cannot be empty")
+	}
 	task := store.ScheduledTask{
 		CustomerID: customerID, UserID: userID, CallerKind: string(auth.KindServer),
 		Title: strings.TrimSpace(body.Title), Instructions: body.Instructions,
@@ -239,7 +252,7 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		case errors.Is(err, store.ErrScheduledTaskIDTaken):
 			return nil, conflict("a scheduled task with this id already exists; read it back, or choose another id")
 		case errors.Is(err, store.ErrTooManyScheduledTasks):
-			return nil, errTooManyScheduledTasks(maxActive)
+			return nil, errTooManyScheduledTasks
 		}
 		return nil, err
 	}
@@ -262,12 +275,19 @@ func (s *Server) scheduledTaskSession(ctx context.Context, customerID, userID, i
 			if spec.Caller.UserID != userID {
 				return "", "", errUnknownSession
 			}
+			if !spec.PersistConversation {
+				return "", "", errUnkeptTaskSession
+			}
 			return spec.ConfigID, spec.ConversationID, nil
 		}
 	}
 	row, err := s.store.StoredSession(ctx, customerID, id)
 	if err != nil || row.UserID != userID {
 		return "", "", errUnknownSession
+	}
+	// What reopenedFromRow needs to carry the conversation on.
+	if row.ConversationID == "" {
+		return "", "", errUnkeptTaskSession
 	}
 	return row.ConfigID, row.ConversationID, nil
 }
@@ -311,6 +331,9 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		task.Title = title
 	}
 	if body.Instructions != nil {
+		if strings.TrimSpace(*body.Instructions) == "" {
+			return nil, invalidRequest("instructions cannot be empty")
+		}
 		task.Instructions = *body.Instructions
 	}
 	if body.DeliverTo != nil {
@@ -482,7 +505,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			return nil, err
 		}
 		if active >= maxActive {
-			return nil, errTooManyScheduledTasks(maxActive)
+			return nil, errTooManyScheduledTasks
 		}
 		schedule, err := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task))
 		if err != nil {
@@ -789,7 +812,7 @@ func (s *Server) registerScheduledTasks(api huma.API) {
 // ScheduledTaskSchedule is the schedule object, the same on create, on update and in
 // responses: responses only ever carry at, never in.
 type ScheduledTaskSchedule struct {
-	At          *string `json:"at,omitempty" doc:"The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write." example:"2026-10-20T09:00:00"`
+	At          *string `json:"at,omitempty" doc:"The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write."`
 	In          *string `json:"in,omitempty" doc:"How long from now instead, an ISO 8601 duration: PT20M, P1D. Resolved on write; a response never carries it." example:"PT20M"`
 	Timezone    *string `json:"timezone,omitempty" doc:"An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's stored zone, then the agent's default_timezone; on update, to the task's own zone." example:"Europe/Amsterdam"`
 	Repeat      *string `json:"repeat,omitempty" doc:"Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1." example:"FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"`
@@ -799,7 +822,7 @@ type ScheduledTaskSchedule struct {
 
 // ScheduledTaskNext moves a task's next occurrence only.
 type ScheduledTaskNext struct {
-	At *string `json:"at,omitempty" doc:"The next occurrence as the user's clock reads it, in the task's zone." example:"2026-10-20T09:15:00"`
+	At *string `json:"at,omitempty" doc:"The next occurrence as the user's clock reads it, in the task's zone."`
 	In *string `json:"in,omitempty" doc:"How long from now instead, an ISO 8601 duration: PT15M." example:"PT15M"`
 }
 
@@ -857,6 +880,16 @@ type ScheduledTask struct {
 	UpdatedAt           time.Time                `json:"updated_at"`
 }
 
+// TransformSchema names created_by's constants: AgentLogSource has agent too, and two enums
+// sharing a value make oapi-codegen prefix both, renaming the Go SDK's Agent (as
+// ConnectionOwnerType explains).
+func (*ScheduledTask) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["created_by"].Extensions = map[string]any{
+		"x-enum-varnames": []any{"ScheduledTaskCreatedByAgent", "ScheduledTaskCreatedByApi"},
+	}
+	return schema
+}
+
 // ScheduledTaskRun is one occurrence of a task, as the API renders it.
 type ScheduledTaskRun struct {
 	Id           string     `json:"id"`
@@ -889,7 +922,7 @@ type ScheduledTaskRunPage struct {
 type listScheduledTasksRequest struct {
 	Limit     optionalParam[int]    `query:"limit" doc:"Up to 200. Omitted is 25." minimum:"1" maximum:"200"`
 	Cursor    optionalParam[string] `query:"cursor" doc:"The next_cursor of the previous page. Omitted is the first page."`
-	State     optionalParam[string] `query:"state" doc:"Only tasks in this state: active, paused, completed or failed."`
+	State     optionalParam[string] `query:"state" doc:"Only tasks in this state." enum:"active,paused,completed,failed"`
 	ConfigId  optionalParam[string] `query:"config_id" doc:"Only tasks on this agent config."`
 	SessionId optionalParam[string] `query:"session_id" doc:"Only tasks following up in this session."`
 }

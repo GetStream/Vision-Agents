@@ -6,6 +6,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
+from ...models.list_scheduled_tasks_state import ListScheduledTasksState
 from ...models.scheduled_task_page import ScheduledTaskPage
 from ...types import UNSET, Response, Unset
 
@@ -14,7 +15,7 @@ def _get_kwargs(
     *,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-    state: str | Unset = UNSET,
+    state: ListScheduledTasksState | Unset = UNSET,
     config_id: str | Unset = UNSET,
     session_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -25,7 +26,11 @@ def _get_kwargs(
 
     params["cursor"] = cursor
 
-    params["state"] = state
+    json_state: str | Unset = UNSET
+    if not isinstance(state, Unset):
+        json_state = state.value
+
+    params["state"] = json_state
 
     params["config_id"] = config_id
 
@@ -97,7 +102,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-    state: str | Unset = UNSET,
+    state: ListScheduledTasksState | Unset = UNSET,
     config_id: str | Unset = UNSET,
     session_id: str | Unset = UNSET,
 ) -> Response[ErrorResponse | ScheduledTaskPage]:
@@ -112,7 +117,7 @@ def sync_detailed(
     Args:
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
-        state (str | Unset): Only tasks in this state: active, paused, completed or failed.
+        state (ListScheduledTasksState | Unset): Only tasks in this state.
         config_id (str | Unset): Only tasks on this agent config.
         session_id (str | Unset): Only tasks following up in this session.
 
@@ -144,7 +149,7 @@ def sync(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-    state: str | Unset = UNSET,
+    state: ListScheduledTasksState | Unset = UNSET,
     config_id: str | Unset = UNSET,
     session_id: str | Unset = UNSET,
 ) -> ErrorResponse | ScheduledTaskPage | None:
@@ -159,7 +164,7 @@ def sync(
     Args:
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
-        state (str | Unset): Only tasks in this state: active, paused, completed or failed.
+        state (ListScheduledTasksState | Unset): Only tasks in this state.
         config_id (str | Unset): Only tasks on this agent config.
         session_id (str | Unset): Only tasks following up in this session.
 
@@ -186,7 +191,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-    state: str | Unset = UNSET,
+    state: ListScheduledTasksState | Unset = UNSET,
     config_id: str | Unset = UNSET,
     session_id: str | Unset = UNSET,
 ) -> Response[ErrorResponse | ScheduledTaskPage]:
@@ -201,7 +206,7 @@ async def asyncio_detailed(
     Args:
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
-        state (str | Unset): Only tasks in this state: active, paused, completed or failed.
+        state (ListScheduledTasksState | Unset): Only tasks in this state.
         config_id (str | Unset): Only tasks on this agent config.
         session_id (str | Unset): Only tasks following up in this session.
 
@@ -231,7 +236,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-    state: str | Unset = UNSET,
+    state: ListScheduledTasksState | Unset = UNSET,
     config_id: str | Unset = UNSET,
     session_id: str | Unset = UNSET,
 ) -> ErrorResponse | ScheduledTaskPage | None:
@@ -246,7 +251,7 @@ async def asyncio(
     Args:
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
-        state (str | Unset): Only tasks in this state: active, paused, completed or failed.
+        state (ListScheduledTasksState | Unset): Only tasks in this state.
         config_id (str | Unset): Only tasks on this agent config.
         session_id (str | Unset): Only tasks following up in this session.
 
