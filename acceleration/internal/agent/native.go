@@ -240,8 +240,13 @@ func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan
 			// The moment the caller stopped is when their wait begins. The event's own time
 			// rather than now: a model that had no stop event of its own reports the time
 			// of the last words it heard, which is nearer the truth than when it said so.
+			// A stop heard while a reply is in flight belongs to that reply, which the
+			// provider times: kept here, it would time the next reply from a wait long
+			// over, and hold back the background follow-up until one starts.
 			a.mu.Lock()
-			a.waitingSince = typed.At
+			if a.speakingTurn == "" {
+				a.waitingSince = typed.At
+			}
 			a.lastHeardAt = typed.At
 			a.mu.Unlock()
 

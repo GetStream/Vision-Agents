@@ -374,7 +374,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		Action: store.AuditSynced, Changes: synced,
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 

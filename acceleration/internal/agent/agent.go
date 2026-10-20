@@ -586,7 +586,7 @@ func New(options Options) (*Agent, error) {
 		}
 	}
 
-	logger := options.Logger.With("customer", options.CustomerID)
+	logger := options.Logger.With("customer", options.CustomerID, "session", options.SessionID, "call", options.CallID)
 	owner := routing.Owner{
 		CustomerID: options.CustomerID,
 		Caller:     options.Caller,
@@ -3384,6 +3384,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
+	overlapping := newOverlap(voice.Provider(), a.abandonedTurn, a.logger)
 
 	for event := range voice.Events() {
 		switch typed := event.(type) {
@@ -3416,6 +3417,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if err != nil {
 				a.fail(err, "edge")
 			}
+			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
 			a.mu.Lock()
 			a.lastSpokeAt = time.Now()
 			a.mu.Unlock()
@@ -3429,6 +3431,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "voice", typed.Voice)
 
 		case tts.SynthesisComplete:
+			overlapping.finished(typed.SynthesisID)
 			a.settleVoice(voice)
 			a.logger.Debug("finished speaking",
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),

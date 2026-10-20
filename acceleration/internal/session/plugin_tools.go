@@ -115,7 +115,7 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 				servers = append(servers, name)
 			}
 		}
-		logger.Warn(plugins.DeprecatedUse, "path", plugins.PathSessionTools,
+		plugins.ReportUse(ctx, logger, plugins.PathSessionTools,
 			"customer", spec.CustomerID, "config", spec.ConfigID, "plugin", catalog, "mcp_server", servers)
 	}
 	if len(wanted) == 0 {
@@ -440,7 +440,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 // A plugin the agent was given no client for cannot be logged into, which the model is told
 // to pass on as the plugin being unavailable here rather than as a fault to fix.
 func (r *userPluginRunner) authorize(ctx context.Context, plugin plugins.Plugin) (string, error) {
-	r.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathLogin,
+	plugins.ReportUse(ctx, r.logger, plugins.PathLogin,
 		"customer", r.customerID, "config", r.configID, "plugin", plugin.ID, "via", plugins.Via(plugin.ID))
 	owner := plugins.Owner{CustomerID: r.customerID, ConfigID: r.configID}
 	pending, err := r.auth.StartAuthorize(ctx, owner, plugin, "")
