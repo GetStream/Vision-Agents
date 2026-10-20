@@ -61,6 +61,18 @@ too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from 
 declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
 updates.
 
+### The Kotlin SDK is one module, and its views are Stream Chat's AI components
+
+`vision-agents-core` is the only Android artifact, and everything in it is in
+`io.getstream.visionagents.android.core`. `vision-agents-ui`, `vision-agents-rtc` and
+`vision-agents-chat` are gone: `VoiceSession` and `session.chat()` moved into core, which is
+now an Android library depending on Stream Chat (7.15.0+) and Stream Video. `ConversationView`,
+`TranscriptView`, `Composer`, `AgentStatusView`, `VoiceCallView` and `AgentVideoView` are gone
+too; show a conversation with Stream Chat's AI components (`stream-chat-android-ai-compose`).
+`ChatFailed` and `CallFailed` are now `AgentsException.ChatFailed` and
+`AgentsException.CallFailed`. Stream Chat 7.15.0 is published to `https://stream-io-repo.com`,
+not Maven Central, so add that repository.
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,
@@ -621,6 +633,38 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
 
 ## New Features
+
+### An agent config has a `role`, and the app's moderator agent is found by it
+
+`AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
+agent the chat worker hands flagged messages to for review. It is set on create, update, patch
+and a folder sync (`role:` in agent.yaml), and `GET /v1/agents/configs?role=agent_moderator` answers
+the app's one moderator, or an empty list. One live config per app holds a role: giving it to a
+second is a 409 `role_taken`, a deleted config frees it, and a test copy (tagged `draft_of`) may
+carry the role of the config it copies without being found by it. A save that leaves `role` out
+keeps the stored one, so a client that does not know the field cannot take it away. Configs the
+dashboard tagged `role: agent_moderator` before the field existed take the role when the router
+migrates: the newest live one in each app (AI-1472).
+
+### A template for the app's moderator, and a run of it answers in a fixed format
+
+`acceleration/templates/agent_moderator` is the starting point for an app's Nora: a text agent
+on `llm-thinking` with `role: agent_moderator`, reviewer instructions (content is untrusted data,
+flags are hypotheses, the current content is judged first, evidence is quoted exactly) and a
+skill each for profanity, harassment, suggestive language and actions. The app may edit all of
+it. The answer format the chat review worker parses, one JSON object with per-case, per-label
+judgments, evidence, a flag assessment and summaries, is not in the template: `POST
+/v1/agents/runs` adds it after the config's and the caller's instructions on every run of an
+`agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
+Ask Nora, are not held to it (AI-1479).
+
+### An Android demo, the Android half of swift_demo
+
+`examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
+against `sdks/kotlin` as it is in the checkout. Its Chat screen shows the conversation with
+Stream Chat's AI components: the reply streaming in, its reasoning, each tool call, and the
+refund's question on the reply. Its Voice screen puts the agent on a call and writes out what
+was said, with the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
 
 ### Cartesia records speech
 
@@ -2211,6 +2255,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `GET /v1/{modality}/providers` lists each model's `supports`: the options it can be asked for, such as `keyterms` and `diarize`, and left out when it takes none. Which models take keyterms was only in the router's config (#1014, AI-1419).
 
 ## Bug Fixes
+
+### A Kotlin voice call asks only for the microphone
+
+`VoiceSession` joined an agent's call with Stream Video's default foreground service, which
+refuses to start without the camera permission because the call allows video. The call went
+on, with no service holding it. It now runs Stream's audio-call service, and the client it
+builds asks for the camera only while the camera is on. A call type the app configured on its
+own `StreamVideo` is left as it is.
 
 - A flow decision that has said nothing for `ROUTER_FLOW_HEDGE` (`400ms` by default, `0` turns it off, `cmd/agent -flow-hedge`) is asked of another candidate of `llm-flow` as well, and whichever says something first rules on the turn, as a late reply already is under `ROUTER_REPLY_HEDGE`. A flow controller that stalled on its first token made the caller wait out its 3 s deadline on every turn it did, and the turn was then answered with no ruling (#1040).
 - A line the agent says on a call (`say`, and the greeting) is in its transcript and its responses, and the model knows it was said. It went straight to the voice with no reply announced, so the Chat channel and `responses.items` never had it, and the caller's answer to a greeting's question reached the model and the flow controller with no question before it. A line that opens the call is told to the model in its instructions rather than as a first turn, which chat templates that need a user turn first refuse; a conversation is not named after its greeting (#1040).

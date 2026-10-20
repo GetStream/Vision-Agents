@@ -181,6 +181,23 @@ func (s *ConfigSuite) TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise
 	s.ErrorContains(err, "connectors.proxy_calls_per_minute")
 }
 
+// TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise: the default, the variable that changes
+// it, 0 that turns it off, and a negative cap refused.
+func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.EqualValues(20, config.Runs.ConcurrentPerApp)
+
+	s.T().Setenv("ROUTER_RUNS_CONCURRENT_PER_APP", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Runs.ConcurrentPerApp)
+
+	s.T().Setenv("ROUTER_RUNS_CONCURRENT_PER_APP", "-1")
+	_, _, err = Load("")
+	s.ErrorContains(err, "runs.concurrent_per_app")
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

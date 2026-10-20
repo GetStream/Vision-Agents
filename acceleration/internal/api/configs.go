@@ -61,6 +61,18 @@ func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigs
 		return &listAgentConfigsResponse{Body: []AgentConfig{agentConfigOf(found)}}, nil
 	}
 
+	// A role is held by one live config at most, so it answers as a name does.
+	if role := request.Role.ptr(); role != nil {
+		found, exists, err := s.store.AgentConfigByRole(ctx, customerID, string(*role))
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return &listAgentConfigsResponse{Body: []AgentConfig{}}, nil
+		}
+		return &listAgentConfigsResponse{Body: []AgentConfig{agentConfigOf(found)}}, nil
+	}
+
 	stored, err := s.store.CustomerAgentConfigs(ctx, customerID)
 	if err != nil {
 		return nil, err
@@ -207,6 +219,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// cards off by saving.
 	if request.Body.EpisodeCards == nil {
 		config.EpisodeCards = existing.EpisodeCards
+	}
+	// Kept for the same reason: a client that does not know the role must not take it away
+	// from the agent the chat worker looks for by it.
+	if request.Body.Role == nil {
+		config.Role = existing.Role
 	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
@@ -431,6 +448,14 @@ var (
 	}
 )
 
+// errAgentRoleTaken is a save that would give a second live agent config of the customer a
+// role another one holds. The one there is, agent_moderator, is what the chat worker finds the
+// app's moderator by, so two would leave it guessing.
+var errAgentRoleTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeRoleTaken,
+	Message: "another agent already has this role",
+}
+
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
 // channel connection, such as a Slack bot's, as fixed: one agent answers each message that
 // comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
@@ -466,6 +491,8 @@ func storeFailure(err error, taken APIError) error {
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		return taken
+	case errors.Is(err, store.ErrRoleTaken):
+		return errAgentRoleTaken
 	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
 		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
 		errors.Is(err, store.ErrNoConnectorConnection), errors.Is(err, store.ErrNoConnectorDefinition):
@@ -1472,6 +1499,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
+		Role:               string(value(request.Role)),
 		Mode:               mode,
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
@@ -1563,6 +1591,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		Mode:      AgentMode(config.Mode),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
+	}
+	if config.Role != "" {
+		role := AgentRole(config.Role)
+		rendered.Role = &role
 	}
 	rendered.Stt = optional(config.STT)
 	rendered.Tts = optional(config.TTS)
@@ -1807,7 +1839,8 @@ func (s *Server) registerConfigs(api huma.API) {
 }
 
 type listAgentConfigsRequest struct {
-	Name optionalParam[string] `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+	Name optionalParam[string]    `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+	Role optionalParam[AgentRole] `query:"role" doc:"Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set."`
 }
 
 type listAgentConfigsResponse struct {
@@ -1856,6 +1889,7 @@ type AgentConfigRequest struct {
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
@@ -1891,6 +1925,7 @@ type AgentConfig struct {
 	Llm                *string                  `json:"llm,omitempty"`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
