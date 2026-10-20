@@ -1498,6 +1498,44 @@ func (s *ConverseSuite) TestAnUnfinishedTurnWhoseControllerFailedIsPutAgain() {
 	s.Error(actions[0].Err)
 }
 
+func (s *ConverseSuite) TestWordsAddedToAnAnsweredRunAreHeardOnce() {
+	// The transcript and the model are told what the caller said each turn, not the whole
+	// run the transcriber kept open, which would repeat every earlier answer.
+	s.answerFinal("It came on gradually.", 1)
+	s.answerFinal("It came on gradually. I sit at a desk all day.", 1)
+
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the second turn was never recorded")
+	s.Equal("It came on gradually.", s.heard()[0].Text)
+	s.Equal("I sit at a desk all day.", s.heard()[1].Text)
+}
+
+func (s *ConverseSuite) TestAQueuedTurnAddedToAnAnsweredRunIsHeardOnlyForTheNewWords() {
+	s.build(DuplexOptions{})
+	s.answerFinal("It came on gradually.", 1)
+	s.queueOnOverlap(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "It came on gradually. I sit at a desk all day.",
+	})
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the queued turn was never heard")
+	s.Equal("I sit at a desk all day.", s.heard()[1].Text)
+}
+
+func (s *ConverseSuite) TestAFinishedTurnWhoseControllerTimedOutIsAnswered() {
+	ready := s.settle("what time do you open", s.quiet())
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Err:         errors.New("harness: decide flow: context deadline exceeded"),
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(actions), "a slow controller must not cost the caller their answer")
+	s.Equal("what time do you open", actions[0].Text)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the caller's words were never recorded")
+	s.Equal("what time do you open", s.heard()[0].Text)
+}
+
 func (s *ConverseSuite) TestAFinishedTurnOverTheAgentWhoseControllerFailedTakesTheFloor() {
 	ready := s.settle("make it six people, and gluten instead", s.talking())
 

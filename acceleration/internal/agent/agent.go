@@ -328,6 +328,9 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// opened is the line the agent opened the conversation with before anybody spoke, told
+	// to the model in its instructions rather than kept as a turn (Say).
+	opened string
 	// lateResults are lateResult messages, and lines said while a call ran, held back while
 	// the history ends in a call not yet answered (callsOpen), in the order they came.
 	lateResults []llm.Message
@@ -355,7 +358,7 @@ type Agent struct {
 	// label their words go under. Once there are two, every new turn names who said it,
 	// because the model cannot tell them apart otherwise. Turns typed with RespondTo are
 	// the caller's and are never counted.
-	speakers map[string]string
+	speakers map[string]nameTag
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -600,7 +603,7 @@ func New(options Options) (*Agent, error) {
 		departed:         map[string]time.Time{},
 		now:              time.Now,
 		voices:           map[string]string{},
-		speakers:         map[string]string{},
+		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
@@ -981,7 +984,7 @@ func (a *Agent) refuseWritten(turnID string, verdict guardrail.Verdict) string {
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
 // agent already knows what it wants to say, so a model would only add latency and cost.
 func (a *Agent) Say(ctx context.Context, text string) error {
-	turnID := fmt.Sprintf("say-%d", time.Now().UnixNano())
+	turnID := fmt.Sprintf("%s%d", sayPrefix, time.Now().UnixNano())
 
 	// A conversation in writing has no voice to say it with, so it is reported as said
 	// instead: what a caller would have heard is what a reader reads.
@@ -1002,9 +1005,61 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	}
 	a.speakingTurn = turnID
 	a.saying = text
+	// The model reads what the agent said from the history, so a line said without it has
+	// to be kept too, or the caller's answer to a greeting's question reaches it with no
+	// question. A line that opens the conversation is told to it instead: chat templates
+	// that need a user turn first refuse a conversation that opens on the assistant's.
+	said := llm.Message{Role: llm.Assistant, Content: text}
+	opening := len(a.history) == 0
+	switch {
+	case opening:
+		a.opened = text
+	case callsOpen(a.history):
+		a.lateResults = append(a.lateResults, said)
+	default:
+		a.history = append(a.history, said)
+	}
 	a.mu.Unlock()
 
-	return a.speakWhole(turnID, text)
+	// Announced like a reply, so the line is in the session's responses and its transcript.
+	// Before speaking, because the transcript stores a turn's text when its voice finishes and
+	// only if it was told the text first, and a voice may finish before Synthesize returns.
+	a.emitter.Send(Responding{TurnID: turnID})
+	a.emitter.Send(Responded{TurnID: turnID, Text: text})
+	if err := a.speakWhole(turnID, text); err != nil {
+		// Never heard, so the model must not be told it was said, and the transcript must not
+		// keep it as said.
+		a.mu.Lock()
+		a.forgetSaidLocked(opening, said)
+		a.mu.Unlock()
+		a.emitter.Send(Interrupted{TurnID: turnID})
+		return err
+	}
+	return nil
+}
+
+// sayPrefix starts the turn id of a line said as written, without the model.
+const sayPrefix = "say-"
+
+// Scripted reports whether a turn is a line the agent said as written rather than a reply
+// the model wrote, such as the greeting.
+func Scripted(turnID string) bool { return strings.HasPrefix(turnID, sayPrefix) }
+
+// forgetSaidLocked takes back a line Say kept for the model, when the voice never said it.
+// The caller holds a.mu.
+func (a *Agent) forgetSaidLocked(opening bool, said llm.Message) {
+	if opening {
+		if a.opened == said.Content {
+			a.opened = ""
+		}
+		return
+	}
+	for _, kept := range []*[]llm.Message{&a.lateResults, &a.history} {
+		if last := len(*kept) - 1; last >= 0 && (*kept)[last].Role == said.Role && (*kept)[last].Content == said.Content {
+			*kept = (*kept)[:last]
+			return
+		}
+	}
 }
 
 // Greet opens the call with a greeting. Unvaried, it is said word for word without asking
@@ -1566,6 +1621,10 @@ func (a *Agent) ask(ready candidate) {
 		reply = lastAssistantSaid(history)
 	}
 	anotherVoice := a.anotherVoiceLocked(ready)
+	participant := ready.Participant.Name
+	if participant == "" {
+		participant = a.speakerLocked(ready.Participant).label
+	}
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the
@@ -1579,8 +1638,8 @@ func (a *Agent) ask(ready candidate) {
 		ID:           ready.ID,
 		Instructions: instructions,
 		History:      history,
-		Participant:  participantName(ready.Participant),
-		Text:         ready.Text,
+		Participant:  participant,
+		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
 		Unfinished:   ready.Unfinished,
@@ -1640,16 +1699,6 @@ type heard struct {
 	typed bool
 }
 
-func participantName(participant stt.Participant) string {
-	if participant.Name != "" {
-		return participant.Name
-	}
-	if participant.UserID != "" {
-		return participant.UserID
-	}
-	return participant.ID
-}
-
 func lastAssistantSaid(history []llm.Message) string {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role == llm.Assistant && strings.TrimSpace(history[i].Content) != "" {
@@ -1703,7 +1752,7 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
 func (a *Agent) respondCandidate(ready candidate, note string) error {
-	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
+	return a.respondTurn(ready.ID, ready.Participant, ready.Said(), heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
@@ -1854,7 +1903,7 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	turn := llm.Message{Role: llm.User, Content: text}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
-		turn.Speaker = a.labelLocked(participant)
+		turn.Speaker = a.speakerLocked(participant).label
 	}
 	return turn
 }
@@ -1864,33 +1913,55 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
 	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
 	if participant.ID != typedCaller {
-		a.speakers[personOf(participant)] = a.labelLocked(participant)
+		a.speakers[personOf(participant)] = a.speakerLocked(participant)
 	}
 }
 
-// labelLocked is the label a person's words go under. It is fixed by their first answered
-// turn, unless that turn had no display name and went under their user ID: the name, once
-// it is known, replaces it. A person whose name another already goes under is numbered,
-// "Alex (2)", in the order they first spoke, so the model tells them apart without being
-// told their user.
-func (a *Agent) labelLocked(participant stt.Participant) string {
+// nameTag is how a person counted in speakers is labelled.
+type nameTag struct {
+	// label goes ahead of their words.
+	label string
+	// fallback is the label they were given for having no display name at their first
+	// answered turn. Empty for a person who had one.
+	fallback string
+}
+
+// speakerLocked is the label a person's words go under. It is fixed by their first
+// answered turn, unless that turn had no display name: such people go under "Speaker 1",
+// "Speaker 2" and on, in the order they first spoke, until their name is known and
+// replaces it. A person whose name another already goes under is numbered, "Alex (2)", in
+// the order they first spoke, so the model tells them apart without being told their user
+// or participant ID, which are the app's and mean nothing to it.
+func (a *Agent) speakerLocked(participant stt.Participant) nameTag {
 	person := personOf(participant)
 	name := speakerLabel(participant)
-	label, ok := a.speakers[person]
-	if ok && label != participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID}) {
-		return label
+	current, ok := a.speakers[person]
+	if ok && (name == "" || current.label != current.fallback) {
+		return current
 	}
 	var taken []string
-	for other, otherLabel := range a.speakers {
+	fallbacks := 0
+	for other, otherSpeaker := range a.speakers {
 		if other != person {
-			taken = append(taken, otherLabel)
+			taken = append(taken, otherSpeaker.label)
+		}
+		if otherSpeaker.fallback != "" {
+			fallbacks++
 		}
 	}
-	label = name
+	nameless := name == ""
+	if nameless {
+		// "Speaker N" is the wording Kanat chose on AI-1458 (2026-10-19).
+		name = fmt.Sprintf("Speaker %d", fallbacks+1)
+	}
+	label := name
 	for n := 2; slices.Contains(taken, label); n++ {
 		label = fmt.Sprintf("%s (%d)", name, n)
 	}
-	return label
+	if nameless {
+		return nameTag{label: label, fallback: label}
+	}
+	return nameTag{label: label, fallback: current.fallback}
 }
 
 // personOf is who a participant is. A person who rejoins gets a new ID but keeps their
@@ -1902,14 +1973,11 @@ func personOf(participant stt.Participant) string {
 	return participant.ID
 }
 
-// speakerLabel is a participant's name as it goes ahead of their words. A line break or a
-// colon in a display name could pass for the start of another person's line, so they go.
+// speakerLabel is a participant's display name as it goes ahead of their words, empty
+// when they have none. A line break or a colon in a display name could pass for the start
+// of another person's line, so they go.
 func speakerLabel(participant stt.Participant) string {
-	label := strings.Join(strings.Fields(strings.ReplaceAll(participantName(participant), ":", "")), " ")
-	if label == "" {
-		return participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID})
-	}
-	return label
+	return strings.Join(strings.Fields(strings.ReplaceAll(participant.Name, ":", "")), " ")
 }
 
 func (a *Agent) replayLocked() []llm.Message {
@@ -2056,6 +2124,9 @@ func (a *Agent) instructions() string {
 	}
 	if a.prompt != "" {
 		parts = append(parts, a.prompt)
+	}
+	if a.opened != "" {
+		parts = append(parts, fmt.Sprintf("You opened the call by saying: %q", a.opened))
 	}
 	// How to write for the voice comes last, because it is about the delivery rather than
 	// about who the agent is.
@@ -3916,11 +3987,13 @@ func (a *Agent) Continue(previous *Agent) {
 	// A copy: the old agent can still keep a turn between this and its Close, and would
 	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
+	opened := previous.opened
 	previous.mu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = history
 	a.speakers = speakers
+	a.opened = opened
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.

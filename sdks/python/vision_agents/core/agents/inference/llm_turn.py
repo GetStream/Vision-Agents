@@ -9,7 +9,11 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
 from vision_agents.core.llm.events import LLMResponseFinalEvent
-from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.llm import (
+    LLMResponseDelta,
+    LLMResponseFinal,
+    answered_speaker,
+)
 from vision_agents.core.utils.exceptions import log_task_exception
 from vision_agents.core.utils.stream import Stream
 from vision_agents.core.utils.utils import cancel_and_wait
@@ -113,6 +117,8 @@ class LLMTurn:
         self._confirmed = True
 
     async def _do_llm_response(self, llm: LLM):
+        # This runs in its own task, so the label is seen only by this turn's requests.
+        answered_speaker.set(self.speaker)
         with tracer.start_as_current_span("simple_response"):
             try:
                 async for item in llm.simple_response(

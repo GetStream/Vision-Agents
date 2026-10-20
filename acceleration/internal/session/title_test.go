@@ -5,6 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/stretchr/testify/suite"
 )
@@ -15,6 +16,20 @@ type TitleSuite struct {
 
 func TestTitleSuite(t *testing.T) {
 	suite.Run(t, new(TitleSuite))
+}
+
+func (s *TitleSuite) TestTheGreetingIsNotAnAnswerToNameTheConversationAfter() {
+	// The greeting is the same on every call, so naming after it would call every
+	// conversation the same thing until the next renaming.
+	session := &Session{naming: &naming{}}
+	// A naming in flight stops this from starting one, which needs a model.
+	session.naming.running.Store(true)
+
+	session.name(agent.Responded{TurnID: "say-1", Text: "Hi, thanks for calling Acme, how can I help?"})
+	s.Zero(session.naming.answered)
+
+	session.name(agent.Responded{TurnID: "turn-1", Text: "We open at nine."})
+	s.Equal(1, session.naming.answered)
 }
 
 func (s *TitleSuite) TestATitleIsReadOutOfWhatTheModelWrote() {

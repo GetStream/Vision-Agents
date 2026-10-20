@@ -3986,6 +3986,84 @@ func (s *AgentSuite) TestSayGoesStraightToTheVoice() {
 	s.True(s.voice.spoken()[0].Final)
 }
 
+func (s *AgentSuite) TestASaidLineIsReportedBeforeItsVoiceFinishes() {
+	// The transcript stores a turn's text when its voice finishes, so the text has to have
+	// arrived by then or a greeting never reaches the transcript or the responses.
+	s.join(true)
+
+	s.Require().NoError(s.agent.Say(s.ctx, "welcome"))
+
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the greeting was never spoken")
+	reported := s.reported()
+	responding, _ := firstOf[Responding](reported)
+	responded, _ := firstOf[Responded](reported)
+	spoke, _ := firstOf[Spoke](reported)
+	s.Equal(spoke.TurnID, responding.TurnID, "the line opens a turn of its own")
+	s.Equal(spoke.TurnID, responded.TurnID)
+	s.Equal("welcome", responded.Text)
+	s.Less(slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Responded); return ok }),
+		slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Spoke); return ok }),
+		"the text arrives before the voice finishes")
+}
+
+func (s *AgentSuite) TestTheModelIsToldTheLineTheCallOpenedWith() {
+	// The caller's first words answer the greeting's question, which the model has to know.
+	// It is told rather than handed a conversation opening on the assistant, which chat
+	// templates that need a user turn first refuse.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Where does it hurt?"))
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the question was never spoken")
+	s.speak(participant)
+	s.says(participant, "my lower back")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the answer was never asked about")
+	request := s.model.requests()[0]
+	s.Contains(request.Instructions, `You opened the call by saying: "Where does it hurt?"`)
+	s.Require().Len(request.Input, 1)
+	s.Equal(llm.User, request.Input[0].Role)
+	s.Equal("my lower back", request.Input[0].Content)
+}
+
+func (s *AgentSuite) TestALineSaidPartWayThroughIsInTheConversation() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Is there anything else?"))
+	s.says(participant, "no thanks")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn was never asked")
+	input := s.model.requests()[1].Input
+	s.Require().Len(input, 4)
+	s.Equal(llm.Message{Role: llm.Assistant, Content: "Is there anything else?"}, input[2])
+	s.Equal("no thanks", input[3].Content)
+	s.NotContains(s.model.requests()[1].Instructions, "You opened the call by saying")
+}
+
+func (s *AgentSuite) TestALineTheVoiceCouldNotSayIsNotToldToTheModel() {
+	s.join(true)
+	s.voice.mu.Lock()
+	s.voice.unavailable = true
+	s.voice.mu.Unlock()
+
+	s.Require().Error(s.agent.Say(s.ctx, "Where does it hurt?"))
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the transcript was never told the line went unheard")
+	responded, _ := firstOf[Responded](s.reported())
+	interrupted, _ := firstOf[Interrupted](s.reported())
+	s.Equal(responded.TurnID, interrupted.TurnID)
+	s.agent.mu.Lock()
+	instructions := s.agent.instructions()
+	s.agent.mu.Unlock()
+	s.NotContains(instructions, "Where does it hurt?")
+	s.Empty(s.agent.History())
+}
+
 func (s *AgentSuite) TestAnExactGreetingIsSaidWordForWord() {
 	s.join(true)
 

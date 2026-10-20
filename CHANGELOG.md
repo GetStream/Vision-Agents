@@ -61,6 +61,18 @@ too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from 
 declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
 updates.
 
+### The Kotlin SDK is one module, and its views are Stream Chat's AI components
+
+`vision-agents-core` is the only Android artifact, and everything in it is in
+`io.getstream.visionagents.android.core`. `vision-agents-ui`, `vision-agents-rtc` and
+`vision-agents-chat` are gone: `VoiceSession` and `session.chat()` moved into core, which is
+now an Android library depending on Stream Chat (7.15.0+) and Stream Video. `ConversationView`,
+`TranscriptView`, `Composer`, `AgentStatusView`, `VoiceCallView` and `AgentVideoView` are gone
+too; show a conversation with Stream Chat's AI components (`stream-chat-android-ai-compose`).
+`ChatFailed` and `CallFailed` are now `AgentsException.ChatFailed` and
+`AgentsException.CallFailed`. Stream Chat 7.15.0 is published to `https://stream-io-repo.com`,
+not Maven Central, so add that repository.
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,
@@ -621,6 +633,68 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
 
 ## New Features
+
+### An agent config has a `role`, and the app's moderator agent is found by it
+
+`AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
+agent the chat worker hands flagged messages to for review. It is set on create, update, patch
+and a folder sync (`role:` in agent.yaml), and `GET /v1/agents/configs?role=agent_moderator` answers
+the app's one moderator, or an empty list. One live config per app holds a role: giving it to a
+second is a 409 `role_taken`, a deleted config frees it, and a test copy (tagged `draft_of`) may
+carry the role of the config it copies without being found by it. A save that leaves `role` out
+keeps the stored one, so a client that does not know the field cannot take it away. Configs the
+dashboard tagged `role: agent_moderator` before the field existed take the role when the router
+migrates: the newest live one in each app (AI-1472).
+
+### A template for the app's moderator, and a run of it answers in a fixed format
+
+`acceleration/templates/agent_moderator` is the starting point for an app's Nora: a text agent
+on `llm-thinking` with `role: agent_moderator`, reviewer instructions (content is untrusted data,
+flags are hypotheses, the current content is judged first, evidence is quoted exactly) and a
+skill each for profanity, harassment, suggestive language and actions. The app may edit all of
+it. The answer format the chat review worker parses, one JSON object with per-case, per-label
+judgments, evidence, a flag assessment and summaries, is not in the template: `POST
+/v1/agents/runs` adds it after the config's and the caller's instructions on every run of an
+`agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
+Ask Nora, are not held to it (AI-1479).
+
+### An Android demo, the Android half of swift_demo
+
+`examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
+against `sdks/kotlin` as it is in the checkout. Its Chat screen shows the conversation with
+Stream Chat's AI components: the reply streaming in, its reasoning, each tool call, and the
+refund's question on the reply. Its Voice screen puts the agent on a call and writes out what
+was said, with the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
+
+### Inworld records speech
+
+`POST /v1/tts/recordings` can be served by Inworld, pinned (`inworld/inworld-tts-2`,
+`inworld/inworld-tts-2-flash`, `inworld/inworld-tts-2-batch`), named in a priority list
+(`["inworld"]`, `["elevenlabs","inworld"]`), or reached from a shortcut when the models ahead of
+it cannot be built. It records on Inworld's `/tts/v1/voice` in the voice, model, delivery mode
+and language its live voice uses, and `can_record` is now true for it in `GET /v1/tts/routes`.
+`en-recorded` and `multilingual-recorded` still prefer ElevenLabs v3, then Cartesia. `format`
+takes `mp3_<rate>_<kbps>`, `pcm_<rate>`, `wav_<rate>`, `ulaw_<rate>` and `alaw_<rate>` from 8000
+to 48000 Hz, `mp3_44100_128` when left out. Any other format, a speed, volume or emotion, and a
+text over 2,000 UTF-16 code units are refused naming it: the format and the text as a failed job
+(the request is accepted with 202 and the job ends `failed`), not counted against the model's
+health, since the caller is the one to change them. A live Inworld voice asked for a format is
+refused as the caller's mistake. `tl` is sent to Inworld as `fil`, which it resolves.
+Breeze still only streams (AI-1463).
+
+### Cartesia records speech
+
+`POST /v1/tts/recordings` can be served by Cartesia, pinned (`cartesia/sonic-preview`,
+`cartesia/sonic-3.6`), named in a priority list (`["cartesia"]`, `["elevenlabs","cartesia"]`), or
+reached from a shortcut such as `tts-quality` when ElevenLabs cannot be built. It records on
+Cartesia's `/tts/bytes` in the voice, model and language its live voice uses, and `can_record` is
+now true for it in `GET /v1/tts/routes`. `en-recorded` and `multilingual-recorded` still prefer
+ElevenLabs v3. `format` takes `mp3_<rate>_<kbps>`, `pcm_<rate>`, `wav_<rate>`, `ulaw_<rate>` and
+`alaw_<rate>` at the rates Cartesia offers, `mp3_44100_128` when left out. Any other format, and a
+speed, volume or emotion, fails the job and names it: the request is accepted (202) and the job
+ends `failed`. A live Cartesia voice asked for a format is refused as the caller's mistake.
+Recorded shortcuts (`en-recorded`, `multilingual-recorded`) with a language hint of bn, gu, he, ka, kn, ml, mr, or, pa, te, th, tl or ur now record on Cartesia: ElevenLabs v3 lacks them and they were refused before.
+Breeze still only streams (AI-1462).
 
 ### A phone on a call can show the agent its camera
 
@@ -2198,13 +2272,30 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+### A Kotlin voice call asks only for the microphone
+
+`VoiceSession` joined an agent's call with Stream Video's default foreground service, which
+refuses to start without the camera permission because the call allows video. The call went
+on, with no service holding it. It now runs Stream's audio-call service, and the client it
+builds asks for the camera only while the camera is on. A call type the app configured on its
+own `StreamVideo` is left as it is.
+
+- A flow decision that has said nothing for `ROUTER_FLOW_HEDGE` (`400ms` by default, `0` turns it off, `cmd/agent -flow-hedge`) is asked of another candidate of `llm-flow` as well, and whichever says something first rules on the turn, as a late reply already is under `ROUTER_REPLY_HEDGE`. A flow controller that stalled on its first token made the caller wait out its 3 s deadline on every turn it did, and the turn was then answered with no ruling (#1040).
+- A line the agent says on a call (`say`, and the greeting) is in its transcript and its responses, and the model knows it was said. It went straight to the voice with no reply announced, so the Chat channel and `responses.items` never had it, and the caller's answer to a greeting's question reached the model and the flow controller with no question before it. A line that opens the call is told to the model in its instructions rather than as a first turn, which chat templates that need a user turn first refuse; a conversation is not named after its greeting (#1040).
+- The agent's spoken replies in a call's Chat channel carry `ai_generated`, as replies in a conversation held in writing already did, so Stream's AI components render them as the assistant's (#1040).
+- What a caller says after an answer, on a transcriber that keeps the run of speech open (Deepgram Flux resuming a turn), is heard as only the new words. The whole run was passed on each time, so every later turn repeated the earlier ones to the model, the flow controller, in `heard` and in the transcript, more each turn. Words added to something being read out ("order 1 2" then "3 4", "one two" then "three", letters spelled out) are still heard whole (#1040).
+- The router's agent answers a question whose turn decision timed out. The decision call is given 3 s; when its stream had opened but no token came by then, the call was closed and no ruling was sent, so the question was never answered nor stored. That ruling now carries the timeout, and the agent answers a finished question whose ruling failed, as it already did when the call timed out before it opened (AI-1460).
+- A person on a voice call with no display name goes under `Speaker 1`, `Speaker 2` and on, numbered in the order such people first spoke, in what the reply model reads (`Speaker 1: what about me`) and in what the flow controller is asked. Their user id, or their participant id when they had no user, went ahead of their words instead, so the model read the app's internal ids. Their name, once it is known, still replaces the label, and named people read as before (AI-1458).
 - A phone's tools work on the call of a person's saved conversation. Every tool call there needed a typed question's request id, which a spoken question and the vision skill's request for camera frames never have, so on a call each was refused with `session: tool call has no durable command binding` and the agent said the tool did not work. A request id is now needed only in a conversation held in writing, as taking the results already was.
 - A chat that starts voice hands its skills over on the call. A session opened on a call is given the default subagent (`llm-thinking`) when its config names none, and one that started in writing was not when voice started, so its call had nothing to run `think`, `recall`, `explain` or `vision` on: a tool's pictures ended as `skill "vision" is not available`. Starting voice now gives it the same default.
 - A tool's pictures reach the `vision` skill on a model that checks a conversation's tool calls. The vision task was handed the conversation with the call that took the picture still open, which OpenAI refused (`400 No tool output found for function call`), so the agent said the analysis did not work. The open call is now answered as still running before the conversation is handed over.
 - A Python agent on a local LLM plugin is told who is speaking once a second person has spoken in the call, as the router's agent is (AI-1420): their words reach the model as `Bob: what about me`. Every person's words read the same before, so the model answered two people as one. A call where one person speaks sends exactly what it did. The name is the call participant's (`Participant.name`, filled by the Stream edge), else their user id. The plugins that rebuild the request from the conversation (anthropic, aws, huggingface, nvidia, openai Chat Completions, openrouter) name every line from then on; the ones that keep their own history (gemini, openai Responses, xai) are sent the named turn. What the conversation stores and shows is still only the words (AI-1439).
+- A Python agent on a local LLM plugin tells the model when several people are talking, as the router's agent does: once a second person has spoken, the system prompt ends with `Several people are talking in this call. Each of their messages starts with the name of who said it, then a colon. Never start your reply with such a label.` A call where one person speaks sends exactly what it did. Realtime plugins hear audio, not named turns, and are not told. A person with no display name goes under `Speaker 1`, `Speaker 2` and on, in the order such people first spoke; their user id went ahead of their words instead. Their name, once known, replaces the label; a name is fixed by a person's first message, and two people with the same name read as `Alex` and `Alex (2)` (AI-1461).
 - `stream.STT.start()` gives up on a router that never answers its start frame after 90 seconds, closes the socket and raises `TimeoutError: the router did not start transcribing within 90 s`. It waited forever, so an agent whose router was stuck never joined and never said why (AI-1440).
 - An agent opens no transcription session for a participant who has left the call. Their audio and their departure come apart, so a last frame handled after the leave, or one whose session was still opening, opened a vendor socket that stayed open until the agent closed. A participant who comes back with the same session id is transcribed again, and so is one whose audio still comes a second after the first frame dropped, in case the SFU reported a leave for somebody who stayed (AI-1433).
 - A live transcription pinned to a batch model, such as `deepgram/nova-3`, is refused before the vendor is called: `routing: deepgram/nova-3 is a batch model for recordings, not live calls; for a live call name deepgram/flux-general-en or deepgram/flux-general-multi or stt-fast or stt-accurate`. It was dialled at Deepgram's live endpoint and failed after about 4 s with `deepgram: connect failed`, recording a `start_failed` row against Nova-3. This is the `/v1/stt/stream` `error` frame, and for an agent the 400 that starting its voice session answers with (`agent: start stt: routing: ...`) rather than an `stt` error on every frame of the call; a priority list made only of batch models, and the recorded shortcuts `en-recorded` and `multilingual-recorded`, are refused the same way. A list with a live model in it is served by that model, a recording on Nova-3 is unchanged, and `mock/mock-stt` is now marked live so the load benchmark still streams at it (AI-1431).
+- A voice agent config naming a batch-only transcriber, such as `deepgram/nova-3` or `en-recorded`, is refused when it is saved: create, update, `PATCH` and sync answer `400 invalid_request` with the same message a session start gives. Every session of such a config was refused as it started, after the config had been saved without complaint. A config that speaks through an STS model or is written to is not checked, and neither is a save that leaves a stored `stt` as it was, so a config saved before this change stays editable (AI-1455).
+- A `/v1/{modality}/stream` socket that routing refuses, such as a live transcription pinned to a batch model, closes with 1008 (policy violation) instead of 1011. Any other failure still closes with 1011, and the reason is the same refusal (AI-1456).
 - People on a voice call keep their names after the session switches between voice and writing: the next turn reads `<name>: <words>` and the instructions still say several people are talking. Both were lost until two people spoke again. Two people with the same display name now get distinct labels, in the order they first spoke: `Alex`, then `Alex (2)`, then `Alex (3)`. A label stays the same for the whole session, even if the person rejoins or renames themselves (AI-1437, AI-1438).
 - `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
 - `GET /v1/agents/voices/library` lists every Cartesia voice. It stopped at the first 1,000 (ten pages of 100), and Cartesia had 1,049 on 2026-10-19. `provider=fish` now says Fish voices cannot be browsed through the router yet and to name one by its Fish model id, rather than `fish publishes no voice library`. A provider that will not list voices for the router's key (a 401 or 403) is reported as `the inworld key cannot list voices (http 403)` rather than as a refused voice (AI-1413).

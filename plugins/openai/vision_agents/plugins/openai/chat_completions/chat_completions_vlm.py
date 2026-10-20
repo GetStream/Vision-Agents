@@ -280,11 +280,11 @@ class ChatCompletionsVLM(VideoLLM):
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
         # Add Agent's instructions as system prompt.
-        if self._instructions:
+        if self.instructions:
             messages.append(
                 {
                     "role": "system",
-                    "content": self._instructions,
+                    "content": self.instructions,
                 }
             )
 

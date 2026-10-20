@@ -181,6 +181,23 @@ func (s *ConfigSuite) TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise
 	s.ErrorContains(err, "connectors.proxy_calls_per_minute")
 }
 
+// TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise: the default, the variable that changes
+// it, 0 that turns it off, and a negative cap refused.
+func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.EqualValues(20, config.Runs.ConcurrentPerApp)
+
+	s.T().Setenv("ROUTER_RUNS_CONCURRENT_PER_APP", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Runs.ConcurrentPerApp)
+
+	s.T().Setenv("ROUTER_RUNS_CONCURRENT_PER_APP", "-1")
+	_, _, err = Load("")
+	s.ErrorContains(err, "runs.concurrent_per_app")
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
@@ -370,6 +387,29 @@ func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnless
 	_, _, err = Load("")
 	s.Require().Error(err)
 	s.Contains(err.Error(), "agent.reply_hedge")
+}
+
+func (s *ConfigSuite) TestALateFlowDecisionIsAskedOfAnotherCandidateAfterItsOwnHedgeUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(400*time.Millisecond, config.Agent.FlowHedge, "a decision is hedged sooner than a reply")
+
+	s.T().Setenv("ROUTER_FLOW_HEDGE", "250ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, config.Agent.FlowHedge)
+	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge, "the reply's hedge is its own")
+
+	s.T().Setenv("ROUTER_FLOW_HEDGE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.FlowHedge, "zero asks once rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_FLOW_HEDGE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_FLOW_HEDGE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.flow_hedge")
 }
 
 func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {
