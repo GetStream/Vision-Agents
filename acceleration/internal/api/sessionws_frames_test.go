@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
@@ -103,4 +104,62 @@ func TestATimelineEntryCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 	require.Equal(t, &roundtrip, timeline[0].RoundtripMs, "the figure taken at the return is kept")
 	require.Nil(t, timeline[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
 	require.Nil(t, timeline[1].FirstAudibleFrameMs)
+}
+
+func TestATimelineEntryDoesNotTakeAReplyTalkedOverAsSaid(t *testing.T) {
+	start := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	turns := []live.Turn{{TurnID: "turn-1", StartedAt: start}}
+	said := []chatlog.Spoken{
+		{Speaker: "alice", Text: "Is it raining?", At: start.Add(-time.Second)},
+		{Speaker: "agent", Agent: true, Text: "It is, and it will be all week.", At: start.Add(time.Second), Interrupted: true},
+	}
+
+	timeline := timelineOf(turns, said, nil)
+
+	require.Equal(t, "Is it raining?", *timeline[0].Heard)
+	require.Nil(t, timeline[0].Said, "what it was going to say is not what it said")
+}
+
+func TestTheWordsOfALineNameItFromTheFirstOfThemToItsRuling(t *testing.T) {
+	// The stored transcript keeps a participant's line under this id, so a watcher can tell
+	// the words it is shown live and the line read back later apart from a second line.
+	for _, event := range []agent.Event{
+		agent.Hearing{Text: "where is", LineID: "line-1"},
+		agent.Heard{Text: "Where is my order?", LineID: "line-1"},
+		agent.Decided{Kind: string(agent.ActIgnore), LineID: "line-1"},
+	} {
+		sent, ok := frameOf(event)
+		require.True(t, ok)
+		require.Equal(t, "line-1", sent["line_id"])
+	}
+}
+
+func TestAFrameAboutNoLineLeavesTheLineOut(t *testing.T) {
+	sent, ok := frameOf(agent.Heard{Text: "typed into the call"})
+
+	require.True(t, ok)
+	require.NotContains(t, sent, "line_id")
+}
+
+func TestAScriptedLineIsShownAsSaid(t *testing.T) {
+	sent, ok := frameOf(agent.Said{TurnID: "say-1", Text: "Hi, thanks for getting in touch."})
+
+	require.True(t, ok)
+	require.Equal(t, "said", sent["type"], "a client waiting on the model's answer would take it for one")
+	require.Equal(t, "say-1", sent["turn_id"])
+	require.Equal(t, "Hi, thanks for getting in touch.", sent["text"])
+}
+
+func TestALineSaidUnaskedSaysWhatItIsFor(t *testing.T) {
+	greeting, ok := frameOf(agent.Said{TurnID: "say-1", Text: "Hi.", Purpose: agent.PurposeGreeting})
+	require.True(t, ok)
+	require.Equal(t, agent.PurposeGreeting, greeting["purpose"])
+
+	checkIn, ok := frameOf(agent.Responded{TurnID: "back-1", Text: "Still there?", Purpose: agent.PurposeCheckIn})
+	require.True(t, ok)
+	require.Equal(t, agent.PurposeCheckIn, checkIn["purpose"])
+
+	answer, ok := frameOf(agent.Responded{TurnID: "turn-1", Text: "Yes."})
+	require.True(t, ok)
+	require.NotContains(t, answer, "purpose")
 }
