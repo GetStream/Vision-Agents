@@ -458,3 +458,54 @@ func (s *AgentSuite) TestTheFlowControllerHearsANamedPersonByTheirName() {
 
 	s.Contains(s.flow.requests()[0].Input[0].Content, `Alice has just said: "hello"`)
 }
+
+func (s *AgentSuite) TestTheFlowControllerHearsNamedPeopleByTheirRawName() {
+	// The expected values are what 41cb93cba asks: the name as given, not the numbered
+	// label the reply model sees, and a colon kept.
+	s.join(true)
+	first := stt.Participant{ID: "s-1", UserID: "u-1", Name: "Alex"}
+	second := stt.Participant{ID: "s-2", UserID: "u-2", Name: "Alex"}
+	colon := stt.Participant{ID: "s-3", UserID: "u-3", Name: "Al:ex"}
+	for _, participant := range []stt.Participant{first, second, colon} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{first, "hello"}, {second, "hi"}, {colon, "yo"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	asked := s.flow.requests()
+	s.Require().Len(asked, 3)
+	s.Contains(asked[1].Input[0].Content, `Alex has just said: "hi"`)
+	s.NotContains(asked[1].Input[0].Content, "Alex (2)")
+	s.Contains(asked[2].Input[0].Content, `Al:ex has just said: "yo"`)
+}
+
+func (s *AgentSuite) TestAPersonNamedLikeAFallbackLabelIsNotMistakenForOne() {
+	s.join(true)
+	real := stt.Participant{ID: "s-1", UserID: "u-1", Name: "Speaker 1"}
+	nameless := stt.Participant{ID: "s-2", UserID: "u-2"}
+	named := stt.Participant{ID: "s-2", UserID: "u-2", Name: "Dana"}
+	for _, participant := range []stt.Participant{real, nameless, named} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{real, "hello"}, {nameless, "hi"}, {named, "it is Dana"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	input := s.model.requests()[2].Input
+	s.Require().Len(input, 5)
+	s.Equal("Speaker 1 (2): hi", input[2].Content)
+	s.Equal("Dana: it is Dana", input[4].Content)
+}
