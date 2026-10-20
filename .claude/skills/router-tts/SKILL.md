@@ -260,17 +260,18 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   them and the models that record. One recorder among the candidates is enough: `tts-quality`
   is served by ElevenLabs, or by Cartesia when ElevenLabs cannot be built, because `Select`
   passes over a candidate with no factory without counting it against the model.
-- `Recordings.Record` fails over during the recording too. The first candidate is chosen by
-  `Select` on the request as written, so its refusals read as before. When that recorder's
-  `Record` fails, the rest of the candidates (taken once, before the first was chosen) are tried
-  in order, each by a `Select` pinned to its name. Classes: a vendor failure (any error from
+- `Recordings.Record` fails over during the recording too. It routes with `routing.Router.Walk`,
+  which is `Select` with the provider handed to a callback: one resolution of the request, with
+  `Select`'s filters (voice, policy, terms, data policy), ranking and overwrite rule applied once,
+  and each started candidate handed to `Record` in that order. A candidate `Select` rules out is
+  never asked, and once a vendor's model refused its overwrite block no other vendor is. Classes: a vendor failure (any error from
   `Record`: a non-200, a transport error, a timeout, a body it cannot read) writes
   `record_failed` and moves on; a refusal (`routing.ErrRequest` from a build, or
   `inworld.ErrTextTooLong`) moves on without a stat; a cancelled or expired context stops.
   Empty text is refused before any candidate (`tts.Recording.Validate`). If none records it, the
   error names each candidate's (cut to `maxTriedError`, 300 bytes) and keeps `ErrRequest` when
-  one refused, as `Select` does. A request with one candidate (a pinned model) fails as it did
-  before the walk. The inline path's 90 s is shared by every candidate.
+  one refused, as `Select` does. A walk whose only error is the one recorder's (a pinned model,
+  or one candidate left by the filters) fails as it did before the walk: that error, that model. The inline path's 90 s is shared by every candidate.
   A voice asked only in a streaming vendor's overwrites is still refused once routed
   (`Router.voiced`), as a failed job.
 - `GET /v1/tts/routes` and `/v1/tts/routes/{target}` say per candidate whether a recording can
