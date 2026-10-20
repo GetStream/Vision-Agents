@@ -64,25 +64,26 @@ private struct AgentConversation: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(chat.messages, id: \.id) { message in
-                        MessageRow(message: message, reasoning: chat.reasoning, approver: approver)
+            // The person's messages in bubbles, the agent's as their steps and then their answer.
+            // Each question goes to the top as it is asked, and its reply writes itself out below
+            // it without moving what is on screen. While the agent thinks, the list shows its
+            // thinking, which the reply's first step takes over once it arrives.
+            AIConversationView(
+                messages: chat.listMessages,
+                isThinking: chat.activity == .thinking,
+                approver: approver,
+                loadOlderMessages: chat.hasOlderMessages ? { await chat.loadOlderMessages() } : nil,
+                viewFactory: MessageViews(chat: chat),
+                footer: {
+                    if case .working(let text) = chat.activity {
+                        AITypingIndicatorView(text: text)
                     }
-                    if let indicator = chat.indicator {
-                        AITypingIndicatorView(text: indicator)
-                    }
-                }
-                .padding()
-            }
-            .defaultScrollAnchor(.bottom)
-            .overlay {
-                if chat.messages.isEmpty {
+                },
+                emptyContent: {
                     ContentUnavailableView(
                         "Ask about an order", systemImage: "shippingbox",
                         description: Text("Orders A-1042 and A-1043 are on this account."))
-                }
-            }
+                })
 
             if chat.messages.isEmpty {
                 SuggestionsView(suggestions: Self.starters) { message in
@@ -120,61 +121,36 @@ private struct AgentConversation: View {
     }
 }
 
-/// One message: the person's in a bubble, the agent's as its steps and then its answer.
-private struct MessageRow: View {
-    let message: ChatMessage
-    let reasoning: LiveReasoning
-    let approver: AIToolApprover
+/// Stream's message views, with what the person can do under each finished reply: copy it,
+/// share it, and rate it. Asking for a reply again needs the router to replace one, which it
+/// does not yet.
+private final class MessageViews: AIConversationViewFactory {
+    let chat: AgentChat?
 
-    /// Whether the text is shown as still being written, which is what types it out.
-    ///
-    /// Stream folds a fast reply's live updates into one, so its text can arrive in the same
-    /// update that says it is finished. `StreamingMessageView` types only what arrives while it
-    /// is told the reply is being written, so it is told that until the text has reached it.
-    @State private var writing: Bool
-
-    init(message: ChatMessage, reasoning: LiveReasoning, approver: AIToolApprover) {
-        self.message = message
-        self.reasoning = reasoning
-        self.approver = approver
-        _writing = State(initialValue: message.isGenerating)
+    init(chat: AgentChat?) {
+        self.chat = chat
     }
 
-    var body: some View {
-        if message.isAgentReply {
-            VStack(alignment: .leading, spacing: 8) {
-                let parts = message.parts
-                if !parts.isEmpty {
-                    AIMessagePartsView(parts: parts) { part in
-                        // The step keeps only the opening of its thinking; the whole of it
-                        // came with the live updates, while the reply was being written.
-                        if let step = part.reasoning {
-                            StreamingReasoningView(part: step, text: reasoning[message: message.id, step: step.id])
-                        } else {
-                            AIMessagePartView(part: part, approver: approver)
-                        }
-                    }
-                }
-                if !message.text.isEmpty {
-                    StreamingMessageView(content: message.text, isGenerating: writing)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .task(id: message.isGenerating) {
-                guard !message.isGenerating else {
-                    writing = true
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(100))
-                writing = false
-            }
-        } else {
-            Text(message.text)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.tint.opacity(0.15), in: .rect(cornerRadius: 18))
-                .frame(maxWidth: .infinity, alignment: .trailing)
+    @ViewBuilder
+    func makeReplyActionsView(options: AIReplyActionsViewOptions) -> some View {
+        if let chat, let reply = options.message as? AgentMessage {
+            ReplyActions(chat: chat, reply: reply)
         }
+    }
+}
+
+/// The buttons under a reply. The rating is read here, from the chat, so the thumbs change as
+/// soon as it does: the list keeps a reply's row while the reply stays the same.
+private struct ReplyActions: View {
+    let chat: AgentChat
+    let reply: AgentMessage
+
+    var body: some View {
+        AIReplyActionsView(
+            text: reply.text,
+            actions: AIReplyActions(
+                rating: chat.ratings[reply.id],
+                onRate: { rating in chat.rate(reply.message, rating) }))
     }
 }
 
