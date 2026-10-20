@@ -19,7 +19,11 @@ the config's `default_timezone`, and is a refusal rather than a guess when none 
 Every router runs the worker (`internal/scheduling.Scheduler`). Claims are one
 transaction under `FOR UPDATE SKIP LOCKED` with a lease and a `claim_id` fence, so each
 occurrence is claimed once across the deployment; the run row is the prompt snapshot, so
-a retry says the same thing. Delivery (`internal/api/scheduled_delivery.go`) follows up
+a retry says the same thing. The worker renews the lease while a delivery runs; a pause,
+edit or delete takes the claim, and the delivery and its retries stop at the next
+renewal. One occurrence holds a worker slot for at most 20 minutes, retries included. A
+stopping router claims nothing more, and its drain waits for the deliveries in flight.
+Delivery (`internal/api/scheduled_delivery.go`) follows up
 in the task's own conversation: live on this node, followed up in place; live on another,
 handed over the peer forwarder and answered on acceptance; ended, reopened from its row
 and held until it answers. A first occurrence with no session opens one. A session on a

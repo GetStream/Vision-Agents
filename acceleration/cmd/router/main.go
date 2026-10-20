@@ -1248,10 +1248,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 	// Every router runs the scheduled-task worker: whichever of them claims
-	// an occurrence delivers it, in the conversation its task belongs to.
+	// an occurrence delivers it, in the conversation its task belongs to. It
+	// claims until the stop signal ends ctx; the drain then waits for the
+	// occurrences it is delivering, as for the sessions.
+	var scheduler *scheduling.Scheduler
 	if pgStore != nil && sessions != nil {
-		scheduler := scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
-		scheduler.Start()
+		scheduler = scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
+		scheduler.Start(ctx)
 		defer scheduler.Close()
 		server.SetSchedulerKick(scheduler.Kick)
 	}
@@ -1306,7 +1309,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:    httpServer,
 			peers:     peerServer,
 			drainWork: server.Drain,
-			held:      func() int { return running(sessions) },
+			held:      func() int { return running(sessions, scheduler) },
 			telephony: telephony,
 			drain:     settings.Shutdown.Drain,
 			logger:    logger,
@@ -1335,7 +1338,8 @@ type stopping struct {
 	peers  *http.Server
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
-	// held is how many sessions the process is still running.
+	// held is how many sessions and scheduled deliveries the process is
+	// still running.
 	held      func() int
 	telephony *phone.Service
 	drain     time.Duration
@@ -1400,12 +1404,17 @@ func stopServing(s stopping) error {
 	return shutdown(peerCtx, s.peers, "peers", grace, s.logger)
 }
 
-// running is how many sessions a router holds; one without sessions holds none.
-func running(sessions *session.Manager) int {
-	if sessions == nil {
-		return 0
+// running is how many sessions and scheduled deliveries a router holds; one
+// without sessions or a scheduled-task worker holds none of them.
+func running(sessions *session.Manager, scheduler *scheduling.Scheduler) int {
+	held := 0
+	if sessions != nil {
+		held += sessions.Len()
 	}
-	return sessions.Len()
+	if scheduler != nil {
+		held += scheduler.Running()
+	}
+	return held
 }
 
 // servePprof serves the runtime profiles on an address of their own, with lock contention

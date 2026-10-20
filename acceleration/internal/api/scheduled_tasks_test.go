@@ -246,7 +246,7 @@ func (s *ScheduledTasksSuite) tasksOf(user *testClient) []store.ScheduledTask {
 // delivering through the suite's own router, as every router does.
 func (s *ScheduledTasksSuite) runWorker() {
 	worker := scheduling.NewScheduler(s.store, s.router.DeliverScheduledTask, slog.New(slog.DiscardHandler))
-	worker.Start()
+	worker.Start(context.Background())
 	s.T().Cleanup(worker.Close)
 }
 
