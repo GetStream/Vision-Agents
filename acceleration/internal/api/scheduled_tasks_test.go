@@ -665,13 +665,14 @@ func (s *ScheduledTasksSuite) respondAs(user *testClient, id, text string) {
 	s.Require().Equal(http.StatusAccepted, status, failure)
 }
 
-// awaitAnswers waits until the app's answers have all been recorded. A day is
+// awaitAnswers waits until the app's answers by the counted model have all been
+// recorded; the stub model's rows are the sessions' own. A day is
 // debited just before an answer's request row is, so a row means its debit,
 // if there was going to be one, has landed.
 func (s *ScheduledTasksSuite) awaitAnswers(answers int) {
 	s.Require().Eventually(func() bool {
 		var rows []store.Request
-		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Where("model = ?", "counted-model").Scan(s.T().Context())
 		return err == nil && len(rows) >= answers
 	}, settleFor, 50*time.Millisecond, "%d answers were never recorded", answers)
 }

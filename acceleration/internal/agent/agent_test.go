@@ -2287,6 +2287,51 @@ func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedInTheNameOfWhoeverType
 	s.Equal([]routing.Caller{user, {}, {}}, s.model.sentBy())
 }
 
+func (s *AgentSuite) TestASpokenTurnIsNotAskedAsScheduledWhenAScheduledTurnCameBeforeIt() {
+	// A spoken turn is the caller's, not the customer's scheduled spend, so the mark of the
+	// scheduled turn before it does not carry over.
+	s.join(false)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the scheduled turn was never answered")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the spoken turn was never asked")
+	s.Equal([]bool{true, false}, s.model.askedScheduled())
+}
+
+func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedAsScheduledWhenAScheduledTurnCameBeforeIt() {
+	// A spoken turn answered from a reply started early begins a turn of its own, so the
+	// tool reply that finishes it does not carry the mark of the scheduled turn before it.
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Hello."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.callsOn = 2
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the scheduled turn was never answered")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the reply should be asked for while the flow controller is still deciding")
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the tool result was never answered")
+	s.Equal([]bool{true, false, false}, s.model.askedScheduled())
+}
+
 func (s *AgentSuite) TestAReasoningEffortTheModelDoesNotTakeIsRefusedBeforeTheTurn() {
 	s.join(true)
 
