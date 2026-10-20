@@ -1,9 +1,7 @@
 package streamedge
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
+	"bytes"
 	"log/slog"
 	"time"
 
@@ -21,28 +19,55 @@ func (s *StreamEdgeSuite) sent(talker *speaker, n int) [][]byte {
 	return frames
 }
 
-func (s *StreamEdgeSuite) TestCountingThePlayoutLeavesWhatIsSentAsItWas() {
+// scenario plays one run through a speaker and returns what it sent. When counted, it reads
+// the stats between the steps, as the agent does around an utterance.
+func (s *StreamEdgeSuite) scenario(counted bool) [][]byte {
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
+	read := func() {
+		if counted {
+			talker.stats()
+		}
+	}
+	read()
 	frames := s.sent(talker, 1)
 	// A lead of silence takes the marked path, 210 ms leaves a part-frame for the flush, and
 	// the drop throws away the rest of the first reply and what the encoder held of it.
 	lead := silence(24_000, 30)
 	lead.Samples = append(lead.Samples, speech(24_000, 210).Samples...)
 	s.Require().NoError(talker.WriteMarked(lead, new(playoutRecord)))
-	frames = append(frames, s.sent(talker, 3)...)
+	read()
+	frames = append(frames, s.sent(talker, 1)...)
+	read()
+	frames = append(frames, s.sent(talker, 2)...)
 	talker.drop()
+	read()
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 130)))
-	frames = append(frames, s.sent(talker, 12)...)
+	frames = append(frames, s.sent(talker, 6)...)
+	read()
+	frames = append(frames, s.sent(talker, 6)...)
+	read()
+	return frames
+}
 
-	digest := sha256.New()
-	for _, frame := range frames {
-		_ = binary.Write(digest, binary.BigEndian, uint32(len(frame)))
-		digest.Write(frame)
+// The Opus bytes differ between platforms, so the control compares two speakers in one run
+// rather than a digest probed elsewhere.
+func (s *StreamEdgeSuite) TestCountingThePlayoutLeavesWhatIsSentAsItWas() {
+	asked := s.scenario(true)
+	never := s.scenario(false)
+
+	s.Len(asked, 16)
+	s.Equal(never, asked, "reading the stats changed the frames sent")
+	silent := func(frames [][]byte) []bool {
+		var out []bool
+		for _, frame := range frames {
+			out = append(out, bytes.Equal(frame, silenceFrame))
+		}
+		return out
 	}
-	s.Len(frames, 16)
-	// Probed on 3a172535f, before the queue was counted.
-	s.Equal("71943fda5a73181989bcab5677322169206e42b0ff98adfdd7ee6b2470d10648", hex.EncodeToString(digest.Sum(nil)))
+	s.Equal(silent(never), silent(asked))
+	s.Contains(silent(asked), true, "the run has silence in it")
+	s.Contains(silent(asked), false, "the run has speech in it")
 }
 
 func (s *StreamEdgeSuite) TestTheEdgeCountsItsQueue() {
