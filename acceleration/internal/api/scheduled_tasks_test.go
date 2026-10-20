@@ -442,6 +442,23 @@ func (s *ScheduledTasksSuite) TestTheAgentIsToldWhatDayItIsForTheUser() {
 	s.Contains(s.model().instructions(), "(Europe/Amsterdam)")
 }
 
+func (s *ScheduledTasksSuite) TestAPaddedSessionZoneIsTrimmedAndTheRoutersOwnIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.Timezone = pointerTo(" Europe/Amsterdam ")
+	})
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "hello")
+	s.await(watching, "responded")
+	s.Contains(s.model().instructions(), "(Europe/Amsterdam)")
+
+	status, answered := s.taskFailure(user, http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{ConfigId: &config, Timezone: pointerTo("Local")})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeInvalidTimezone, answered.Error.Code)
+}
+
 func (s *ScheduledTasksSuite) TestGuestsAndAnonymousCallersAreNotOfferedTheTools() {
 	config := s.agentWithScheduling(nil)
 	for _, user := range []*testClient{s.guestClient, s.anonymousClient} {
@@ -603,6 +620,78 @@ func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
 
 	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
 	s.Empty(s.tasksOf(user), "the deleted conversation's tasks went with it")
+}
+
+func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
+	// The user agreed to the task once, not to each time it runs: the turn it
+	// fires in their own conversation is the customer's spend, and the turn
+	// they type next is theirs again.
+	s.capTheDay(2)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Llm = pointerTo("counted/counted-model")
+	})
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, nil)
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.delivered(s.tasksOf(user)[0])
+	s.awaitAnswers(1)
+	s.Equal("2", s.leftOfTheDay(user), "the scheduled turn spent none of the user's day")
+
+	s.respondAs(user, opened.Id, "and what else")
+	s.awaitAnswers(2)
+	s.Equal("1", s.leftOfTheDay(user), "the user's own turn after it is counted on their day")
+}
+
+func (s *ScheduledTasksSuite) TestAUsersOwnTurnInTheirConversationIsCountedOnTheirDay() {
+	// Unchanged by scheduling being on: what the user types is theirs.
+	s.capTheDay(2)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Llm = pointerTo("counted/counted-model")
+	})
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+
+	s.respondAs(user, opened.Id, "how much does a call cost")
+	s.awaitAnswers(1)
+	s.Equal("1", s.leftOfTheDay(user))
+}
+
+// capTheDay sets, through the app's own policy, the messages one of its users
+// may ask for in a day.
+func (s *ScheduledTasksSuite) capTheDay(messages int64) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/app",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": messages}}, nil))
+}
+
+// leftOfTheDay is what is left of the user's day, as a session they open is
+// told.
+func (s *ScheduledTasksSuite) leftOfTheDay(user *testClient) string {
+	response := user.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	return response.Header.Get("X-Quota-Remaining")
+}
+
+// respondAs has the user type text into their conversation with their own
+// token.
+func (s *ScheduledTasksSuite) respondAs(user *testClient, id, text string) {
+	status, failure := user.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/responses",
+		CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusAccepted, status, failure)
+}
+
+// awaitAnswers waits until the app's answers by the counted model have all been
+// recorded; the stub model's rows are the sessions' own. A day is
+// debited just before an answer's request row is, so a row means its debit,
+// if there was going to be one, has landed.
+func (s *ScheduledTasksSuite) awaitAnswers(answers int) {
+	s.Require().Eventually(func() bool {
+		var rows []store.Request
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Where("model = ?", "counted-model").Scan(s.T().Context())
+		return err == nil && len(rows) >= answers
+	}, settleFor, 50*time.Millisecond, "%d answers were never recorded", answers)
 }
 
 // createTask has the backend schedule a task for the user, as a customer's
@@ -790,6 +879,32 @@ func (s *ScheduledTasksSuite) TestADeviceMayChangeTitleScheduleAndNextButNotInst
 	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
 	s.Require().NoError(err)
 	s.WithinDuration(before.Add(30*time.Minute), next, 2*time.Minute)
+}
+
+func (s *ScheduledTasksSuite) TestARepeatWrittenFromAPastDateStartsAtItsNextOccurrence() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	nextOf := func(task ScheduledTask, clock string) {
+		s.Require().NotNil(task.NextRunAt)
+		next, err := time.Parse(time.RFC3339, *task.NextRunAt)
+		s.Require().NoError(err)
+		s.True(next.After(time.Now()), "the next run %s is not in the past", next)
+		s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
+		amsterdam, err := time.LoadLocation("Europe/Amsterdam")
+		s.Require().NoError(err)
+		s.Equal(clock, next.In(amsterdam).Format("15:04"))
+	}
+	body := taskRequest(config)
+	body.Schedule = ScheduledTaskSchedule{At: pointerTo("2026-01-01T09:00:00"), Repeat: pointerTo("FREQ=DAILY"),
+		Timezone: pointerTo("Europe/Amsterdam")}
+	created := s.createTask(user, body)
+	nextOf(created, "09:00")
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{At: pointerTo("2026-02-01T10:00:00"),
+			Repeat: pointerTo("FREQ=DAILY")}}, &updated))
+	nextOf(updated, "10:00")
 }
 
 func (s *ScheduledTasksSuite) TestPauseAndResumeCountsFromNow() {
