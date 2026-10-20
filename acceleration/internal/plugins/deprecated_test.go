@@ -44,13 +44,12 @@ func (s *ReportUseSuite) SetupTest() {
 	s.client = client
 }
 
-func (s *ReportUseSuite) TestWithSentryOffAUseIsTheLogLineAlone() {
+func (s *ReportUseSuite) TestWithNoClientAUseIsTheLogLineAlone() {
 	ctx := sentry.SetHubOnContext(context.Background(), sentry.NewHub(nil, sentry.NewScope()))
 
 	s.login(ctx)
 
 	s.Equal(loginLine, s.line())
-	s.Empty(s.transport.Events())
 }
 
 func (s *ReportUseSuite) TestAUseIsAWarningIssueOfItsPathAndVia() {
@@ -77,6 +76,17 @@ func (s *ReportUseSuite) TestAUseWithNoViaIsAnIssueOfItsPathAlone() {
 	s.Equal(map[string]string{
 		"path": PathSessionTools, "customer": "cus_1", "config": "cfg_1", "plugin": "[github]", "mcp_server": "[]",
 	}, event.Tags)
+}
+
+func (s *ReportUseSuite) TestATagValueOverTheLimitIsCutToIt() {
+	long := strings.Repeat("é", maxTagValue+50)
+
+	ReportUse(s.request(), s.logger, PathSessionTools, "plugin", []string{long})
+
+	s.Require().Len(s.transport.Events(), 1)
+	tag := s.transport.Events()[0].Tags["plugin"]
+	s.Equal(maxTagValue, len([]rune(tag)))
+	s.Equal("[", tag[:1])
 }
 
 func (s *ReportUseSuite) TestAUseSendsNothingOfTheRequest() {

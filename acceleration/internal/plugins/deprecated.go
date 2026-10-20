@@ -25,7 +25,7 @@ func ReportUse(ctx context.Context, logger *slog.Logger, path string, args ...an
 	event.Fingerprint = []string{DeprecatedUse, path}
 	event.Tags = map[string]string{"path": path}
 	for i := 0; i+1 < len(args); i += 2 {
-		event.Tags[fmt.Sprint(args[i])] = fmt.Sprint(args[i+1])
+		event.Tags[fmt.Sprint(args[i])] = tagValue(fmt.Sprint(args[i+1]))
 	}
 	if via, ok := event.Tags["via"]; ok {
 		event.Fingerprint = append(event.Fingerprint, via)
@@ -39,6 +39,17 @@ func ReportUse(ctx context.Context, logger *slog.Logger, path string, args ...an
 		hub = sentry.CurrentHub()
 	}
 	hub.CaptureEvent(event)
+}
+
+// maxTagValue is the longest tag value Sentry keeps, in characters; it drops a tag whose
+// value is longer (https://docs.sentry.io/platforms/go/enriching-events/tags/).
+const maxTagValue = 200
+
+func tagValue(v string) string {
+	if r := []rune(v); len(r) > maxTagValue {
+		return string(r[:maxTagValue])
+	}
+	return v
 }
 
 // The paths a use of the plugin system is logged under, as the path attribute.
