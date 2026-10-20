@@ -1,14 +1,83 @@
+import json
 import os
+from typing import AsyncIterator
 
+import anthropic
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
 
 load_dotenv()
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+
+
+@pytest.fixture
+async def anthropic_api() -> AsyncIterator[tuple[str, list[dict]]]:
+    """A real server standing in for Anthropic: its URL, and every request body sent.
+
+    Every answer is one streamed "Ok", in the events of
+    https://docs.anthropic.com/en/docs/build-with-claude/streaming: the tests are
+    about requests.
+    """
+    bodies: list[dict] = []
+    events = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "test",
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Ok"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": {"output_tokens": 1},
+        },
+        {"type": "message_stop"},
+    ]
+
+    async def messages(request: web.Request) -> web.StreamResponse:
+        bodies.append(await request.json())
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        for event in events:
+            line = f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+            await response.write(line.encode())
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/messages", messages)
+    server = TestServer(app)
+    await server.start_server()
+    yield str(server.make_url("")).rstrip("/"), bodies
+    await server.close()
 
 
 @pytest.fixture
@@ -34,6 +103,28 @@ class TestClaudeLLM:
         }
         messages2 = ClaudeLLM._normalize_message(advanced)
         assert messages2[0].original is not None
+
+    # Building the Anthropic client stats files, which blockbuster refuses in a loop.
+    @pytest.mark.skip_blockbuster
+    async def test_the_model_is_told_once_a_second_person_has_spoken(
+        self, anthropic_api: tuple[str, list[dict]]
+    ):
+        url, bodies = anthropic_api
+        conversation = InMemoryConversation("", [])
+        llm = ClaudeLLM(
+            model="test", client=anthropic.AsyncAnthropic(api_key="test", base_url=url)
+        )
+        llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
+
+        for participant, text in ((ALICE, "Hi"), (ALICE, "Hello?"), (BOB, "Me too")):
+            await answer(llm, conversation, participant, text)
+        await llm.close()
+
+        # One person: what the base sha (9653cb696) sent.
+        told = [body["system"] for body in bodies]
+        assert told == ["be brief", "be brief", "be brief\n\n" + SEVERAL_SPEAKERS]
+        assert bodies[-1]["messages"][-1] == {"role": "user", "content": "Bob: Me too"}
 
     # Building the Anthropic client stats files, which blockbuster refuses in a loop.
     @pytest.mark.skip_blockbuster
