@@ -3,6 +3,7 @@ package openailive
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -159,6 +160,41 @@ func (s *OpenAILiveSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() 
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
 }
 
+// The words of a reply can come before its audio. They still find the caller's turn
+// settled first, so each reply's wait starts at its own caller's last word.
+func (s *OpenAILiveSuite) TestAReplyWhoseWordsComeFirstStillFollowsTheCallerStopping() {
+	provider := s.newProvider()
+	provider.participant = sts.Participant{ID: "alice"}
+
+	for _, words := range []string{"my favorite color is blue", "and green"} {
+		provider.handleMessage(s.frame(heard(words)))
+		time.Sleep(20 * time.Millisecond)
+		provider.handleMessage(s.frame(said("Nice.")))
+		provider.handleMessage(s.frame(spoke(2400)))
+
+		events := s.settled(provider)
+		var kinds []string
+		for _, event := range events {
+			kinds = append(kinds, fmt.Sprintf("%T", event))
+		}
+		s.Require().Equal([]string{
+			"sts.SpeechStarted", "sts.InputTranscript", "sts.InputTranscript", "sts.SpeechStopped",
+			"sts.ResponseStarted", "sts.OutputTranscript", "sts.AudioChunk", "sts.ResponseComplete",
+		}, kinds, "the caller stops before the reply to them starts")
+
+		settled := events[2].(sts.InputTranscript)
+		s.Equal(stt.ModeFinal, settled.Mode)
+		s.Equal(words, settled.Text, "what the reply answers is known when it starts")
+		stopped := events[3].(sts.SpeechStopped)
+		begun := events[4].(sts.ResponseStarted)
+		s.False(begun.At.Before(stopped.At))
+
+		complete := events[7].(sts.ResponseComplete)
+		s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait is timed from this caller's last word")
+		s.Less(complete.TimeToFirstByteMs, 100.0, "not from the turn before")
+	}
+}
+
 func (s *OpenAILiveSuite) TestAudioWithoutAPauseIsOneReply() {
 	provider := s.newProvider()
 
@@ -241,6 +277,25 @@ func (s *OpenAILiveSuite) TestALocalInterruptMutesTheRestOfTheReply() {
 	s.Require().Len(chunks, 2, "one before the interrupt, one from the next reply")
 	s.Equal(1, chunks[0].Generation)
 	s.Equal(2, chunks[1].Generation)
+}
+
+// A caller who barges in is still being heard when the rest of the cut-off reply's words
+// arrive. They may not settle their turn or open a reply.
+func (s *OpenAILiveSuite) TestWhatRemainsOfACutOffReplyDoesNotEndTheBargeIn() {
+	provider := s.newProvider()
+	provider.participant = sts.Participant{ID: "alice"}
+
+	provider.handleMessage(s.frame(spoke(240)))
+	s.Require().NoError(provider.Interrupt(0))
+	s.drain(provider)
+	provider.handleMessage(s.frame(heard("wait ")))
+	provider.handleMessage(s.frame(said("and the rest")))
+
+	var kinds []string
+	for _, event := range s.drain(provider) {
+		kinds = append(kinds, fmt.Sprintf("%T", event))
+	}
+	s.Equal([]string{"sts.SpeechStarted", "sts.InputTranscript"}, kinds, "the caller is still speaking")
 }
 
 func (s *OpenAILiveSuite) TestAFinishedBackendFunctionCallIsAToolCall() {
