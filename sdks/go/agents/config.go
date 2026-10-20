@@ -238,6 +238,10 @@ func pluginEntries(named []PluginSettings) *[]acceleration.PluginEntry {
 }
 
 func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
+	if settings.Role != "" {
+		role := acceleration.AgentRole(settings.Role)
+		body.Role = &role
+	}
 	if settings.Mode != "" {
 		mode := acceleration.AgentMode(settings.Mode)
 		body.Mode = &mode

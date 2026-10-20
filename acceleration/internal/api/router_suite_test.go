@@ -238,6 +238,9 @@ type RouterSuite struct {
 	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
 	// the connection proxy to set before it starts the harness. Zero caps nothing.
 	proxyCallsPerMinute int64
+	// runsPerApp caps one app's runs in flight, for a suite about runs to set before it starts
+	// the harness. Zero caps nothing.
+	runsPerApp int64
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -545,6 +548,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorTransports:   serverTransports,
 		ConnectorLimiter:      connectorLimiter,
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
+		RunsPerApp:            s.runsPerApp,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
@@ -734,6 +738,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
+	})
+
+	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
 	})
 
 	// A model that is a while in the writing, for a command that has to still be running

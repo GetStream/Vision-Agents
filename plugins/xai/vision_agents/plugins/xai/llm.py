@@ -84,8 +84,8 @@ class XAILLM(LLM):
 
         if not self.xai_chat:
             messages = []
-            if self._instructions:
-                messages.append(system(self._instructions))
+            if self.instructions:
+                messages.append(system(self.instructions))
             create_kwargs = {"model": self.model, "messages": messages}
             if tools:
                 create_kwargs["tools"] = tools

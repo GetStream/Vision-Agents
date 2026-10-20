@@ -188,8 +188,9 @@ func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Rec
 		VoiceID:      voice,
 		ModelID:      strings.TrimSuffix(r.options.Model, batchSuffix),
 		AudioConfig:  format,
-		Language:     strings.ToLower(language),
+		Language:     inworldLanguage(language),
 		DeliveryMode: r.options.DeliveryMode,
+		Temperature:  recordingTemperature,
 	})
 	if err != nil {
 		return tts.Recorded{}, stack.Wrap(fmt.Errorf("inworld: encode request: %w", err))
@@ -233,8 +234,8 @@ func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Rec
 
 // recorderRequest is the body of one synthesis on /tts/v1/voice
 // (https://docs.inworld.ai/api-reference/ttsAPI/texttospeech/synthesize-speech, read 2026-10-19).
-// speakingRate and temperature are not sent: the models do not declare speed in
-// router.yaml, so the router refuses a recording that asks for one.
+// speakingRate is not sent: the models do not declare speed in router.yaml, so the router
+// refuses a recording that asks for one.
 type recorderRequest struct {
 	Text         string      `json:"text"`
 	VoiceID      string      `json:"voiceId"`
@@ -242,7 +243,13 @@ type recorderRequest struct {
 	AudioConfig  audioConfig `json:"audioConfig"`
 	Language     string      `json:"language,omitempty"`
 	DeliveryMode string      `json:"deliveryMode,omitempty"`
+	Temperature  float64     `json:"temperature"`
 }
+
+// recordingTemperature is what the live socket sends too (inworld.go, createConfig). The docs
+// say inworld-tts-2 ignores it and the other models default to 1
+// (https://docs.inworld.ai/api-reference/ttsAPI/texttospeech/synthesize-speech, read 2026-10-20).
+const recordingTemperature = 1.1
 
 // recorderResponse is what /tts/v1/voice answers: the whole file, base64.
 type recorderResponse struct {
@@ -282,6 +289,18 @@ func recordingFormat(name string) (audioConfig, error) {
 	}
 	format.BitRate = kbps * 1000
 	return format, nil
+}
+
+// inworldLanguage is the code Inworld is sent for a recording's language: lower case, and
+// fil for tl. Probed 2026-10-20 14:19Z on inworld-tts-2 with the repo key: of the 42 codes
+// of the batch entry only tl is refused (400 "language 'tl' could not be resolved to a
+// BCP-47 tag or known alias"); fil is 200 and tl-PH is 400.
+func inworldLanguage(language string) string {
+	language = strings.ToLower(language)
+	if language == "tl" {
+		return "fil"
+	}
+	return language
 }
 
 // utf16Length is how /tts/v1/voice counts text: JavaScript's text.length.

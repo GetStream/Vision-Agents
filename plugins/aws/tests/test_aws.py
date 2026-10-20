@@ -1,21 +1,21 @@
 """Tests for AWS plugin."""
 
+import json
 import os
+import struct
+import zlib
 from typing import AsyncIterator
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
-from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
-from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import EventManager
-from vision_agents.core.llm import LLM
-from vision_agents.core.llm.events import LLMResponseFinalEvent
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.aws.aws_llm import BedrockLLM
 
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
 
 load_dotenv()
 
@@ -27,13 +27,52 @@ BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 async def bedrock_api(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[list[dict]]:
     """A real server standing in for Bedrock, and every request body sent to it.
 
-    Every answer is an empty event stream: the tests are about requests.
+    A request offering tools, whose last message is no tool result, is answered by a
+    call of its first tool; every other answer is an empty event stream: the tests are
+    about requests.
     """
     bodies: list[dict] = []
 
+    def event(event_type: str, payload: dict) -> bytes:
+        """One message of the AWS event stream encoding:
+        https://docs.aws.amazon.com/transcribe/latest/dg/streaming-setting-up.html
+        """
+        headers = b""
+        for name, value in (
+            (":message-type", "event"),
+            (":event-type", event_type),
+            (":content-type", "application/json"),
+        ):
+            # A header: name length, name, value type 7 (string), value length, value.
+            headers += struct.pack(">B", len(name)) + name.encode()
+            headers += struct.pack(">BH", 7, len(value)) + value.encode()
+        body = json.dumps(payload).encode()
+        prelude = struct.pack(">II", 16 + len(headers) + len(body), len(headers))
+        message = prelude + struct.pack(">I", zlib.crc32(prelude)) + headers + body
+        return message + struct.pack(">I", zlib.crc32(message))
+
     async def converse_stream(request: web.Request) -> web.Response:
-        bodies.append(await request.json())
-        return web.Response(content_type="application/vnd.amazon.eventstream")
+        body = await request.json()
+        bodies.append(body)
+        answered = "toolResult" in body["messages"][-1]["content"][0]
+        if "toolConfig" not in body or answered:
+            return web.Response(content_type="application/vnd.amazon.eventstream")
+        name = body["toolConfig"]["tools"][0]["toolSpec"]["name"]
+        tool_use = {"toolUseId": "t1", "name": name}
+        stream = (
+            event(
+                "contentBlockStart",
+                {"contentBlockIndex": 0, "start": {"toolUse": tool_use}},
+            )
+            + event(
+                "contentBlockDelta",
+                {"contentBlockIndex": 0, "delta": {"toolUse": {"input": "{}"}}},
+            )
+            + event("contentBlockStop", {"contentBlockIndex": 0})
+        )
+        return web.Response(
+            body=stream, content_type="application/vnd.amazon.eventstream"
+        )
 
     app = web.Application()
     app.router.add_post("/model/{model}/converse-stream", converse_stream)
@@ -49,26 +88,6 @@ async def bedrock_api(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[list[dic
     await server.close()
 
 
-async def answer(
-    llm: LLM, conversation: Conversation, participant: Participant, text: str
-) -> None:
-    """What the agent does with a participant's words: keep them, then ask the LLM."""
-    await conversation.upsert_message(
-        role="user", user_id=participant.user_id, content=text, participant=participant
-    )
-    events = EventManager()
-    events.register(LLMResponseFinalEvent)
-    turn = LLMTurn(
-        transcript=text,
-        participant=participant,
-        events=events,
-        speaker=conversation.speaker_label(participant),
-    )
-    turn.start(llm)
-    await turn.stream.collect()
-    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
-
-
 class TestBedrockLLM:
     async def test_who_spoke_is_named_once_a_second_person_has(
         self, bedrock_api: list[dict]
@@ -78,10 +97,12 @@ class TestBedrockLLM:
             model="test", aws_access_key_id="test", aws_secret_access_key="test"
         )
         llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
 
         await answer(llm, conversation, ALICE, "Hi")
         await answer(llm, conversation, ALICE, "Are you there?")
-        # One person: what the base sha (486427184) sent for the same two turns.
+        # One person: what the base sha (9653cb696) sent for the same two turns.
+        assert bedrock_api[-1]["system"] == [{"text": "be brief"}]
         assert bedrock_api[-1]["messages"] == [
             {"role": "user", "content": [{"text": "Hi"}]},
             {"role": "assistant", "content": [{"text": "Ok"}]},
@@ -90,6 +111,9 @@ class TestBedrockLLM:
 
         await answer(llm, conversation, BOB, "Me too")
         await answer(llm, conversation, ALICE, "Who is that?")
+        assert bedrock_api[-1]["system"] == [
+            {"text": "be brief\n\n" + SEVERAL_SPEAKERS}
+        ]
         assert bedrock_api[-1]["messages"][2:] == [
             {"role": "user", "content": [{"text": "Are you there?"}]},
             {"role": "assistant", "content": [{"text": "Ok"}]},
@@ -97,6 +121,29 @@ class TestBedrockLLM:
             {"role": "assistant", "content": [{"text": "Ok"}]},
             {"role": "user", "content": [{"text": "Alice: Who is that?"}]},
         ]
+
+    async def test_a_tool_call_follow_up_tells_the_model_about_several_people(
+        self, bedrock_api: list[dict]
+    ):
+        conversation = InMemoryConversation("", [])
+        llm = BedrockLLM(
+            model="test", aws_access_key_id="test", aws_secret_access_key="test"
+        )
+        llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
+
+        @llm.register_function(description="The time.")
+        async def clock() -> str:
+            return "noon"
+
+        await answer(llm, conversation, ALICE, "Hi")
+        await answer(llm, conversation, BOB, "What time is it?")
+
+        follow_up = bedrock_api[-1]
+        assert (
+            follow_up["messages"][-1]["content"][0]["toolResult"]["toolUseId"] == "t1"
+        )
+        assert follow_up["system"] == [{"text": "be brief\n\n" + SEVERAL_SPEAKERS}]
 
 
 def _has_aws_creds() -> bool:

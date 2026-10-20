@@ -174,8 +174,8 @@ class BedrockLLM(LLM):
             "modelId": self.model,
             "messages": messages,
         }
-        if self._instructions:
-            request_kwargs["system"] = [{"text": self._instructions}]
+        if self.instructions:
+            request_kwargs["system"] = [{"text": self.instructions}]
         if tools:
             request_kwargs["toolConfig"] = {"tools": tools}
 
@@ -375,8 +375,8 @@ class BedrockLLM(LLM):
                 "modelId": self.model,
                 "messages": current_messages,
             }
-            if self._instructions:
-                request_kwargs["system"] = [{"text": self._instructions}]
+            if self.instructions:
+                request_kwargs["system"] = [{"text": self.instructions}]
             if tools:
                 request_kwargs["toolConfig"] = {"tools": tools}
 

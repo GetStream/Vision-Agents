@@ -247,8 +247,11 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   `ulaw_<rate>` and `alaw_<rate>` to `MULAW` and `ALAW`, at 8000 to 48000 Hz; empty is
   `mp3_44100_128`. `opus_*` and any other name is refused when the recorder is built. One
   request takes at most 2,000 UTF-16 code units, so a longer text fails the job naming the
-  limit: the router does not cut it up, because mp3 and wav files cannot be joined byte for
-  byte. Speed (`speakingRate`) and temperature are not sent, so no Inworld entry declares
+  limit, as a `routing.ErrRequest` (`Recordings.Record` writes no `record_failed` stat for it,
+  as with a refused format, since a pinned live model's health is every customer's): the
+  router does not cut it up, because mp3 and wav files cannot be joined byte for byte. `tl`
+  is sent as `fil` (Inworld refuses `tl`, probed 2026-10-20), and `temperature` as 1.1, as
+  the live socket sends it. Speed (`speakingRate`) and temperature are not sent, so no Inworld entry declares
   `speed`.
 - `Recordings.Check` runs before a recording is accepted (`recordSpeech` in `api/recordings.go`).
   When no candidate's vendor has a recorder, such as a pinned `breeze/breeze-tts-2` or a

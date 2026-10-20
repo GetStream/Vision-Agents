@@ -367,6 +367,32 @@ func (s *ChatLogSuite) channel() []getstream.MessageResponse {
 	return response.Data.Messages
 }
 
+func (s *ChatLogSuite) TestASpokenReplyIsMarkedAsTheAssistants() {
+	// Stream's AI components render a message as the assistant's only when it says so, as a
+	// reply in a conversation held in writing does.
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, text: "Where does it", turnID: "turn-1", kind: piece, source: SourceAgent})
+	writer.show()
+	writer.handle(message{author: s.log.agent, text: "Where does it hurt?", turnID: "turn-1", kind: prepared, source: SourceAgent})
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken, source: SourceAgent})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Equal("Where does it hurt?", stored[0].Text)
+	s.Equal(true, stored[0].Custom[aiGeneratedField])
+}
+
+func (s *ChatLogSuite) TestWhatAParticipantSaidIsNotMarkedAsTheAssistants() {
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "my lower back", kind: heard, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.NotContains(stored[0].Custom, aiGeneratedField)
+}
+
 func (s *ChatLogSuite) TestWhatAParticipantIsSayingIsOneMessageThatSettles() {
 	s.useChat()
 	writer := newWriter(s.log)

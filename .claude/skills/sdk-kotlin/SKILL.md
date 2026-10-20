@@ -1,6 +1,6 @@
 ---
 name: sdk-kotlin
-description: How to build and extend the Kotlin/Android SDKs in sdks/kotlin. Read this before changing vision-agents-core, vision-agents-ui or vision-agents-rtc, or before adding a Kotlin client for a new endpoint.
+description: How to build and extend the Kotlin/Android SDK in sdks/kotlin. Read this before changing vision-agents-core, or before adding a Kotlin client for a new endpoint.
 ---
 
 # Kotlin SDK conventions
@@ -13,35 +13,27 @@ API in two languages, and a feature added to one belongs in the other.
 Assume Kotlin 2.4, JVM 17 bytecode, AGP 9, Gradle with the version catalogue in
 `gradle/libs.versions.toml`. Client side only: no folder sync, no dispatch, no config writing.
 
-## Modules, and what they are called
+## The module, and what it is called
 
 ```
-core  io.getstream:vision-agents-core  io.getstream.visionagents.core  plain JVM: HTTP, socket, state
-ui    io.getstream:vision-agents-ui    io.getstream.visionagents.ui    Compose views over it   -> core
-rtc   io.getstream:vision-agents-rtc   io.getstream.visionagents.rtc   Stream Video            -> core
-chat  io.getstream:vision-agents-chat  io.getstream.visionagents.chat  Stream Chat             -> core
+core  io.getstream:vision-agents-core  io.getstream.visionagents.android.core  Android library: HTTP, socket, state, Stream Chat, Stream Video
 ```
 
-The sdk skill asks for `ai-kotlin-core` and `ai-kotlin-rtc`. The artifacts are named after the
-Swift packages instead (`VisionAgentsCore`, `VisionAgentsUI`, `VisionAgentsRTC`), written the
-way Maven writes names: the group is Stream's `io.getstream`, the artifact is kebab-case, and
-the package is the reverse-DNS lower case Kotlin requires. `vision-agents-*` sits beside
-Stream's own `stream-video-android-*` and `stream-chat-android-*` in a dependency list and says
-which product it is; `ai-kotlin-*` repeats the language the artifact is already written in and
-names no product. One name per concept across Swift and Kotlin is what lets the docs, the demo
-apps and a bug report talk about "core" and "rtc" without saying which platform.
+One module, as Swift is one package (`VisionAgentsCore`). The artifact is named after it,
+written the way Maven writes names: the group is Stream's `io.getstream`, the artifact is
+kebab-case, and the package is the reverse-DNS lower case Kotlin requires. `vision-agents-core`
+sits beside Stream's own `stream-video-android-*` and `stream-chat-android-*` in a dependency list
+and says which product it is.
 
-- `core` is `kotlin("jvm")`, not an Android library. It has nothing Android in it, so its tests
-  run under `gradle:jdk21` with no Android SDK, and a text-only app never resolves WebRTC.
-- `ui` holds no networking. `rtc` keeps Stream's types out of `core`'s public API.
-- `-PcoreOnly` drops `ui` and `rtc` from `settings.gradle.kts`. It is a flag rather than a
-  guess at whether an Android SDK is present, so a misconfigured machine fails loudly.
-- AGP 9 compiles Kotlin itself: apply `com.android.library` and the Compose plugin, never
+- `core` is a `com.android.library`. It holds the conversation, `session.chat(context)` and
+  `VoiceSession`, and depends on `stream-chat-android-client` and `stream-video-android-core`.
+- It ships no views. Apps compose Stream Chat's AI components
+  (`stream-chat-android-ai-compose`), the way Swift apps compose `StreamChatAI`.
+- Stream Chat 7.15.0+ comes from `https://stream-io-repo.com`, not Maven Central;
+  `settings.gradle.kts` lists it for `io.getstream` only.
+- AGP 9 compiles Kotlin itself: apply `com.android.library`, never
   `org.jetbrains.kotlin.android`.
 - compileSdk 37 is Stream Video 1.34's floor; minSdk 24 is Stream's.
-- Chat is its own module, `chat`, the way Swift's is its own package and JS's its own entry
-  point, so an app that only talks pays for no Chat SDK and one that only types pays for no
-  WebRTC.
 
 ## HTTP and the socket
 
@@ -109,17 +101,7 @@ its trimmed text, or the status phrase, as `reason` with those three null. Ktor 
 upgrade's response, so `Backend` opens sockets through `Handshakes`, which reads it in OkHttp's
 `onFailure`.
 
-## Compose
-
-- Slots (`bubble: @Composable (Turn) -> Unit`) for customisation, not a theme object. The views
-  use `MaterialTheme` colours and typography, so they follow whatever theme the host has.
-- No component navigates, and none closes a session: a rotation recomposes, and ending the
-  conversation is the owner's.
-- `LazyColumn` keyed by turn id. Follow the bottom without animating growing text; animate
-  only a new line.
-- Collect with `collectAsStateWithLifecycle`.
-
-## Stream clients: chat and rtc
+## Stream clients: chat and video
 
 Stream is set up once: the key, and the user and token `setUser` is given, are the one identity
 for the router, Stream Chat and Stream Video. There is no call token and no credentials object.
@@ -127,14 +109,13 @@ for the router, Stream Chat and Stream Video. There is no call token and no cred
 - `Backend.shared(kind, open, disconnect)` builds one client per kind, key and user however many
   sessions ask, keyed before any token is asked for, and forgets one that failed to open.
   `give(kind, client)` records the app's own, handed over with `agents.use(...)`. Both are
-  `@StreamClients`, an opt-in annotation standing in for Swift's `@_spi(Stream)`: public so the
-  modules can reach them, not for apps.
+  `internal`.
 - `agents.disconnect()` closes only what was built. Leaving a call or closing a session
   disconnects nothing; the next session reuses the client.
 - `ChatClient` and `StreamVideo` are one per process, and building another replaces the app's.
   One the app built without handing it over is adopted if it is connected as the same user and
-  refused with `Configuration` otherwise. Each module remembers the last client it built so it
-  can tell its own instance from the app's.
+  refused with `Configuration` otherwise. `Chat.kt` and `VoiceSession.kt` each remember the
+  last client they built, so they can tell their own instance from the app's.
 - A token provider that asks `backend.streamCredentials(refresh = true)` again, never one fixed
   token: a token expires an hour in, and two clients refreshing at once fetch one.
 - Camera direction and state are set before joining, so no front-facing frame is published.
@@ -159,11 +140,12 @@ JUnit 5 through `kotlin-test`. Never mock; assert on state and outputs, never on
 4. **Live.** `LiveTest` is gated on `VISION_AGENTS_URL` (`@EnabledIfEnvironmentVariable`), the
    Kotlin answer to `@pytest.mark.integration`. `KeyedRouterPostureTest` is gated on
    `INTEGRATION_ROUTER_KEY` and checks a device token's 403s against a router in `api_key` mode.
-5. **Builds.** `ui`, `rtc` and `chat` are assembled in `cimg/android`, not tested.
+
+The tests are plain JVM unit tests run by AGP (`:core:testDebugUnitTest`), with no emulator.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
-`sdks/kotlin` or to the spec: `:core:test`, then `generate.py` again, failing if the generated
-models differ from what is committed, then the three Android modules assembled.
+`sdks/kotlin` or to the spec: `:core:testDebugUnitTest` and `:core:assembleRelease`, then
+`generate.py` again, failing if the generated models differ from what is committed.
 
 Wait on a condition with a deadline (`until { ... }`), never a fixed delay. A collector that
 must see an event has to be subscribed before the frame is sent: start it with
@@ -176,13 +158,13 @@ which `sdks/kotlin/.gitignore` covers.
 
 Reject it if it:
 
-- exposes a generated or Stream type from `core`, or adds Android to `core`;
+- exposes a generated type, or a Stream type anywhere but `chat()` and `VoiceSession`;
 - sends a schema default the caller did not set;
 - answers tools from a collector, starts a second read loop, or replays `respond`/`tool_result`;
 - treats an unknown frame or enum value as fatal;
 - catches `CancellationException`, or reports an HTTP status as a transport failure;
 - hand-edits generated code, or adds a method for an operation that is not client-accessible;
-- adds a theme object or navigation to `ui`;
+- adds views: they belong to Stream Chat's AI components and the apps;
 - builds a second Stream client, replaces the app's process-wide one, or disconnects one the
   app gave;
 - mocks, or asserts that a method was called.

@@ -95,7 +95,7 @@ func (s *RecorderSuite) TestARecordingThatAsksForNothingIsAnMp3OfTheRecordersVoi
 	s.Equal("/tts/v1/voice", request.path)
 	s.Equal("Basic k", request.header.Get("Authorization"), "the key is Inworld's Base64 credential, sent as is")
 	s.Equal("application/json", request.header.Get("Content-Type"))
-	s.JSONEq(`{"text":"hello","voiceId":"Ashley","modelId":"inworld-tts-2","language":"en",
+	s.JSONEq(`{"text":"hello","voiceId":"Ashley","modelId":"inworld-tts-2","language":"en","temperature":1.1,
 		"audioConfig":{"audioEncoding":"MP3","sampleRateHertz":44100,"bitRate":128000}}`, request.body)
 	s.Equal(tts.Recorded{Audio: []byte("audio"), Format: "mp3_44100_128", Characters: 5}, recorded,
 		"the audio is decoded from base64")
@@ -104,7 +104,7 @@ func (s *RecorderSuite) TestARecordingThatAsksForNothingIsAnMp3OfTheRecordersVoi
 func (s *RecorderSuite) TestTheVoiceAndLanguageARecordingNamesWinOverTheRecorders() {
 	_, request := s.record(RecorderOptions{VoiceID: "Ashley", Language: "en"}, tts.Recording{Voice: "Dennis", Language: "DE"})
 
-	s.JSONEq(`{"text":"hello","voiceId":"Dennis","modelId":"inworld-tts-2-flash","language":"de",
+	s.JSONEq(`{"text":"hello","voiceId":"Dennis","modelId":"inworld-tts-2-flash","language":"de","temperature":1.1,
 		"audioConfig":{"audioEncoding":"MP3","sampleRateHertz":44100,"bitRate":128000}}`, request.body)
 }
 
@@ -120,6 +120,22 @@ func (s *RecorderSuite) TestADeliveryModeIsSentAsTheLiveVoiceSendsIt() {
 	_, request := s.record(RecorderOptions{VoiceID: "Ashley", DeliveryMode: "STABLE"}, tts.Recording{})
 
 	s.Contains(request.body, `"deliveryMode":"STABLE"`)
+}
+
+func (s *RecorderSuite) TestTemperatureIsSentAsTheLiveSocketSendsIt() {
+	_, request := s.record(RecorderOptions{}, tts.Recording{})
+
+	s.Contains(request.body, `"temperature":1.1`)
+}
+
+func (s *RecorderSuite) TestTagalogIsAskedForAsFilBecauseInworldDoesNotResolveTl() {
+	for language, want := range map[string]string{"tl": "fil", "TL": "fil", "fil": "fil", "fr": "fr", "tl-PH": "tl-ph"} {
+		s.Run(language, func() {
+			_, request := s.record(RecorderOptions{}, tts.Recording{Language: language})
+
+			s.Contains(request.body, `"language":"`+want+`"`)
+		})
+	}
 }
 
 func (s *RecorderSuite) TestARecorderNamingNoVoiceSpeaksInTheVoiceOfTheEnvironment() {
@@ -149,7 +165,7 @@ func (s *RecorderSuite) TestEachFormatIsAskedOfInworldAsTheFileItNames() {
 		s.Run(format, func() {
 			recorded, request := s.record(RecorderOptions{VoiceID: "Ashley", Format: format}, tts.Recording{Format: format})
 
-			s.JSONEq(`{"text":"hello","voiceId":"Ashley","modelId":"inworld-tts-2-flash","audioConfig":`+want+`}`,
+			s.JSONEq(`{"text":"hello","voiceId":"Ashley","modelId":"inworld-tts-2-flash","temperature":1.1,"audioConfig":`+want+`}`,
 				request.body)
 			s.Equal(format, recorded.Format)
 		})

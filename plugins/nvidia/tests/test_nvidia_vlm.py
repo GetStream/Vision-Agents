@@ -18,15 +18,12 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
 from PIL import Image
-from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
-from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import EventManager
-from vision_agents.core.llm import LLM
-from vision_agents.core.llm.events import LLMResponseFinalEvent
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.nvidia import VLM
 
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
 
 load_dotenv()
 
@@ -69,26 +66,6 @@ async def nvidia_api() -> AsyncIterator[tuple[aiohttp.ClientSession, list[dict]]
     await server.close()
 
 
-async def answer(
-    llm: LLM, conversation: Conversation, participant: Participant, text: str
-) -> None:
-    """What the agent does with a participant's words: keep them, then ask the LLM."""
-    await conversation.upsert_message(
-        role="user", user_id=participant.user_id, content=text, participant=participant
-    )
-    events = EventManager()
-    events.register(LLMResponseFinalEvent)
-    turn = LLMTurn(
-        transcript=text,
-        participant=participant,
-        events=events,
-        speaker=conversation.speaker_label(participant),
-    )
-    turn.start(llm)
-    await turn.stream.collect()
-    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
-
-
 @pytest.fixture(scope="session")
 def cat_image(assets_dir) -> Iterator[Image.Image]:
     """Load the local cat test image from tests/test_assets."""
@@ -126,11 +103,13 @@ class TestNvidiaVLM:
         conversation = InMemoryConversation("", [])
         vlm = VLM(api_key="test", client=session)
         vlm.set_conversation(conversation)
+        vlm.set_instructions("be brief")
 
         await answer(vlm, conversation, ALICE, "Hi")
         await answer(vlm, conversation, ALICE, "Are you there?")
-        # One person: what the base sha (486427184) sent for the same two turns.
+        # One person: what the base sha (9653cb696) sent for the same two turns.
         assert bodies[-1]["messages"] == [
+            {"role": "system", "content": "be brief"},
             {"role": "user", "content": "Hi"},
             {"role": "assistant", "content": "Ok"},
             {"role": "user", "content": "Are you there?"},
@@ -138,7 +117,11 @@ class TestNvidiaVLM:
 
         await answer(vlm, conversation, BOB, "Me too")
         await answer(vlm, conversation, ALICE, "Who is that?")
-        assert bodies[-1]["messages"][2:] == [
+        assert bodies[-1]["messages"][0] == {
+            "role": "system",
+            "content": "be brief\n\n" + SEVERAL_SPEAKERS,
+        }
+        assert bodies[-1]["messages"][3:] == [
             {"role": "user", "content": "Are you there?"},
             {"role": "assistant", "content": "Ok"},
             {"role": "user", "content": "Bob: Me too"},

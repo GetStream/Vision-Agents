@@ -93,6 +93,7 @@ type Config struct {
 	Stream     Stream     `koanf:"stream"`
 	Agent      Agent      `koanf:"agent"`
 	Connectors Connectors `koanf:"connectors"`
+	Runs       Runs       `koanf:"runs"`
 	Episodes   Episodes   `koanf:"episodes"`
 	Sandbox    Sandbox    `koanf:"sandbox"`
 	Models     Models     `koanf:"models"`
@@ -264,6 +265,11 @@ type Agent struct {
 	// kept and the other is cancelled. It only applies to a target with more than one candidate.
 	// 1.2s by default; 0 turns it off.
 	ReplyHedge time.Duration `koanf:"reply_hedge"`
+	// FlowHedge is ReplyHedge for the flow controller's decisions. A decision is a few tokens
+	// the caller is waiting in silence for, and one that has said nothing after this is
+	// stalled rather than thinking, so it is asked of another candidate far sooner than a
+	// reply is. 400ms by default; 0 turns it off.
+	FlowHedge time.Duration `koanf:"flow_hedge"`
 	// FlowJudge routes the flow controller to a decision model, such as
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
@@ -279,6 +285,14 @@ type Connectors struct {
 	// customers share the router's egress, so one customer's calls could otherwise spend a
 	// provider's limit for everyone. 0 turns it off; so does a deployment with no Redis.
 	ProxyCallsPerMinute int64 `koanf:"proxy_calls_per_minute"`
+}
+
+// Runs is how many headless runs (POST /v1/agents/runs) one app may have going at once.
+type Runs struct {
+	// ConcurrentPerApp caps one app's runs in flight, counted in Redis across every router,
+	// so one app's backlog cannot hold every model slot of the deployment. A run over it is a
+	// 429 with Retry-After. 0 turns it off; so does a deployment with no Redis.
+	ConcurrentPerApp int64 `koanf:"concurrent_per_app"`
 }
 
 // Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
@@ -364,6 +378,7 @@ var variables = map[string]string{
 	"agent.unified_replies":     "ROUTER_UNIFIED_REPLIES",
 	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
+	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
@@ -371,6 +386,7 @@ var variables = map[string]string{
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
+	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -400,7 +416,7 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond},
+		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes: Episodes{IdleAfter: time.Hour},
@@ -417,6 +433,9 @@ func Defaults() Config {
 		// and 60 a minute is under its «5,000 requests per hour» and «80 content-generating
 		// requests per minute».
 		Connectors: Connectors{ProxyCallsPerMinute: 60},
+		// A choice, not a measurement: room for a moderation worker's batch without letting
+		// one app's backlog take every model slot. # unverified
+		Runs: Runs{ConcurrentPerApp: 20},
 	}
 }
 
@@ -516,6 +535,9 @@ func (c Config) validate() error {
 	if c.Connectors.ProxyCallsPerMinute < 0 {
 		return fmt.Errorf("config: connectors.proxy_calls_per_minute cannot be negative, got %d", c.Connectors.ProxyCallsPerMinute)
 	}
+	if c.Runs.ConcurrentPerApp < 0 {
+		return fmt.Errorf("config: runs.concurrent_per_app cannot be negative, got %d", c.Runs.ConcurrentPerApp)
+	}
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
@@ -546,6 +568,9 @@ func (c Config) validate() error {
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
+	}
+	if c.Agent.FlowHedge < 0 {
+		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
 	return c.validateShard()
 }
@@ -652,6 +677,7 @@ func (c Config) export() error {
 		"agent.unified_replies":         fmt.Sprint(c.Agent.UnifiedReplies),
 		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
+		"agent.flow_hedge":              c.Agent.FlowHedge.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
@@ -660,6 +686,7 @@ func (c Config) export() error {
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
+		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
 
 		"telnyx.api_key":       c.Telnyx.APIKey,
 		"telnyx.connection_id": c.Telnyx.ConnectionID,

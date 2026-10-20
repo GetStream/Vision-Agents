@@ -3,6 +3,8 @@ package ttsrouter
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -53,6 +55,32 @@ func (ownVoices) ResolveVoice(_ context.Context, _, _, voice string) (string, er
 	return voice, nil
 }
 
+// inworldStub is Inworld's /tts/v1/voice as the http transport the recorders are built on:
+// it keeps the bodies it was sent and answers a short file, or a 500 when failing.
+type inworldStub struct {
+	bodies  []string
+	failing bool
+}
+
+func (t *inworldStub) RoundTrip(request *http.Request) (*http.Response, error) {
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	t.bodies = append(t.bodies, string(body))
+	status, answer := http.StatusOK, `{"audioContent":"YXVkaW8="}`
+	if t.failing {
+		status, answer = http.StatusInternalServerError, `{"code":13,"message":"down"}`
+	}
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(answer)),
+		Request:    request,
+	}, nil
+}
+
 type RecordingsSuite struct {
 	suite.Suite
 	ctx context.Context
@@ -97,6 +125,23 @@ func (s *RecordingsSuite) newRecordings() *Recordings {
 	s.Require().NoError(err)
 	s.T().Cleanup(recordings.Close)
 	return recordings
+}
+
+// speakingInworld routes over the built-in config with Inworld's own factory, whose recorder
+// speaks to the stub that http.DefaultTransport is swapped for before it is built.
+func (s *RecordingsSuite) speakingInworld() (*Recordings, *inworldStub) {
+	s.T().Setenv("INWORLD_API_KEY", "test-key")
+	stub := &inworldStub{}
+	real := http.DefaultTransport
+	http.DefaultTransport = stub
+	s.T().Cleanup(func() { http.DefaultTransport = real })
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	recordings, err := NewRecordings(Options{Config: config[routing.TTS], Recorders: DefaultRecorderRegistry()})
+	s.Require().NoError(err)
+	s.T().Cleanup(recordings.Close)
+	return recordings, stub
 }
 
 func (s *RecordingsSuite) record(voice string, overwrite string) error {
@@ -444,6 +489,37 @@ func (s *RecordingsSuite) TestARecordingInAFormatInworldCannotProduceIsRefusedNa
 	s.ErrorIs(err, inworld.ErrFormat)
 	s.ErrorContains(err, "opus_48000_64")
 	s.Empty(s.asked, "no other file is made in its place")
+}
+
+func (s *RecordingsSuite) TestAnInworldDeliveryModeOverwriteReachesInworld() {
+	recordings, stub := s.speakingInworld()
+
+	_, _, err := recordings.Record(s.ctx, Recording{
+		CustomerID: "acme",
+		Options: options.TTS{Target: "inworld/inworld-tts-2", Overwrites: map[string]json.RawMessage{
+			"inworld": json.RawMessage(`{"delivery_mode":"STABLE"}`),
+		}},
+		Text: "hello",
+	})
+
+	s.Require().NoError(err)
+	s.Require().Len(stub.bodies, 1)
+	s.Contains(stub.bodies[0], `"deliveryMode":"STABLE"`)
+}
+
+func (s *RecordingsSuite) TestATextOverInworldsLimitIsTheCallersToShortenAndSendsNothing() {
+	recordings, stub := s.speakingInworld()
+
+	_, _, err := recordings.Record(s.ctx, Recording{
+		CustomerID: "acme",
+		Options:    options.TTS{Target: "inworld/inworld-tts-2"},
+		Text:       strings.Repeat("a", inworld.MaxRecordingText+1),
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "not counted against the model")
+	s.ErrorIs(err, inworld.ErrTextTooLong)
+	s.ErrorContains(err, "at most 2000")
+	s.Empty(stub.bodies, "no vendor call")
 }
 
 func (s *RecordingsSuite) TestARecordingAskingInworldForWhatItCannotExpressIsRefused() {

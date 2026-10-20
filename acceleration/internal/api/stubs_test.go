@@ -114,7 +114,9 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
-		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
+			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
+		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 	)
@@ -164,6 +166,8 @@ type scriptedLLM struct {
 	// analyses answers a request for JSON as a review analyst would: one cause behind every
 	// call it was handed and one it made up, and a second cause behind made-up calls only.
 	analyses bool
+	// refuses, when set, is what every request is refused with.
+	refuses error
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -204,13 +208,16 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		})
 		reply = string(analysis)
 	}
-	held := s.held
+	held, refuses := s.held, s.refuses
 	var calls []llm.ToolCall
 	if first {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
 
+	if refuses != nil {
+		return nil, refuses
+	}
 	if held != nil {
 		select {
 		case <-held:
