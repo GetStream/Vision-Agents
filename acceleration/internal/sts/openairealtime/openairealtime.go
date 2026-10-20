@@ -421,10 +421,12 @@ type STS struct {
 	// speech stops is settled; OpenAI reports once, after the stop.
 	speaking   bool
 	heardSoFar string
-	// owed is a reply the server refused to open for the caller's turn because another was
-	// still open. It is asked for once that one is done; a caller who speaks again cancels
-	// it, since the server answers their next stop on its own.
-	owed    bool
+	// owed is a reply the server refused to open, for the caller's turn or for a request of
+	// ours, because another was still open. It is asked for once that one is done; a caller
+	// who speaks again cancels it, since the server answers their next stop on its own.
+	// asked is the last reply request of ours, owed as it was sent when it is refused.
+	owed    *clientEvent
+	asked   clientEvent
 	started bool
 	closed  bool
 }
@@ -622,7 +624,7 @@ func (s *STS) SendText(text string, participant sts.Participant) error {
 	}}); err != nil {
 		return err
 	}
-	return s.send(clientEvent{Type: eventResponseCreate, EventID: clientResponse})
+	return s.ask(clientEvent{Type: eventResponseCreate})
 }
 
 // SendFrame offers the model a still image as context for its next reply.
@@ -699,7 +701,7 @@ func (s *STS) Answer(callID string, output string, err error) error {
 	}}); sendErr != nil {
 		return sendErr
 	}
-	return s.send(clientEvent{Type: eventResponseCreate, EventID: clientResponse})
+	return s.ask(clientEvent{Type: eventResponseCreate})
 }
 
 // Prompt asks the model to reply now, guided by the text.
@@ -720,9 +722,9 @@ func (s *STS) Prompt(text string) error {
 		}}); err != nil {
 			return err
 		}
-		return s.send(clientEvent{Type: eventResponseCreate, EventID: clientResponse})
+		return s.ask(clientEvent{Type: eventResponseCreate})
 	}
-	return s.send(clientEvent{Type: eventResponseCreate, EventID: clientResponse, Response: &responseRequest{Instructions: text}})
+	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
 }
 
 // Interrupt stops the reply in flight and tells the model how much of it was heard, so its
@@ -734,7 +736,7 @@ func (s *STS) Interrupt(playedMs int) error {
 
 	s.mu.Lock()
 	turn, itemID := s.turn, s.itemID
-	s.owed = false
+	s.owed = nil
 	s.mu.Unlock()
 	if turn == nil {
 		return nil
@@ -1065,7 +1067,7 @@ func (s *STS) handleMessage(event serverEvent) {
 	case eventSpeechStarted:
 		s.mu.Lock()
 		s.speaking = true
-		s.owed = false
+		s.owed = nil
 		s.mu.Unlock()
 		s.emitter.Send(sts.SpeechStarted{Participant: s.speaker(), At: time.Now()})
 
@@ -1274,10 +1276,10 @@ func (s *STS) finishTurn(event serverEvent) {
 
 	s.mu.Lock()
 	owed := s.owed
-	s.owed = false
+	s.owed = nil
 	s.mu.Unlock()
-	if owed {
-		s.answer()
+	if owed != nil {
+		s.answer(*owed)
 	}
 }
 
@@ -1303,8 +1305,7 @@ func (s *STS) fail(event serverEvent) {
 		s.logger.Debug("nothing to cancel")
 		return
 	}
-	if event.Error.Code == activeResponse && event.Error.EventID == "" {
-		s.owe()
+	if event.Error.Code == activeResponse && s.owe(event.Error.EventID) {
 		return
 	}
 	s.emitter.Send(sts.Error{
@@ -1315,23 +1316,45 @@ func (s *STS) fail(event serverEvent) {
 	})
 }
 
-// owe answers the caller's turn the server refused to: after the reply in flight, or now
-// when that reply is already done, because the refusal can arrive after its response.done
-// (live, gpt-realtime-2.1, 2026-10-20).
-func (s *STS) owe() {
+// owe answers a reply the server refused to open: after the reply in flight, or now when
+// that reply is already done, because the refusal can arrive after its response.done (live,
+// gpt-realtime-2.1, 2026-10-20). A caller already speaking again is answered at their next
+// stop by the server itself. A refusal of ours with no reply open is not owed: it reports
+// false, and the caller reports it as an error.
+func (s *STS) owe(eventID string) bool {
 	s.mu.Lock()
-	open := s.turn != nil
-	s.owed = open
-	s.mu.Unlock()
-	if !open {
-		s.answer()
+	open, speaking := s.turn != nil, s.speaking
+	request := clientEvent{Type: eventResponseCreate}
+	if eventID == clientResponse {
+		if !open {
+			s.mu.Unlock()
+			return false
+		}
+		request = s.asked
 	}
+	if open && (s.owed == nil || eventID == clientResponse) {
+		s.owed = &request
+	}
+	s.mu.Unlock()
+	if !open && !speaking {
+		s.answer(request)
+	}
+	return true
 }
 
-// answer asks for the reply the caller is owed. A refusal of this one names the request,
-// so it is reported rather than owed again.
-func (s *STS) answer() {
-	if err := s.send(clientEvent{Type: eventResponseCreate, EventID: clientResponse}); err != nil {
+// ask sends a reply request of ours, remembered so a refusal of it is asked for again.
+func (s *STS) ask(event clientEvent) error {
+	event.EventID = clientResponse
+	s.mu.Lock()
+	s.asked = event
+	s.mu.Unlock()
+	return s.send(event)
+}
+
+// answer asks for the reply that is owed. A refusal of this one names the request, so it is
+// owed again only while another reply is open, and reported otherwise.
+func (s *STS) answer(request clientEvent) {
+	if err := s.ask(request); err != nil {
 		s.emitter.Send(sts.Error{
 			Provider: s.options.Vendor.Provider,
 			Model:    s.options.Model,
