@@ -13,6 +13,7 @@ import (
 // left out keeps what is stored.
 type AgentConfigPatch struct {
 	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Stt                *string                  `json:"stt,omitempty"`
 	Tts                *string                  `json:"tts,omitempty"`
@@ -69,6 +70,14 @@ func (Harness) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "Harness", "Which harness the agent's sessions run: what hands "+
 		"work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on "+
 		"the agent, never on a session. Omit it for the default, the only one there is.", string(Default))
+}
+
+func (AgentRole) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "AgentRole", "What the agent is for in the app, beyond answering people. "+
+		"ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app "+
+		"holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share "+
+		"the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit "+
+		"it for an ordinary agent.", string(AgentRoleAiModerator))
 }
 
 func (DispatchSetting) Schema(registry huma.Registry) *huma.Schema {
@@ -141,6 +150,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 
 	config.Name = override(config.Name, patch.Name)
+	if patch.Role != nil {
+		config.Role = string(*patch.Role)
+	}
 	if patch.Mode != nil {
 		config.Mode, _ = modeOf(patch.Mode)
 	}

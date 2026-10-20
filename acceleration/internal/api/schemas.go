@@ -391,6 +391,24 @@ func (e Harness) Valid() bool {
 	}
 }
 
+// AgentRole is what an agent config is for in the app around it, beyond answering people.
+type AgentRole string
+
+// Defines values for AgentRole.
+const (
+	AgentRoleAiModerator AgentRole = "ai_moderator"
+)
+
+// Valid indicates whether the value is a known member of the AgentRole enum.
+func (e AgentRole) Valid() bool {
+	switch e {
+	case AgentRoleAiModerator:
+		return true
+	default:
+		return false
+	}
+}
+
 // HistoryMessage is one message of a conversation the caller kept itself. Its name, text
 // and created_at are what a TranscriptMessage calls them; a transcript line is not reused
 // whole because its speaker and created_at are required, and a caller's thread may know

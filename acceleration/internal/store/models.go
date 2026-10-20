@@ -325,6 +325,10 @@ type AgentConfig struct {
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
 	Name       string `bun:"name,notnull"`
+	// Role is what the config is for in the app around it, beyond answering people:
+	// RoleAIModerator, or empty for an ordinary agent. One live config per customer holds a
+	// role, test copies aside (20261103120000_agent_config_role.sql).
+	Role string `bun:"role,notnull"`
 	// Mode is whether the agent is spoken to or written to: AgentModeVoice or
 	// AgentModeText. A text agent uses neither speech target and joins no call.
 	Mode string `bun:"mode,notnull"`
@@ -583,6 +587,13 @@ const (
 	AgentModeVoice = "voice"
 	// AgentModeText holds the same conversation in writing, using neither speech target.
 	AgentModeText = "text"
+)
+
+// What an agent config is for, beyond answering people (AgentConfig.Role).
+const (
+	// RoleAIModerator is the app's Nora: the agent the chat worker hands flagged messages
+	// to for review.
+	RoleAIModerator = "ai_moderator"
 )
 
 // How a greeting is said.

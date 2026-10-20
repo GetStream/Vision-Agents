@@ -622,6 +622,18 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### An agent config has a `role`, and the app's AI moderator is found by it
+
+`AgentConfig` takes an optional `role`, whose one value is `ai_moderator`: the app's Nora, the
+agent the chat worker hands flagged messages to for review. It is set on create, update, patch
+and a folder sync (`role:` in agent.yaml), and `GET /v1/agents/configs?role=ai_moderator` answers
+the app's one moderator, or an empty list. One live config per app holds a role: giving it to a
+second is a 409 `role_taken`, a deleted config frees it, and a test copy (tagged `draft_of`) may
+carry the role of the config it copies without being found by it. A save that leaves `role` out
+keeps the stored one, so a client that does not know the field cannot take it away. Configs the
+dashboard tagged `role: ai_moderator` before the field existed take the role when the router
+migrates: the newest live one in each app (AI-1472).
+
 ### Cartesia records speech
 
 `POST /v1/tts/recordings` can be served by Cartesia, pinned (`cartesia/sonic-preview`,

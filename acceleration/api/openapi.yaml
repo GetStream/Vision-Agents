@@ -182,6 +182,8 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        role:
+          $ref: '#/components/schemas/AgentRole'
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -287,6 +289,8 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        role:
+          $ref: '#/components/schemas/AgentRole'
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -384,6 +388,8 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        role:
+          $ref: '#/components/schemas/AgentRole'
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -688,6 +694,11 @@ components:
         - has_more
         - items
       type: object
+    AgentRole:
+      description: 'What the agent is for in the app, beyond answering people. ai_moderator is the app''s AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.'
+      enum:
+        - ai_moderator
+      type: string
     AgentStats:
       properties:
         peak_at:
@@ -7093,6 +7104,8 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        role:
+          $ref: '#/components/schemas/AgentRole'
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -9467,6 +9480,13 @@ paths:
           schema:
             description: Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
             type: string
+        - description: Narrow the list to the live config holding this role, which is how the app's AI moderator is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set.
+          explode: false
+          in: query
+          name: role
+          schema:
+            $ref: '#/components/schemas/AgentRole'
+            description: Narrow the list to the live config holding this role, which is how the app's AI moderator is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set.
       responses:
         "200":
           content:

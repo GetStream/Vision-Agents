@@ -6,6 +6,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.agent_config import AgentConfig
+from ...models.agent_role import AgentRole
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
@@ -13,11 +14,18 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     name: str | Unset = UNSET,
+    role: AgentRole | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["name"] = name
+
+    json_role: str | Unset = UNSET
+    if not isinstance(role, Unset):
+        json_role = role.value
+
+    params["role"] = json_role
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -84,6 +92,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
+    role: AgentRole | Unset = UNSET,
 ) -> Response[ErrorResponse | list[AgentConfig]]:
     """The agent configs the calling customer holds
 
@@ -97,6 +106,11 @@ def sync_detailed(
     Args:
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
+        role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
+            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
+            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
+            share the role of the agent it copies. Left out on an update or a sync, the stored role
+            stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -108,6 +122,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         name=name,
+        role=role,
     )
 
     response = client.get_httpx_client().request(
@@ -121,6 +136,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
+    role: AgentRole | Unset = UNSET,
 ) -> ErrorResponse | list[AgentConfig] | None:
     """The agent configs the calling customer holds
 
@@ -134,6 +150,11 @@ def sync(
     Args:
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
+        role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
+            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
+            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
+            share the role of the agent it copies. Left out on an update or a sync, the stored role
+            stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,6 +167,7 @@ def sync(
     return sync_detailed(
         client=client,
         name=name,
+        role=role,
     ).parsed
 
 
@@ -153,6 +175,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
+    role: AgentRole | Unset = UNSET,
 ) -> Response[ErrorResponse | list[AgentConfig]]:
     """The agent configs the calling customer holds
 
@@ -166,6 +189,11 @@ async def asyncio_detailed(
     Args:
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
+        role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
+            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
+            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
+            share the role of the agent it copies. Left out on an update or a sync, the stored role
+            stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,6 +205,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         name=name,
+        role=role,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -188,6 +217,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
+    role: AgentRole | Unset = UNSET,
 ) -> ErrorResponse | list[AgentConfig] | None:
     """The agent configs the calling customer holds
 
@@ -201,6 +231,11 @@ async def asyncio(
     Args:
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
+        role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
+            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
+            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
+            share the role of the agent it copies. Left out on an update or a sync, the stored role
+            stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,5 +249,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             name=name,
+            role=role,
         )
     ).parsed
