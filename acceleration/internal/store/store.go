@@ -255,7 +255,12 @@ func (s *Store) recordShardRequest(ctx context.Context, request *Request) error 
 	}
 
 	outcome, severity := "completed", "info"
-	if !request.Success {
+	switch {
+	case request.ErrorCode == ErrorCancelled:
+		// A caller closing its own request is routine, a superseded flow decision or a barge-in,
+		// and no failure, as the rollups count it.
+		outcome = "cancelled"
+	case !request.Success:
 		outcome, severity = "failed", "error"
 	}
 	entry := &AgentLog{

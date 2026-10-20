@@ -106,11 +106,11 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
 			"purpose", params.Purpose, "turn", params.TurnID,
 			"provider", s.config.Provider, "model", s.config.Model,
-			"duration_ms", durationMs, "success", false)
+			"duration_ms", durationMs, "success", false, "error_code", code)
 		if params.OnTiming != nil {
 			params.OnTiming(llm.CallTiming{OperationID: params.ID, Purpose: params.Purpose,
 				TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
-				DurationMs: durationMs, Success: false})
+				DurationMs: durationMs, Success: false, ErrorCode: code})
 		}
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"cached_tokens", response.Usage.InputTokensDetails.CachedTokens,
 		"output_tokens", response.Usage.OutputTokens,
 		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
-		"success", response.Status != llm.StatusFailed)
+		"success", served(response), "error_code", errorCode(response))
 	usage := routing.Usage{
 		InputTokens:       response.Usage.InputTokens,
 		CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
@@ -190,7 +190,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
-			Success:     response.Status != llm.StatusFailed,
+			Success: served(response), ErrorCode: errorCode(response),
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
 			OutputTokens: usage.OutputTokens, CostMicros: s.config.Price.CostMicros(usage)})
 	}

@@ -507,6 +507,32 @@ class TestAccelerated:
         )
         await router.send(
             {
+                "type": "model_call",
+                "turn_id": "turn-1",
+                "purpose": "flow",
+                "provider": "stub",
+                "model": "slow",
+                "ttft_ms": 0,
+                "duration_ms": 400,
+                "success": False,
+                "error_code": "cancelled",
+            }
+        )
+        await router.send(
+            {
+                "type": "model_call",
+                "turn_id": "turn-1",
+                "purpose": "flow",
+                "provider": "stub",
+                "model": "broken",
+                "ttft_ms": 0,
+                "duration_ms": 30,
+                "success": False,
+                "error_code": "provider_error",
+            }
+        )
+        await router.send(
+            {
                 "type": "turn",
                 "turn_id": "turn-1",
                 "stt_latency_ms": 120,
@@ -529,7 +555,10 @@ class TestAccelerated:
         assert "[STT 120 ms]" in caplog.text
         assert "[cadence 350 ms]" in caplog.text
         assert "[decision 180 ms]" in caplog.text
-        assert "+-- flow stub/fast: TTFT 80 ms, full 110 ms" in caplog.text
+        assert "+-- flow stub/fast: TTFT 80 ms, full 110 ms\n" in caplog.text
+        assert "+-- flow stub/slow: TTFT 0 ms, full 400 ms CANCELLED" in caplog.text
+        assert "+-- flow stub/broken: TTFT 0 ms, full 30 ms FAILED" in caplog.text
+        assert "success=False error_code=cancelled" in caplog.text
         assert "[first speakable text 220 ms]" in caplog.text
         assert "+-- reply stub/answer: TTFT 90 ms, full 600 ms" in caplog.text
         assert "[TTS handoff 20 ms]" in caplog.text
