@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 )
 
 // Recorders is the set of batch voices a build can construct.
@@ -64,6 +65,32 @@ func DefaultRecorderRegistry() *Recorders {
 		// A format Cartesia cannot produce is the caller's to change, and says nothing
 		// about the model's health.
 		if errors.Is(err, cartesia.ErrFormat) {
+			return nil, routing.Refused(err)
+		}
+		return recorder, err
+	})
+
+	// Built from what the live Inworld voice reads: an overwrite's voice_id and
+	// delivery_mode, the voice the router hands over, the model, and the first language.
+	registry.Register(inworld.ProviderName, func(spec routing.Spec) (tts.Recorder, error) {
+		settings := inworldSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+		// Language is the recorder's fallback for a recording that names none:
+		// Recordings.Record names the first language itself, so only a direct caller
+		// leans on it (Cartesia's factory passes it the same way).
+		recorder, err := inworld.NewRecorder(inworld.RecorderOptions{
+			VoiceID:      voiceOr(settings.VoiceID, spec.Voice),
+			Model:        spec.Model,
+			Language:     firstLanguage(spec.LanguageHints),
+			DeliveryMode: settings.DeliveryMode,
+			Format:       spec.TTS.Format,
+			Logger:       spec.Logger,
+		})
+		// A format Inworld cannot produce is the caller's to change, and says nothing
+		// about the model's health.
+		if errors.Is(err, inworld.ErrFormat) {
 			return nil, routing.Refused(err)
 		}
 		return recorder, err
@@ -181,6 +208,12 @@ func (r *Recordings) Record(
 		Similarity:     number(recording.Options.Similarity),
 		Pronunciations: recording.Options.Pronunciations,
 	})
+
+	// A text Inworld takes no more of is the caller's to shorten, and says nothing about the
+	// model's health, which is every customer's (as routing.Select does for ErrRequest).
+	if errors.Is(err, inworld.ErrTextTooLong) {
+		return tts.Recorded{}, config, routing.Refused(err)
+	}
 
 	stat := routing.Stat{
 		Owner:     request.Owner(),

@@ -260,6 +260,37 @@ func (s *TTSRouterSuite) TestALiveCartesiaVoiceAskedForAFormatIsRefusedRatherTha
 	}
 }
 
+func (s *TTSRouterSuite) TestALiveInworldVoiceAskedForAFormatIsRefusedRatherThanStreamingRawAudio() {
+	// On b5a81650b both were refused before a voice was built, neither declaring format:
+	// "routing: inworld/inworld-tts-2 does not take format".
+	s.T().Setenv("INWORLD_API_KEY", "test-key")
+	for _, target := range []string{"inworld/inworld-tts-2", "inworld/inworld-tts-2-flash"} {
+		s.Run(target, func() {
+			_, err := s.newRouter().Start(s.ctx, Request{
+				CustomerID: "acme",
+				Target:     target,
+				Options:    options.TTS{Format: "pcm_16000"},
+			})
+
+			s.Require().ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
+			s.EqualError(err, target+": a format is taken only when recording, not by a live voice")
+		})
+	}
+}
+
+func (s *TTSRouterSuite) TestALiveShortcutAskedForAFormatIsStillRefusedByCartesia() {
+	// Probed on b5a81650b: both refused in these words.
+	s.T().Setenv("CARTESIA_API_KEY", "test-key")
+	s.T().Setenv("INWORLD_API_KEY", "test-key")
+	for _, target := range []string{"tts-fast", "tts-quality"} {
+		s.Run(target, func() {
+			_, err := s.newRouter().Start(s.ctx, Request{CustomerID: "acme", Target: target, Options: options.TTS{Format: "pcm_16000"}})
+
+			s.EqualError(err, "cartesia/sonic-preview: a format is taken only when recording, not by a live voice")
+		})
+	}
+}
+
 func (s *TTSRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
 	s.False(DefaultRegistry().Has("mock"),
 		"a deployment that did not ask for mocks should fail to build one rather than route to it")
