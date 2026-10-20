@@ -265,6 +265,11 @@ type Agent struct {
 	// kept and the other is cancelled. It only applies to a target with more than one candidate.
 	// 1.2s by default; 0 turns it off.
 	ReplyHedge time.Duration `koanf:"reply_hedge"`
+	// FlowHedge is ReplyHedge for the flow controller's decisions. A decision is a few tokens
+	// the caller is waiting in silence for, and one that has said nothing after this is
+	// stalled rather than thinking, so it is asked of another candidate far sooner than a
+	// reply is. 400ms by default; 0 turns it off.
+	FlowHedge time.Duration `koanf:"flow_hedge"`
 	// FlowJudge routes the flow controller to a decision model, such as
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
@@ -373,6 +378,7 @@ var variables = map[string]string{
 	"agent.unified_replies":     "ROUTER_UNIFIED_REPLIES",
 	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
+	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
@@ -410,7 +416,7 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond},
+		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes: Episodes{IdleAfter: time.Hour},
@@ -563,6 +569,9 @@ func (c Config) validate() error {
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
 	}
+	if c.Agent.FlowHedge < 0 {
+		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
+	}
 	return c.validateShard()
 }
 
@@ -668,6 +677,7 @@ func (c Config) export() error {
 		"agent.unified_replies":         fmt.Sprint(c.Agent.UnifiedReplies),
 		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
+		"agent.flow_hedge":              c.Agent.FlowHedge.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),

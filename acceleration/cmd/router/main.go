@@ -742,6 +742,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Models:     models,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
+			FlowHedge:  settings.Agent.FlowHedge,
 			Logger:     logger,
 		})
 		if err != nil {

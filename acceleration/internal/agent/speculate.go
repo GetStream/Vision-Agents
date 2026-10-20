@@ -77,7 +77,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		note = strings.Join(parts, "\n\n")
 	}
 	stale := a.takeSpeculationsLocked()
-	said := a.userTurnLocked(ready.Participant, unifiedText(ready.Text, unified))
+	said := a.userTurnLocked(ready.Participant, unifiedText(ready.Said(), unified))
 	instructions := a.instructions()
 	if said.Speaker != "" && len(a.speakers) == 1 {
 		// The second person's first turn: the reply is written as the turn will be answered,
@@ -180,7 +180,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 		spec.drop()
 		return false
 	}
-	a.keepTurnLocked(ready.Participant, ready.Text)
+	a.keepTurnLocked(ready.Participant, ready.Said())
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0
@@ -196,7 +196,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	adopted := time.Now()
 	a.turns.begin(ready.ID, ready.Participant, ready.ReadyAt, ready.RevisedAt, ready.STTLatencyMs)
 	a.turns.modelStarted(ready.ID, adopted)
-	a.emitter.Send(Responding{TurnID: ready.ID, Participant: ready.Participant, Prompt: ready.Text})
+	a.emitter.Send(Responding{TurnID: ready.ID, Participant: ready.Participant, Prompt: ready.Said()})
 	a.logger.Debug("answering with a reply started before the ruling",
 		"turn", ready.ID, "head_start_ms", adopted.Sub(spec.startedAt).Milliseconds())
 	spec.release <- true
