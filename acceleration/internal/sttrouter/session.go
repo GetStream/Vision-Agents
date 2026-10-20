@@ -1,9 +1,12 @@
 package sttrouter
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -122,8 +125,16 @@ func (s *Session) observe(event stt.Event) {
 	}
 }
 
+// transportDrop is a read or write that failed without the vendor saying why. A close
+// frame with a code, such as Muse's 1008 "Ingress below real-time", is the vendor's
+// refusal. 1006 is the code gorilla reports for a connection that ended with no close
+// frame at all (RFC 6455 section 7.4.1).
 func transportDrop(failure stt.Error) bool {
-	return failure.Context == "read" || failure.Context == "write"
+	if failure.Context != "read" && failure.Context != "write" {
+		return false
+	}
+	var closed *websocket.CloseError
+	return !errors.As(failure.Err, &closed) || closed.Code == websocket.CloseAbnormalClosure
 }
 
 func errorCode(failure stt.Error) string {

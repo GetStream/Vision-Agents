@@ -5,12 +5,19 @@ package sttrouter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -19,12 +26,17 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // refusal is what ElevenLabs sends an account that has not accepted its terms, partway
 // through a call (probed 2026-10-19).
 const refusal = "You have not accepted the terms required to use this feature."
+
+// ingressRefusal is the close frame Muse ends a session with when audio arrives slower
+// than real time (the same frame internal/stt/muse/socket_test.go sends).
+var ingressRefusal = &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "Ingress below real-time"}
 
 // SessionSuite covers what a session does once its provider fails, and what that failure
 // leaves in the stats and in the provider's health.
@@ -191,6 +203,60 @@ func (s *SessionSuite) TestAnErrorThatIsNotFatalIsRecordedWithItsMessage() {
 	s.Equal(refusal, rows[0].ErrorMessage)
 }
 
+func (s *SessionSuite) TestAVendorsCloseCodeMarksTheModelUnavailable() {
+	s.leftUnavailable(stt.Error{Err: ingressRefusal, Context: "read", Fatal: true})
+}
+
+func (s *SessionSuite) TestAVendorsCloseCodeWrappedByTheProviderMarksTheModelUnavailable() {
+	s.leftUnavailable(stt.Error{Err: fmt.Errorf("muse: read: %w", ingressRefusal), Context: "read", Fatal: true})
+}
+
+func (s *SessionSuite) TestASocketThatClosedWithoutAFrameLeavesTheModelAvailable() {
+	// What gorilla reports for a connection that ended with no close frame (conn.go,
+	// errUnexpectedEOF).
+	closed := &websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}
+	s.leftAvailable(stt.Error{Err: closed, Context: "read", Fatal: true})
+}
+
+func (s *SessionSuite) TestAConnectionResetLeavesTheModelAvailable() {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	s.leftAvailable(stt.Error{Err: reset, Context: "read", Fatal: true})
+}
+
+func (s *SessionSuite) TestAMuseSocketTheVendorClosedWithACodeMarksTheModelUnavailable() {
+	router := s.museRouter(func(conn *websocket.Conn) {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(ingressRefusal.Code, ingressRefusal.Text))
+	})
+	defer router.Close()
+	s.Require().NoError(s.failedSilently(router).Close())
+	s.awaitHealth(4)
+
+	health, err := s.live.Health(s.ctx, "stt", s.refusing, "live")
+	s.Require().NoError(err)
+	s.False(health.Available)
+	next := s.start(router)
+	s.Equal(s.working, next.Provider())
+	// Drained before the router closes: a next session on Muse would still be recording
+	// the turns the socket sends it.
+	s.Require().NoError(next.Close())
+	for range next.Events() {
+	}
+}
+
+func (s *SessionSuite) TestAMuseSocketThatDroppedLeavesTheModelAvailable() {
+	router := s.museRouter(func(conn *websocket.Conn) {
+		_ = conn.NetConn().Close()
+	})
+	defer router.Close()
+	s.Require().NoError(s.failedSilently(router).Close())
+	s.awaitHealth(4)
+
+	health, err := s.live.Health(s.ctx, "stt", s.refusing, "live")
+	s.Require().NoError(err)
+	s.True(health.Available)
+}
+
 func (s *SessionSuite) TestADroppedSocketLeavesTheModelAvailable() {
 	for _, context := range []string{"read", "write"} {
 		s.Run(context, func() {
@@ -253,6 +319,111 @@ func (s *SessionSuite) TestAFatalErrorFromAVoiceLeavesItAvailable() {
 	s.Require().NoError(err)
 	s.EqualValues(4, health.Requests)
 	s.True(health.Available)
+}
+
+// leftUnavailable serves three turns, fails with failure, and checks that the next
+// session goes to the working provider.
+func (s *SessionSuite) leftUnavailable(failure stt.Error) {
+	router := s.router(3, failure)
+	defer router.Close()
+	s.Require().NoError(s.failed(router).Close())
+	s.awaitHealth(4)
+
+	health, err := s.live.Health(s.ctx, "stt", s.refusing, "live")
+	s.Require().NoError(err)
+	s.False(health.Available)
+	next := s.start(router)
+	defer next.Close()
+	s.Equal(s.working, next.Provider())
+}
+
+// leftAvailable serves three turns, fails with failure, and checks that the next session
+// still goes to the same provider.
+func (s *SessionSuite) leftAvailable(failure stt.Error) {
+	router := s.router(3, failure)
+	defer router.Close()
+	s.Require().NoError(s.failed(router).Close())
+	s.awaitHealth(4)
+
+	health, err := s.live.Health(s.ctx, "stt", s.refusing, "live")
+	s.Require().NoError(err)
+	s.True(health.Available)
+	next := s.start(router)
+	defer next.Close()
+	s.Equal(s.refusing, next.Provider())
+}
+
+// museRouter serves the real Muse client against a socket that takes its setup frame,
+// settles three turns and then hangs up the way hangUp does, and one provider that works.
+// The three turns keep one failure under the error rate, so only a fatal stat can mark the
+// model unavailable.
+func (s *SessionSuite) museRouter(hangUp func(*websocket.Conn)) *Router {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		for turn := 1; turn <= 3; turn++ {
+			for _, message := range []map[string]any{
+				{"type": "speechStart", "turnId": turn},
+				{"type": "speechComplete", "turnId": turn, "transcript": "hello"},
+			} {
+				if err := conn.WriteJSON(message); err != nil {
+					return
+				}
+			}
+		}
+		hangUp(conn)
+	}))
+	s.T().Cleanup(server.Close)
+
+	registry := NewRegistry()
+	registry.Register(s.refusing, func(routing.Spec) (stt.STT, error) {
+		return muse.New(muse.Options{
+			APIKey: "test-key",
+			URL:    "ws://" + strings.TrimPrefix(server.URL, "http://"),
+		})
+	})
+	registry.Register(s.working, func(routing.Spec) (stt.STT, error) {
+		return &quietSTT{emitter: stt.NewEmitter(64)}, nil
+	})
+	router, err := New(Options{
+		Config: routing.ModalityConfig{
+			Providers: []routing.ProviderConfig{
+				{Provider: s.refusing, Model: "live", Languages: []string{"en"}, Realtime: true},
+				{Provider: s.working, Model: "live", Languages: []string{"en"}, Realtime: true},
+			},
+		},
+		Registry: registry,
+		Store:    s.store,
+		Live:     s.live,
+	})
+	s.Require().NoError(err)
+	return router
+}
+
+// failedSilently starts a session on the refusing provider and waits, sending nothing,
+// until it fails.
+func (s *SessionSuite) failedSilently(router *Router) *Session {
+	session := s.start(router)
+	s.Require().Equal(s.refusing, session.Provider())
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-session.Events():
+			if _, failed := event.(stt.Error); failed {
+				return session
+			}
+		case <-deadline:
+			s.FailNow("the provider never reported the socket closing")
+			return nil
+		}
+	}
 }
 
 // awaitHealth waits for the refusing provider's stats to reach its health, which the
