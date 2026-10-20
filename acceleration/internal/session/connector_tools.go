@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -278,7 +279,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	switch connection.Status {
 	case store.ConnectionConnected:
 	case store.ConnectionNeedsReauthorization:
-		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+		if none.SavedAgain(registry.Schemes, connection.AuthScheme) {
 			return unavailableCredentialRejected, nil
 		}
 		return unavailableReauthorize, nil
@@ -303,7 +304,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		return "", err
 	}
 	if broken {
-		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+		if none.SavedAgain(registry.Schemes, connection.AuthScheme) {
 			return unavailableCredentialRejected, nil
 		}
 		return unavailableReauthorize, nil

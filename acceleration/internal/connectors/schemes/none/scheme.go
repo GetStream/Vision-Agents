@@ -24,6 +24,14 @@ import (
 // (internal/connectors/runtime.go:15 on codex/connector-support at cf62af0d).
 const Name = "none"
 
+// SavedAgain reports whether a connection of the scheme schemes names name is moved by saving
+// its credentials again (PUT /v1/agents/connections/{id}/credentials), never by a consent: a
+// core.Static scheme, or none, which refuses a consent (authorizations begin) and is not
+// Static, since a 4xx on its validate says nothing of a credential it does not have.
+func SavedAgain(schemes map[string]core.Scheme, name string) bool {
+	return name == Name || core.IsStatic(schemes, name)
+}
+
 // payloadVersion is the shape of the empty payload. A new shape is a new version, so a sealed
 // blob is always read as what it was written as.
 const payloadVersion = 1
