@@ -50,6 +50,8 @@ public final class VoiceSession {
     /// True when this device called `start`, false when it attached to a session something
     /// else started. Leaving closes only a session this device owns.
     private let createdLocally: Bool
+    /// What the camera showed lately, while it is on, for the agent to look at.
+    private let frames = CameraFrames()
 
     /// Starts an agent on the new session's own call, `agent:<session id>`, and prepares to
     /// join it.
@@ -114,6 +116,7 @@ public final class VoiceSession {
                 callSettings: CallSettings(videoOn: camera, cameraPosition: .back))
             if camera {
                 try await call.camera.enable()
+                look(through: call)
             } else {
                 try await call.camera.disable()
             }
@@ -142,6 +145,9 @@ public final class VoiceSession {
     }
 
     /// Turns this device's camera on or off. Re-enabling keeps the back lens.
+    ///
+    /// While it is on, the agent can look through it: its vision skill asks for what the
+    /// camera showed when a question was put, and `session` answers with those frames.
     public func setCameraEnabled(_ enabled: Bool) async {
         guard let call else { return }
         do {
@@ -150,8 +156,10 @@ public final class VoiceSession {
                     try await call.camera.flip()
                 }
                 try await call.camera.enable()
+                look(through: call)
             } else {
                 try await call.camera.disable()
+                stopLooking()
             }
             isCameraEnabled = enabled
         } catch {
@@ -170,7 +178,20 @@ public final class VoiceSession {
         await leaveCall(closeSession: true)
     }
 
+    /// Samples the call's camera for the agent, and lets `session` answer with what it showed.
+    private func look(through call: Call) {
+        call.setVideoFilter(frames.filter)
+        session.cameraFrames = frames
+    }
+
+    private func stopLooking() {
+        call?.setVideoFilter(nil)
+        frames.clear()
+        session.cameraFrames = nil
+    }
+
     private func leaveCall(closeSession: Bool) async {
+        stopLooking()
         call?.leave()
         call = nil
         isCameraEnabled = false

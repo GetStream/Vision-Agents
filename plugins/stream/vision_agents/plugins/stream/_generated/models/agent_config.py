@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.agent_mode import AgentMode
+from ..models.agent_role import AgentRole
 from ..models.harness import Harness
 from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
@@ -68,6 +69,10 @@ class AgentConfig:
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
         plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
+        role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
+            app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a
+            second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an
+            update or a sync, the stored role stays. Omit it for an ordinary agent.
         sandbox (Sandbox | Unset): Where the agent may run code it writes. A text agent runs it itself; a voice agent
             hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works
             everything out in its head.
@@ -114,6 +119,7 @@ class AgentConfig:
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     scheduling: AgentScheduling | Unset = UNSET
@@ -213,6 +219,10 @@ class AgentConfig:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
 
+        role: str | Unset = UNSET
+        if not isinstance(self.role, Unset):
+            role = self.role.value
+
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
@@ -300,6 +310,8 @@ class AgentConfig:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if role is not UNSET:
+            field_dict["role"] = role
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -461,6 +473,13 @@ class AgentConfig:
 
                 plugins.append(plugins_item)
 
+        _role = d.pop("role", UNSET)
+        role: AgentRole | Unset
+        if isinstance(_role, Unset):
+            role = UNSET
+        else:
+            role = AgentRole(_role)
+
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -542,6 +561,7 @@ class AgentConfig:
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,
             plugins=plugins,
+            role=role,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             scheduling=scheduling,

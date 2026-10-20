@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -52,6 +53,18 @@ func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigs
 	// and a caller looking a name up is asking whether it is there.
 	if named := value(request.Name.ptr()); named != "" {
 		found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return &listAgentConfigsResponse{Body: []AgentConfig{}}, nil
+		}
+		return &listAgentConfigsResponse{Body: []AgentConfig{agentConfigOf(found)}}, nil
+	}
+
+	// A role is held by one live config at most, so it answers as a name does.
+	if role := request.Role.ptr(); role != nil {
+		found, exists, err := s.store.AgentConfigByRole(ctx, customerID, string(*role))
 		if err != nil {
 			return nil, err
 		}
@@ -119,6 +132,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
@@ -208,6 +224,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.EpisodeCards == nil {
 		config.EpisodeCards = existing.EpisodeCards
 	}
+	// Kept for the same reason: a client that does not know the role must not take it away
+	// from the agent the chat worker looks for by it.
+	if request.Body.Role == nil {
+		config.Role = existing.Role
+	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
@@ -226,6 +247,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -434,6 +458,14 @@ var (
 	}
 )
 
+// errAgentRoleTaken is a save that would give a second live agent config of the customer a
+// role another one holds. The one there is, agent_moderator, is what the chat worker finds the
+// app's moderator by, so two would leave it guessing.
+var errAgentRoleTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeRoleTaken,
+	Message: "another agent already has this role",
+}
+
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
 // channel connection, such as a Slack bot's, as fixed: one agent answers each message that
 // comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
@@ -469,12 +501,31 @@ func storeFailure(err error, taken APIError) error {
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		return taken
+	case errors.Is(err, store.ErrRoleTaken):
+		return errAgentRoleTaken
 	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
 		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
 		errors.Is(err, store.ErrNoConnectorConnection), errors.Is(err, store.ErrNoConnectorDefinition):
 		return invalidRequest(err.Error())
 	}
 	return err
+}
+
+// liveSTTComplaint refuses a voice config whose transcriber only a recording can use,
+// which a session would otherwise refuse only as it starts (sttrouter.Router.Live). A
+// config that speaks through an STS model, or is written to, opens no transcriber. was is
+// the stt the config held before this save: one the save leaves as it was is not refused,
+// so a config stored before the check stays editable, and its sessions are still refused
+// as they start.
+func (s *Server) liveSTTComplaint(config store.AgentConfig, was string) (string, bool) {
+	if s.streams == nil || s.streams.STT == nil || config.STT == was ||
+		config.STS != "" || config.Mode == store.AgentModeText {
+		return "", true
+	}
+	if err := s.streams.STT.Live(sttrouter.Request{Target: config.STT}); err != nil {
+		return err.Error(), false
+	}
+	return "", true
 }
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are
@@ -1458,6 +1509,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
+		Role:               string(value(request.Role)),
 		Mode:               mode,
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
@@ -1550,6 +1602,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		Mode:      AgentMode(config.Mode),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
+	}
+	if config.Role != "" {
+		role := AgentRole(config.Role)
+		rendered.Role = &role
 	}
 	rendered.Stt = optional(config.STT)
 	rendered.Tts = optional(config.TTS)
@@ -1795,7 +1851,8 @@ func (s *Server) registerConfigs(api huma.API) {
 }
 
 type listAgentConfigsRequest struct {
-	Name optionalParam[string] `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+	Name optionalParam[string]    `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+	Role optionalParam[AgentRole] `query:"role" doc:"Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set."`
 }
 
 type listAgentConfigsResponse struct {
@@ -1844,6 +1901,7 @@ type AgentConfigRequest struct {
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
@@ -1880,6 +1938,7 @@ type AgentConfig struct {
 	Llm                *string                  `json:"llm,omitempty"`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`

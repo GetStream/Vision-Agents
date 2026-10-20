@@ -29,6 +29,7 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .agent_role import AgentRole
 from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
@@ -301,7 +302,6 @@ from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .provider_price import ProviderPrice
-from .quota import Quota
 from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
@@ -499,6 +499,7 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AgentRole",
     "AgentScheduling",
     "AgentStats",
     "AgentTools",
@@ -765,7 +766,6 @@ __all__ = (
     "ProviderBenchmark",
     "ProviderHealth",
     "ProviderPrice",
-    "Quota",
     "RCSProfile",
     "RecordingSource",
     "RecordingStatus",

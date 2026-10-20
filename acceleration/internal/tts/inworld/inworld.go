@@ -94,6 +94,8 @@ type createConfig struct {
 type audioConfig struct {
 	AudioEncoding   string `json:"audioEncoding"`
 	SampleRateHertz int    `json:"sampleRateHertz"`
+	// BitRate is for MP3 alone, which only a recording asks for.
+	BitRate int `json:"bitRate,omitempty"`
 }
 
 type sendText struct {

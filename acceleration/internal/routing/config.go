@@ -487,6 +487,55 @@ func (c ModalityConfig) recordedAdvice() string {
 	return "send a recording to " + strings.Join(recorded, " or ") + ", or name a batch model"
 }
 
+// Live refuses a live session pinned to a batch-only model, or to a shortcut every
+// candidate of which is one, which the vendor's streaming endpoint would turn away only
+// once dialled. It names the live models and shortcuts to use instead. A vendor, and a
+// shortcut with a live candidate, pass: routing keeps them to their live models.
+func (c ModalityConfig) Live(target string) error {
+	if alias, ok := c.Aliases[target]; ok {
+		if !c.batchOnly(alias) {
+			return nil
+		}
+		return Refused(stack.Wrap(fmt.Errorf("routing: %s is a shortcut for recordings, not live calls; for a live call %s",
+			target, c.liveAdvice(""))))
+	}
+	provider, ok := c.Provider(target)
+	if !ok || provider.Realtime {
+		return nil
+	}
+	return Refused(stack.Wrap(fmt.Errorf("routing: %s is a batch model for recordings, not live calls; for a live call %s",
+		target, c.liveAdvice(provider.Provider))))
+}
+
+// batchOnly reports whether a shortcut has candidates and none of them is live. One with
+// no candidates at all is left to fail as it always has.
+func (c ModalityConfig) batchOnly(alias Alias) bool {
+	return slices.ContainsFunc(c.Providers, alias.matches) &&
+		!slices.ContainsFunc(c.Providers, func(provider ProviderConfig) bool {
+			return provider.Realtime && alias.matches(provider)
+		})
+}
+
+// liveAdvice tells a caller whose live session was refused where one goes: the vendor's
+// live models, then the live shortcuts offered.
+func (c ModalityConfig) liveAdvice(vendor string) string {
+	var live []string
+	for _, candidate := range c.Providers {
+		if candidate.Provider == vendor && candidate.Realtime {
+			live = append(live, candidate.Name())
+		}
+	}
+	for _, name := range c.Offered() {
+		if c.Aliases[name].RequireRealtime {
+			live = append(live, name)
+		}
+	}
+	if len(live) == 0 {
+		return "name a live model"
+	}
+	return "name " + strings.Join(live, " or ")
+}
+
 // Meets reports whether any model here could serve a request asking for that data policy.
 // A policy nothing meets is worth refusing when it is written down, since every request
 // made under it afterwards would be refused anyway.

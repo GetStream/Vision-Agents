@@ -1150,13 +1150,19 @@ func (s *socket) failed(err error) {
 // A connection dropped without a close frame reaches the caller as 1006, and one closed on
 // audio the router never read is reset, which can throw away the frames the caller had not
 // read yet: the refusal it was waiting for. So the caller is told how the socket ended, 1000
-// or 1011 with the failure as the reason, and what it sends meanwhile is read and dropped.
-// 1011 rather than 1008 because what ends a socket here is as often a provider as a caller
-// (RFC 6455 section 7.4.1). A caller that closed first has had its close answered already.
+// or a failure code with the failure as the reason, and what it sends meanwhile is read and
+// dropped. A request the router refused (routing.ErrRequest) is the caller's to change, so
+// it ends with 1008, policy violation; any other failure, as often a provider's as a
+// caller's, with 1011, an unexpected condition (RFC 6455 section 7.4.1,
+// https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1). A caller that closed first has
+// had its close answered already.
 func (s *socket) end(failure error) {
 	code, reason := websocket.CloseNormalClosure, ""
 	if failure != nil {
 		code, reason = websocket.CloseInternalServerErr, closeReason(failure.Error())
+		if errors.Is(failure, routing.ErrRequest) {
+			code = websocket.ClosePolicyViolation
+		}
 	}
 	deadline := time.Now().Add(closeWait)
 	if err := s.connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), deadline); err != nil {

@@ -328,12 +328,22 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// opened is the line the agent opened the conversation with before anybody spoke, told
+	// to the model in its instructions rather than kept as a turn (Say).
+	opened string
 	// lateResults are lateResult messages, and lines said while a call ran, held back while
 	// the history ends in a call not yet answered (callsOpen), in the order they came.
 	lateResults []llm.Message
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
+	// departed are the participants who have left and not come back. Their audio and
+	// their departure arrive on separate channels, so a frame can come after the leave,
+	// and a session opened for it would stay open until the agent closes. Each holds when
+	// the first such frame was dropped, zero until one is (see departedGrace).
+	departed map[string]time.Time
+	// now is the clock departedGrace is measured on.
+	now func() time.Time
 	// learnedTerms are names the caller said and the agent has said back, which the
 	// transcriber is told to expect for the rest of the call (keyterms.go).
 	learnedTerms []string
@@ -344,10 +354,11 @@ type Agent struct {
 	// that cannot tell one voice from another, which leaves it saying nothing rather
 	// than guessing.
 	voices map[string]string
-	// speakers are the people, by personOf, who have had a turn answered. Once there are
-	// two, every new turn names who said it, because the model cannot tell them apart
-	// otherwise. Turns typed with RespondTo are the caller's and are never counted.
-	speakers map[string]struct{}
+	// speakers are the people, by personOf, who have had a turn answered, each with the
+	// label their words go under. Once there are two, every new turn names who said it,
+	// because the model cannot tell them apart otherwise. Turns typed with RespondTo are
+	// the caller's and are never counted.
+	speakers map[string]nameTag
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -589,8 +600,10 @@ func New(options Options) (*Agent, error) {
 		emitter:          emitter,
 		prompt:           options.Instructions,
 		listeners:        map[string]*sttrouter.Session{},
+		departed:         map[string]time.Time{},
+		now:              time.Now,
 		voices:           map[string]string{},
-		speakers:         map[string]struct{}{},
+		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
@@ -895,7 +908,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		a.mu.Unlock()
 		return "", errors.New("agent: not joined")
 	}
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: text})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
@@ -971,7 +984,7 @@ func (a *Agent) refuseWritten(turnID string, verdict guardrail.Verdict) string {
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
 // agent already knows what it wants to say, so a model would only add latency and cost.
 func (a *Agent) Say(ctx context.Context, text string) error {
-	turnID := fmt.Sprintf("say-%d", time.Now().UnixNano())
+	turnID := fmt.Sprintf("%s%d", sayPrefix, time.Now().UnixNano())
 
 	// A conversation in writing has no voice to say it with, so it is reported as said
 	// instead: what a caller would have heard is what a reader reads.
@@ -992,9 +1005,61 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	}
 	a.speakingTurn = turnID
 	a.saying = text
+	// The model reads what the agent said from the history, so a line said without it has
+	// to be kept too, or the caller's answer to a greeting's question reaches it with no
+	// question. A line that opens the conversation is told to it instead: chat templates
+	// that need a user turn first refuse a conversation that opens on the assistant's.
+	said := llm.Message{Role: llm.Assistant, Content: text}
+	opening := len(a.history) == 0
+	switch {
+	case opening:
+		a.opened = text
+	case callsOpen(a.history):
+		a.lateResults = append(a.lateResults, said)
+	default:
+		a.history = append(a.history, said)
+	}
 	a.mu.Unlock()
 
-	return a.speakWhole(turnID, text)
+	// Announced like a reply, so the line is in the session's responses and its transcript.
+	// Before speaking, because the transcript stores a turn's text when its voice finishes and
+	// only if it was told the text first, and a voice may finish before Synthesize returns.
+	a.emitter.Send(Responding{TurnID: turnID})
+	a.emitter.Send(Responded{TurnID: turnID, Text: text})
+	if err := a.speakWhole(turnID, text); err != nil {
+		// Never heard, so the model must not be told it was said, and the transcript must not
+		// keep it as said.
+		a.mu.Lock()
+		a.forgetSaidLocked(opening, said)
+		a.mu.Unlock()
+		a.emitter.Send(Interrupted{TurnID: turnID})
+		return err
+	}
+	return nil
+}
+
+// sayPrefix starts the turn id of a line said as written, without the model.
+const sayPrefix = "say-"
+
+// Scripted reports whether a turn is a line the agent said as written rather than a reply
+// the model wrote, such as the greeting.
+func Scripted(turnID string) bool { return strings.HasPrefix(turnID, sayPrefix) }
+
+// forgetSaidLocked takes back a line Say kept for the model, when the voice never said it.
+// The caller holds a.mu.
+func (a *Agent) forgetSaidLocked(opening bool, said llm.Message) {
+	if opening {
+		if a.opened == said.Content {
+			a.opened = ""
+		}
+		return
+	}
+	for _, kept := range []*[]llm.Message{&a.lateResults, &a.history} {
+		if last := len(*kept) - 1; last >= 0 && (*kept)[last].Role == said.Role && (*kept)[last].Content == said.Content {
+			*kept = (*kept)[:last]
+			return
+		}
+	}
 }
 
 // Greet opens the call with a greeting. Unvaried, it is said word for word without asking
@@ -1177,6 +1242,9 @@ func (a *Agent) consumeEdge() {
 			continue
 		}
 		listener, err := a.listen(inbound.Participant)
+		if errors.Is(err, errDeparted) {
+			continue
+		}
 		if err != nil {
 			a.fail(err, "stt")
 			continue
@@ -1193,6 +1261,9 @@ func (a *Agent) consumeRoster(roster Roster) {
 
 	for attendance := range roster.Attendance() {
 		if attendance.Joined {
+			a.mu.Lock()
+			delete(a.departed, attendance.Participant.ID)
+			a.mu.Unlock()
 			a.logger.Debug("a participant joined",
 				"participant", attendance.Participant.UserID)
 			a.emitter.Send(ParticipantJoined{
@@ -1203,6 +1274,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 		}
 		a.unbind(attendance.Participant)
 		a.mu.Lock()
+		a.departed[attendance.Participant.ID] = time.Time{}
 		listener := a.listeners[attendance.Participant.ID]
 		a.mu.Unlock()
 		if listener != nil {
@@ -1224,12 +1296,54 @@ func (a *Agent) consumeRoster(roster Roster) {
 	}
 }
 
+// errDeparted is listen refusing a participant who has left the call.
+var errDeparted = errors.New("agent: participant left")
+
+// departedGrace is how long audio from a participant who left is dropped, counted from the
+// first frame dropped rather than from the leave, so a consumer held up opening someone
+// else's session (a dial, up to a 15 s handshake: stt/muse/muse.go:246) does not use it up.
+// The frames that trail a leave were queued before it: at most audioBuffer (10 chunks of
+// 20 ms, streamedge/streamedge.go:41-43) on the channel, one held in each track's Send
+// (streamedge/streamedge.go:429) and what the track buffered behind it. consumeEdge hands
+// them over back to back, since a dropped frame opens nothing, so they normally come within
+// milliseconds of the first. A stall after the first dropped frame (another participant's
+// first dial, or a slow ProcessAudio) can outlast the grace: a trailing frame after it
+// reopens a session, which then lives until the agent closes, as on base. A second covers
+// the normal case with room to spare, and is all a
+// participant still in the call loses when the SFU reports a leave that did not happen
+// (a migration keeps the session id: getstream-go-webrtc call.go:558-563).
+const departedGrace = time.Second
+
+// dropsDeparted reports whether listen must drop a participant's audio because they left, and
+// forgets the leave once departedGrace has passed: audio still coming then is somebody
+// who is still in the call. Called with a.mu held.
+func (a *Agent) dropsDeparted(participantID string) bool {
+	dropped, gone := a.departed[participantID]
+	if !gone {
+		return false
+	}
+	now := a.now()
+	if dropped.IsZero() {
+		a.departed[participantID] = now
+		return true
+	}
+	if now.Sub(dropped) < departedGrace {
+		return true
+	}
+	delete(a.departed, participantID)
+	return false
+}
+
 // listen returns a participant's transcription session, opening one on first hearing them.
 func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
 		return nil, errors.New("agent: closed")
+	}
+	if a.dropsDeparted(participant.ID) {
+		a.mu.Unlock()
+		return nil, errDeparted
 	}
 	if existing, ok := a.listeners[participant.ID]; ok {
 		a.mu.Unlock()
@@ -1248,6 +1362,17 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 		a.mu.Unlock()
 		_ = session.Close()
 		return nil, errors.New("agent: closed")
+	}
+	// The participant may have left while the session was opening. Closing waits on the
+	// final transcript, so it must not hold up everyone else's audio.
+	if _, gone := a.departed[participant.ID]; gone {
+		a.running.Add(1)
+		a.mu.Unlock()
+		go func() {
+			defer a.running.Done()
+			a.closeListener(session)
+		}()
+		return nil, errDeparted
 	}
 	a.listeners[participant.ID] = session
 	a.mu.Unlock()
@@ -1496,6 +1621,10 @@ func (a *Agent) ask(ready candidate) {
 		reply = lastAssistantSaid(history)
 	}
 	anotherVoice := a.anotherVoiceLocked(ready)
+	participant := ready.Participant.Name
+	if participant == "" {
+		participant = a.speakerLocked(ready.Participant).label
+	}
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the
@@ -1509,8 +1638,8 @@ func (a *Agent) ask(ready candidate) {
 		ID:           ready.ID,
 		Instructions: instructions,
 		History:      history,
-		Participant:  participantName(ready.Participant),
-		Text:         ready.Text,
+		Participant:  participant,
+		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
 		Unfinished:   ready.Unfinished,
@@ -1570,16 +1699,6 @@ type heard struct {
 	typed bool
 }
 
-func participantName(participant stt.Participant) string {
-	if participant.Name != "" {
-		return participant.Name
-	}
-	if participant.UserID != "" {
-		return participant.UserID
-	}
-	return participant.ID
-}
-
 func lastAssistantSaid(history []llm.Message) string {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role == llm.Assistant && strings.TrimSpace(history[i].Content) != "" {
@@ -1633,7 +1752,7 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
 func (a *Agent) respondCandidate(ready candidate, note string) error {
-	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
+	return a.respondTurn(ready.ID, ready.Participant, ready.Said(), heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
@@ -1784,17 +1903,65 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	turn := llm.Message{Role: llm.User, Content: text}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
-		turn.Speaker = speakerLabel(participant)
+		turn.Speaker = a.speakerLocked(participant).label
 	}
 	return turn
 }
 
 // keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+// What tools showed the model before it stand as a note from here on (toolPicturesSeen).
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
-	a.history = append(a.history, a.userTurnLocked(participant, text))
+	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
 	if participant.ID != typedCaller {
-		a.speakers[personOf(participant)] = struct{}{}
+		a.speakers[personOf(participant)] = a.speakerLocked(participant)
 	}
+}
+
+// nameTag is how a person counted in speakers is labelled.
+type nameTag struct {
+	// label goes ahead of their words.
+	label string
+	// fallback is the label they were given for having no display name at their first
+	// answered turn. Empty for a person who had one.
+	fallback string
+}
+
+// speakerLocked is the label a person's words go under. It is fixed by their first
+// answered turn, unless that turn had no display name: such people go under "Speaker 1",
+// "Speaker 2" and on, in the order they first spoke, until their name is known and
+// replaces it. A person whose name another already goes under is numbered, "Alex (2)", in
+// the order they first spoke, so the model tells them apart without being told their user
+// or participant ID, which are the app's and mean nothing to it.
+func (a *Agent) speakerLocked(participant stt.Participant) nameTag {
+	person := personOf(participant)
+	name := speakerLabel(participant)
+	current, ok := a.speakers[person]
+	if ok && (name == "" || current.label != current.fallback) {
+		return current
+	}
+	var taken []string
+	fallbacks := 0
+	for other, otherSpeaker := range a.speakers {
+		if other != person {
+			taken = append(taken, otherSpeaker.label)
+		}
+		if otherSpeaker.fallback != "" {
+			fallbacks++
+		}
+	}
+	nameless := name == ""
+	if nameless {
+		// "Speaker N" is the wording Kanat chose on AI-1458 (2026-10-19).
+		name = fmt.Sprintf("Speaker %d", fallbacks+1)
+	}
+	label := name
+	for n := 2; slices.Contains(taken, label); n++ {
+		label = fmt.Sprintf("%s (%d)", name, n)
+	}
+	if nameless {
+		return nameTag{label: label, fallback: label}
+	}
+	return nameTag{label: label, fallback: current.fallback}
 }
 
 // personOf is who a participant is. A person who rejoins gets a new ID but keeps their
@@ -1806,14 +1973,11 @@ func personOf(participant stt.Participant) string {
 	return participant.ID
 }
 
-// speakerLabel is a participant's name as it goes ahead of their words. A line break or a
-// colon in a display name could pass for the start of another person's line, so they go.
+// speakerLabel is a participant's display name as it goes ahead of their words, empty
+// when they have none. A line break or a colon in a display name could pass for the start
+// of another person's line, so they go.
 func speakerLabel(participant stt.Participant) string {
-	label := strings.Join(strings.Fields(strings.ReplaceAll(participantName(participant), ":", "")), " ")
-	if label == "" {
-		return participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID})
-	}
-	return label
+	return strings.Join(strings.Fields(strings.ReplaceAll(participant.Name, ":", "")), " ")
 }
 
 func (a *Agent) replayLocked() []llm.Message {
@@ -1960,6 +2124,9 @@ func (a *Agent) instructions() string {
 	}
 	if a.prompt != "" {
 		parts = append(parts, a.prompt)
+	}
+	if a.opened != "" {
+		parts = append(parts, fmt.Sprintf("You opened the call by saying: %q", a.opened))
 	}
 	// How to write for the voice comes last, because it is about the delivery rather than
 	// about who the agent is.
@@ -3809,6 +3976,24 @@ func turnOf(synthesisID string) string {
 		return synthesisID[:index]
 	}
 	return synthesisID
+}
+
+// Continue picks up the conversation another agent held: what was said and who said it,
+// so the people already heard keep their labels when a session switches between voice and
+// writing.
+func (a *Agent) Continue(previous *Agent) {
+	previous.mu.Lock()
+	history := append([]llm.Message(nil), previous.history...)
+	// A copy: the old agent can still keep a turn between this and its Close, and would
+	// write to a map the new agent reads.
+	speakers := maps.Clone(previous.speakers)
+	opened := previous.opened
+	previous.mu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = history
+	a.speakers = speakers
+	a.opened = opened
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.

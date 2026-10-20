@@ -13,6 +13,7 @@ import (
 // left out keeps what is stored.
 type AgentConfigPatch struct {
 	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Stt                *string                  `json:"stt,omitempty"`
 	Tts                *string                  `json:"tts,omitempty"`
@@ -72,6 +73,14 @@ func (Harness) Schema(registry huma.Registry) *huma.Schema {
 		"the agent, never on a session. Omit it for the default, the only one there is.", string(Default))
 }
 
+func (AgentRole) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "AgentRole", "What the agent is for in the app, beyond answering people. "+
+		"agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app "+
+		"holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share "+
+		"the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit "+
+		"it for an ordinary agent.", string(AgentRoleAgentModerator))
+}
+
 func (DispatchSetting) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "DispatchSetting", "Whether this kind of work is left to the "+
 		"customer's own dispatch worker.", string(Enabled), string(Disabled))
@@ -118,6 +127,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	existing := agentConfigOf(config)
 	before := config.MCPServers
+	heard := config.STT
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
@@ -141,6 +151,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 
 	config.Name = override(config.Name, patch.Name)
+	if patch.Role != nil {
+		config.Role = string(*patch.Role)
+	}
 	if patch.Mode != nil {
 		config.Mode, _ = modeOf(patch.Mode)
 	}
@@ -227,6 +240,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, heard); !ok {
 		return nil, invalidRequest(message)
 	}
 

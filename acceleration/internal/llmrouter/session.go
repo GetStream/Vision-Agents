@@ -39,11 +39,13 @@ type Session struct {
 	children map[*Session]struct{}
 	fallback func(context.Context, llm.ResponseParams) (*llm.Stream, error)
 	// hedge opens a session on another candidate of the same target, and hedgeAfter is how
-	// long a reply may say nothing before it is asked of that one as well. Both are unset on
-	// a fallback child, which is only ever asked for a response its parent has chosen it for.
-	hedge      func(context.Context) (*Session, error)
-	hedgeAfter time.Duration
-	provider   Provider
+	// long a reply may say nothing before it is asked of that one as well, flowHedgeAfter the
+	// same for a flow decision. All are unset on a fallback child, which is only ever asked for
+	// a response its parent has chosen it for.
+	hedge          func(context.Context) (*Session, error)
+	hedgeAfter     time.Duration
+	flowHedgeAfter time.Duration
+	provider       Provider
 	// config is the routing identity of the provider. Stats and health are keyed by it,
 	// so a provider registered under a different name still aggregates coherently.
 	config   routing.ProviderConfig
@@ -179,11 +181,18 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"output_tokens", response.Usage.OutputTokens,
 		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
 		"success", response.Status != llm.StatusFailed)
+	usage := routing.Usage{
+		InputTokens:       response.Usage.InputTokens,
+		CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
+		OutputTokens:      response.Usage.OutputTokens,
+	}
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
-			Success: response.Status != llm.StatusFailed})
+			Success:     response.Status != llm.StatusFailed,
+			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
+			OutputTokens: usage.OutputTokens, CostMicros: s.config.Price.CostMicros(usage)})
 	}
 
 	// The debit is taken here rather than where the response was asked for, because what a
@@ -204,11 +213,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		Purpose:     params.Purpose,
 		TurnID:      params.TurnID,
 		DurationMs:  durationMs,
-		Usage: routing.Usage{
-			InputTokens:       response.Usage.InputTokens,
-			CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
-			OutputTokens:      response.Usage.OutputTokens,
-		},
+		Usage:       usage,
 		InputParts: store.InputParts{
 			InstructionTokens:    composed.Instructions,
 			MessageTokens:        composed.Messages,

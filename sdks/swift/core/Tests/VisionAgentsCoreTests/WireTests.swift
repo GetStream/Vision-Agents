@@ -156,6 +156,17 @@ import Testing
             #"{"error":"","output":"ok","request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
         ),
         (
+            Command.toolResult(
+                id: "c1", output: "the kitchen", error: nil,
+                images: [ImageSource(url: "data:image/png;base64,iVBORw0KGgo=", detail: .low)]),
+            #"{"error":"","output":[{"text":"the kitchen","type":"text"},{"image_url":{"detail":"low","url":"data:image\/png;base64,iVBORw0KGgo="},"type":"image_url"}],"tool_call_id":"c1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolResult(
+                id: "c1", output: nil, error: nil, images: [ImageSource(url: "https://example.com/a.png")]),
+            #"{"error":"","output":[{"image_url":{"url":"https:\/\/example.com\/a.png"},"type":"image_url"}],"tool_call_id":"c1","type":"tool_result"}"#
+        ),
+        (
             Command.toolApproval(id: "c1", allowed: true, requestID: "m1", turnID: "t1"),
             #"{"allowed":true,"request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_approval"}"#
         ),

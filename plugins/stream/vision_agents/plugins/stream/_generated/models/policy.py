@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from ..models.budget import Budget
     from ..models.data_policy import DataPolicy
     from ..models.policy_tags import PolicyTags
-    from ..models.quota import Quota
 
 
 T = TypeVar("T", bound="Policy")
@@ -39,10 +38,6 @@ class Policy:
                 - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to
                 time to first token. The end of the response is held until the verdict, and a response whose input reads as an
                 injection fails with prompt_injection before its tool calls can be acted on.
-            quota (Quota | Unset): What one end user of the app may spend in a UTC day, counted per user and per address.
-                Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the
-                user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with
-                Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
             require_own_stream_app (bool | Unset): Keep the app out of the router's own Stream app: in app mode it is never
                 written there for want of a registered Stream app of its own, and what it wrote there before can only be read.
                 True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the
@@ -56,7 +51,6 @@ class Policy:
     budget: Budget | Unset = UNSET
     data_policy: DataPolicy | Unset = UNSET
     prompt_injection: bool | Unset = UNSET
-    quota: Quota | Unset = UNSET
     require_own_stream_app: bool | Unset = UNSET
     tags: PolicyTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -76,10 +70,6 @@ class Policy:
 
         prompt_injection = self.prompt_injection
 
-        quota: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.quota, Unset):
-            quota = self.quota.to_dict()
-
         require_own_stream_app = self.require_own_stream_app
 
         tags: dict[str, Any] | Unset = UNSET
@@ -97,8 +87,6 @@ class Policy:
             field_dict["data_policy"] = data_policy
         if prompt_injection is not UNSET:
             field_dict["prompt_injection"] = prompt_injection
-        if quota is not UNSET:
-            field_dict["quota"] = quota
         if require_own_stream_app is not UNSET:
             field_dict["require_own_stream_app"] = require_own_stream_app
         if tags is not UNSET:
@@ -111,7 +99,6 @@ class Policy:
         from ..models.budget import Budget
         from ..models.data_policy import DataPolicy
         from ..models.policy_tags import PolicyTags
-        from ..models.quota import Quota
 
         d = dict(src_dict)
         allowed_models = cast(list[str], d.pop("allowed_models", UNSET))
@@ -132,13 +119,6 @@ class Policy:
 
         prompt_injection = d.pop("prompt_injection", UNSET)
 
-        _quota = d.pop("quota", UNSET)
-        quota: Quota | Unset
-        if isinstance(_quota, Unset):
-            quota = UNSET
-        else:
-            quota = Quota.from_dict(_quota)
-
         require_own_stream_app = d.pop("require_own_stream_app", UNSET)
 
         _tags = d.pop("tags", UNSET)
@@ -153,7 +133,6 @@ class Policy:
             budget=budget,
             data_policy=data_policy,
             prompt_injection=prompt_injection,
-            quota=quota,
             require_own_stream_app=require_own_stream_app,
             tags=tags,
         )

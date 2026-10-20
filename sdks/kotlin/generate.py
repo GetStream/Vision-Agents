@@ -35,7 +35,7 @@ import yaml
 KOTLIN = Path(__file__).parent
 ROOT = KOTLIN.parents[1]
 SPEC = ROOT / "acceleration" / "api" / "openapi.yaml"
-PACKAGE = "io.getstream.visionagents.core.generated"
+PACKAGE = "io.getstream.visionagents.android.core.generated"
 GENERATED = KOTLIN / "core" / "src" / "main" / "kotlin" / Path(*PACKAGE.split("."))
 IMAGE = "openapitools/openapi-generator-cli:v7.25.0"
 

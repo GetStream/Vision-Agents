@@ -231,11 +231,11 @@ class HuggingFaceVLM(VideoLLM):
 
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
-        if self._instructions:
+        if self.instructions:
             messages.append(
                 {
                     "role": "system",
-                    "content": self._instructions,
+                    "content": self.instructions,
                 }
             )
 
@@ -244,7 +244,7 @@ class HuggingFaceVLM(VideoLLM):
                 messages.append(
                     {
                         "role": message.role,
-                        "content": message.content,
+                        "content": message.named_content,
                     }
                 )
 

@@ -22,17 +22,14 @@ class Authorization:
             expires_at (datetime.datetime): When the attempt ends, 10 minutes after it began. A callback after that is
                 refused.
             handoff_token (str): Handed to the launch page by postMessage, from the return_url's origin or the dashboard's,
-                and never in a query string. A native app, which has no origin to post from, puts it in launch_url's fragment,
-                which no server and no Referer is sent. It binds the attempt to the first browser that opens launch_url and
-                hands it off; a second handoff is refused.
+                never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second
+                handoff is refused.
             id (str): The attempt.
             kind (AuthorizationKind): consent for a connection no account was connected to yet, reconnect for one that has
                 been connected before, which must come back with the same provider account.
             launch_url (str): The router's page to open in a popup from a page of the return_url's origin, or of the
                 dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin
-                only, and then sends the browser to the provider. A consent whose return_url is a native app's own scheme is
-                opened in the app's web authentication sheet as launch_url#handoff_token=<handoff_token> instead, and the page
-                reads the token from its fragment.
+                only, and then sends the browser to the provider.
     """
 
     expires_at: datetime.datetime

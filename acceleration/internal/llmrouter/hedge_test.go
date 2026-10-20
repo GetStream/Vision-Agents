@@ -84,6 +84,12 @@ func (p *pace) Capabilities() llm.Capabilities { return llm.Capabilities{} }
 // hedges its replies after the given time.
 func newRig(t *testing.T, hedge time.Duration, candidates ...string) *rig {
 	t.Helper()
+	return newHedgeRig(t, Options{ReplyHedge: hedge}, candidates...)
+}
+
+// newHedgeRig is newRig with the hedges set as the router options say.
+func newHedgeRig(t *testing.T, hedges Options, candidates ...string) *rig {
+	t.Helper()
 	r := &rig{
 		headers: map[string]time.Duration{},
 		failing: map[string]error{},
@@ -103,7 +109,7 @@ func newRig(t *testing.T, hedge time.Duration, candidates ...string) *rig {
 		members = append(members, name+"/"+models[name])
 	}
 	config.Aliases = map[string]routing.Alias{"voice": {Prefer: members[0], Only: members}}
-	router, err := New(Options{Config: config, Registry: registry, ReplyHedge: hedge})
+	router, err := New(Options{Config: config, Registry: registry, ReplyHedge: hedges.ReplyHedge, FlowHedge: hedges.FlowHedge})
 	require.NoError(t, err)
 	r.session, err = router.Start(context.Background(), Request{CustomerID: "acme", Target: "voice"})
 	require.NoError(t, err)
@@ -376,10 +382,10 @@ func TestWhenBothFailTheOriginalsOutcomeStands(t *testing.T) {
 	})
 }
 
-func TestARequestIsNotHedgedAtZeroOrWhenItIsNotAReply(t *testing.T) {
+func TestARequestIsNotHedgedAtZeroOrWhenNobodyIsWaitingOnIt(t *testing.T) {
 	for name, change := range map[string]func(*llm.ResponseParams){
 		"at zero":                    func(*llm.ResponseParams) {},
-		"for the flow controller":    func(p *llm.ResponseParams) { p.Purpose = "flow" },
+		"for background work":        func(p *llm.ResponseParams) { p.Purpose = "compose" },
 		"for a held conversation":    func(p *llm.ResponseParams) { p.PreviousResponseID = "resp_1" },
 		"for a provider's own state": func(p *llm.ResponseParams) { p.Conversation = "conv_1" },
 	} {
@@ -444,4 +450,47 @@ func TestAHedgeGoesToADifferentModelBeforeADifferentProvider(t *testing.T) {
 	}
 	require.Equal(t, []string{"openai/mini", "openai/nano", "gemini/lite", "together/flash"}, names,
 		"never the one asked, never an unavailable one, and the ranking decides between equals")
+}
+
+// flowDecision is a request from the flow controller, which the caller waits on in silence.
+func (r *rig) flowDecision() llm.ResponseParams {
+	params := r.params()
+	params.Purpose = flowPurpose
+	return params
+}
+
+// flowLateAfter is how long the rigs below let a flow decision say nothing.
+const flowLateAfter = 400 * time.Millisecond
+
+func TestALateFlowDecisionIsAskedOfAnotherCandidateSoonerThanAReply(t *testing.T) {
+	// A flow controller that has said nothing for this long has stalled rather than thought,
+	// and a decision it never makes leaves the caller waiting out its deadline.
+	synctest.Test(t, func(t *testing.T) {
+		r := newHedgeRig(t, Options{ReplyHedge: lateAfter, FlowHedge: flowLateAfter}, "alpha", "beta")
+		asked := r.ask(context.Background(), r.flowDecision())
+
+		pass(flowLateAfter - time.Millisecond)
+		require.Zero(t, r.requests("beta"))
+		pass(time.Millisecond)
+		require.Equal(t, 1, r.requests("beta"), "the decision was asked again once it was late")
+
+		r.say("beta", `{"disposition":"respond","floor":"continue"}`)
+		require.True(t, asked.answered())
+		require.NoError(t, asked.err)
+		require.True(t, r.script("alpha").Abandoned(), "the stalled decision was stopped once it lost")
+		require.Equal(t, "beta", r.finish("beta", asked).Provider)
+	})
+}
+
+func TestAFlowDecisionIsNotHedgedAtZero(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newHedgeRig(t, Options{ReplyHedge: lateAfter}, "alpha", "beta")
+		asked := r.ask(context.Background(), r.flowDecision())
+
+		pass(5 * lateAfter)
+		require.Zero(t, r.requests("beta"), "a reply's hedge is not a flow decision's")
+		r.say("alpha", `{"disposition":"respond","floor":"continue"}`)
+		require.True(t, asked.answered())
+		require.Equal(t, "alpha", r.finish("alpha", asked).Provider)
+	})
 }
