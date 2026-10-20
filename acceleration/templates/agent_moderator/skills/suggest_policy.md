@@ -32,6 +32,8 @@ Pick the kind that fits the pattern, and do not answer with only label actions:
 - `label_action` sets flag or remove on a label that is already listed, classifier or LLM.
 - `llm_label` creates an LLM label with `words` that say what the content is, written for this
   app, and optionally `severities`. A classifier named HATRED is not an LLM label of that name.
+  When one action is too blunt, set severities: low and medium can be flag, high and critical
+  remove.
 - `label_severity` sets the action per severity on an LLM label that already exists.
 - `app_context` replaces the application context with a few sentences about what the app is and
   how strict to be, at most 400 characters. Set it when it is missing or does not fit the app.
@@ -56,7 +58,9 @@ reviews, return no suggestions and a summary of what the window contained. If th
 revising an earlier proposal, keep what still fits, change what they asked, and fix the cause
 when a save was refused.
 
-Answer with one JSON object and nothing else, no Markdown fences:
+When the moderator's message asks for a written draft instead of JSON, write the same changes
+one per line, each saying what it changes and why. Otherwise answer with one JSON object and
+nothing else, no Markdown fences:
 
 {"summary":"one sentence","suggestions":[]}
 
