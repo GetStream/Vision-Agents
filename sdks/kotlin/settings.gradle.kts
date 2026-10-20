@@ -11,16 +11,13 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Stream publishes its Android SDKs here; Maven Central stops at the older releases.
+        maven("https://stream-io-repo.com") {
+            content { includeGroup("io.getstream") }
+        }
     }
 }
 
 rootProject.name = "vision-agents-kotlin"
 
 include(":core")
-
-// The Android modules need an Android SDK to configure at all. `-PcoreOnly` is how the plain
-// JVM image builds and tests core; it is asked for rather than guessed from the environment,
-// so a CI job missing its SDK fails instead of quietly skipping half the build.
-if (!providers.gradleProperty("coreOnly").isPresent) {
-    include(":ui", ":rtc", ":chat")
-}

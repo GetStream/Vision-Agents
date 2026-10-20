@@ -61,6 +61,18 @@ too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from 
 declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
 updates.
 
+### The Kotlin SDK is one module, and its views are Stream Chat's AI components
+
+`vision-agents-core` is the only Android artifact, and everything in it is in
+`io.getstream.visionagents.android.core`. `vision-agents-ui`, `vision-agents-rtc` and
+`vision-agents-chat` are gone: `VoiceSession` and `session.chat()` moved into core, which is
+now an Android library depending on Stream Chat (7.15.0+) and Stream Video. `ConversationView`,
+`TranscriptView`, `Composer`, `AgentStatusView`, `VoiceCallView` and `AgentVideoView` are gone
+too; show a conversation with Stream Chat's AI components (`stream-chat-android-ai-compose`).
+`ChatFailed` and `CallFailed` are now `AgentsException.ChatFailed` and
+`AgentsException.CallFailed`. Stream Chat 7.15.0 is published to `https://stream-io-repo.com`,
+not Maven Central, so add that repository.
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,
@@ -621,6 +633,14 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
 
 ## New Features
+
+### An Android demo, the Android half of swift_demo
+
+`examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
+against `sdks/kotlin` as it is in the checkout. Its Chat screen shows the conversation with
+Stream Chat's AI components: the reply streaming in, its reasoning, each tool call, and the
+refund's question on the reply. Its Voice screen puts the agent on a call and writes out what
+was said, with the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
 
 ### Cartesia records speech
 
@@ -2211,6 +2231,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `GET /v1/{modality}/providers` lists each model's `supports`: the options it can be asked for, such as `keyterms` and `diarize`, and left out when it takes none. Which models take keyterms was only in the router's config (#1014, AI-1419).
 
 ## Bug Fixes
+
+### A Kotlin voice call asks only for the microphone
+
+`VoiceSession` joined an agent's call with Stream Video's default foreground service, which
+refuses to start without the camera permission because the call allows video. The call went
+on, with no service holding it. It now runs Stream's audio-call service, and the client it
+builds asks for the camera only while the camera is on. A call type the app configured on its
+own `StreamVideo` is left as it is.
 
 - The router's agent answers a question whose turn decision timed out. The decision call is given 3 s; when its stream had opened but no token came by then, the call was closed and no ruling was sent, so the question was never answered nor stored. That ruling now carries the timeout, and the agent answers a finished question whose ruling failed, as it already did when the call timed out before it opened (AI-1460).
 - A person on a voice call with no display name goes under `Speaker 1`, `Speaker 2` and on, numbered in the order such people first spoke, in what the reply model reads (`Speaker 1: what about me`) and in what the flow controller is asked. Their user id, or their participant id when they had no user, went ahead of their words instead, so the model read the app's internal ids. Their name, once it is known, still replaces the label, and named people read as before (AI-1458).
