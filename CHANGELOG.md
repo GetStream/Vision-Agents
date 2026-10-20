@@ -622,6 +622,20 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### Cartesia records speech
+
+`POST /v1/tts/recordings` can be served by Cartesia, pinned (`cartesia/sonic-preview`,
+`cartesia/sonic-3.6`), named in a priority list (`["cartesia"]`, `["elevenlabs","cartesia"]`), or
+reached from a shortcut such as `tts-quality` when ElevenLabs cannot be built. It records on
+Cartesia's `/tts/bytes` in the voice, model and language its live voice uses, and `can_record` is
+now true for it in `GET /v1/tts/routes`. `en-recorded` and `multilingual-recorded` still prefer
+ElevenLabs v3. `format` takes `mp3_<rate>_<kbps>`, `pcm_<rate>`, `wav_<rate>`, `ulaw_<rate>` and
+`alaw_<rate>` at the rates Cartesia offers, `mp3_44100_128` when left out. Any other format, and a
+speed, volume or emotion, fails the job and names it: the request is accepted (202) and the job
+ends `failed`. A live Cartesia voice asked for a format is refused as the caller's mistake.
+Recorded shortcuts (`en-recorded`, `multilingual-recorded`) with a language hint of bn, gu, he, ka, kn, ml, mr, or, pa, te, th, tl or ur now record on Cartesia: ElevenLabs v3 lacks them and they were refused before.
+Inworld and Breeze still only stream (AI-1462).
+
 ### A phone on a call can show the agent its camera
 
 `VoiceSession.join(camera: true)` or `setCameraEnabled(true)` now lets the agent look through the

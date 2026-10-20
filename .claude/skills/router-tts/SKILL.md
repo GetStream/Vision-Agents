@@ -89,7 +89,7 @@ caller cannot tell the difference from the audio, and the whole point of routing
 did not have to know which vendor answered. So options become `Terms()`, and only models whose
 `supports:` lists every term asked for are candidates.
 
-Today the batch entry `elevenlabs/eleven_v3` declares `[stability, similarity, format]`, which is the recorded path; it declares no `speed`, so a recording that asks for one is refused. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
+Today the batch entry `elevenlabs/eleven_v3` declares `[stability, similarity, format]`, which is the recorded path; it declares no `speed`, so a recording that asks for one is refused. `cartesia/sonic-3.6` is its batch entry (`realtime: false`, `[format]`), the one a priority list asked for a recording reaches, and `en-recorded` still prefers `eleven_v3`; the live `cartesia/sonic-preview` also declares `[format]`; its live factory refuses a format as `routing.ErrRequest`, since a live voice streams raw audio. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
 declare `[speed, stability, similarity]`, sent as `voice_settings` when each context opens (stability 0.5,
 similarity 0.8 when not asked); a speed outside 0.7–1.2 or a stability or similarity outside
 0–1 is refused when the provider is built. The dialogue models (v3 conversational, v4, v4
@@ -213,29 +213,39 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   that named one before anything is tried (`Router.voiced`): any other vendor would be handed
   no voice and speak its default, which nobody can hear is wrong (ElevenLabs' default is
   "Spuds Oxley - Grandpa", `elevenlabs.DefaultVoiceID`). None of them a candidate, or none
-  with a factory (a recording asked in a Cartesia voice), is refused as `routing.ErrRequest`.
+  with a factory (a recording asked in a Breeze voice), is refused as `routing.ErrRequest`.
   A top-level voice goes to every candidate, so nothing is left out for it.
 - The voice that spoke, the provider's default included, is `voice` on the socket's `started`
   frame and on `Speech` (`tts.Voiced`). A provider that cannot say leaves it out rather than
   echo the voice asked for.
 
-## Only ElevenLabs records
+## ElevenLabs and Cartesia record
 
 - A recording is built by `ttsrouter.DefaultRecorderRegistry` (`ttsrouter/recordings.go`), which
-  has ElevenLabs alone. Every other vendor in `router.yaml` (Cartesia, Inworld, Breeze, Speechify,
+  has ElevenLabs and Cartesia. Every other vendor in `router.yaml` (Inworld, Breeze, Speechify,
   Gemini, Fish, s2pro) only streams. Any ElevenLabs model is offered as a recorder, but only
   `eleven_v4` is verified (staging, 2026-10-19: an inline recording returned audio); the other
   five in `router.yaml` (`eleven_flash_v2_5`, `eleven_v4_turbo`, `eleven_multilingual_v2`,
   `eleven_v3_conversational`, `eleven_v3`) are `unverified`. On the same day a recording on
-  `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2` failed with
-  `no factory registered`.
+  `inworld/inworld-tts-2` or `breeze/breeze-tts-2` failed with `no factory registered`.
+- Cartesia records on `POST /tts/bytes` (`cartesia.Recorder`), with the voice, model and
+  language its live voice reads (an overwrite's `voice_id` included). `format` is mapped to
+  `output_format`: `mp3_<rate>_<kbps>` to mp3, `pcm_<rate>` to raw `pcm_s16le`, `wav_<rate>`
+  to wav, `ulaw_<rate>` and `alaw_<rate>` to raw `pcm_mulaw` and `pcm_alaw`; empty is
+  `mp3_44100_128`, as at ElevenLabs. A format Cartesia has no container, rate or bit rate for
+  (`opus_*`, `mp3_24000_48`, `pcm_32000`) is refused when the recorder is built, naming it.
+  Speed, volume and emotion (its `generation_config`) are not sent, so `sonic-preview` does not
+  declare them and a recording that asks for one is refused. A recording on Cartesia is
+  `unverified` against the real API: the local key was out of credits (402) on 2026-10-19.
 - `Recordings.Check` runs before a recording is accepted (`recordSpeech` in `api/recordings.go`).
-  When no candidate's vendor has a recorder, such as a pinned `cartesia/sonic-preview` or a
+  When no candidate's vendor has a recorder, such as a pinned `inworld/inworld-tts-2` or a
   shortcut or priority list made only of vendors that stream, the request is a 400 that names
   them and the models that record. One recorder among the candidates is enough: `tts-quality`
-  is served by ElevenLabs, because `Select` passes over a candidate with no factory without
-  counting it against the model. A voice asked only in a streaming vendor's overwrites is still
-  refused once routed (`Router.voiced`), as a failed job.
+  is served by ElevenLabs, or by Cartesia when ElevenLabs cannot be built, because `Select`
+  passes over a candidate with no factory without counting it against the model. It does not
+  move to Cartesia when ElevenLabs fails during the recording: `Record` asks one recorder once.
+  A voice asked only in a streaming vendor's overwrites is still refused once routed
+  (`Router.voiced`), as a failed job.
 - `GET /v1/tts/routes` and `/v1/tts/routes/{target}` say per candidate whether a recording can
   use it (`can_record`, from the recorder registry). The list and its health stay the live
   router's. STT and STS leave the field out.

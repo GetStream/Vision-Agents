@@ -932,6 +932,8 @@ func (s *RoutingSuite) TestAPriorityListKeepsABatchModelOffTheLivePath() {
 	})
 
 	s.ErrorContains(err, "nothing in the priority list batchy")
+	s.NotContains(err.Error(), "%!w", "no refusal is wrapped when every entry resolved")
+	s.NotContains(err.Error(), "can serve this request:", "nothing follows the sentence")
 }
 
 func (s *RoutingSuite) TestAPriorityListKeepsALiveModelOffTheRecordedPath() {
