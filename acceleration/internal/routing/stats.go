@@ -61,6 +61,10 @@ type Stat struct {
 	Success      bool
 	ErrorCode    string
 	ErrorMessage string
+	// Fatal marks a failure that ended the session for a reason the provider gives every
+	// caller, such as an account it refuses. It makes the provider unavailable for one
+	// health window, however much it served before.
+	Fatal bool
 }
 
 // ErrorCancelled is the ErrorCode of work its caller gave up on, whether before the provider
@@ -82,7 +86,7 @@ type Recorder struct {
 	// none.
 	gate Gate
 
-	queue chan store.Request
+	queue chan queued
 	done  chan struct{}
 
 	closeOnce sync.Once
@@ -102,7 +106,7 @@ func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Clien
 		live:     liveClient,
 		logger:   logger,
 		gate:     gate,
-		queue:    make(chan store.Request, statQueueSize),
+		queue:    make(chan queued, statQueueSize),
 		done:     make(chan struct{}),
 	}
 	go r.run()
@@ -157,7 +161,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	select {
-	case r.queue <- request:
+	case r.queue <- queued{request: request, fatal: entry.Fatal}:
 	default:
 		r.dropped.Add(1)
 	}
@@ -178,14 +182,21 @@ func (r *Recorder) Close() {
 func (r *Recorder) run() {
 	defer close(r.done)
 
-	for request := range r.queue {
+	for next := range r.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), statWriteTimeout)
-		r.write(ctx, request)
+		r.write(ctx, next)
 		cancel()
 	}
 }
 
-func (r *Recorder) write(ctx context.Context, request store.Request) {
+// queued is a stat on its way to the writer: the row, and what only health reads.
+type queued struct {
+	request store.Request
+	fatal   bool
+}
+
+func (r *Recorder) write(ctx context.Context, next queued) {
+	request := next.request
 	if r.gate != nil {
 		// Only the tags are wanted here. A refusal is the budget, which the work being
 		// recorded has already got past.
@@ -199,7 +210,9 @@ func (r *Recorder) write(ctx context.Context, request store.Request) {
 	}
 
 	if r.live != nil {
-		if err := r.live.RecordRequest(ctx, liveUsage(request)); err != nil {
+		usage := liveUsage(request)
+		usage.Fatal = next.fatal
+		if err := r.live.RecordRequest(ctx, usage); err != nil {
 			r.logger.Error("could not update live counters", "error", err)
 		}
 	}

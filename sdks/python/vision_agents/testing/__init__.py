@@ -31,6 +31,7 @@ Key exports:
     JudgeVerdict: dataclass returned by ``Judge.evaluate()``.
     LLMJudge: default judge backed by an LLM instance.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
+    answer: what the agent does with a participant's words, for tests of what an LLM sends.
 """
 
 from vision_agents.testing._events import (
@@ -42,6 +43,7 @@ from vision_agents.testing._events import (
 from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._session import TestSession
+from vision_agents.testing._turns import answer
 from vision_agents.testing._utils import collect_simple_response
 
 __all__ = [
@@ -54,5 +56,6 @@ __all__ = [
     "FunctionCallEvent",
     "FunctionCallOutputEvent",
     "RunEvent",
+    "answer",
     "collect_simple_response",
 ]

@@ -266,8 +266,13 @@ working. What the router writes is what it renders:
 - `AIComposerView`'s stop button is `session.interrupt()`, which cancels the reply in flight.
   The router does not listen for `ai_indicator.stop`.
 
-A spoken session has no channel: render `session.turns` with `StreamingMessageView` and
-`session.state` with `AITypingIndicatorView`.
+A spoken session has no channel. The demo shows the agent as `AIVoiceGlowView`, whose
+`AIVoiceAgentState` comes from the call and the session together: connecting until
+`VoiceSession.call` is joined, speaking while a remote participant `isSpeaking`, and otherwise
+`session.state` (listening, thinking while responding or working, idle). Speaking is the call's
+to say because a reply is written before it is spoken, and `responded` arrives before the agent
+stops talking. An app that wants the words too renders `session.turns` with
+`StreamingMessageView`.
 
 ## Tests
 

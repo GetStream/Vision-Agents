@@ -617,12 +617,15 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 	return &getCallTimelineResponse{Body: timelineOf(turns, said, models)}, nil
 }
 
-// timelineOf pairs each exchange with the lines said during it.
+// timelineOf pairs each exchange with what the caller said and what the agent answered.
 //
-// A turn starts when the transcript settled, and the messages are written as the call
-// goes, so a line belongs to the last turn that had started when it was stored. Within a
-// turn the first line is what the caller said and the last is what the agent answered,
-// which is what a two-line exchange always is.
+// The lines are told apart by who wrote them, because their times alone put them in the
+// wrong turn. A caller's line is stored when they start talking, so it is older than the
+// turn their words started (a staging call: Alice's line at 18:26:10.608, her turn at
+// 18:26:11.940). The agent's reply is stored after its turn started. So a turn said the
+// agent's lines from its start to the next turn's, and heard the caller's lines since the
+// previous turn's reply began, up to its own reply, or its start when it has none.
+// Everything heard before one answer is joined, since that answer is to all of it.
 func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request) []TimelineEntry {
 	modelCalls := make(map[string][]ModelCallTiming)
 	for _, request := range models {
@@ -643,6 +646,7 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 		})
 	}
 	timeline := make([]TimelineEntry, 0, len(turns))
+	var since time.Time
 	for index, turn := range turns {
 		entry := TimelineEntry{
 			TurnId:               turn.TurnID,
@@ -671,15 +675,37 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 		if index+1 < len(turns) {
 			until = turns[index+1].StartedAt
 		}
-		if spoken := within(said, turn.StartedAt, until); len(spoken) > 0 {
-			entry.Heard = optional(spoken[0].Text)
-			if len(spoken) > 1 {
-				entry.Said = optional(spoken[len(spoken)-1].Text)
-			}
+		reply := spokenBy(within(said, turn.StartedAt, until), true)
+		answered := turn.StartedAt
+		if len(reply) > 0 {
+			answered = reply[0].At
 		}
+		entry.Heard = optional(joined(spokenBy(within(said, since, answered), false)))
+		entry.Said = optional(joined(reply))
+		since = answered
 		timeline = append(timeline, entry)
 	}
 	return timeline
+}
+
+// spokenBy keeps the agent's lines, or everybody else's.
+func spokenBy(lines []chatlog.Spoken, agent bool) []chatlog.Spoken {
+	var kept []chatlog.Spoken
+	for _, line := range lines {
+		if line.Agent == agent {
+			kept = append(kept, line)
+		}
+	}
+	return kept
+}
+
+// joined is the lines' text as one, in the order they were stored.
+func joined(lines []chatlog.Spoken) string {
+	texts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		texts = append(texts, line.Text)
+	}
+	return strings.Join(texts, " ")
 }
 
 // within returns the lines stored in a half-open window. A zero end is the rest of them.

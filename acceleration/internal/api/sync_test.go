@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type SyncSuite struct {
@@ -139,6 +140,25 @@ func (s *SyncSuite) TestASyncGivingATextAgentASubagentIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "subagent")
+}
+
+func (s *SyncSuite) TestASyncPinningABatchTranscriberIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v1", "stt": "batch/" + batchModel})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "is a batch model for recordings, not live calls")
+}
+
+func (s *SyncSuite) TestASyncLeavingAStoredBatchTranscriberAsItWasIsStored() {
+	pinned := "batch/" + batchModel
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "support", Mode: store.AgentModeVoice, STT: pinned}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "stt": pinned, "instructions": "Be brief."})
+
+	s.Equal(config.ID, result.Config.Id)
+	s.Equal("Be brief.", value(result.Config.Instructions))
 }
 
 func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {

@@ -89,6 +89,22 @@ func (s *RecordingsSuite) TestATextIsSpokenIntoOneFileAndReadBack() {
 	s.NotEmpty(value(finished.Audio))
 	s.Equal("mp3_44100_128", value(finished.Format))
 	s.EqualValues(34, value(finished.Characters))
+	s.Nil(finished.Voice, "no voice was asked and the stub has no default, so none is claimed")
+}
+
+func (s *RecordingsSuite) TestASpeechJobSaysWhichVoiceItWasSpokenIn() {
+	var accepted Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"text": "hello", "options": map[string]any{"voice": "library-voice"}}, &accepted))
+
+	var finished Speech
+	s.Require().Eventually(func() bool {
+		finished = Speech{}
+		s.serverClient.do(http.MethodGet, "/v1/tts/recordings/"+accepted.Id, nil, &finished)
+		return finished.Status == RecordingStatusCompleted
+	}, settleFor, 25*time.Millisecond, "the job never finished")
+
+	s.Equal("library-voice", value(finished.Voice))
 }
 
 func (s *RecordingsSuite) TestASpeechJobWithNothingToSayIsRefused() {
@@ -129,6 +145,14 @@ func (s *RecordingsSuite) TestATextSpokenInlineComesBackInTheAnswer() {
 
 	s.Equal(RecordingStatusCompleted, spoken.Status, "there was no job to come back for")
 	s.NotEmpty(value(spoken.Audio))
+}
+
+func (s *RecordingsSuite) TestATextSpokenInlineSaysWhichVoiceItWasSpokenIn() {
+	var spoken Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"voice": "library-voice"}}, &spoken))
+
+	s.Equal("library-voice", value(spoken.Voice))
 }
 
 func (s *RecordingsSuite) TestARecordingTranscribedInlineComesBackInTheAnswer() {

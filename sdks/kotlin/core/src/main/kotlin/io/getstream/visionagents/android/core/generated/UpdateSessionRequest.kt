@@ -47,7 +47,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param title 
  * @param tts 
  * @param verbosity 
- * @param voice The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+ * @param voice The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
  */
 @Serializable
 
@@ -89,7 +89,7 @@ internal data class UpdateSessionRequest (
     @SerialName(value = "verbosity")
     val verbosity: UpdateSessionRequest.Verbosity? = null,
 
-    /* The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+    /* The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default. */
     @SerialName(value = "voice")
     val voice: kotlin.String? = null
 

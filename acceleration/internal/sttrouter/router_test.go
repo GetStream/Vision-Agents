@@ -3,6 +3,7 @@ package sttrouter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -500,6 +501,171 @@ func (s *STTRouterSuite) TestKeytermsReachTheProviderTheRouterBuilt() {
 
 	s.Equal([]string{"Vision Agents", "Stream"}, built.Keyterms)
 }
+
+func (s *STTRouterSuite) TestKeytermsOnAModelThatTakesNoneAreRefusedNamingTheModel() {
+	// Microsoft declares no keyterms in router.yaml. On the commit before this PR the
+	// refusal read "no provider can express keyterms", as if the router had looked
+	// further than the one model the caller named.
+	terms := []string{"Vision Agents"}
+	_, err := s.newRouter().Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "microsoft/MAI-Transcribe-2-Streaming",
+		Keyterms:   terms,
+		Options:    options.STT{Keyterms: terms},
+	})
+
+	s.ErrorContains(err, "routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms")
+}
+
+func (s *STTRouterSuite) TestKeytermsOnATargetAmongSeveralProvidersAreRefusedWithoutNamingIt() {
+	// The request targets Microsoft but lists parakeet too, so parakeet was considered:
+	// naming Microsoft alone would claim the router looked at no other model.
+	terms := []string{"Vision Agents"}
+	_, err := s.newRouter().Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "microsoft/MAI-Transcribe-2-Streaming",
+		Keyterms:   terms,
+		Options: options.STT{Keyterms: terms, Providers: []string{
+			"microsoft/MAI-Transcribe-2-Streaming", "parakeet/parakeet-tdt-0.6b-v3"}},
+	})
+
+	s.EqualError(err, "routing: no provider can express keyterms")
+}
+
+// dialled routes over the built-in config with Deepgram and the mock built as stubs, and
+// records every model the router built.
+func (s *STTRouterSuite) dialled() (*Router, *[]string) {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	var built []string
+	registry := NewRegistry()
+	for _, vendor := range []string{"deepgram", "mock"} {
+		registry.Register(vendor, func(spec routing.Spec) (stt.STT, error) {
+			built = append(built, spec.Model)
+			return &pinnedSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(1)}, model: spec.Model}, nil
+		})
+	}
+	router, err := New(Options{Config: config[routing.STT], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router, &built
+}
+
+// startOn starts a session on the dialled router and says which model serves it.
+func (s *STTRouterSuite) startOn(router *Router, request Request) (string, error) {
+	request.CustomerID = "acme"
+	session, err := router.Start(s.ctx, request)
+	if err != nil {
+		return "", err
+	}
+	s.T().Cleanup(func() { _ = session.Close() })
+	return session.Model(), nil
+}
+
+func (s *STTRouterSuite) TestALiveSessionPinnedToABatchModelIsRefusedBeforeAnyVendorIsDialled() {
+	// On d1654d42 Nova-3 was built and dialled, Deepgram's live endpoint turned it away,
+	// and the start_failed row went on Nova-3's own health: "routing: every candidate for
+	// \"deepgram/nova-3\" failed: deepgram/nova-3: deepgram: connect failed".
+	router, built := s.dialled()
+
+	_, err := s.startOn(router, Request{Target: "deepgram/nova-3"})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+	s.EqualError(err, "routing: deepgram/nova-3 is a batch model for recordings, not live calls; for a live call name "+
+		"deepgram/flux-general-en or deepgram/flux-general-multi or stt-fast or stt-accurate")
+	s.Empty(*built, "nothing was built, so nothing was dialled or recorded")
+}
+
+func (s *STTRouterSuite) TestALiveSessionOnARecordedShortcutIsRefusedBeforeAnyVendorIsDialled() {
+	// On d1654d42 both built Nova-3 and failed with "routing: every candidate for
+	// \"en-recorded\" failed: deepgram/nova-3: deepgram: connect failed".
+	for _, target := range []string{"en-recorded", "multilingual-recorded"} {
+		router, built := s.dialled()
+
+		_, err := s.startOn(router, Request{Target: target})
+
+		s.Require().ErrorIs(err, routing.ErrRequest, target)
+		s.ErrorContains(err, "routing: "+target+" is a shortcut for recordings, not live calls; for a live call name ")
+		s.Empty(*built, target)
+	}
+}
+
+func (s *STTRouterSuite) TestALiveSessionOnALiveShortcutStarts() {
+	// Probed on d1654d42: flux-general-en.
+	router, _ := s.dialled()
+
+	served, err := s.startOn(router, Request{Target: "en-low-latency"})
+
+	s.Require().NoError(err)
+	s.Equal("flux-general-en", served)
+}
+
+func (s *STTRouterSuite) TestAPriorityListOfOnlyBatchModelsIsRefusedNamingThem() {
+	// On d1654d42: "routing: nothing in the priority list deepgram/nova-3 can serve this
+	// request: %!w(<nil>)", which never said why.
+	router, built := s.dialled()
+
+	_, err := s.startOn(router, Request{Options: options.STT{Providers: []string{"deepgram/nova-3"}}})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "routing: deepgram/nova-3 is a batch model for recordings, not live calls")
+	s.Empty(*built)
+}
+
+func (s *STTRouterSuite) TestAPriorityListWithALiveModelIsServedByIt() {
+	// Probed on d1654d42: flux-general-en, and Nova-3 never built.
+	router, built := s.dialled()
+
+	served, err := s.startOn(router, Request{Options: options.STT{
+		Providers: []string{"deepgram/nova-3", "deepgram/flux-general-en"}}})
+
+	s.Require().NoError(err)
+	s.Equal("flux-general-en", served)
+	s.Equal([]string{"flux-general-en"}, *built)
+}
+
+func (s *STTRouterSuite) TestALiveSessionPinnedToALiveModelStarts() {
+	// Probed on d1654d42: flux-general-en.
+	router, _ := s.dialled()
+
+	served, err := s.startOn(router, Request{Target: "deepgram/flux-general-en"})
+
+	s.Require().NoError(err)
+	s.Equal("flux-general-en", served)
+}
+
+func (s *STTRouterSuite) TestTheMockIsStreamedAtByNameAndReachedByNoShortcut() {
+	// Probed on d1654d42: mock/mock-stt started when named. The load benchmark streams at it.
+	router, _ := s.dialled()
+
+	served, err := s.startOn(router, Request{Target: "mock/mock-stt"})
+	s.Require().NoError(err)
+	s.Equal("mock-stt", served)
+	for alias := range router.Config().Aliases {
+		candidates, err := router.Resolve(s.ctx, alias, nil)
+		s.Require().NoErrorf(err, "alias %s", alias)
+		for _, candidate := range candidates {
+			s.NotEqualf("mock/mock-stt", candidate.Config.Name(), "alias %s", alias)
+		}
+	}
+}
+
+// pinnedSTT is a stub that reports the model it was built for. Like Deepgram's live
+// endpoint, it refuses Nova-3, which only its batch endpoint serves.
+type pinnedSTT struct {
+	quietSTT
+	model string
+}
+
+func (p *pinnedSTT) Start(context.Context) error {
+	if p.model == "nova-3" {
+		return errors.New("deepgram: connect failed")
+	}
+	return nil
+}
+
+func (p *pinnedSTT) Model() string { return p.model }
 
 // quietSTT transcribes nothing, so a test can watch what the router built without
 // reaching a provider.

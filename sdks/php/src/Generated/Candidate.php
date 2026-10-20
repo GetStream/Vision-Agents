@@ -14,6 +14,8 @@ final readonly class Candidate
         public ProviderHealth $health,
         public string $model,
         public string $provider,
+        // Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream,...
+        public ?bool $canRecord = null,
     ) {
     }
 
@@ -26,6 +28,7 @@ final readonly class Candidate
             health: ProviderHealth::fromArray(Json::object($data, 'health')),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            canRecord: array_key_exists('can_record', $data) && $data['can_record'] !== null ? Json::bool($data, 'can_record') : null,
         );
     }
 
@@ -40,6 +43,9 @@ final readonly class Candidate
         $out['health'] = $this->health->toArray();
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        if ($this->canRecord !== null) {
+            $out['can_record'] = $this->canRecord;
+        }
         return $out;
     }
 }

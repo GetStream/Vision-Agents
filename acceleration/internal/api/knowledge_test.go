@@ -135,6 +135,45 @@ func (s *KnowledgeSuite) TestOnlyTheAppsOwnBackendMayPostADocument() {
 	})
 }
 
+func (s *KnowledgeSuite) TestADocumentWithALongSourceIsWrittenReadTrimmedAndDeleted() {
+	// Over 61 bytes, so its ids were 64 bytes and up, which turbopuffer refuses.
+	s.source = "https://getstream.io/chat/docs/sdk/android/" + s.utils.uuid() + "/push-notifications/"
+	s.post("# Pricing\n\nA penny.\n\n# Support\n\nA day.")
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(s.source, listed[0].Source)
+
+	var passages []KnowledgePassage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents/"+listed[0].Id+"/passages", nil, &passages))
+	s.Require().Len(passages, 2)
+	s.Contains(passages[0].Text, "A penny.")
+	s.Contains(passages[1].Text, "A day.")
+	s.Equal(s.source+" > Pricing", passages[0].Source, "the passage still says where it came from")
+	s.ElementsMatch([]string{passages[0].Id, passages[1].Id}, s.storedOfSource())
+
+	s.post("# Pricing\n\nTuppence.")
+	s.Equal([]string{passages[0].Id}, s.storedOfSource(), "the old tail is no longer findable")
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil))
+	s.Empty(s.storedOfSource())
+}
+
+// storedOfSource is the id of every passage stored from the test's file, each checked to
+// be short enough for turbopuffer to take.
+func (s *KnowledgeSuite) storedOfSource() []string {
+	_, passages := s.knowledge.stored()
+	var stored []string
+	for id, passage := range passages {
+		if strings.HasPrefix(passage.Source, s.source) {
+			s.Less(len(id), 64, id)
+			stored = append(stored, id)
+		}
+	}
+	return stored
+}
+
 // post writes the test's one file into its knowledge base.
 func (s *KnowledgeSuite) post(text string) {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge",

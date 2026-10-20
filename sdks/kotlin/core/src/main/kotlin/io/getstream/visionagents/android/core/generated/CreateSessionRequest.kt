@@ -82,7 +82,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param userId Who the agent joins the call as.
  * @param userName 
  * @param video 
- * @param voice Provider-specific voice id.
+ * @param voice The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
  */
 @Serializable
 
@@ -227,7 +227,7 @@ internal data class CreateSessionRequest (
     @SerialName(value = "video")
     val video: SessionVideo? = null,
 
-    /* Provider-specific voice id. */
+    /* The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. */
     @SerialName(value = "voice")
     val voice: kotlin.String? = null
 

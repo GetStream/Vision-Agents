@@ -135,6 +135,8 @@ type Session struct {
 	transcribe func(ctx context.Context, spec Spec) Transcript
 	// supersede ends the sessions this agent left in the call a spec joins (Manager.supersede).
 	supersede func(spec Spec)
+	// think names the model a call's skills run on when the spec did not (Manager.think).
+	think func(ctx context.Context, spec *Spec)
 	// typed are the texts typed into the call by a durable command, waiting for the turn
 	// that answers them, and typedTurns those turns: the conversation writes them, so the
 	// call's transcript does not write them again. Guarded by typedMu.
@@ -513,9 +515,14 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model, and only
 // that one returns the id of the response it recorded. clientID names the install the
-// command came from, which a client tool called while answering is addressed to. asked is
-// what the caller wants changed about this reply alone.
-func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, asked options.LLM) (persistent.CommandReceipt, string, error) {
+// command came from, which a client tool called while answering is addressed to. images
+// are photos sent with it, shown on the person's message and to the model with this reply
+// alone. asked is what the caller wants changed about this reply alone.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM) (persistent.CommandReceipt, string, error) {
+	photos, err := s.photos(ctx, id, images)
+	if err != nil {
+		return persistent.CommandReceipt{}, "", err
+	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
@@ -527,7 +534,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
-	receipt, err := s.persisted.BeginCommand(id, text, clientID)
+	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -543,7 +550,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, nil, asked)
+	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
@@ -553,6 +560,28 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// photos uploads what a person sent with a command to their conversation before the command
+// takes commandMu: an upload takes as long as the network does, and a stop waits on that
+// lock. A caller the conversation is not theirs uploads nothing into it, and a retry of a
+// command it already took (a client resending after a lost answer) uploads nothing again.
+func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart) ([]persistent.Photo, error) {
+	if len(images) == 0 || s.persisted == nil {
+		return nil, nil
+	}
+	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+		return nil, err
+	}
+	if _, err := s.persisted.Command(id); err == nil {
+		photos := make([]persistent.Photo, 0, len(images))
+		for _, image := range images {
+			photos = append(photos, persistent.Photo{Sent: image})
+		}
+		return photos, nil
+	}
+	photos, err := s.persisted.PublishPhotos(ctx, images)
+	return photos, stack.Wrap(err)
 }
 
 // chose keeps connectionID as the session's selection for the connector binding called name,
@@ -845,7 +874,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		return stack.Wrap(ErrCardedToNative)
 	}
 	if next.ControllerTarget == "" && !next.Native() {
-		next.ControllerTarget = next.internalTarget(defaultControllerTarget)
+		next.ControllerTarget = next.controllerTarget()
 	}
 
 	if err := s.current().SetSettings(ctx, agent.Settings{
@@ -921,6 +950,11 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 			current = current.Holding(call)
 		}
 		next = current.Voiced()
+		// A chat holds no subagent to bring back, so its call is given the default one a
+		// call opened as one is, without which its skills have nothing to run on.
+		if s.think != nil {
+			s.think(ctx, &next)
+		}
 	}
 
 	old := s.current()
@@ -937,7 +971,7 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 		s.logger.Debug("the agent was still talking when voice changed", "error", err)
 	}
 	cancel()
-	fresh.RestoreHistory(old.History())
+	fresh.Continue(old)
 
 	var transcript Transcript
 	if voice && s.transcribe != nil {
@@ -1497,7 +1531,10 @@ func (s *Session) askTool(call ToolCall) error {
 	if call.TurnID != "" && s.persisted != nil {
 		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
 	}
-	if s.persisted != nil && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
+	// Only a conversation held in writing is asked by command. On a call a question is spoken,
+	// with no request id, and the vision skill's request for frames belongs to no turn: their
+	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.
+	if s.persisted != nil && s.spec.Text && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
 		return errors.New("session: tool call has no durable command binding")
 	}
 	s.mu.Lock()

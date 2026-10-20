@@ -85,7 +85,12 @@ def _to_core_participant(
     )
 
     unique_id = f"{participant.user_id}__{participant.track_lookup_prefix}"
-    return Participant(original=participant, user_id=participant.user_id, id=unique_id)
+    return Participant(
+        original=participant,
+        user_id=participant.user_id,
+        id=unique_id,
+        name=participant.name or "",
+    )
 
 
 class StreamConnection(Connection):

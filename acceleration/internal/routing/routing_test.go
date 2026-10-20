@@ -16,7 +16,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // stubProvider stands in for a real provider so routing decisions can be tested without
@@ -229,6 +228,50 @@ func (s *RoutingSuite) TestARecordingToALiveShortcutInAConfigWithNoRecordedOneAs
 	s.EqualError(err, "routing: en-low-latency is a shortcut for live calls; name a batch model for a recording")
 }
 
+func (s *RoutingSuite) TestALiveCallPinnedToABatchModelIsRefusedAndToALiveOneOrAShortcutIsNot() {
+	config := s.config()
+
+	err := config.Live("batchy/offline-en")
+	s.Require().ErrorIs(err, ErrRequest, "the caller's to change")
+	s.EqualError(err, "routing: batchy/offline-en is a batch model for recordings, not live calls; for a live call name a live model")
+	s.NoError(config.Live("quick/en"))
+	s.NoError(config.Live("en-high-accuracy"), "a shortcut keeps to its own half")
+	s.NoError(config.Live("nobody/unknown"), "routing refuses it in its own words")
+}
+
+func (s *RoutingSuite) TestALiveCallPinnedToABatchModelIsToldTheVendorsLiveModelsAndTheLiveShortcuts() {
+	config := s.config()
+	config.Providers = append(config.Providers, ProviderConfig{Provider: "quick", Model: "offline", Languages: []string{"en"}})
+	config.Aliases["en-low-latency"] = Alias{Title: "Fast", Languages: []string{"en"}, RequireRealtime: true}
+	config.Aliases["en-recorded"] = Alias{Title: "Recorded", Languages: []string{"en"}, RequireRecorded: true}
+
+	s.EqualError(config.Live("quick/offline"),
+		"routing: quick/offline is a batch model for recordings, not live calls; for a live call name quick/en or quick/multi or en-low-latency")
+}
+
+func (s *RoutingSuite) TestALiveCallOnAShortcutWithOnlyBatchCandidatesIsRefusedNamingTheLiveShortcuts() {
+	// On d1654d42 Live passed every shortcut, so a live session on en-recorded dialled its
+	// batch models at the vendor's streaming endpoint.
+	config := s.config()
+	config.Aliases["en-low-latency"] = Alias{Title: "Fast", Languages: []string{"en"}, RequireRealtime: true}
+	config.Aliases["en-recorded"] = Alias{Title: "Recorded", Languages: []string{"en"}, RequireRecorded: true}
+	config.Aliases["offline"] = Alias{Only: []string{"batchy/offline-en"}}
+
+	err := config.Live("en-recorded")
+	s.Require().ErrorIs(err, ErrRequest, "the caller's to change")
+	s.EqualError(err, "routing: en-recorded is a shortcut for recordings, not live calls; for a live call name en-low-latency")
+	s.ErrorIs(config.Live("offline"), ErrRequest, "every candidate is a batch model, whatever the shortcut requires")
+}
+
+func (s *RoutingSuite) TestALiveCallOnAShortcutWithALiveCandidateOrNoneAtAllIsLeftToRouting() {
+	config := s.config()
+	config.Aliases["french"] = Alias{Languages: []string{"fr"}}
+
+	s.NoError(config.Live("en-low-latency"))
+	s.NoError(config.Live("en-high-accuracy"), "batchy/offline-en is a candidate, and so is quick/en")
+	s.NoError(config.Live("french"), "nothing serves it, which routing says in its own words")
+}
+
 func (s *RoutingSuite) TestARecordingPinnedToALiveOnlyModelIsRefusedAndToABatchOneIsNot() {
 	config := s.config()
 	config.Aliases["en-recorded"] = Alias{Languages: []string{"en"}, RequireRecorded: true}
@@ -353,10 +396,20 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	})
 	s.Require().NoError(err)
 
-	serving, err := serving(candidates, []options.Term{options.Diarize})
+	serving, err := serving(candidates, []options.Term{options.Diarize}, "")
 	s.Require().NoError(err)
 
 	s.Equal([]string{"muse/muse-voice-transcribe-1.0"}, names(serving))
+}
+
+func (s *RoutingSuite) TestAShortcutLeftWithOneModelStillRefusesAsNoProvider() {
+	// The caller named a shortcut, not the model, so the refusal says what it said on the
+	// commit before this PR rather than naming a model the caller never chose.
+	only := []Candidate{{Config: ProviderConfig{Provider: "microsoft", Model: "MAI-Transcribe-2-Streaming"}}}
+
+	_, err := serving(only, []options.Term{options.Keyterms}, "multilingual-low-latency")
+
+	s.EqualError(err, "routing: no provider can express keyterms")
 }
 
 func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
@@ -879,6 +932,8 @@ func (s *RoutingSuite) TestAPriorityListKeepsABatchModelOffTheLivePath() {
 	})
 
 	s.ErrorContains(err, "nothing in the priority list batchy")
+	s.NotContains(err.Error(), "%!w", "no refusal is wrapped when every entry resolved")
+	s.NotContains(err.Error(), "can serve this request:", "nothing follows the sentence")
 }
 
 func (s *RoutingSuite) TestAPriorityListKeepsALiveModelOffTheRecordedPath() {
@@ -1051,7 +1106,7 @@ func (s *RoutingSuite) capturingStats(router *Router[*stubProvider]) *Recorder {
 	router.recorder.Close()
 	done := make(chan struct{})
 	close(done)
-	recorder := &Recorder{live: &live.Client{}, queue: make(chan store.Request, 16), done: done}
+	recorder := &Recorder{live: &live.Client{}, queue: make(chan queued, 16), done: done}
 	router.recorder = recorder
 	return recorder
 }
@@ -1085,7 +1140,7 @@ func (s *RoutingSuite) TestAProviderThatFailsToBuildIsStillCountedAgainstItsHeal
 
 	s.Require().NoError(err)
 	s.Require().Len(stats.queue, 1)
-	recorded := <-stats.queue
+	recorded := (<-stats.queue).request
 	s.Equal("build_failed", recorded.ErrorCode)
 	s.Equal("en", recorded.Model)
 }

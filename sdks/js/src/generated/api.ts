@@ -1822,7 +1822,7 @@ export type paths = {
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
          *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
          *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
-         *     A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
+         *     A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text and images returns the existing IDs without invoking the model again; reuse with different content emits an error. Its images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
@@ -3713,7 +3713,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Speak a whole text into one audio file, off the live path
-         * @description The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+         * @description The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
          */
         readonly post: operations["recordSpeech"];
         readonly delete?: never;
@@ -3878,6 +3878,7 @@ export type components = {
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
             readonly visible_tools?: readonly string[];
+            /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
@@ -3926,6 +3927,7 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
             readonly visible_tools?: readonly string[];
+            /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
@@ -3984,7 +3986,7 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
             readonly visible_tools?: readonly string[];
-            /** @description Provider-specific voice id. */
+            /** @description The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI. */
             readonly voice?: string;
         };
         /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other. */
@@ -4602,6 +4604,8 @@ export type components = {
             };
         };
         readonly Candidate: {
+            /** @description Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them. */
+            readonly can_record?: boolean;
             readonly health: components["schemas"]["ProviderHealth"];
             readonly model: string;
             readonly provider: string;
@@ -5372,7 +5376,7 @@ export type components = {
             readonly max_output_tokens?: number;
             /** @description How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
             readonly reasoning_effort?: string;
-            /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id. */
+            /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id. */
             readonly request_id?: string;
             /** @description What to answer, as though it had been said. */
             readonly text: string;
@@ -5470,7 +5474,7 @@ export type components = {
             /** @default Vision Agent */
             readonly user_name?: string;
             readonly video?: components["schemas"]["SessionVideo"];
-            /** @description Provider-specific voice id. */
+            /** @description The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. */
             readonly voice?: string;
         };
         readonly CreateSipTrunkRequest: {
@@ -6663,6 +6667,14 @@ export type components = {
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
+            /**
+             * @description The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
+             * @example [
+             *       "keyterms",
+             *       "diarize"
+             *     ]
+             */
+            readonly supports?: readonly string[];
             readonly tier: components["schemas"]["Tier"];
             /**
              * Format: double
@@ -6718,7 +6730,7 @@ export type components = {
             readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
-            /** @description False once the error rate crosses the configured threshold. */
+            /** @description False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
             readonly available: boolean;
             /** Format: double */
             readonly error_rate: number;
@@ -7190,7 +7202,7 @@ export type components = {
             readonly tts?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
-            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            /** @description The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default. */
             readonly voice?: string;
         };
         readonly SessionSort: {
@@ -7511,6 +7523,8 @@ export type components = {
             readonly updated_at: string;
             /** @description Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead. */
             readonly url?: string;
+            /** @description The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say. */
+            readonly voice?: string;
         };
         readonly SpeechRequest: {
             /** @description A URL the finished job is POSTed to, so a caller does not have to poll. */
@@ -7518,7 +7532,7 @@ export type components = {
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
             /**
-             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             * @description Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
              * @default false
              */
             readonly inline?: boolean;
@@ -7842,6 +7856,7 @@ export type components = {
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };
         readonly SyncAgentResult: {
@@ -8307,7 +8322,7 @@ export type components = {
             readonly tts?: string;
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
-            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            /** @description The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default. */
             readonly voice?: string;
         };
         readonly UpdateSipTrunkRequest: {

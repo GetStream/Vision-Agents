@@ -94,16 +94,17 @@ preflight() {
   (cd "$root" && docker compose up -d --wait postgres redis) > "$out/compose.log" 2>&1 \
     || { echo "postgres and redis did not start, see $out/compose.log"; return 1; }
 
-  local t
-  for _ in $(seq 1 40); do
-    t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "${BENCH_WAKE_URL:-$GEMMA_BASE_URL}/chat/completions" \
+  # BENCH_WAKE_URL and BENCH_WAKE_MODEL name another self-hosted model to wake instead.
+  local t wake_url="${BENCH_WAKE_URL:-$GEMMA_BASE_URL}" wake_model="${BENCH_WAKE_MODEL:-google/gemma-4-26B-A4B-it}"
+  for _ in $(seq 1 120); do
+    t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$wake_url/chat/completions" \
       -H "Authorization: Bearer $BASETEN_API_KEY" -H 'Content-Type: application/json' \
-      -d '{"model":"'"${BENCH_WAKE_MODEL:-google/gemma-4-26B-A4B-it}"'","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}')
-    echo "gemma $t"
+      -d '{"model":"'"$wake_model"'","max_tokens":1,"messages":[{"role":"user","content":"Hi"}]}')
+    echo "$wake_model $t"
     case "$t" in 200\ 0.*|200\ 1.*) return 0 ;; esac
     sleep 15
   done
-  echo "gemma never answered within two seconds"
+  echo "$wake_model never answered within two seconds"
   return 1
 }
 
@@ -128,7 +129,7 @@ EOF
 if ! preflight; then
   record preflight failed "setup, see above"
 else
-  record preflight ok "keys, ports, postgres, redis, gemma awake"
+  record preflight ok "keys, ports, postgres, redis, ${BENCH_WAKE_MODEL:-gemma} awake"
   for stage in $stages; do
     echo "== $stage"
     started=$(date +%s)

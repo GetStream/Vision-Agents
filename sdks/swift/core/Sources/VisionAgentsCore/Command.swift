@@ -10,16 +10,42 @@ public enum Command: Sendable, Hashable {
     case say(String)
     /// Abandon the reply in flight.
     case interrupt
-    /// Answer a tool call. One of `output` or `error` says how it went. A call made for a
-    /// request is only accepted back with its `requestID` and `turnID`.
+    /// Answer a tool call. One of `output` or `error` says how it went, and `images` are
+    /// pictures the call shows beside `output`. A call made for a request is only accepted back
+    /// with its `requestID` and `turnID`.
     case toolResult(
-        id: String, output: String?, error: String?, requestID: String = "", turnID: String = "")
+        id: String, output: String?, error: String?, images: [ImageSource] = [],
+        requestID: String = "", turnID: String = "")
     /// A person's answer to a tool call that waited for them. A declined call's step shows
     /// `summary`. The call is still answered with `toolResult` either way.
     case toolApproval(
         id: String, allowed: Bool, summary: String = "", requestID: String = "", turnID: String = "")
     /// End the session.
     case close
+}
+
+/// One part of a tool's output, as the router reads an output that is not just words.
+private struct OutputPart: Encodable {
+    let type: String
+    var text: String?
+    var imageURL: ImageURL?
+
+    struct ImageURL: Encodable {
+        let url: String
+        let detail: String?
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, text, imageURL = "image_url"
+    }
+
+    static func parts(_ text: String, _ images: [ImageSource]) -> [OutputPart] {
+        let words = text.isEmpty ? [] : [OutputPart(type: "text", text: text)]
+        return words
+            + images.map {
+                OutputPart(type: "image_url", imageURL: ImageURL(url: $0.url, detail: $0.detail?.rawValue))
+            }
+    }
 }
 
 extension Command: Encodable {
@@ -36,12 +62,17 @@ extension Command: Encodable {
             try container.encode(text, forKey: .text)
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
-        case .toolResult(let id, let output, let error, let requestID, let turnID):
+        case .toolResult(let id, let output, let error, let images, let requestID, let turnID):
             try container.encode("tool_result", forKey: .type)
             try container.encode(id, forKey: .toolCallID)
             // The router reads both fields off one struct and treats the empty string as
             // absent, so sending the empty string and sending nothing are the same thing.
-            try container.encode(output ?? "", forKey: .output)
+            // Pictures make the output an array of parts, which is how the router takes them.
+            if images.isEmpty {
+                try container.encode(output ?? "", forKey: .output)
+            } else {
+                try container.encode(OutputPart.parts(output ?? "", images), forKey: .output)
+            }
             try container.encode(error ?? "", forKey: .error)
             if !requestID.isEmpty {
                 try container.encode(requestID, forKey: .requestID)

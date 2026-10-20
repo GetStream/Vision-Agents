@@ -309,7 +309,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	}()
 	// The provider's own message id is the command id, so the durable conversation refuses a
 	// repeat for the same reason the delivery table does.
-	if _, _, err := created.RespondCommand(ctx, message.ID, message.Text, "", options.LLM{}); err != nil {
+	if _, _, err := created.RespondCommand(ctx, message.ID, message.Text, "", nil, options.LLM{}); err != nil {
 		s.logger.Error("the agent could not take a channel message", "session", created.ID(), "error", err)
 	}
 	<-sending

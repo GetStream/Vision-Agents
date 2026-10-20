@@ -298,7 +298,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/reasoning_effort`.
             internal var reasoningEffort: Swift.String?
-            /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+            /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/request_id`.
             internal var requestId: Swift.String?
@@ -316,7 +316,7 @@ extension Components {
             ///   - images:
             ///   - maxOutputTokens: Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
             ///   - reasoningEffort: How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
-            ///   - requestId: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+            ///   - requestId: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
             ///   - text: What to answer, as though it had been said.
             ///   - videos: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
             internal init(
@@ -515,7 +515,7 @@ extension Components {
             internal var userName: Swift.String?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/video`.
             internal var video: Components.Schemas.SessionVideo?
-            /// Provider-specific voice id.
+            /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/voice`.
             internal var voice: Swift.String?
@@ -559,7 +559,7 @@ extension Components {
             ///   - userId: Who the agent joins the call as.
             ///   - userName:
             ///   - video:
-            ///   - voice: Provider-specific voice id.
+            ///   - voice: The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
             internal init(
                 agent: Swift.String? = nil,
                 agentId: Swift.String? = nil,
@@ -2531,7 +2531,7 @@ extension Components {
             }
             /// - Remark: Generated from `#/components/schemas/UpdateSessionRequest/verbosity`.
             internal var verbosity: Components.Schemas.UpdateSessionRequest.VerbosityPayload?
-            /// The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+            /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
             ///
             /// - Remark: Generated from `#/components/schemas/UpdateSessionRequest/voice`.
             internal var voice: Swift.String?
@@ -2549,7 +2549,7 @@ extension Components {
             ///   - title:
             ///   - tts:
             ///   - verbosity:
-            ///   - voice: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+            ///   - voice: The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
             internal init(
                 custom: Components.Schemas.UpdateSessionRequest.CustomPayload? = nil,
                 description: Swift.String? = nil,

@@ -431,11 +431,11 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
     def _build_messages(self) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
-        if self._instructions:
-            messages.append({"role": "system", "content": self._instructions})
+        if self.instructions:
+            messages.append({"role": "system", "content": self.instructions})
         if self._conversation:
             for msg in self._conversation.messages:
-                messages.append({"role": msg.role, "content": msg.content})
+                messages.append({"role": msg.role, "content": msg.named_content})
         return messages
 
     def _build_processor_inputs(

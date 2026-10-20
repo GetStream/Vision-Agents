@@ -58,6 +58,11 @@ func DefaultRegistry() *Registry {
 	})
 
 	registry.Register(cartesia.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		// sonic-preview declares format for its recordings, and a live voice streams raw
+		// audio into the call, so a format here would be dropped in silence.
+		if spec.TTS.Format != "" {
+			return nil, routing.Refused(stack.Wrap(errors.New("a format is taken only when recording, not by a live voice")))
+		}
 		return cartesia.New(cartesia.Options{
 			Model:    spec.Model,
 			VoiceID:  spec.Voice,

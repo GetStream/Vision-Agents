@@ -273,11 +273,17 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 
 		result := Frame{"type": "tool_result", "id": id}
 		output, err := functions.Call(ctx, name, frame.String("arguments"))
-		if err != nil {
+		switch {
+		case err != nil:
 			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
 			result["error"] = err.Error()
-		} else {
-			result["output"] = output
+		case len(output.Images) > 0:
+			// The router takes a worker's result as words, so its pictures would be lost
+			// without the model knowing; saying so lets it tell the person.
+			d.logger.Error("a hosted tool returned pictures, which a worker cannot send", "tool", name)
+			result["error"] = name + " returned pictures, and a hosted tool's result reaches the model as words only"
+		default:
+			result["output"] = output.Text
 		}
 		if !d.tell(result) {
 			d.logger.Error("a hosted tool's result never reached the router", "tool", name)

@@ -9,19 +9,61 @@ Integration tests require NVIDIA_API_KEY environment variable:
 
 import os
 from pathlib import Path
-from typing import Iterator
+from typing import AsyncIterator, Iterator
 
+import aiohttp
 import av
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
 from PIL import Image
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.nvidia import VLM
 
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
 
 load_dotenv()
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+
+
+@pytest.fixture
+async def nvidia_api() -> AsyncIterator[tuple[aiohttp.ClientSession, list[dict]]]:
+    """A real server standing in for NVIDIA: a session whose requests all go to it, and
+    every request body sent.
+
+    Every answer is an empty stream: the tests are about requests.
+    """
+    bodies: list[dict] = []
+
+    async def stream(request: web.Request) -> web.StreamResponse:
+        bodies.append(await request.json())
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", stream)
+    server = TestServer(app)
+    await server.start_server()
+
+    # The plugin posts to NVIDIA's fixed URL; the session sends it here instead.
+    async def to_server(
+        request: aiohttp.ClientRequest, handler: aiohttp.ClientHandlerType
+    ) -> aiohttp.ClientResponse:
+        request.url = server.make_url(request.url.path)
+        return await handler(request)
+
+    session = aiohttp.ClientSession(middlewares=(to_server,))
+    yield session, bodies
+    await session.close()
+    await server.close()
 
 
 @pytest.fixture(scope="session")
@@ -51,6 +93,41 @@ async def vlm() -> VLM:
         yield vlm_instance
     finally:
         await vlm_instance.close()
+
+
+class TestNvidiaVLM:
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, nvidia_api: tuple[aiohttp.ClientSession, list[dict]]
+    ):
+        session, bodies = nvidia_api
+        conversation = InMemoryConversation("", [])
+        vlm = VLM(api_key="test", client=session)
+        vlm.set_conversation(conversation)
+        vlm.set_instructions("be brief")
+
+        await answer(vlm, conversation, ALICE, "Hi")
+        await answer(vlm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (9653cb696) sent for the same two turns.
+        assert bodies[-1]["messages"] == [
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Are you there?"},
+        ]
+
+        await answer(vlm, conversation, BOB, "Me too")
+        await answer(vlm, conversation, ALICE, "Who is that?")
+        assert bodies[-1]["messages"][0] == {
+            "role": "system",
+            "content": "be brief\n\n" + SEVERAL_SPEAKERS,
+        }
+        assert bodies[-1]["messages"][3:] == [
+            {"role": "user", "content": "Are you there?"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Alice: Who is that?"},
+        ]
 
 
 @pytest.mark.integration

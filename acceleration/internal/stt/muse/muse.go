@@ -80,6 +80,22 @@ const (
 // what it is still holding, report it as speechComplete and close the socket.
 const controlTypeEndStream = "endStream"
 
+// The server closes a session whose audio falls behind the clock: with 1008 "Ingress
+// below real-time" after about 16s of no audio, and after about 22s of audio arriving at
+// half speed (probed 2026-10-19). A call carries audio only while someone speaks, so
+// silence is filled in for the time nobody did.
+const (
+	// fillTick is one token's worth of audio: the model turns each 80ms into one, and the
+	// server reports audioProgress in 80ms steps (probed 2026-10-19).
+	fillTick = 80 * time.Millisecond
+	// fillAfter is how far the audio may fall behind the clock before silence makes up
+	// the difference. It is twice the 100ms pieces a call is tested at
+	// (sttsuite.defaultChunkMs), so audio that is late by one piece is not padded out.
+	fillAfter = 200 * time.Millisecond
+	// samplePeriod is how long one 16-bit sample at stt.SampleRate lasts.
+	samplePeriod = time.Second / stt.SampleRate
+)
+
 // Options configures the provider. APIKey falls back to META_API_KEY.
 type Options struct {
 	APIKey string
@@ -160,8 +176,17 @@ type STT struct {
 	emitter *stt.Emitter
 
 	conn *websocket.Conn
-	// writeMu serialises writes: a websocket connection allows only one writer.
+	// writeMu serialises writes: a websocket connection allows only one writer. It also
+	// guards the audio clock, so silence is measured against the audio actually sent.
 	writeMu sync.Mutex
+	// clockStart is when the session started taking audio, and audioSent how much of it
+	// has been written since, the caller's and the filled-in silence together.
+	clockStart time.Time
+	audioSent  time.Duration
+	// stopFill stops the silence filler, and filling is what Close waits for so no silence
+	// follows the end of the audio stream.
+	stopFill chan struct{}
+	filling  sync.WaitGroup
 
 	// finished is closed when the server has answered the end of the audio stream and
 	// hung up, which is how Close knows the tail has been transcribed.
@@ -233,6 +258,7 @@ func New(options Options) (*STT, error) {
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  stt.NewEmitter(64),
 		finished: make(chan struct{}),
+		stopFill: make(chan struct{}),
 		turns:    map[int64]*turn{},
 	}, nil
 }
@@ -265,6 +291,11 @@ func (s *STT) Start(ctx context.Context) error {
 
 	s.emitter.Send(stt.Connected{Provider: ProviderName, Model: s.options.Model, At: time.Now()})
 	go s.readLoop()
+	s.writeMu.Lock()
+	s.clockStart = time.Now()
+	s.writeMu.Unlock()
+	s.filling.Add(1)
+	go s.fillSilence()
 	return nil
 }
 
@@ -288,7 +319,9 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 		return errors.New("muse: not started")
 	}
 
-	if err := s.write(websocket.BinaryMessage, pcm.Bytes()); err != nil {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.writeAudio(pcm.Bytes()); err != nil {
 		return fmt.Errorf("muse: write audio: %w", err)
 	}
 	return nil
@@ -309,6 +342,8 @@ func (s *STT) Close() error {
 	conn := s.conn
 	s.mu.Unlock()
 
+	close(s.stopFill)
+	s.filling.Wait()
 	if conn != nil {
 		s.flush()
 		conn.Close()
@@ -375,6 +410,55 @@ func (s *STT) write(messageType int, payload []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return stack.Wrap(s.conn.WriteMessage(messageType, payload))
+}
+
+// writeAudio sends PCM and moves the audio clock on by its length. The caller holds
+// writeMu.
+func (s *STT) writeAudio(payload []byte) error {
+	if err := s.conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+		return stack.Wrap(err)
+	}
+	s.audioSent += time.Duration(len(payload)/2) * samplePeriod
+	return nil
+}
+
+// fillSilence sends zero PCM whenever the audio has fallen behind the clock by fillAfter,
+// until Close stops it or the connection is gone.
+func (s *STT) fillSilence() {
+	defer s.filling.Done()
+
+	ticker := time.NewTicker(fillTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopFill:
+			return
+		case <-ticker.C:
+			if err := s.fillGap(); err != nil {
+				// The server hung up, which the read loop reports.
+				return
+			}
+		}
+	}
+}
+
+// fillGap writes the silence the audio is behind the clock by, if that is fillAfter or
+// more.
+func (s *STT) fillGap() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	behind := time.Since(s.clockStart) - s.audioSent
+	if behind < fillAfter {
+		return nil
+	}
+	// A peer that stopped reading would hold writeMu, and so Close, for as long as it
+	// stays silent: bound the write by how long Close waits for the server anyway.
+	// gorilla's SetWriteDeadline only stores the time and always returns nil (conn.go in
+	// github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674).
+	_ = s.conn.SetWriteDeadline(time.Now().Add(s.options.FlushTimeout))
+	defer func() { _ = s.conn.SetWriteDeadline(time.Time{}) }()
+	return s.writeAudio(make([]byte, 2*int(behind/samplePeriod)))
 }
 
 // readLoop translates server frames into events until the connection ends.

@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -115,6 +116,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
@@ -216,6 +220,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -465,6 +472,23 @@ func storeFailure(err error, taken APIError) error {
 		return invalidRequest(err.Error())
 	}
 	return err
+}
+
+// liveSTTComplaint refuses a voice config whose transcriber only a recording can use,
+// which a session would otherwise refuse only as it starts (sttrouter.Router.Live). A
+// config that speaks through an STS model, or is written to, opens no transcriber. was is
+// the stt the config held before this save: one the save leaves as it was is not refused,
+// so a config stored before the check stays editable, and its sessions are still refused
+// as they start.
+func (s *Server) liveSTTComplaint(config store.AgentConfig, was string) (string, bool) {
+	if s.streams == nil || s.streams.STT == nil || config.STT == was ||
+		config.STS != "" || config.Mode == store.AgentModeText {
+		return "", true
+	}
+	if err := s.streams.STT.Live(sttrouter.Request{Target: config.STT}); err != nil {
+		return err.Error(), false
+	}
+	return "", true
 }
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are
@@ -1849,7 +1873,7 @@ type AgentConfigRequest struct {
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
-	Voice              *string                  `json:"voice,omitempty" doc:"Provider-specific voice id."`
+	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
 }
 
 // AgentConfig is the AgentConfig schema.
@@ -1887,7 +1911,7 @@ type AgentConfig struct {
 	UpdatedAt          time.Time                `json:"updated_at"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty"`
-	Voice              *string                  `json:"voice,omitempty"`
+	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 }
 
 // AgentTools is how an agent is offered its plugin, MCP server and connector tools.

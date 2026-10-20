@@ -174,6 +174,10 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"purpose", params.Purpose, "turn", params.TurnID,
 		"provider", s.config.Provider, "model", s.config.Model,
 		"ttft_ms", ttftMs, "duration_ms", durationMs,
+		"input_tokens", response.Usage.InputTokens,
+		"cached_tokens", response.Usage.InputTokensDetails.CachedTokens,
+		"output_tokens", response.Usage.OutputTokens,
+		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
 		"success", response.Status != llm.StatusFailed)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
