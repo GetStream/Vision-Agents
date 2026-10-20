@@ -157,6 +157,35 @@ class TestChatCompletionsVLM:
         assert final.text == ""
         assert final.original is None
 
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, object]]]
+    ):
+        client, bodies = openai_api
+        conversation = InMemoryConversation("", [])
+        vlm = ChatCompletionsVLM(client=client, model="test")
+        vlm.set_conversation(conversation)
+
+        await answer(vlm, conversation, ALICE, "Hi")
+        await answer(vlm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (486427184) sent for the same two turns.
+        assert bodies[-1]["messages"] == [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Are you there?"},
+        ]
+
+        await answer(vlm, conversation, BOB, "Me too")
+        await answer(vlm, conversation, ALICE, "Who is that?")
+        sent = bodies[-1]["messages"]
+        assert isinstance(sent, list)
+        assert sent[2:] == [
+            {"role": "user", "content": "Are you there?"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Alice: Who is that?"},
+        ]
+
 
 class TestChatCompletionsLLM:
     async def test_simple_response_success(self, llm, conversation, openai_client_mock):

@@ -1,15 +1,102 @@
 """Tests for AWS plugin."""
 
 import os
+from typing import AsyncIterator
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
-from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
+from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
+from vision_agents.core.llm import LLM
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.plugins.aws.aws_llm import BedrockLLM
 
 from vision_agents.testing import collect_simple_response
 
 load_dotenv()
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+
+
+@pytest.fixture
+async def bedrock_api(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[list[dict]]:
+    """A real server standing in for Bedrock, and every request body sent to it.
+
+    Every answer is an empty event stream: the tests are about requests.
+    """
+    bodies: list[dict] = []
+
+    async def converse_stream(request: web.Request) -> web.Response:
+        bodies.append(await request.json())
+        return web.Response(content_type="application/vnd.amazon.eventstream")
+
+    app = web.Application()
+    app.router.add_post("/model/{model}/converse-stream", converse_stream)
+    server = TestServer(app)
+    await server.start_server()
+    # boto3 sends a service's requests to AWS_ENDPOINT_URL_<SERVICE ID> when it is set:
+    # https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html
+    monkeypatch.setenv(
+        "AWS_ENDPOINT_URL_BEDROCK_RUNTIME", str(server.make_url("")).rstrip("/")
+    )
+    monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+    yield bodies
+    await server.close()
+
+
+async def answer(
+    llm: LLM, conversation: Conversation, participant: Participant, text: str
+) -> None:
+    """What the agent does with a participant's words: keep them, then ask the LLM."""
+    await conversation.upsert_message(
+        role="user", user_id=participant.user_id, content=text, participant=participant
+    )
+    events = EventManager()
+    events.register(LLMResponseFinalEvent)
+    turn = LLMTurn(
+        transcript=text,
+        participant=participant,
+        events=events,
+        speaker=conversation.speaker_label(participant),
+    )
+    turn.start(llm)
+    await turn.stream.collect()
+    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
+
+
+class TestBedrockLLM:
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, bedrock_api: list[dict]
+    ):
+        conversation = InMemoryConversation("", [])
+        llm = BedrockLLM(
+            model="test", aws_access_key_id="test", aws_secret_access_key="test"
+        )
+        llm.set_conversation(conversation)
+
+        await answer(llm, conversation, ALICE, "Hi")
+        await answer(llm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (486427184) sent for the same two turns.
+        assert bedrock_api[-1]["messages"] == [
+            {"role": "user", "content": [{"text": "Hi"}]},
+            {"role": "assistant", "content": [{"text": "Ok"}]},
+            {"role": "user", "content": [{"text": "Are you there?"}]},
+        ]
+
+        await answer(llm, conversation, BOB, "Me too")
+        await answer(llm, conversation, ALICE, "Who is that?")
+        assert bedrock_api[-1]["messages"][2:] == [
+            {"role": "user", "content": [{"text": "Are you there?"}]},
+            {"role": "assistant", "content": [{"text": "Ok"}]},
+            {"role": "user", "content": [{"text": "Bob: Me too"}]},
+            {"role": "assistant", "content": [{"text": "Ok"}]},
+            {"role": "user", "content": [{"text": "Alice: Who is that?"}]},
+        ]
 
 
 def _has_aws_creds() -> bool:

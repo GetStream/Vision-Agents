@@ -1,16 +1,80 @@
 """Tests for OpenRouter LLM plugin."""
 
 import os
+from typing import AsyncIterator
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
-from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
+from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
 from vision_agents.core.instructions import Instructions
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.plugins.openrouter import LLM
 
 from vision_agents.testing import collect_simple_response
 
 load_dotenv()
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+
+
+@pytest.fixture
+async def openrouter_api() -> AsyncIterator[tuple[str, list[dict]]]:
+    """A real server standing in for OpenRouter: its base URL, and every request body sent.
+
+    Every answer is an empty stream: the tests are about requests.
+    """
+    bodies: list[dict] = []
+
+    async def stream(request: web.Request) -> web.StreamResponse:
+        bodies.append(await request.json())
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", stream)
+    server = TestServer(app)
+    await server.start_server()
+    yield str(server.make_url("/v1")), bodies
+    await server.close()
+
+
+@pytest.fixture
+async def openrouter_llm(
+    openrouter_api: tuple[str, list[dict]],
+) -> AsyncIterator[LLM]:
+    base_url, _ = openrouter_api
+    llm = LLM(model="test", api_key="test", base_url=base_url)
+    yield llm
+    await llm.close()
+
+
+async def answer(
+    llm: LLM, conversation: Conversation, participant: Participant, text: str
+) -> None:
+    """What the agent does with a participant's words: keep them, then ask the LLM."""
+    await conversation.upsert_message(
+        role="user", user_id=participant.user_id, content=text, participant=participant
+    )
+    events = EventManager()
+    events.register(LLMResponseFinalEvent)
+    turn = LLMTurn(
+        transcript=text,
+        participant=participant,
+        events=events,
+        speaker=conversation.speaker_label(participant),
+    )
+    turn.start(llm)
+    await turn.stream.collect()
+    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
 
 
 @pytest.fixture()
@@ -35,6 +99,33 @@ async def llm_factory():
 
 class TestOpenRouterLLM:
     """Test suite for OpenRouter LLM class."""
+
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, openrouter_llm: LLM, openrouter_api: tuple[str, list[dict]]
+    ):
+        _, bodies = openrouter_api
+        llm = openrouter_llm
+        conversation = InMemoryConversation("", [])
+        llm.set_conversation(conversation)
+
+        await answer(llm, conversation, ALICE, "Hi")
+        await answer(llm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (486427184) sent for the same two turns.
+        assert bodies[-1]["messages"] == [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Are you there?"},
+        ]
+
+        await answer(llm, conversation, BOB, "Me too")
+        await answer(llm, conversation, ALICE, "Who is that?")
+        assert bodies[-1]["messages"][2:] == [
+            {"role": "user", "content": "Are you there?"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Alice: Who is that?"},
+        ]
 
     async def test_strict_mode_for_non_openai(self, llm_factory):
         """Non-OpenAI models should have strict mode enabled for tools with required params."""
