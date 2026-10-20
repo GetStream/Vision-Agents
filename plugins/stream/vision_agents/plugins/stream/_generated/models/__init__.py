@@ -29,6 +29,7 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .agent_role import AgentRole
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
 from .analyze_reviews_request import AnalyzeReviewsRequest
@@ -482,6 +483,7 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AgentRole",
     "AgentStats",
     "AgentTools",
     "AnalyzeReviewsRequest",
