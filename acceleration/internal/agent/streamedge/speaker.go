@@ -40,9 +40,6 @@ const (
 	// loudest and 127 is silence.
 	audioLevelSilent   = 127
 	audioLevelSpeaking = 20
-	// audibleSample is the level a sample has to reach, in either direction, for the piece
-	// holding it to count as speech: about -48 dBFS, above what a voice leaves in its pauses.
-	audibleSample = 128
 	// dtxFrameBytes is the most an Opus DTX frame takes: the encoder's way of saying there is
 	// nothing to hear, which is not sent.
 	dtxFrameBytes = 2
@@ -258,10 +255,8 @@ func (s *speaker) waitForRoom() {
 func firstAudible(pcm audio.PcmData) int {
 	piece := max(pcm.SampleRate/int(time.Second/opusFrameDuration), 1)
 	for start := 0; start < len(pcm.Samples); start += piece {
-		for _, sample := range pcm.Samples[start:min(start+piece, len(pcm.Samples))] {
-			if sample >= audibleSample || sample <= -audibleSample {
-				return start
-			}
+		if audio.Audible(pcm.Samples[start:min(start+piece, len(pcm.Samples))]) {
+			return start
 		}
 	}
 	return -1
