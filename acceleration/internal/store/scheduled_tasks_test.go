@@ -142,6 +142,29 @@ func (s *StoreSuite) TestAStaleRunIsReclaimedUnderTheSameRun() {
 	s.Equal(2, reclaimed[0].Run.Attempts)
 }
 
+func (s *StoreSuite) TestARenewalExtendsOnlyTheClaimItHolds() {
+	due := s.base.Add(-time.Minute)
+	s.task("st-renew", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 10, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	held, err := s.store.RenewScheduledTaskLease(s.ctx, "acme", "st-renew", claimed[0].ClaimID, time.Hour)
+	s.Require().NoError(err)
+	s.True(held)
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "st-renew")
+	s.Require().NoError(err)
+	s.Require().NotNil(task.LeaseUntil)
+	s.WithinDuration(time.Now().Add(time.Hour), *task.LeaseUntil, time.Minute)
+
+	// A pause clears the claim, so the worker that had it holds nothing.
+	task.State = ScheduledTaskPaused
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+	held, err = s.store.RenewScheduledTaskLease(s.ctx, "acme", "st-renew", claimed[0].ClaimID, time.Hour)
+	s.Require().NoError(err)
+	s.False(held)
+}
+
 func (s *StoreSuite) TestAFinishUnderAStolenClaimDoesNotAdvanceTheTask() {
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })

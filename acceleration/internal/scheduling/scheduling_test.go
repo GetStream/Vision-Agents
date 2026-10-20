@@ -252,3 +252,125 @@ func TestAMoveLandsNoSoonerThanMinMoveUnlessItKeepsTheCurrentRun(t *testing.T) {
 		require.Equal(t, CodeIntervalTooShort, failure.Code, name)
 	}
 }
+
+// Europe/Berlin falls back on Sun 25 Oct 2026 at 01:00 UTC: 03:00 CEST becomes
+// 02:00 CET, so 02:00 to 03:00 reads twice, first at +02:00, then at +01:00.
+
+func TestAnInLandingInTheSecondPassOfAFallBackHourKeepsItsInstant(t *testing.T) {
+	// 01:50 CEST; an hour and a half on is 02:20 CET, not 02:20 CEST.
+	now := time.Date(2026, 10, 24, 23, 50, 0, 0, time.UTC)
+	for _, repeat := range []string{"", "FREQ=DAILY"} {
+		schedule, err := Parse(Input{In: "PT1H30M", Repeat: repeat, Timezone: "Europe/Berlin"}, now)
+		require.NoError(t, err)
+		next, ok := schedule.Next(now)
+		require.True(t, ok)
+		require.Equal(t, "2026-10-25T01:20:00Z", next.Format(time.RFC3339), "repeat %q", repeat)
+	}
+}
+
+func TestAnAtWithAnOffsetInTheSecondPassOfAFallBackHourKeepsItsInstant(t *testing.T) {
+	// 02:10 CET, the second pass; 02:30 CET is twenty minutes on.
+	now := time.Date(2026, 10, 25, 1, 10, 0, 0, time.UTC)
+	schedule, err := Parse(Input{At: "2026-10-25T02:30:00+01:00", Timezone: "Europe/Berlin"}, now)
+	require.NoError(t, err)
+	first, _ := schedule.First()
+	require.Equal(t, "2026-10-25T01:30:00Z", first.Format(time.RFC3339))
+}
+
+func TestAWallClockReadingInTheFallBackHourStillTakesTheFirstPass(t *testing.T) {
+	// The same reading without an offset names no instant: the first pass.
+	schedule, err := Parse(Input{At: "2026-10-25T02:30", Timezone: "Europe/Berlin"},
+		time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	first, _ := schedule.First()
+	require.Equal(t, "2026-10-25T00:30:00Z", first.Format(time.RFC3339))
+}
+
+func TestADayInIsTheSameClockReadingTomorrow(t *testing.T) {
+	// 09:00 CEST on Saturday; Sunday is 25 hours long in Berlin.
+	now := time.Date(2026, 10, 24, 7, 0, 0, 0, time.UTC)
+	for in, want := range map[string]string{
+		"P1D":    "2026-10-25T08:00:00Z", // 09:00 CET
+		"P1DT1H": "2026-10-25T09:00:00Z", // 10:00 CET
+		"PT24H":  "2026-10-25T07:00:00Z", // hours are exact: 08:00 CET
+		"P1W":    "2026-10-31T08:00:00Z", // 09:00 CET a week on
+	} {
+		schedule, err := Parse(Input{In: in, Timezone: "Europe/Berlin"}, now)
+		require.NoError(t, err, in)
+		first, _ := schedule.First()
+		require.Equal(t, want, first.Format(time.RFC3339), in)
+	}
+}
+
+func TestAZeroInIsRefused(t *testing.T) {
+	require.Equal(t, CodeInvalidSchedule, codeOf(t, Input{In: "P0D", Timezone: "UTC"}))
+}
+
+func TestTheRoutersOwnZoneIsRefused(t *testing.T) {
+	require.Equal(t, CodeInvalidTimezone, codeOf(t, Input{At: "2026-10-21T09:00", Timezone: "Local"}))
+	_, err := ResolveZone(" Local ", "", "", "UTC")
+	require.Error(t, err)
+	require.Equal(t, CodeInvalidTimezone, err.(*Error).Code)
+}
+
+func TestAPaddedZoneResolvesTrimmed(t *testing.T) {
+	zone, err := ResolveZone(" Europe/Berlin ", "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, "Europe/Berlin", zone)
+	schedule := parse(t, Input{At: "2026-10-21T09:00", Timezone: " Europe/Berlin "})
+	require.Equal(t, "Europe/Berlin", schedule.Timezone)
+}
+
+func TestAMonthlyRepeatFromThe31stSkipsShortMonths(t *testing.T) {
+	// RFC 5545 3.3.10: an occurrence on a date that does not exist is skipped.
+	schedule := parse(t, Input{At: "2026-10-31T09:00", Repeat: "FREQ=MONTHLY", Timezone: "UTC"})
+	days := []string{}
+	for _, occurrence := range schedule.Upcoming(monday, 3) {
+		days = append(days, occurrence.Format("2006-01-02"))
+	}
+	require.Equal(t, []string{"2026-10-31", "2026-12-31", "2027-01-31"}, days)
+
+	lastDay := parse(t, Input{At: "2026-10-31T09:00", Repeat: "FREQ=MONTHLY;BYMONTHDAY=-1", Timezone: "UTC"})
+	days = []string{}
+	for _, occurrence := range lastDay.Upcoming(monday, 3) {
+		days = append(days, occurrence.Format("2006-01-02"))
+	}
+	require.Equal(t, []string{"2026-10-31", "2026-11-30", "2026-12-31"}, days)
+}
+
+func TestARepeatFromAnAtWithAnOffsetKeepsRecurring(t *testing.T) {
+	// The first occurrence is the named instant; the later ones are the
+	// same clock reading on later days, not that instant again.
+	schedule := parse(t, Input{At: "2026-01-01T09:00:00+01:00", Repeat: "FREQ=DAILY", Timezone: "Europe/Berlin"})
+	first, ok := schedule.First()
+	require.True(t, ok)
+	require.Equal(t, "2026-01-01T08:00:00Z", first.Format(time.RFC3339))
+	next, ok := schedule.Next(monday)
+	require.True(t, ok)
+	require.Equal(t, "2026-10-20T07:00:00Z", next.Format(time.RFC3339))
+}
+
+func TestARepeatFromAnInListsDistinctOccurrences(t *testing.T) {
+	schedule := parse(t, Input{In: "PT1H", Repeat: "FREQ=DAILY", Timezone: "UTC"})
+	var got []string
+	for _, at := range schedule.Upcoming(monday, 3) {
+		got = append(got, at.Format(time.RFC3339))
+	}
+	require.Equal(t, []string{"2026-10-19T13:00:00Z", "2026-10-20T13:00:00Z", "2026-10-21T13:00:00Z"}, got)
+}
+
+func TestAnInBeyondAYearIsRefusedBeforeItOverflows(t *testing.T) {
+	for _, in := range []string{"P367D", "P99999999999D", "P9999999999999999999D", "PT99999999999H", "P53W", "P366DT1S"} {
+		for _, repeat := range []string{"", "FREQ=DAILY"} {
+			require.Equal(t, CodeScheduleTooFar, codeOf(t, Input{In: in, Repeat: repeat, Timezone: "UTC"}), "%s %q", in, repeat)
+		}
+	}
+	for _, repeat := range []string{"", "FREQ=DAILY"} {
+		_, err := Parse(Input{In: "P364D", Repeat: repeat, Timezone: "UTC"}, monday)
+		require.NoError(t, err, repeat)
+	}
+	// A one-shot is also held to a calendar year after the in-bound; a repeat
+	// is held only to the in-bound, so exactly 366 days passes with one.
+	_, err := Parse(Input{In: "P366D", Repeat: "FREQ=DAILY", Timezone: "UTC"}, monday)
+	require.NoError(t, err)
+}
