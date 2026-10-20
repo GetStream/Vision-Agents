@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -115,6 +116,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
@@ -216,6 +220,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -465,6 +472,23 @@ func storeFailure(err error, taken APIError) error {
 		return invalidRequest(err.Error())
 	}
 	return err
+}
+
+// liveSTTComplaint refuses a voice config whose transcriber only a recording can use,
+// which a session would otherwise refuse only as it starts (sttrouter.Router.Live). A
+// config that speaks through an STS model, or is written to, opens no transcriber. was is
+// the stt the config held before this save: one the save leaves as it was is not refused,
+// so a config stored before the check stays editable, and its sessions are still refused
+// as they start.
+func (s *Server) liveSTTComplaint(config store.AgentConfig, was string) (string, bool) {
+	if s.streams == nil || s.streams.STT == nil || config.STT == was ||
+		config.STS != "" || config.Mode == store.AgentModeText {
+		return "", true
+	}
+	if err := s.streams.STT.Live(sttrouter.Request{Target: config.STT}); err != nil {
+		return err.Error(), false
+	}
+	return "", true
 }
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are

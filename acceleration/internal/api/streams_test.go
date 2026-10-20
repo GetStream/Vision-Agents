@@ -199,6 +199,26 @@ func (s *StreamsSuite) TestAStartPinnedToABatchModelIsRefusedAndLeavesItsHealthA
 	}, time.Second, 50*time.Millisecond, "no start_failed row counts against the model")
 }
 
+func (s *StreamsSuite) TestAStartPinnedToABatchModelEndsAsAPolicyViolation() {
+	read, ended := s.ending(s.start("/v1/stt/stream", frame{"target": "batch/" + batchModel}))
+
+	s.Require().NotEmpty(read)
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code, "the caller's to change, not the router's failure")
+	s.True(strings.HasPrefix(read[0]["error"].(string), closed.Text), "the refusal is the reason, cut to fit")
+}
+
+func (s *StreamsSuite) TestAVendorThatFailsToStartEndsAsAnInternalError() {
+	read, ended := s.ending(s.start("/v1/stt/stream", frame{"target": "down/" + downModel}))
+
+	s.Require().NotEmpty(read)
+	s.Contains(read[0]["error"], "batch: connect failed")
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+}
+
 func (s *StreamsSuite) TestAStartWithNoTargetEndsWithTheSameClose() {
 	s.refusedStartEndsWithItsMessage(frame{"tts": frame{"target": "en-low-latency"}})
 }

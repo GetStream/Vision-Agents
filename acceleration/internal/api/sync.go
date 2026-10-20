@@ -260,6 +260,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
+		return nil, invalidRequest(message)
+	}
 
 	skills := skillsOf(body.Skills)
 	// After the settings, so a sandbox stored before and not repeated still counts.
