@@ -20,7 +20,9 @@ BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
 
 @pytest.fixture
-async def xai_api() -> AsyncIterator[tuple[AsyncClient, list[chat_pb2.GetCompletionsRequest]]]:
+async def xai_api() -> AsyncIterator[
+    tuple[AsyncClient, list[chat_pb2.GetCompletionsRequest]]
+]:
     """A real gRPC server standing in for xAI: a client of it, and every request sent.
 
     Every answer is one streamed "Ok": the tests are about requests.

@@ -140,7 +140,9 @@ class TestBedrockLLM:
         await answer(llm, conversation, BOB, "What time is it?")
 
         follow_up = bedrock_api[-1]
-        assert follow_up["messages"][-1]["content"][0]["toolResult"]["toolUseId"] == "t1"
+        assert (
+            follow_up["messages"][-1]["content"][0]["toolResult"]["toolUseId"] == "t1"
+        )
         assert follow_up["system"] == [{"text": "be brief\n\n" + SEVERAL_SPEAKERS}]
 
 
