@@ -1721,7 +1721,7 @@ export type paths = {
          * Run an agent on one input and wait for its answer
          * @description Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
          *     The instructions are the caller's, trusted, and added to the config's for this run alone. The input is handed to the agent as JSON data, never as instructions.
-         *     A config that does not start a session is a 400 invalid_config, a spent budget a 429 budget_exceeded, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+         *     A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
          */
         readonly post: operations["createRun"];
         readonly delete?: never;
@@ -5811,7 +5811,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 429: the app or organization has spent its budget, and the message says which and when it resets), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -12265,9 +12265,17 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
-            readonly 403: components["responses"]["Forbidden"];
+            /** @description Not the app's backend, or the app's or organization's budget is spent */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 404: components["responses"]["NotFound"];
-            /** @description The app's or organization's budget is spent */
+            /** @description The app has as many runs in flight as it may: retry after Retry-After */
             readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;

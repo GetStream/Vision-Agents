@@ -93,6 +93,7 @@ type Config struct {
 	Stream     Stream     `koanf:"stream"`
 	Agent      Agent      `koanf:"agent"`
 	Connectors Connectors `koanf:"connectors"`
+	Runs       Runs       `koanf:"runs"`
 	Episodes   Episodes   `koanf:"episodes"`
 	Sandbox    Sandbox    `koanf:"sandbox"`
 	Models     Models     `koanf:"models"`
@@ -281,6 +282,14 @@ type Connectors struct {
 	ProxyCallsPerMinute int64 `koanf:"proxy_calls_per_minute"`
 }
 
+// Runs is how many headless runs (POST /v1/agents/runs) one app may have going at once.
+type Runs struct {
+	// ConcurrentPerApp caps one app's runs in flight, counted in Redis across every router,
+	// so one app's backlog cannot hold every model slot of the deployment. A run over it is a
+	// 429 with Retry-After. 0 turns it off; so does a deployment with no Redis.
+	ConcurrentPerApp int64 `koanf:"concurrent_per_app"`
+}
+
 // Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
 type Episodes struct {
 	// IdleAfter is how long a text episode goes without a message before it closes and is
@@ -371,6 +380,7 @@ var variables = map[string]string{
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
+	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -417,6 +427,9 @@ func Defaults() Config {
 		// and 60 a minute is under its «5,000 requests per hour» and «80 content-generating
 		// requests per minute».
 		Connectors: Connectors{ProxyCallsPerMinute: 60},
+		// A choice, not a measurement: room for a moderation worker's batch without letting
+		// one app's backlog take every model slot. # unverified
+		Runs: Runs{ConcurrentPerApp: 20},
 	}
 }
 
@@ -515,6 +528,9 @@ func environment() *env.Env {
 func (c Config) validate() error {
 	if c.Connectors.ProxyCallsPerMinute < 0 {
 		return fmt.Errorf("config: connectors.proxy_calls_per_minute cannot be negative, got %d", c.Connectors.ProxyCallsPerMinute)
+	}
+	if c.Runs.ConcurrentPerApp < 0 {
+		return fmt.Errorf("config: runs.concurrent_per_app cannot be negative, got %d", c.Runs.ConcurrentPerApp)
 	}
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
@@ -660,6 +676,7 @@ func (c Config) export() error {
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
+		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
 
 		"telnyx.api_key":       c.Telnyx.APIKey,
 		"telnyx.connection_id": c.Telnyx.ConnectionID,

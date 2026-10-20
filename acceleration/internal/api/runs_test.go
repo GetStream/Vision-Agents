@@ -20,6 +20,12 @@ func TestRunsSuite(t *testing.T) {
 	runSuite(t, new(RunsSuite))
 }
 
+func (s *RunsSuite) SetupSuite() {
+	// One, so a test holds the whole of an app's allowance with a single run.
+	s.runsPerApp = 1
+	s.RouterSuite.SetupSuite()
+}
+
 func (s *RunsSuite) SetupTest() {
 	s.useFixture("standard")
 }
@@ -91,8 +97,42 @@ func (s *RunsSuite) TestASpentBudgetIsBudgetExceeded() {
 
 	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
 
-	s.Equal(http.StatusTooManyRequests, status)
+	s.Equal(http.StatusForbidden, status, "waiting does not refill a budget, so it is no 429 to retry")
 	s.Equal(codeBudgetExceeded, failure.Code)
+}
+
+func (s *RunsSuite) TestARunOverTheAppsLimitIsToldWhenToRetry() {
+	s.useApp(s.data.createApp())
+	finished := s.holdRun(s.config("holding/holding-model"))
+	defer func() { <-finished }()
+	defer s.holding.answers()
+
+	response := s.serverClient.raw(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
+
+	s.Equal(http.StatusTooManyRequests, response.StatusCode)
+	s.Equal("5", response.Header.Get("Retry-After"))
+	var answered ErrorResponse
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	s.Equal(codeConcurrencyLimited, answered.Error.Code)
+}
+
+func (s *RunsSuite) TestAFinishedRunFreesItsSlot() {
+	s.useApp(s.data.createApp())
+	finished := s.holdRun(s.config("holding/holding-model"))
+	s.holding.answers()
+	s.Require().Equal(http.StatusOK, <-finished)
+
+	s.run(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
+}
+
+func (s *RunsSuite) TestAnotherAppsRunsDoNotCountAgainstAnApp() {
+	s.useApp(s.data.createApp())
+	finished := s.holdRun(s.config("holding/holding-model"))
+	defer func() { <-finished }()
+	defer s.holding.answers()
+	s.useApp(s.data.createApp())
+
+	s.run(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
 }
 
 func (s *RunsSuite) TestARunThatOutlastsItsTimeoutTimesOut() {
@@ -145,6 +185,17 @@ func (s *RunsSuite) config(model string) string {
 	return created.Id
 }
 
+// holdRun starts a run of config on the held model, waits until it is in flight, and returns
+// where its status arrives once the model answers.
+func (s *RunsSuite) holdRun(config string) <-chan int {
+	s.holding.holds()
+	asked := len(s.holding.requests())
+	client, finished := s.serverClient, make(chan int, 1)
+	go func() {
+		finished <- client.do(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: config, Input: "hold"}, nil)
+	}()
+	s.Require().Eventually(func() bool { return len(s.holding.requests()) > asked }, 5*time.Second, 10*time.Millisecond)
+	return finished
 // spend is what the app spent in the last hour, grouped as options says.
 func (s *RunsSuite) spend(options string) []SpendBucket {
 	now := time.Now().UTC()
