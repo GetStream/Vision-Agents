@@ -121,7 +121,7 @@ class TestClaudeLLM:
             await answer(llm, conversation, participant, text)
         await llm.close()
 
-        # One person: what the base sha (9653cb696) sent.
+        # One person: what the base sha (b5a81650b) sent.
         told = [body["system"] for body in bodies]
         assert told == ["be brief", "be brief", "be brief\n\n" + SEVERAL_SPEAKERS]
         assert bodies[-1]["messages"][-1] == {"role": "user", "content": "Bob: Me too"}
