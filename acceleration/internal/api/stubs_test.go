@@ -458,8 +458,20 @@ func recorderRegistry() *ttsrouter.Recorders {
 	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
 		return &recordedVoice{model: spec.Model}, nil
 	})
+	registry.Register("down", func(spec routing.Spec) (tts.Recorder, error) {
+		return &downVoice{recordedVoice{model: spec.Model}}, nil
+	})
 	return registry
 }
+
+// downVoice is a vendor that fails every recording, as one answering 503 does.
+type downVoice struct{ recordedVoice }
+
+func (*downVoice) Record(context.Context, tts.Recording) (tts.Recorded, error) {
+	return tts.Recorded{}, errors.New("down: record: 503 Service Unavailable: overloaded")
+}
+
+func (*downVoice) Provider() string { return "down" }
 
 func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.Recorded, error) {
 	format := recording.Format

@@ -3,6 +3,7 @@ package ttsrouter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -81,6 +82,44 @@ func (t *inworldStub) RoundTrip(request *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// vendorStub is ElevenLabs', Cartesia's and Inworld's recording endpoints as the http
+// transport the recorders are built on. It answers a short file, or for a host it holds a
+// status for, that status and its body. It keeps the hosts it was asked, in order, and
+// cancels the recording's context at the cancelAt-th request when set.
+type vendorStub struct {
+	asked    []string
+	statuses map[string]int
+	body     string
+	cancelAt int
+	cancel   context.CancelFunc
+}
+
+func (t *vendorStub) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.asked = append(t.asked, request.URL.Host)
+	if len(t.asked) == t.cancelAt {
+		t.cancel()
+		return nil, context.Canceled
+	}
+	status, answer := http.StatusOK, `{"audioContent":"YXVkaW8="}`
+	if failing, ok := t.statuses[request.URL.Host]; ok {
+		status, answer = failing, t.body
+	}
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(answer)),
+		Request:    request,
+	}, nil
+}
+
+// The hosts the recorders send to (recorderURL in each vendor's recorder.go).
+const (
+	elevenLabsHost = "api.elevenlabs.io"
+	cartesiaHost   = "api.cartesia.ai"
+	inworldHost    = "api.inworld.ai"
+)
+
 type RecordingsSuite struct {
 	suite.Suite
 	ctx context.Context
@@ -132,6 +171,25 @@ func (s *RecordingsSuite) newRecordings() *Recordings {
 func (s *RecordingsSuite) speakingInworld() (*Recordings, *inworldStub) {
 	s.T().Setenv("INWORLD_API_KEY", "test-key")
 	stub := &inworldStub{}
+	real := http.DefaultTransport
+	http.DefaultTransport = stub
+	s.T().Cleanup(func() { http.DefaultTransport = real })
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	recordings, err := NewRecordings(Options{Config: config[routing.TTS], Recorders: DefaultRecorderRegistry()})
+	s.Require().NoError(err)
+	s.T().Cleanup(recordings.Close)
+	return recordings, stub
+}
+
+// speaking routes over the built-in config with every vendor's own factory, whose
+// recorders speak to a vendorStub answering statuses, swapped in for http.DefaultTransport.
+func (s *RecordingsSuite) speaking(statuses map[string]int) (*Recordings, *vendorStub) {
+	for _, key := range []string{"ELEVENLABS_API_KEY", "CARTESIA_API_KEY", "INWORLD_API_KEY"} {
+		s.T().Setenv(key, "test-key")
+	}
+	stub := &vendorStub{statuses: statuses, body: `{"detail":"down"}`}
 	real := http.DefaultTransport
 	http.DefaultTransport = stub
 	s.T().Cleanup(func() { http.DefaultTransport = real })
@@ -666,4 +724,156 @@ func (s *RecordingsSuite) TestARecorderThatCannotSayItsVoiceReportsNoneRatherTha
 	s.Require().NoError(err)
 
 	s.Empty(recorded.Voice, "a voice the recorder may have dropped is not claimed")
+}
+
+func (s *RecordingsSuite) TestAPriorityListFallsBackToCartesiaWhenElevenLabsFailsTheRecording() {
+	// Probed on 1c5fa58db: failed, "elevenlabs: record: 500 Internal Server Error", and
+	// Cartesia was never asked.
+	recordings, stub := s.speaking(map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+	recorded, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, Text: "hello"})
+
+	s.Require().NoError(err)
+	s.Equal("cartesia/sonic-3.6", served.Name(), "the job says who spoke it")
+	s.Equal(cartesia.DefaultVoiceID, recorded.Voice)
+	s.Equal([]string{elevenLabsHost, cartesiaHost}, stub.asked)
+}
+
+func (s *RecordingsSuite) TestTheRecordedShortcutFallsBackWhenElevenLabsIsOutOfCredits() {
+	// Probed on 1c5fa58db: failed, "elevenlabs: record: 402 Payment Required".
+	recordings, stub := s.speaking(map[string]int{elevenLabsHost: http.StatusPaymentRequired})
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded"}, Text: "hello"})
+
+	s.Require().NoError(err)
+	s.Equal("cartesia/sonic-3.6", served.Name(), "the next en-recorded ranks")
+	s.Equal([]string{elevenLabsHost, cartesiaHost}, stub.asked)
+}
+
+func (s *RecordingsSuite) TestATextOverInworldsLimitGoesToTheNextCandidate() {
+	// Probed on 1c5fa58db: refused, "at most 2000", and Cartesia was never asked.
+	recordings, stub := s.speaking(nil)
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"inworld", "cartesia"}},
+		Text:    strings.Repeat("a", inworld.MaxRecordingText+1)})
+
+	s.Require().NoError(err)
+	s.Equal("cartesia/sonic-3.6", served.Name())
+	s.Equal([]string{cartesiaHost}, stub.asked, "Inworld refused it before any call")
+}
+
+func (s *RecordingsSuite) TestACandidateThatCannotMakeTheFormatIsPassedOverForTheNext() {
+	// Cartesia records no pcm_32000; Inworld does.
+	recordings, stub := s.speaking(map[string]int{elevenLabsHost: http.StatusServiceUnavailable})
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia", "inworld"}, Format: "pcm_32000"},
+		Text:    "hello"})
+
+	s.Require().NoError(err)
+	s.Equal("inworld/inworld-tts-2-batch", served.Name())
+	s.Equal([]string{elevenLabsHost, inworldHost}, stub.asked)
+}
+
+func (s *RecordingsSuite) TestARecordingEveryCandidateRefusesIsTheCallersToChange() {
+	// Inworld takes pcm_32000 and no text over its limit; Cartesia takes the text and not
+	// pcm_32000.
+	recordings, stub := s.speaking(nil)
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"inworld", "cartesia"}, Format: "pcm_32000"},
+		Text:    strings.Repeat("a", inworld.MaxRecordingText+1)})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "nothing failed, so nothing is the provider's")
+	s.ErrorIs(err, inworld.ErrTextTooLong)
+	s.ErrorIs(err, cartesia.ErrFormat)
+	s.Equal(routing.ProviderConfig{}, served, "nobody spoke it")
+	s.Empty(stub.asked)
+}
+
+func (s *RecordingsSuite) TestARecordingOneCandidateRefusedAndTheNextFailedIsStillTheCallersToChange() {
+	recordings, _ := s.speaking(map[string]int{cartesiaHost: http.StatusInternalServerError})
+
+	_, _, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"inworld", "cartesia"}},
+		Text:    strings.Repeat("a", inworld.MaxRecordingText+1)})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "a refusal is the answer even when another failed, as in Select")
+	s.ErrorIs(err, inworld.ErrTextTooLong)
+	s.ErrorContains(err, "cartesia/sonic-3.6: cartesia: record: 500")
+}
+
+func (s *RecordingsSuite) TestARecordingEveryCandidateFailsNamesEachCandidatesError() {
+	recordings, stub := s.speaking(map[string]int{
+		elevenLabsHost: http.StatusInternalServerError, cartesiaHost: http.StatusTooManyRequests,
+	})
+
+	// mock has no recorder, so it is passed over rather than named.
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "mock", "cartesia"}}, Text: "hello"})
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, routing.ErrRequest, "the providers failed, not the caller")
+	s.Equal("ttsrouter: no candidate recorded the text: "+
+		`elevenlabs/eleven_v3: elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`+"\n"+
+		`cartesia/sonic-3.6: cartesia: record: 429 Too Many Requests: {"detail":"down"}`, err.Error())
+	s.Equal(routing.ProviderConfig{}, served, "nobody spoke it")
+	s.Equal([]string{elevenLabsHost, cartesiaHost}, stub.asked)
+}
+
+func (s *RecordingsSuite) TestAFailedRecordingSaysAtMostTheStartOfEachVendorsAnswer() {
+	recordings, stub := s.speaking(map[string]int{
+		elevenLabsHost: http.StatusInternalServerError, cartesiaHost: http.StatusInternalServerError,
+	})
+	stub.body = strings.Repeat("x", 10_000)
+
+	_, _, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, Text: "hello"})
+
+	s.Require().Error(err)
+	for _, line := range strings.Split(err.Error(), "\n") {
+		s.LessOrEqual(len(line), len("ttsrouter: no candidate recorded the text: ")+maxTriedError+len("..."))
+	}
+}
+
+func (s *RecordingsSuite) TestARecordingWhoseCallerHasGoneAsksNoFurtherVendor() {
+	recordings, stub := s.speaking(nil)
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	stub.cancelAt, stub.cancel = 1, cancel
+
+	_, _, err := recordings.Record(ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, Text: "hello"})
+
+	s.Require().ErrorIs(err, context.Canceled)
+	s.Equal([]string{elevenLabsHost}, stub.asked)
+}
+
+// The control below takes its expected values from 1c5fa58db, the base: a pinned model
+// has no next candidate, so it fails as it always has.
+func (s *RecordingsSuite) TestARecordingPinnedToAModelThatFailsStillFailsAsBefore() {
+	recordings, stub := s.speaking(map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "elevenlabs/eleven_v3"}, Text: "hello"})
+
+	s.EqualError(err, `elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`)
+	s.Equal("elevenlabs/eleven_v3", served.Name())
+	s.Equal([]string{elevenLabsHost}, stub.asked)
+}
+
+func (s *RecordingsSuite) TestARecordingWithNothingToSayIsRefusedWithoutAskingAVendor() {
+	// Probed on 1c5fa58db: "tts: there is nothing to say", not a request error, so it was
+	// counted against eleven_v3.
+	recordings, stub := s.speaking(nil)
+
+	_, _, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, Text: "  "})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "there is nothing to say")
+	s.Empty(stub.asked)
 }

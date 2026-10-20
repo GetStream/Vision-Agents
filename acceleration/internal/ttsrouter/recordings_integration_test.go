@@ -88,6 +88,73 @@ func (s *RecordingStatsSuite) recordInworld(text string, failing bool) ([]store.
 	return rows, recordErr
 }
 
+// recordOn records the text for a customer of its own with every vendor's own recorder,
+// speaking to a vendorStub that answers statuses, and returns the rows the customer left
+// once the stat writer has drained, and the error.
+func (s *RecordingStatsSuite) recordOn(asked options.TTS, text string, statuses map[string]int) ([]store.Request, error) {
+	customer := "customer-" + time.Now().Format("150405.000000000")
+	for _, key := range []string{"ELEVENLABS_API_KEY", "CARTESIA_API_KEY", "INWORLD_API_KEY"} {
+		s.T().Setenv(key, "test-key")
+	}
+	real := http.DefaultTransport
+	http.DefaultTransport = &vendorStub{statuses: statuses, body: `{"detail":"down"}`}
+	s.T().Cleanup(func() { http.DefaultTransport = real })
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	// No live health: the failures here would demote real models for every suite and
+	// router sharing the Redis, and reorder the candidates of the next test.
+	recordings, err := NewRecordings(Options{Config: config[routing.TTS], Recorders: DefaultRecorderRegistry(), Store: s.store})
+	s.Require().NoError(err)
+
+	_, _, recordErr := recordings.Record(s.ctx, Recording{CustomerID: customer, Options: asked, Text: text})
+	recordings.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", customer).Scan(s.ctx))
+	return rows, recordErr
+}
+
+// outcomes is each row's model and error code, empty for a success.
+func outcomes(rows []store.Request) []string {
+	var said []string
+	for _, row := range rows {
+		said = append(said, row.Model+" "+row.ErrorCode)
+	}
+	return said
+}
+
+func (s *RecordingStatsSuite) TestACandidateThatFailsTheRecordingIsAFailedStatOnItsModelAndTheNextServes() {
+	rows, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, "hello",
+		map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+	s.Require().NoError(err)
+	s.ElementsMatch([]string{"eleven_v3 record_failed", "sonic-3.6 "}, outcomes(rows))
+}
+
+func (s *RecordingStatsSuite) TestEveryCandidateThatFailsTheRecordingIsAFailedStatOnItsModel() {
+	rows, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, "hello",
+		map[string]int{elevenLabsHost: http.StatusPaymentRequired, cartesiaHost: http.StatusServiceUnavailable})
+
+	s.Require().Error(err)
+	s.ElementsMatch([]string{"eleven_v3 record_failed", "sonic-3.6 record_failed"}, outcomes(rows))
+}
+
+func (s *RecordingStatsSuite) TestACandidateThatRefusesTheTextLeavesNoStatAndTheNextServes() {
+	rows, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"inworld", "cartesia"}},
+		strings.Repeat("a", inworld.MaxRecordingText+1), nil)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"sonic-3.6 "}, outcomes(rows), "Inworld's limit is not counted against its health")
+}
+
+func (s *RecordingStatsSuite) TestARecordingWithNothingToSayLeavesNoStat() {
+	// Probed on 1c5fa58db: one row, eleven_v3 record_failed.
+	rows, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}, "  ", nil)
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.Empty(rows)
+}
+
 func (s *RecordingStatsSuite) TestATextOverInworldsLimitLeavesNoFailedStatOnTheModel() {
 	rows, err := s.recordInworld(strings.Repeat("a", inworld.MaxRecordingText+1), false)
 
