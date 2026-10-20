@@ -871,7 +871,7 @@ func (s *STS) spoke(raw []byte) {
 		s.mu.Lock()
 		turn := s.turn
 		s.mu.Unlock()
-		if turn != nil {
+		if turn != nil && turn.SentMs() > 0 {
 			s.emitter.Send(turn.Chunk(pcm))
 		}
 		return

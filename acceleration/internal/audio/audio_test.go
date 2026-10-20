@@ -28,9 +28,9 @@ func (s *AudioSuite) TestDurationMsCountsFramesNotSamples() {
 
 func (s *AudioSuite) TestAudioIsAudibleFromTheThresholdInEitherDirection() {
 	s.False(Audible(nil))
-	s.False(Audible([]int16{0, AudibleSample - 1, -(AudibleSample - 1)}))
-	s.True(Audible([]int16{0, AudibleSample}))
-	s.True(Audible([]int16{-AudibleSample, 0}))
+	s.False(Audible([]int16{0, 127, -127}))
+	s.True(Audible([]int16{0, 128}))
+	s.True(Audible([]int16{-128, 0}))
 }
 
 func (s *AudioSuite) TestDurationMsIsZeroWhenUnset() {

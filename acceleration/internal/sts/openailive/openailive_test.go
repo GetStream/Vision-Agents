@@ -310,6 +310,29 @@ func (s *OpenAILiveSuite) TestSilenceInsideAReplyGoesOutWithIt() {
 	s.InDelta(30, completes(events)[0].AudioDurationMs, 0.001, "the pause is part of how long the reply played")
 }
 
+// GPT-Live sends the words of a reply before its sound, so a reply can be open while the
+// model still streams silence. That silence is not the reply's first byte: the wait is
+// timed to the first audible piece.
+func (s *OpenAILiveSuite) TestSilenceBeforeTheFirstSoundIsNotTheFirstByte() {
+	provider := s.newProvider()
+	provider.handleMessage(s.frame(heard("hello")))
+	provider.handleMessage(s.frame(said("hi")))
+	provider.handleMessage(s.frame(quiet(240)))
+	time.Sleep(20 * time.Millisecond)
+	provider.handleMessage(s.frame(spoke(240)))
+
+	events := s.settled(provider)
+	var chunks int
+	for _, event := range events {
+		if _, ok := event.(sts.AudioChunk); ok {
+			chunks++
+		}
+	}
+	s.Equal(1, chunks, "the silence before the sound is not sent")
+	s.Require().Len(completes(events), 1)
+	s.GreaterOrEqual(completes(events)[0].TimeToFirstByteMs, 20.0, "the wait ends at the sound, not at the silence")
+}
+
 // Hearing the caller during a reply says nothing about whether the reply was cut off. The
 // API transcribes the caller asynchronously, so the deltas for the utterance being answered
 // normally land after the answer has started. Only Interrupt settles a reply as cut off.
