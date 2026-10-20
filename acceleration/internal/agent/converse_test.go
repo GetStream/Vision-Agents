@@ -1507,6 +1507,8 @@ func (s *ConverseSuite) TestAFinishedTurnWhoseControllerTimedOutIsAnswered() {
 	}, s.quiet())
 	s.Equal([]ActionKind{ActAnswer}, kinds(actions), "a slow controller must not cost the caller their answer")
 	s.Equal("what time do you open", actions[0].Text)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the caller's words were never recorded")
+	s.Equal("what time do you open", s.heard()[0].Text)
 }
 
 func (s *ConverseSuite) TestAFinishedTurnOverTheAgentWhoseControllerFailedTakesTheFloor() {
