@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 )
 
 type FlowSuite struct {
@@ -340,107 +339,6 @@ func (s *FlowSuite) TestADecisionThatOutlivesTheDeadlineStillRulesOnTheTurn() {
 	s.model.mu.Unlock()
 	s.Require().NotNil(script, "the stream had started, so the deadline is what closed it")
 	s.True(script.Abandoned())
-}
-
-func (s *FlowSuite) TestAFinishedTurnOnAQuietFloorIsNotKeptWaitingForAStalledController() {
-	// A finished turn the controller fails to rule on is answered anyway, so the full
-	// deadline only made the caller sit through it.
-	s.flow.deadline = time.Minute
-	s.flow.settled = 50 * time.Millisecond
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "ended", Participant: "Alex", Text: "what time do you open", Ended: true, EndMarked: true}))
-
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor,
-		5*time.Millisecond, "the caller waited out the full deadline")
-	s.ErrorIs(s.decisions()[0].Error(), context.DeadlineExceeded)
-}
-
-func (s *FlowSuite) TestATurnWaitedOnBeforeIsNotKeptWaitingForAStalledController() {
-	s.flow.deadline = time.Minute
-	s.flow.settled = 50 * time.Millisecond
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "again", Participant: "Alex", Text: "a table for four", Waited: true}))
-
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor,
-		5*time.Millisecond, "words already waited on waited out the full deadline")
-	s.ErrorIs(s.decisions()[0].Error(), context.DeadlineExceeded)
-}
-
-func (s *FlowSuite) TestATurnTheTranscriberHasNotEndedGetsTheFullDeadline() {
-	// The controller is how a caller pausing mid-sentence is told from one who finished, so
-	// it is given its time on words nothing has said are over.
-	s.flow.deadline = 400 * time.Millisecond
-	s.flow.settled = 20 * time.Millisecond
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "open", Participant: "Alex", Text: "a table for"}))
-
-	time.Sleep(200 * time.Millisecond)
-	s.Empty(s.decisions(), "the short deadline cut off a turn that may not be finished")
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor, 5*time.Millisecond)
-}
-
-func (s *FlowSuite) TestAnEndATranscriberNeverMarksGetsTheFullDeadline() {
-	// A transcriber that never marks an end has every turn counted as ended, so that is no
-	// sign the caller finished, and a pause mid-sentence needs the controller's ruling.
-	s.flow.deadline = 400 * time.Millisecond
-	s.flow.settled = 20 * time.Millisecond
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "unmarked", Participant: "Alex", Text: "a table for", Ended: true}))
-
-	time.Sleep(200 * time.Millisecond)
-	s.Empty(s.decisions(), "a turn nothing marked as ended was cut off")
-}
-
-func (s *FlowSuite) TestAnotherVoiceGetsTheFullDeadline() {
-	// Speech from somebody else in the room is what the controller sets aside, and a ruling
-	// that never comes is answered.
-	s.flow.deadline = 400 * time.Millisecond
-	s.flow.settled = 20 * time.Millisecond
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{
-		ID: "child", Participant: "Alex", Text: "Mom, can I have the nuggets?", EndMarked: true, AnotherVoice: true,
-	}))
-
-	time.Sleep(200 * time.Millisecond)
-	s.Empty(s.decisions(), "background speech was answered for want of a ruling")
-}
-
-func (s *FlowSuite) TestAFinishedTurnQueuedBehindAnotherDecisionGetsItsOwnTime() {
-	// Its time is the controller's, so a turn that waited behind another decision is not
-	// answered unruled for the time it spent in the queue.
-	s.flow.deadline = time.Minute
-	s.flow.settled = 300 * time.Millisecond
-	hold := make(chan struct{})
-	s.model.holdCreate = hold
-	s.model.answers["first"] = `{"disposition":"respond","floor":"continue"}`
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "first", Participant: "Alex", Text: "hello"}))
-	s.waitAsked(1)
-	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "queued", Participant: "Sam", Text: "what time do you open", EndMarked: true}))
-	time.Sleep(400 * time.Millisecond)
-	s.model.mu.Lock()
-	s.model.holdCreate = nil
-	s.model.mu.Unlock()
-	close(hold)
-
-	s.waitAsked(2)
-	var script *llmtest.Script
-	s.Require().Eventually(func() bool {
-		s.model.mu.Lock()
-		defer s.model.mu.Unlock()
-		script = s.model.scripts["queued"]
-		return script != nil
-	}, settleFor, 5*time.Millisecond)
-	script.OutputText(`{"disposition":"respond","floor":"continue"}`)
-	script.Done()
-
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 2 }, settleFor, 5*time.Millisecond)
-	for _, decided := range s.decisions() {
-		if decided.CandidateID == "queued" {
-			s.NoError(decided.Error(), "the queued turn ran out of time before it was asked")
-			s.Equal(Respond, decided.Disposition)
-		}
-	}
 }
 
 func (s *FlowSuite) TestAFastDecisionIsRuledAsAnswered() {

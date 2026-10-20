@@ -64,8 +64,6 @@ type FlowTurn struct {
 	Waited bool
 	// Ended says the transcriber marked the end of the turn, or is one that never does.
 	Ended bool
-	// EndMarked says the transcriber itself marked the end of the turn.
-	EndMarked bool
 }
 
 type flow struct {
@@ -75,10 +73,8 @@ type flow struct {
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
-	// deadline is flowDeadline and settled is settledDeadline, shortened by tests that
-	// wait them out.
+	// deadline is flowDeadline, shortened by tests that wait it out.
 	deadline time.Duration
-	settled  time.Duration
 
 	mu sync.Mutex
 	// pending holds each candidate still with the controller: when it was asked about, so
@@ -106,14 +102,6 @@ type flow struct {
 // the controller must not, or a 429 leaves the caller unanswered.
 const flowDeadline = 3 * time.Second
 
-// settledDeadline bounds a decision on words the transcriber says are finished, or that were
-// already waited on, spoken by the caller while the agent is quiet. A finished turn the
-// controller does not rule on is answered all the same, so waiting out flowDeadline for it
-// only adds silence: a controller stalling on its first token cost callers 3 s a turn. The
-// controller rules in well under this when it is well. It counts from when the controller
-// is asked, not from when the turn joined the queue for it.
-const settledDeadline = time.Second
-
 // Ongoing speech cannot wait for the conversation model to finish reasoning.
 // Noise is filtered before an overlap reaches the controller; on timeout yield
 // the floor, without submitting the caller's unfinished words as a new turn.
@@ -123,10 +111,7 @@ const overlapDeadline = 750 * time.Millisecond
 type candidate struct {
 	turn    FlowTurn
 	askedAt time.Time
-	// budget is how long the controller is given once it is asked, for a turn that gets
-	// less than the deadline; zero for one that gets the deadline.
-	budget time.Duration
-	stream *llm.Stream
+	stream  *llm.Stream
 	// ctx and cancel abandon Create itself, not only a stream that has already started. A
 	// revision that moved on while the HTTP request was still waiting for headers used to
 	// leave that round trip occupying the model, which is how a barge-in sat for seconds
@@ -185,7 +170,6 @@ func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *f
 		logger:   logger,
 		pending:  map[string]*candidate{},
 		deadline: flowDeadline,
-		settled:  settledDeadline,
 	}
 }
 
@@ -198,15 +182,11 @@ func (f *flow) Decide(turn FlowTurn) error {
 	}
 
 	deadline := f.deadline
-	var budget time.Duration
-	switch {
-	case turn.Unfinished && turn.Speaking:
+	if turn.Unfinished && turn.Speaking {
 		deadline = overlapDeadline
-	case settled(turn) && f.settled < deadline:
-		budget = f.settled
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	asked := &candidate{turn: turn, askedAt: time.Now(), budget: budget, ctx: ctx, cancel: cancel}
+	asked := &candidate{turn: turn, askedAt: time.Now(), ctx: ctx, cancel: cancel}
 
 	f.mu.Lock()
 	if f.closed {
@@ -238,13 +218,6 @@ func (f *flow) run(asked *candidate) {
 	turn := asked.turn
 	defer f.running.Done()
 	defer f.advance(turn.ID)
-	if asked.budget > 0 {
-		// Only this goroutine reads ctx from here on, and Cancel still reaches it through the
-		// parent's cancel.
-		var stop context.CancelFunc
-		asked.ctx, stop = context.WithTimeout(asked.ctx, asked.budget)
-		defer stop()
-	}
 
 	if f.judge != nil {
 		f.runJudge(asked)
@@ -295,13 +268,6 @@ func (f *flow) run(asked *candidate) {
 	stopExpiry := context.AfterFunc(asked.ctx, func() { _ = stream.Close() })
 	defer stopExpiry()
 	f.consume(asked, stream)
-}
-
-// settled reports whether a turn is one whose words are finished, spoken by the caller to a
-// quiet agent: what a ruling that never comes answers anyway. Words in another voice are not,
-// because the controller is what sets them aside.
-func settled(turn FlowTurn) bool {
-	return !turn.Unfinished && !turn.Speaking && !turn.AnotherVoice && (turn.EndMarked || turn.Waited)
 }
 
 // advance starts the newest waiting turn, or marks the controller idle.
