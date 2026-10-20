@@ -504,6 +504,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	var left bool
 	var err error
 	tool, _ := a.availableTools().Lookup(requested.Call.Name)
+	// ran is whether the tool was called: the router refuses some calls itself, before it.
+	var ran bool
 	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
@@ -528,9 +530,11 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
+		ran = true
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
 	} else {
+		ran = true
 		parts, left, err = a.callTool(ctx, requested.Call)
 	}
 	a.mu.Lock()
@@ -555,7 +559,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if !left && !a.native() && ctx.Err() == nil && a.followsTool(requested) {
 		a.toolReply = true
 	}
-	outcome := toolOutcome(ctx.Err() != nil, err != nil, hold != nil && hold.answered)
+	outcome := toolOutcome(ctx.Err() != nil, err != nil, !ran, hold != nil && hold.answered)
 	a.mu.Unlock()
 	took := time.Since(began)
 	toolCallSeconds.WithLabelValues(outcome).Observe(took.Seconds())
@@ -624,14 +628,16 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	}()
 }
 
-// toolOutcome names how a tool call ended: cancelled, failed, come back after it was
-// answered with stillRunning, or ok.
-func toolOutcome(cancelled, failed, answered bool) string {
+// toolOutcome names how a tool call ended: cancelled, failed, refused by the router before
+// the tool was called, come back after it was answered with stillRunning, or ok.
+func toolOutcome(cancelled, failed, refused, answered bool) string {
 	switch {
 	case cancelled:
 		return "cancelled"
 	case failed:
 		return "error"
+	case refused:
+		return "refused"
 	case answered:
 		return "still-running"
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -152,6 +153,7 @@ func (s *AgentSuite) TestAToolCallIsLoggedWhenItComesBack() {
 
 func (s *AgentSuite) TestAToolThatFailedIsLoggedAsAnError() {
 	s.logs = &logLines{}
+	before, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "error")
 	s.ownsTools("")
 	s.runner.err = errors.New("stub: the order service is down")
 	s.join(false)
@@ -163,6 +165,8 @@ func (s *AgentSuite) TestAToolThatFailedIsLoggedAsAnError() {
 	s.says(participant, "where is my order")
 
 	s.Equal("error", s.loggedOnce(toolBack)["outcome"])
+	after, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "error")
+	s.Equal(before+1, after)
 }
 
 // interruptsATool has the caller interrupt while a tool runs, the tool asking policy of the
@@ -188,6 +192,7 @@ func (s *AgentSuite) interruptsATool(policy ToolPolicy, runner ToolRunner, began
 
 func (s *AgentSuite) TestAToolAnsweredAsStillRunningIsLoggedSoWhenItComesBack() {
 	s.logs = &logLines{}
+	before, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "still-running")
 	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
@@ -199,6 +204,8 @@ func (s *AgentSuite) TestAToolAnsweredAsStillRunningIsLoggedSoWhenItComesBack() 
 	release()
 
 	s.Equal("still-running", s.loggedOnce(toolBack)["outcome"])
+	after, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "still-running")
+	s.Equal(before+1, after)
 }
 
 // cancelledTool runs until its call is cancelled.
@@ -212,10 +219,13 @@ func (r *cancelledTool) Run(ctx context.Context, _ llm.ToolCall) ([]llm.ContentP
 
 func (s *AgentSuite) TestAToolCancelledByTheCallerIsLoggedAsCancelled() {
 	s.logs = &logLines{}
+	before, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "cancelled")
 	runner := &cancelledTool{began: make(chan struct{})}
 	s.interruptsATool(ToolPolicy{Cancels: true}, runner, runner.began)
 
 	s.Equal("cancelled", s.loggedOnce(toolBack)["outcome"])
+	after, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "cancelled")
+	s.Equal(before+1, after)
 }
 
 func (s *AgentSuite) TestAnUtteranceIsLoggedWithWhatStartedItsTurn() {
@@ -289,4 +299,151 @@ func (s *AgentSuite) TestTwoUtterancesPublishedAtOnceAreCountedOpenTogether() {
 	afterSamples, afterAboveOne := histogramOf("router_agent_open_utterances", "provider", "stub")
 	s.Equal(uint64(4), afterSamples-samples, "one sample a published chunk")
 	s.Equal(uint64(3), afterAboveOne-aboveOne, "every chunk after the second utterance began went out with two open")
+}
+
+func (s *AgentSuite) TestACallTheRouterRefusesItselfIsLoggedAsRefused() {
+	// The model asks again for a call it made, so the router answers from the first and
+	// never runs the tool.
+	s.logs = &logLines{}
+	refusedBefore, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "refused")
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.logs.records(toolBack)) >= 2 }, "the repeated call never came back")
+	back := s.logs.records(toolBack)
+	s.Equal("ok", back[0]["outcome"], "the first call ran the tool")
+	s.Equal("refused", back[1]["outcome"])
+	s.Len(s.runner.asked(), 1, "the refused call ran the tool")
+	refusedAfter, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "refused")
+	s.Greater(refusedAfter, refusedBefore, "the refused calls were not counted as refused")
+}
+
+// originOfSpoken is what started the turn that said text.
+func (s *AgentSuite) originOfSpoken(text string) origin {
+	for _, request := range s.voice.spoken() {
+		if strings.Contains(request.Text, text) {
+			return s.agent.turns.originOf(turnOf(request.ID))
+		}
+	}
+	s.FailNow("never said: " + text)
+	return origin{}
+}
+
+func (s *AgentSuite) TestASpeculativeCallerTurnIsRecordedAsTheCallerAndParentsTheTurnsAfterIt() {
+	s.logs = &logLines{}
+	s.speculates = true
+	s.waitsOnATool()
+
+	s.eventually(func() bool { return len(s.logs.records(turnTiming)) == 2 }, "both turns were never measured")
+	timings := s.logs.records(turnTiming)
+	callers, tools := byKind(timings, kindCaller), byKind(timings, kindTool)
+	s.Require().Len(callers, 1, "the speculative reply was not recorded as the caller's turn")
+	s.Require().Len(tools, 1)
+	s.Equal(s.callerTurn(), callers[0]["turn"])
+	s.Equal(s.callerTurn(), tools[0]["parent"])
+	hold := s.originOfSpoken("Pulling up order twelve now.")
+	s.Equal(origin{kind: kindHold, parent: s.callerTurn()}, hold)
+}
+
+func (s *AgentSuite) TestANativeCallerTurnIsRecordedAsTheCallerAndParentsTheTurnsAfterIt() {
+	peer := s.joinNativeDelegating()
+	s.nativeFrame(peer, "session.update")
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_stopped"}`)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+
+	s.Eventually(func() bool { return s.agent.turns.originOf("r1").kind == kindCaller }, time.Second, time.Millisecond)
+
+	s.agent.turns.started("after", kindTool)
+	s.Equal("r1", s.agent.turns.originOf("after").parent)
+}
+
+func (s *AgentSuite) TestAGreetingIsRecordedAsALineSaid() {
+	s.join(true)
+
+	s.Require().NoError(s.agent.Greet(s.ctx, "Northwind, how can I help?", false))
+
+	s.eventually(func() bool { return s.spokenText("Northwind, how can I help?") }, "the greeting was never said")
+	s.Equal(kindSay, s.originOfSpoken("Northwind, how can I help?").kind)
+}
+
+func (s *AgentSuite) TestAMurmurIsRecordedAsABackchannel() {
+	s.duplex = DuplexOptions{Backchannel: true, BackchannelWords: 4}
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.mutters(participant, "so I was wondering whether")
+
+	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 }, "the agent never murmured")
+	murmur, _ := firstOf[Backchannel](s.reported())
+	s.eventually(func() bool { return s.spokenText(murmur.Text) }, "the murmur never reached the voice")
+	s.Equal(kindBackchannel, s.originOfSpoken(murmur.Text).kind)
+}
+
+func (s *AgentSuite) TestAnAnswerToDelegatedWorkIsRecordedAsAFollowUpToTheCallerTurn() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+
+	s.eventually(func() bool { return s.spokenText("That comes to 12.63.") }, "the answer was never said")
+	s.Equal(origin{kind: kindFollowUp, parent: s.callerTurn()}, s.originOfSpoken("That comes to 12.63."))
+}
+
+func (s *AgentSuite) TestTheIntroductionOfAWarmTransferIsRecordedAsAHandoffToTheCallerTurn() {
+	s.onACall()
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to speak to a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.speak(stt.Participant{ID: "human"})
+
+	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") }, "the human was never introduced")
+	s.Equal(origin{kind: kindHandoff, parent: s.callerTurn()}, s.originOfSpoken("Alice needs a refund on order 12."))
+}
+
+func (s *AgentSuite) TestAQuestionAskedIntoSilenceIsLoggedAsACheckIn() {
+	s.logs = &logLines{}
+	s.join(true)
+	s.model.composes = []string{"Anything else on the booking?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.agent.checkIn(participant, idlePurpose)
+
+	s.Equal(kindCheckIn, s.loggedOnce(choseLine)["kind"])
+}
+
+func (s *AgentSuite) TestALineForADelegatedTaskIsAnUpdateAndALineForASilenceACheckIn() {
+	s.Equal(kindHold, composedKind(holdPurpose))
+	s.Equal(kindUpdate, composedKind(updatePurpose))
+	s.Equal(kindCheckIn, composedKind(idlePurpose))
+}
+
+func (s *AgentSuite) TestOnlyTheLatestTurnsKeepTheirOrigin() {
+	tracker := newTurnTracker(routing.Owner{}, nil)
+	for index := range originsKept + 1 {
+		tracker.started(fmt.Sprintf("tool-%d", index), kindTool)
+	}
+
+	s.Equal(origin{}, tracker.originOf("tool-0"), "the oldest turn outlived the cap")
+	s.Equal(kindTool, tracker.originOf("tool-1").kind)
+	s.Equal(kindTool, tracker.originOf(fmt.Sprintf("tool-%d", originsKept)).kind)
+	s.Len(tracker.origins, originsKept)
 }
