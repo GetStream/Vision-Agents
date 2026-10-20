@@ -11,6 +11,10 @@ import (
 	"math"
 )
 
+// AudibleSample is the level a sample has to reach, in either direction, to count as speech:
+// about -48 dBFS, above what a voice leaves in its pauses.
+const AudibleSample = 128
+
 // PcmData is a chunk of signed 16-bit PCM audio.
 type PcmData struct {
 	Samples []int16
@@ -28,6 +32,16 @@ func FromBytes(raw []byte, sampleRate, channels int) PcmData {
 		samples[i] = int16(binary.LittleEndian.Uint16(raw[i*2:]))
 	}
 	return PcmData{Samples: samples, SampleRate: sampleRate, Channels: channels}
+}
+
+// Audible reports whether any of samples reaches AudibleSample, so they hold something to hear.
+func Audible(samples []int16) bool {
+	for _, sample := range samples {
+		if sample >= AudibleSample || sample <= -AudibleSample {
+			return true
+		}
+	}
+	return false
 }
 
 // DurationMs returns the wall-clock length of the chunk.

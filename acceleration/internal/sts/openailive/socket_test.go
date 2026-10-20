@@ -407,6 +407,15 @@ func (s *OpenAILiveSocketSuite) TestSilenceCarriesTheSessionClockUntilTheModelSp
 		s.Zero(sample, "the filler has to be silent")
 	}
 
+	// The silence the model streams between replies is not it talking.
+	var hush serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(quiet(240)), &hush))
+	provider.handleMessage(hush)
+	provider.mu.Lock()
+	carrying := provider.carrying
+	provider.mu.Unlock()
+	s.True(carrying, "the filler goes on while the model is silent")
+
 	// Once the model is talking, its own audio is the clock and the filler stands down.
 	var reply serverEvent
 	s.Require().NoError(json.Unmarshal([]byte(spoke(240)), &reply))
