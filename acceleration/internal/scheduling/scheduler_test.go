@@ -66,6 +66,20 @@ func (d *deliverer) deliver(ctx context.Context, claimed store.ClaimedScheduledT
 	return "conversation", claimed.Task.SessionID, nil
 }
 
+// callsFor is the deliveries made for one task, since a worker over a shared
+// test database may deliver the tasks other suites left due.
+func (d *deliverer) callsFor(taskID string) []store.ClaimedScheduledTask {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var calls []store.ClaimedScheduledTask
+	for _, call := range d.calls {
+		if call.Task.ID == taskID {
+			calls = append(calls, call)
+		}
+	}
+	return calls
+}
+
 func (d *deliverer) count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -227,9 +241,9 @@ func (s *SchedulerSuite) TestARecurringTaskSkipsOccurrencesOlderThanAnHour() {
 	s.started(deliver.deliver, nil)
 
 	s.Require().Eventually(func() bool {
-		return deliver.count() == 1
+		return len(deliver.callsFor(task.ID)) == 1
 	}, 10*time.Second, 10*time.Millisecond)
-	s.Equal(latest, deliver.calls[0].Run.ScheduledFor)
+	s.Equal(latest, deliver.callsFor(task.ID)[0].Run.ScheduledFor)
 	var runs []store.ScheduledTaskRun
 	s.Require().Eventually(func() bool {
 		runs = s.runs(task)
