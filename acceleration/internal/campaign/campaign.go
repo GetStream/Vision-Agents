@@ -281,9 +281,10 @@ func meet(spec *session.Spec, placed phone.Placed) {
 
 // hold waits for the conversation to end, and ends it if nothing else does.
 //
-// Nothing tells the agent that the person hung up, so a campaign call that is over would
-// otherwise hold its slot until the process stopped. The timeout is what makes the
-// concurrency mean calls rather than sessions.
+// A phone session ends itself once the person hangs up or nobody answers, which closes the
+// watch. The deadline covers a call that never ends that way, which would otherwise hold its
+// slot until the process stopped, and is what makes the concurrency mean calls rather than
+// sessions.
 func (r *Runner) hold(ctx context.Context, created *session.Session) {
 	events, detach := created.Watch()
 	defer detach()

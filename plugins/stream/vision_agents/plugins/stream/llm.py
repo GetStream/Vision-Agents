@@ -140,7 +140,7 @@ class LLM(llm.LLM):
                 supplied = (
                     previous
                     and previous[-1].role == "user"
-                    and previous[-1].content == text
+                    and previous[-1].named_content == text
                 )
                 if participant is None or (
                     (images or content is not None) and not supplied
@@ -154,7 +154,10 @@ class LLM(llm.LLM):
                 {
                     "type": "respond",
                     "id": completion,
-                    "instructions": self._instructions,
+                    # Left empty, the router answers with the config's instructions
+                    # (acceleration/internal/api/streamws.go:883), which the
+                    # several-speakers line alone would replace.
+                    "instructions": self.instructions if self._instructions else "",
                     "messages": self._messages(text, images, content),
                     "max_tokens": self.max_tokens,
                 }
@@ -245,7 +248,7 @@ class LLM(llm.LLM):
             {
                 "role": message.role or "user",
                 "content": self._message_content.get(
-                    message.id or "", message.content or ""
+                    message.id or "", message.named_content
                 ),
             }
             for message in self._conversation.messages
@@ -254,7 +257,7 @@ class LLM(llm.LLM):
             (images or ordered is not None)
             and messages
             and messages[-1]["role"] == "user"
-            and self._conversation.messages[-1].content == text
+            and self._conversation.messages[-1].named_content == text
         ):
             messages[-1]["content"] = content
             message_id = self._conversation.messages[-1].id

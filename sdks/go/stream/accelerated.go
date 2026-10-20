@@ -574,7 +574,7 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()
 	} else {
-		result["output"] = output
+		result["output"] = output.Wire()
 	}
 
 	p.mu.Lock()

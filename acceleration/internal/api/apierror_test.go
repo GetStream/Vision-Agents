@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -136,4 +138,19 @@ func TestAnyOtherStoreFailureIsTheRoutersOwnAndSaysNothingOfIt(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, response.Code)
 	require.Equal(t, somethingWentWrong, answered(t, response.Body.Bytes()).Message)
 	require.Contains(t, logged.String(), "connection refused", "recorded for whoever looks into it")
+}
+
+// A scheduling refusal is answered with the scheduling package's own code (scheduleFailure),
+// so ErrorDetail's code list has to name each one a client may branch on.
+func TestEveryScheduleCodeIsNamedInTheErrorCodeList(t *testing.T) {
+	field, ok := reflect.TypeFor[ErrorDetail]().FieldByName("Code")
+	require.True(t, ok)
+	listed := field.Tag.Get("doc")
+	for _, code := range []string{
+		scheduling.CodeScheduleInPast, scheduling.CodeScheduleTooFar, scheduling.CodeInvalidTimezone,
+		scheduling.CodeTimezoneUnknown, scheduling.CodeInvalidRepeat, scheduling.CodeIntervalTooShort,
+		scheduling.CodeInvalidSchedule, codeTooManyTasks,
+	} {
+		require.Contains(t, listed, code)
+	}
 }

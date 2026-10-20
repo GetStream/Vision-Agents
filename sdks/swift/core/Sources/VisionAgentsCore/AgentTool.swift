@@ -28,7 +28,7 @@ public struct AgentTool: Sendable {
 
     /// Runs the tool. What it returns is given to the model as the result; throwing tells the
     /// model the tool failed and why.
-    public let run: @Sendable ([String: JSONValue]) async throws -> String
+    public let run: @Sendable ([String: JSONValue]) async throws -> ToolOutput
 
     public enum Executor: String, Sendable {
         case server
@@ -70,6 +70,26 @@ public struct AgentTool: Sendable {
         }
     }
 
+    /// A tool that answers with pictures as well as words, such as a frame from the camera.
+    public init(
+        name: String,
+        description: String,
+        parameters: JSONValue? = nil,
+        executor: Executor? = nil,
+        displayTitle: String? = nil,
+        approval: Approval? = nil,
+        run: @escaping @Sendable ([String: JSONValue]) async throws -> ToolOutput
+    ) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.executor = executor
+        self.displayTitle = displayTitle
+        self.approval = approval
+        self.run = run
+    }
+
+    /// A tool that answers in words.
     public init(
         name: String,
         description: String,
@@ -79,13 +99,30 @@ public struct AgentTool: Sendable {
         approval: Approval? = nil,
         run: @escaping @Sendable ([String: JSONValue]) async throws -> String
     ) {
-        self.name = name
-        self.description = description
-        self.parameters = parameters
-        self.executor = executor
-        self.displayTitle = displayTitle
-        self.approval = approval
-        self.run = run
+        self.init(
+            name: name, description: description, parameters: parameters, executor: executor,
+            displayTitle: displayTitle, approval: approval
+        ) { ToolOutput(text: try await run($0)) }
+    }
+}
+
+/// What a tool gives the model: words, and pictures beside them, such as a photo the person
+/// picked or a frame from the camera.
+///
+/// The router hands a result's pictures to the agent's `vision` skill on a call, which looks at
+/// them and tells the conversation what it found. With no such worker, as in a chat, a model
+/// that sees images is shown them with its next reply alone; one that reads only text is told
+/// the tool failed. Each picture is a data URI or an https URL, and one socket message holds at
+/// most 5 MB, so shrink a photo before returning it.
+public struct ToolOutput: Sendable, Hashable {
+    /// What the tool says.
+    public var text: String
+    /// What the tool shows.
+    public var images: [ImageSource]
+
+    public init(text: String = "", images: [ImageSource] = []) {
+        self.text = text
+        self.images = images
     }
 }
 

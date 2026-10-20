@@ -14,15 +14,33 @@ import (
 // replyPurpose is what the agent calls the request a caller is waiting to hear the answer to.
 const replyPurpose = "reply"
 
-// hedges says whether a request is asked a second time when it is late. Only a reply is, since
-// it is the one somebody is waiting on, and a response that continues from one the provider
-// holds cannot be asked of another provider, which is also why it is never failed over.
-func (s *Session) hedges(params llm.ResponseParams) bool {
-	return s.hedge != nil && s.hedgeAfter > 0 && params.Purpose == replyPurpose &&
-		params.PreviousResponseID == "" && params.Conversation == ""
+// flowPurpose is the flow controller's decision on whether, and when, to answer: the caller is
+// waiting on it too, in silence, before the reply is even asked for.
+const flowPurpose = "flow"
+
+// lateAfter is how long a request may say nothing before it is asked a second time, zero for
+// one that never is. Only what somebody is waiting on is: a reply, and the decision before it.
+// A response that continues from one the provider holds cannot be asked of another provider,
+// which is also why it is never failed over.
+func (s *Session) lateAfter(params llm.ResponseParams) time.Duration {
+	if s.hedge == nil || params.PreviousResponseID != "" || params.Conversation != "" {
+		return 0
+	}
+	switch params.Purpose {
+	case replyPurpose:
+		return s.hedgeAfter
+	case flowPurpose:
+		return s.flowHedgeAfter
+	}
+	return 0
 }
 
-// hedged asks for a response and, if nothing has been said once hedgeAfter has passed, asks
+// hedges says whether a request is asked a second time when it is late.
+func (s *Session) hedges(params llm.ResponseParams) bool {
+	return s.lateAfter(params) > 0
+}
+
+// hedged asks for a response and, if nothing has been said once lateAfter has passed, asks
 // for the same response on another candidate as well. Whichever says something first is
 // returned, and the other is cancelled the moment it loses.
 //
@@ -34,7 +52,7 @@ func (s *Session) hedged(ctx context.Context, params llm.ResponseParams) (*llm.S
 		stream, err := s.create(ctx, params)
 		return stream, nil, err
 	})
-	late := time.NewTimer(s.hedgeAfter)
+	late := time.NewTimer(s.lateAfter(params))
 	defer late.Stop()
 
 	var hedge *attempt

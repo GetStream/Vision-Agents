@@ -51,8 +51,11 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			return err
 		}
 		if _, err := tx.NewInsert().Model(config).Exec(ctx); err != nil {
-			if constraint(err) == "agent_configs_name_idx" {
+			switch constraint(err) {
+			case "agent_configs_name_idx":
 				return ErrNameTaken
+			case "agent_configs_role_idx":
+				return ErrRoleTaken
 			}
 			return fmt.Errorf("store: create agent config: %w", err)
 		}
@@ -67,7 +70,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // A field added to AgentConfig and forgotten here is stored on create and silently
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
-	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
+	"name", "role", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail",
 	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "sync_hash", "updated_at",
@@ -125,8 +128,11 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			Where("customer_id = ?", config.CustomerID).
 			Where("deleted_at IS NULL").
 			Exec(ctx)
-		if constraint(err) == "agent_configs_name_idx" {
+		switch constraint(err) {
+		case "agent_configs_name_idx":
 			return ErrNameTaken
+		case "agent_configs_role_idx":
+			return ErrRoleTaken
 		}
 		if err != nil {
 			return fmt.Errorf("store: update agent config: %w", err)
@@ -393,6 +399,30 @@ func (s *Store) AgentConfigByName(ctx context.Context, customerID, name string) 
 	return config, true, nil
 }
 
+// AgentConfigByRole returns the live config a customer holds in this role. Test copies are
+// left out, since one may carry the role of the config it copies.
+func (s *Store) AgentConfigByRole(ctx context.Context, customerID, role string) (AgentConfig, bool, error) {
+	if customerID == "" || role == "" {
+		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer and a role are required"))
+	}
+
+	var config AgentConfig
+	err := s.db.NewSelect().Model(&config).
+		Where("customer_id = ?", customerID).
+		Where("role = ?", role).
+		Where("deleted_at IS NULL").
+		Where(notTestCopy).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentConfig{}, false, nil
+	}
+	if err != nil {
+		return AgentConfig{}, false, stack.Wrap(fmt.Errorf("store: agent config by role: %w", err))
+	}
+	return config, true, nil
+}
+
 // CustomerAgentConfigs returns the configs a customer holds, newest first.
 func (s *Store) CustomerAgentConfigs(ctx context.Context, customerID string) ([]AgentConfig, error) {
 	if customerID == "" {
@@ -624,6 +654,10 @@ var ErrNoSkill = errors.New("store: there is no skill")
 // or a skill of the same agent config. The name is the writer's to change, so unlike the
 // database failing it is the caller's to fix.
 var ErrNameTaken = errors.New("store: the name is taken")
+
+// ErrRoleTaken says a write would give a second live agent config of the same customer a
+// role another one holds. A test copy holds none for this, so it is never refused.
+var ErrRoleTaken = errors.New("store: the role is taken")
 
 func unknownAgentConfig(id string) error {
 	return stack.Wrap(fmt.Errorf("%w %s", ErrNoAgentConfig, id))

@@ -643,6 +643,7 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 			InputTokens:  &request.InputTokens,
 			OutputTokens: &request.OutputTokens,
 			Success:      request.Success,
+			ErrorCode:    optional(request.ErrorCode),
 		})
 	}
 	timeline := make([]TimelineEntry, 0, len(turns))
@@ -1276,6 +1277,7 @@ func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
 // ModelCallTiming is the ModelCallTiming schema.
 type ModelCallTiming struct {
 	DurationMs   *float64  `json:"duration_ms,omitempty" doc:"Request to completed response or failed create."`
+	ErrorCode    *string   `json:"error_code,omitempty" doc:"Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure."`
 	InputTokens  *int64    `json:"input_tokens,omitempty"`
 	Model        string    `json:"model"`
 	OperationId  *string   `json:"operation_id,omitempty" doc:"Response ID for this operation; retries can share an ID."`

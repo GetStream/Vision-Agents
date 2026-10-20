@@ -234,6 +234,57 @@ func (s *ConfigsSuite) TestAConfigSchedulingStaysWhenAPatchLeavesItOut() {
 	s.Equal("Europe/Amsterdam", value(patched.Scheduling.DefaultTimezone))
 }
 
+// The dashboard saves an agent by sending back what it read, less the fields the router
+// writes. A config that never set scheduling, or never set its task limit, takes that back.
+func (s *ConfigsSuite) TestAConfigReadBackIsSavedAsItWas() {
+	for name, scheduling := range map[string]map[string]any{
+		"no scheduling":            nil,
+		"scheduling with no limit": {"enabled": true},
+	} {
+		s.Run(name, func() {
+			body := map[string]any{"name": "support-" + s.utils.uuid(), "instructions": "Be brief."}
+			if scheduling != nil {
+				body["scheduling"] = scheduling
+			}
+			created := s.createConfig(body)
+
+			var read map[string]any
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+			for _, written := range []string{"id", "created_at", "updated_at", "sync_hash"} {
+				delete(read, written)
+			}
+
+			var saved AgentConfig
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id, read, &saved))
+			s.Equal("Be brief.", value(saved.Instructions))
+			if scheduling == nil {
+				s.NotContains(read, "scheduling", "a config that never set scheduling renders none")
+				s.Nil(saved.Scheduling)
+				return
+			}
+			s.Require().NotNil(saved.Scheduling)
+			s.True(value(saved.Scheduling.Enabled))
+			s.Nil(saved.Scheduling.MaxTasksPerUser, "a limit never set is left out, not rendered as 0")
+		})
+	}
+}
+
+// A scheduling block on an update keeps what it leaves out, as its doc says.
+func (s *ConfigsSuite) TestAnUpdateNamingOnlyTheTaskLimitKeepsSchedulingOn() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "default_timezone": "Europe/Amsterdam",
+	}})
+
+	var updated AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "scheduling": map[string]any{"max_tasks_per_user": 7}}, &updated))
+
+	s.Require().NotNil(updated.Scheduling)
+	s.True(value(updated.Scheduling.Enabled))
+	s.Equal(7, value(updated.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(updated.Scheduling.DefaultTimezone))
+}
+
 func (s *ConfigsSuite) TestAConfigNamingAnUnknownDefaultTimezoneIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
@@ -629,6 +680,92 @@ func (s *ConfigsSuite) TestAConfigStoredWithAPrivateMCPServerStillReads() {
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, &read))
 	s.Equal([]McpServer{{Name: "wwsd", Url: privateMCPURLs[1]}}, value(read.McpServers))
+}
+
+func (s *ConfigsSuite) TestAVoiceConfigPinnedToABatchTranscriberIsRefused() {
+	pinned := "batch/" + batchModel
+
+	status, raw := s.serverClient.call(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "stt": pinned})
+
+	s.Equal(http.StatusBadRequest, status)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(raw, &answered), "the error envelope: %s", raw)
+	s.Equal(ErrorTypeInvalidRequest, answered.Error.Type)
+	s.Equal("routing: "+pinned+" is a batch model for recordings, not live calls; for a live call name en-low-latency",
+		answered.Error.Message, "the refusal a session start gives, said at the save")
+	var listed []AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs", nil, &listed))
+	s.Empty(listed, "nothing was stored")
+}
+
+func (s *ConfigsSuite) TestAVoiceConfigWithALiveTranscriberIsSaved() {
+	created := s.createConfig(map[string]any{"name": "support", "stt": "en-low-latency"})
+
+	s.Equal("en-low-latency", value(created.Stt))
+}
+
+func (s *ConfigsSuite) TestAConfigThatOpensNoTranscriberMayNameABatchOne() {
+	pinned := "batch/" + batchModel
+
+	written := s.createConfig(map[string]any{"name": "analyst", "mode": "text", "stt": pinned})
+	native := s.createConfig(map[string]any{"name": "concierge", "sts": "sts-fast", "stt": pinned})
+
+	s.Equal(pinned, value(written.Stt), "a config written to has no transcriber")
+	s.Equal(pinned, value(native.Stt), "an STS model hears for itself")
+}
+
+func (s *ConfigsSuite) TestUpdatingAConfigOntoABatchTranscriberIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support", "stt": "en-low-latency"})
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "stt": "batch/" + batchModel})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "is a batch model for recordings, not live calls")
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal("en-low-latency", value(read.Stt), "the stored config is as it was")
+}
+
+func (s *ConfigsSuite) TestPatchingAConfigOntoABatchTranscriberIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support", "stt": "en-low-latency"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"stt": "batch/" + batchModel})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "is a batch model for recordings, not live calls")
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal("en-low-latency", value(read.Stt), "the stored config is as it was")
+}
+
+func (s *ConfigsSuite) TestAConfigStoredWithABatchTranscriberCanStillBeEdited() {
+	// Stored before saves were checked; its sessions are refused as they start instead.
+	pinned := "batch/" + batchModel
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "support", Mode: store.AgentModeVoice, STT: pinned}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+
+	var updated, patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config.ID,
+		map[string]any{"name": "support", "stt": pinned, "instructions": "Be brief."}, &updated))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config.ID,
+		map[string]any{"instructions": "Be briefer."}, &patched))
+
+	s.Equal("Be brief.", value(updated.Instructions))
+	s.Equal("Be briefer.", value(patched.Instructions))
+	s.Equal(pinned, value(patched.Stt))
+}
+
+func (s *ConfigsSuite) TestADeploymentWithoutATranscriberRouterRefusesNoConfig() {
+	config := store.AgentConfig{Mode: store.AgentModeVoice, STT: "batch/" + batchModel}
+
+	for name, server := range map[string]*Server{"no streams": {}, "no stt router": {streams: &Streams{}}} {
+		_, ok := server.liveSTTComplaint(config, "")
+
+		s.True(ok, name)
+	}
 }
 
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {

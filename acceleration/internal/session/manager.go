@@ -567,6 +567,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
+	created.end = func() { m.end(created) }
+	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
 		switch {
@@ -717,7 +719,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
-	go created.consume(built, created.transcript)
+	go created.consume(built, created.transcript, created.track(built))
 
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
@@ -1222,6 +1224,32 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	m.release(id)
 
 	return true, found.Close()
+}
+
+// end ends found when its timeout is reached, as Close does but interrupting the agent:
+// nobody is left to hear the end of its sentence. A reopened conversation can take the id
+// of a session that ended, so it does nothing unless found is still the session held under
+// its id.
+func (m *Manager) end(found *Session) {
+	m.mu.Lock()
+	if held, ok := m.sessions[found.id]; !ok || held != found {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.sessions, found.id)
+	m.closing++
+	m.ended.Add(1)
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.closing--
+		m.mu.Unlock()
+		m.ended.Done()
+	}()
+	m.release(found.id)
+
+	m.logger.Info("ending the session at its timeout", "session", found.id)
+	found.abandon()
 }
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a

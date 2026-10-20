@@ -81,6 +81,18 @@ func (s *SessionVerbsSuite) TestAModelNobodyDeployedIsRefusedAndChangesNothing()
 		"a refused change leaves the session as it was")
 }
 
+func (s *SessionVerbsSuite) TestACallPinnedToABatchTranscriberIsRefusedWhenItStarts() {
+	// On 6d4d0d4a the session was created, then refused a transcriber on every frame.
+	pinned := "batch/" + batchModel
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{StartVoice: pointerTo(true), Stt: &pinned})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `"message":"agent: start stt: routing: `+pinned+
+		` is a batch model for recordings, not live calls; for a live call name en-low-latency"`)
+}
+
 func (s *SessionVerbsSuite) TestAConversationInWritingHasNoVoiceToChange() {
 	opened := s.serverClient.createSession(textSession(nil))
 

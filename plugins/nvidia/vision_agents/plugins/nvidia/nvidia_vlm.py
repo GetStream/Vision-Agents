@@ -398,11 +398,11 @@ class NvidiaVLM(VideoLLM):
             Tuple of (list of message dictionaries, list of asset IDs).
         """
         messages: list[dict] = []
-        if self._instructions:
+        if self.instructions:
             messages.append(
                 {
                     "role": "system",
-                    "content": self._instructions,
+                    "content": self.instructions,
                 }
             )
 
@@ -411,7 +411,7 @@ class NvidiaVLM(VideoLLM):
                 messages.append(
                     {
                         "role": message.role,
-                        "content": message.content,
+                        "content": message.named_content,
                     }
                 )
 

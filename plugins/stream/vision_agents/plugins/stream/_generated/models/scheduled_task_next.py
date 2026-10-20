@@ -16,8 +16,7 @@ T = TypeVar("T", bound="ScheduledTaskNext")
 class ScheduledTaskNext:
     """
     Attributes:
-        at (str | Unset): The next occurrence as the user's clock reads it, in the task's zone. Example: 2026-10-20
-            09:15:00.
+        at (str | Unset): The next occurrence as the user's clock reads it, in the task's zone.
         in_ (str | Unset): How long from now instead, an ISO 8601 duration: PT15M. Example: PT15M.
     """
 

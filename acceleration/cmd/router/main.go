@@ -743,6 +743,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Models:     models,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
+			FlowHedge:  settings.Agent.FlowHedge,
 			Logger:     logger,
 		})
 		if err != nil {
@@ -1096,6 +1097,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		OpsKey:                settings.Auth.OpsKey,
 		Dispatch:              workers,
 		Quota:                 limiter,
+		RunsPerApp:            settings.Runs.ConcurrentPerApp,
 		Policies:              policies,
 		Connectors:            connectors,
 		ConnectorSecrets:      connectorSecrets,

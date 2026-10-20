@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -42,6 +43,8 @@ const settleFor = 3 * time.Second
 // needs from an edge is only that joining and leaving work.
 type quietEdge struct {
 	inbound chan agent.InboundAudio
+	// attending carries who comes and goes, read only through attendedEdge.
+	attending chan agent.Attendance
 
 	mu     sync.Mutex
 	joined bool
@@ -49,17 +52,60 @@ type quietEdge struct {
 	// unheard is speech that has been published but has not gone out yet, which is what a
 	// real edge holds while a reply is being spoken.
 	unheard bool
+	// present is who is in the call besides the agent, starting with whoever was there
+	// before it joined, and attended is whether the agent reads who comes and goes.
+	present  map[string]stt.Participant
+	attended bool
 }
 
-func newQuietEdge() *quietEdge {
-	return &quietEdge{inbound: make(chan agent.InboundAudio, 4)}
+func newQuietEdge(present ...stt.Participant) *quietEdge {
+	e := &quietEdge{
+		inbound:   make(chan agent.InboundAudio, 4),
+		attending: make(chan agent.Attendance, 64),
+		present:   map[string]stt.Participant{},
+	}
+	for _, p := range present {
+		e.present[p.ID] = p
+	}
+	return e
 }
 
+// attendedEdge is a quietEdge that says who comes and goes, as Stream's edge does.
+type attendedEdge struct{ *quietEdge }
+
+func (e attendedEdge) Attendance() <-chan agent.Attendance { return e.attending }
+
+// Join queues whoever is already in the call before it returns, as Stream's edge does.
 func (e *quietEdge) Join(context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.joined = true
+	for _, p := range e.present {
+		e.attending <- agent.Attendance{Participant: p, Joined: true}
+	}
 	return nil
+}
+
+// arrives reports somebody joining the call.
+func (e *quietEdge) arrives(p stt.Participant) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.left {
+		return
+	}
+	e.present[p.ID] = p
+	e.attending <- agent.Attendance{Participant: p, Joined: true}
+}
+
+// leaves reports somebody leaving the call.
+func (e *quietEdge) leaves(p stt.Participant) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.left {
+		return
+	}
+	delete(e.present, p.ID)
+	e.attending <- agent.Attendance{Participant: p}
 }
 
 func (e *quietEdge) Audio() <-chan agent.InboundAudio { return e.inbound }
@@ -86,14 +132,31 @@ func (e *quietEdge) holdSpeech(unheard bool) {
 	e.unheard = unheard
 }
 
+// Leave reports everyone still in the call leaving, as the edge sees them go on its way out.
+// It waits for the agent to take those leaves, so they reach the session before the agent
+// stops reporting.
 func (e *quietEdge) Leave() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.left {
+		e.mu.Unlock()
 		return nil
 	}
 	e.left = true
 	close(e.inbound)
+	reported := e.attended && e.joined && len(e.present) > 0
+	for _, p := range e.present {
+		e.attending <- agent.Attendance{Participant: p}
+	}
+	e.present = map[string]stt.Participant{}
+	e.mu.Unlock()
+	if reported {
+		deadline := time.Now().Add(settleFor)
+		for len(e.attending) > 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	close(e.attending)
 	return nil
 }
 
@@ -308,6 +371,12 @@ type SessionSuite struct {
 	edges   []*quietEdge
 	model   *stubLLM
 	voice   *stubTTS
+	// ears is the transcriber a voice session listens through, so a test can speak.
+	ears *stubSTT
+	// others are the models opened after the first, kept to read what the agent that
+	// took over asked of them.
+	othersMu sync.Mutex
+	others   []*stubLLM
 	// remembers is the memory store the manager was built with, when a test wants one.
 	remembers *stubMemory
 	// records is where a session's conversation is stored, when a test wants to read it
@@ -331,6 +400,12 @@ type SessionSuite struct {
 	// plugins is what the manager reaches plugins and MCP servers with, for a test whose
 	// server listens on loopback. Nil is the manager's default, as before.
 	plugins *plugins.Auth
+	// directory is where the manager says which sessions it runs, when a test reads that.
+	directory *node.Directory
+	// present is who is in the call before the next edge joins it, and unattended makes
+	// edges that say nobody comes or goes, as a socket does.
+	present    []stt.Participant
+	unattended bool
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -348,6 +423,12 @@ func (s *SessionSuite) SetupTest() {
 	s.apps = nil
 	s.edgeApps = nil
 	s.plugins = nil
+	s.directory = nil
+	s.ears = nil
+	s.others = nil
+	s.present = nil
+	s.unattended = false
+	s.shortensPhoneTimeouts()
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -369,6 +450,7 @@ func (s *SessionSuite) manages() {
 	logger := slog.New(slog.DiscardHandler)
 
 	ears := &stubSTT{emitter: stt.NewEmitter(64)}
+	s.ears = ears
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) { return ears, nil })
 	transcriber, err := sttrouter.New(sttrouter.Options{
@@ -389,7 +471,11 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
-		return &stubLLM{}, nil
+		other := &stubLLM{reply: "Sure."}
+		s.othersMu.Lock()
+		s.others = append(s.others, other)
+		s.othersMu.Unlock()
+		return other, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: s.thinking(), Registry: reasoning, Logger: logger,
@@ -428,12 +514,17 @@ func (s *SessionSuite) manages() {
 		Stream:        s.apps,
 		DetachedGrace: s.grace,
 		PluginAuth:    s.plugins,
+		Directory:     s.directory,
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
-			edge := newQuietEdge()
+			edge := newQuietEdge(s.present...)
 			s.edges = append(s.edges, edge)
-			return edge, nil
+			if s.unattended {
+				return edge, nil
+			}
+			edge.attended = true
+			return attendedEdge{edge}, nil
 		},
 	})
 	s.Require().NoError(err)
@@ -1616,8 +1707,8 @@ func (s *SessionSuite) TestASessionIsCountedUntilItHasFinishedClosing() {
 }
 
 func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
+	// Nothing can look: no vision worker, and a conversation model that reads only text.
 	s.manages()
-	s.model.sees = true
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "get_video_frame", Arguments: "{}"}}
 	created := s.joins(Spec{
 		Tools: []harness.Tool{{Name: "get_video_frame", Description: "photograph the camera"}},
@@ -1645,6 +1736,49 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 		}
 		return false
 	}, "the failed vision delegation was not reported to the model")
+}
+
+func (s *SessionSuite) TestAToolsPictureIsShownToAModelThatSeesWithItsReplyAlone() {
+	// A chat has no vision worker, and its model can look at a tool's picture itself.
+	s.manages()
+	s.model.sees = true
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "photograph_room", Arguments: "{}"}}
+	created := s.joins(Spec{
+		Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}},
+	})
+	events, detach := created.Watch()
+	defer detach()
+	s.says(created, "what is in the room")
+
+	asked := awaitToolCall(events)
+	s.Require().NotNil(asked)
+	s.True(created.ResolveToolParts(asked.ID, []llm.ContentPart{
+		{Text: "the room"},
+		{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}},
+	}, ""))
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			for _, message := range request.Input {
+				if message.ToolCallID == asked.ID && message.HasImage() {
+					return true
+				}
+			}
+		}
+		return false
+	}, "the model was never shown the tool's picture")
+
+	s.says(created, "and what colour is the wall")
+	var next llm.ResponseParams
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if slices.Contains(handed(request), "user: and what colour is the wall") {
+				next = request
+				return true
+			}
+		}
+		return false
+	}, "the next turn was never asked")
+	s.False(next.HasImage(), "the tool's picture was sent again with a later turn")
 }
 
 func (s *SessionSuite) TestImagesAreRefusedWhenNeitherASkillNorTheModelCanSeeThem() {
@@ -1801,6 +1935,18 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.manages()
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Memory: MemorySpec{UserID: "organization-cats"}})
 	s.Require().ErrorContains(err, "memory is unavailable")
+}
+
+func (s *SessionSuite) TestAChatThatStartsVoiceIsGivenAThinkingModelItCanRoute() {
+	// A call started from a chat hands the hard parts over, and looks at a tool's pictures,
+	// as a call opened as one does.
+	s.thinks = true
+	s.manages()
+	created := s.writes(Spec{})
+
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
+
+	s.Equal(defaultSubagentTarget, created.Spec().SubagentTarget)
 }
 
 func (s *SessionSuite) TestTextSessionHasNoSubagent() {

@@ -109,8 +109,7 @@ def sync_detailed(
 
      One row per bucket and agent. A request row measures one provider call; a turn measures what the
     caller felt, from finishing a sentence to hearing the answer start, with the transcription, model
-    and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a
-    histogram and are within 5% of the true ones.
+    and voice legs kept apart so a slow conversation can be attributed.
 
     Args:
         agent_id (str | Unset): Narrow to one agent. Omit for every agent the customer runs.
@@ -152,8 +151,7 @@ def sync(
 
      One row per bucket and agent. A request row measures one provider call; a turn measures what the
     caller felt, from finishing a sentence to hearing the answer start, with the transcription, model
-    and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a
-    histogram and are within 5% of the true ones.
+    and voice legs kept apart so a slow conversation can be attributed.
 
     Args:
         agent_id (str | Unset): Narrow to one agent. Omit for every agent the customer runs.
@@ -190,8 +188,7 @@ async def asyncio_detailed(
 
      One row per bucket and agent. A request row measures one provider call; a turn measures what the
     caller felt, from finishing a sentence to hearing the answer start, with the transcription, model
-    and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a
-    histogram and are within 5% of the true ones.
+    and voice legs kept apart so a slow conversation can be attributed.
 
     Args:
         agent_id (str | Unset): Narrow to one agent. Omit for every agent the customer runs.
@@ -231,8 +228,7 @@ async def asyncio(
 
      One row per bucket and agent. A request row measures one provider call; a turn measures what the
     caller felt, from finishing a sentence to hearing the answer start, with the transcription, model
-    and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a
-    histogram and are within 5% of the true ones.
+    and voice legs kept apart so a slow conversation can be attributed.
 
     Args:
         agent_id (str | Unset): Narrow to one agent. Omit for every agent the customer runs.

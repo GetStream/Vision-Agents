@@ -74,7 +74,18 @@ type CallTiming struct {
 	Model       string
 	TTFTMs      float64
 	DurationMs  float64
-	Success     bool
+	// Success is whether the request ran to its end as asked. ErrorCode says why it did not:
+	// "cancelled" when its caller closed it first, which is no failure of the provider's and
+	// is still billed, otherwise the provider's or the request's own failure.
+	Success   bool
+	ErrorCode string
+	// InputTokens, CachedInputTokens and OutputTokens are what the request read and wrote,
+	// and CostMicros what it was priced at, in millionths of a dollar. Zero for a request
+	// that failed before the provider answered.
+	InputTokens       int64
+	CachedInputTokens int64
+	OutputTokens      int64
+	CostMicros        int64
 }
 
 // Overwrite returns these params with everything the caller asked to change written over

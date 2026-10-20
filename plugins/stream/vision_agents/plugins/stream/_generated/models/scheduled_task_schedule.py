@@ -17,8 +17,7 @@ class ScheduledTaskSchedule:
     """
     Attributes:
         at (str | Unset): The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it
-            is that instant, read in the schedule's zone. Exactly one of at and in is given on a write. Example: 2026-10-20
-            09:00:00.
+            is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
         description (str | Unset): What the schedule says, in one sentence. Read-only: written by the router, and the
             same sentence the model reads back. Example: Every weekday at 09:00 (Europe/Amsterdam).
         in_ (str | Unset): How long from now instead, an ISO 8601 duration: PT20M, P1D. Resolved on write; a response

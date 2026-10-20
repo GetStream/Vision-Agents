@@ -244,6 +244,9 @@ type RouterSuite struct {
 	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
 	// the connection proxy to set before it starts the harness. Zero caps nothing.
 	proxyCallsPerMinute int64
+	// runsPerApp caps one app's runs in flight, for a suite about runs to set before it starts
+	// the harness. Zero caps nothing.
+	runsPerApp int64
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -551,6 +554,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorTransports:   serverTransports,
 		ConnectorLimiter:      connectorLimiter,
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
+		RunsPerApp:            s.runsPerApp,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
@@ -689,13 +693,17 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	hearing.Register("refusing", func(routing.Spec) (stt.STT, error) {
 		return &refusingSTT{emitter: stt.NewEmitter(64)}, nil
 	})
+	hearing.Register("batch", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
+	// A live model whose vendor is down: its socket fails to open the way batchOnlySTT's does.
+	hearing.Register("down", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
 	// Reached by name only: no shortcut asks for Latin.
 	heard := routableConfig()
 	// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
 	heard.Aliases["en-low-latency"] = routing.Alias{Title: "Low latency", Languages: []string{"en"}, RequireRealtime: true}
 	heard.Providers = append(heard.Providers, routing.ProviderConfig{
 		Provider: "refusing", Model: refusingModel, Languages: []string{"la"}, Realtime: true,
-	})
+	}, routing.ProviderConfig{Provider: "batch", Model: batchModel, Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "down", Model: downModel, Languages: []string{"la"}, Realtime: true})
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
@@ -736,6 +744,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
+	})
+
+	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
 	})
 
 	// A model that is a while in the writing, for a command that has to still be running

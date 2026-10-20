@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
@@ -60,6 +61,15 @@ func TestACustomersWebsiteMayCallTheAPIWithItsOwnCredential(t *testing.T) {
 		for _, header := range []string{"Authorization", auth.AuthTypeHeader, auth.APIKeyHeader} {
 			require.Contains(t, response.Header().Get("Access-Control-Allow-Headers"), header, mode)
 		}
+	}
+}
+
+func TestACustomersWebsiteMaySendEveryMethodTheSpecServes(t *testing.T) {
+	allowed := strings.Split(preflight(auth.APIKey, customerSite).Header().Get("Access-Control-Allow-Methods"), ", ")
+	operations := specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI())
+	require.NotEmpty(t, operations)
+	for _, operation := range operations {
+		require.Contains(t, allowed, operation.method, operation.path)
 	}
 }
 

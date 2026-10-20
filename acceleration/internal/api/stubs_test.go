@@ -115,7 +115,9 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
-		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
+			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
+		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 	)
@@ -165,6 +167,8 @@ type scriptedLLM struct {
 	// analyses answers a request for JSON as a review analyst would: one cause behind every
 	// call it was handed and one it made up, and a second cause behind made-up calls only.
 	analyses bool
+	// refuses, when set, is what every request is refused with.
+	refuses error
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -205,13 +209,16 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		})
 		reply = string(analysis)
 	}
-	held := s.held
+	held, refuses := s.held, s.refuses
 	var calls []llm.ToolCall
 	if first {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
 
+	if refuses != nil {
+		return nil, refuses
+	}
 	if held != nil {
 		select {
 		case <-held:
@@ -330,6 +337,24 @@ func (s *refusingSTT) Close() error {
 	return nil
 }
 
+// batchOnlySTT is a batch model dialled live, which Deepgram's live endpoint turns away
+// as it does Nova-3: "deepgram: connect failed" (internal/stt/deepgram/deepgram.go).
+type batchOnlySTT struct{}
+
+// batchModel is new each run, for the reason refusingModel is.
+var batchModel = fmt.Sprintf("batch-%d", time.Now().UnixNano())
+
+// downModel is new each run, for the reason refusingModel is: a start that fails marks it
+// unavailable.
+var downModel = fmt.Sprintf("down-%d", time.Now().UnixNano())
+
+func (batchOnlySTT) Start(context.Context) error                     { return errors.New("batch: connect failed") }
+func (batchOnlySTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
+func (batchOnlySTT) Events() <-chan stt.Event                        { return nil }
+func (batchOnlySTT) Close() error                                    { return nil }
+func (batchOnlySTT) Provider() string                                { return "batch" }
+func (batchOnlySTT) Model() string                                   { return batchModel }
+
 // recordingTTS keeps what it was asked to say.
 type recordingTTS struct {
 	emitter *tts.Emitter
@@ -434,8 +459,20 @@ func recorderRegistry() *ttsrouter.Recorders {
 	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
 		return &recordedVoice{model: spec.Model}, nil
 	})
+	registry.Register("down", func(spec routing.Spec) (tts.Recorder, error) {
+		return &downVoice{recordedVoice{model: spec.Model}}, nil
+	})
 	return registry
 }
+
+// downVoice is a vendor that fails every recording, as one answering 503 does.
+type downVoice struct{ recordedVoice }
+
+func (*downVoice) Record(context.Context, tts.Recording) (tts.Recorded, error) {
+	return tts.Recorded{}, errors.New("down: record: 503 Service Unavailable: overloaded")
+}
+
+func (*downVoice) Provider() string { return "down" }
 
 func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.Recorded, error) {
 	format := recording.Format

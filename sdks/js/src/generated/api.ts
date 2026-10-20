@@ -1708,6 +1708,29 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/runs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Run an agent on one input and wait for its answer
+         * @description Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+         *     The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+         *     The input is handed to the agent as JSON data, never as instructions.
+         *     A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+         */
+        readonly post: operations["createRun"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/scheduled-tasks": {
         readonly parameters: {
             readonly query?: never;
@@ -3991,6 +4014,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly scheduling?: components["schemas"]["AgentScheduling"];
@@ -4044,6 +4068,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly scheduling?: components["schemas"]["AgentScheduling"];
@@ -4098,6 +4123,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay. */
@@ -4249,6 +4275,11 @@ export type components = {
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
         };
+        /**
+         * @description What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+         * @enum {string}
+         */
+        readonly AgentRole: "agent_moderator";
         /** @description Whether the agent may schedule tasks for its users, and the defaults those tasks take. */
         readonly AgentScheduling: {
             /** @description The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone. */
@@ -5531,6 +5562,23 @@ export type components = {
             /** @description Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
             readonly videos?: readonly components["schemas"]["VideoSource"][];
         };
+        readonly CreateRunRequest: {
+            /** @description The agent config to run. */
+            readonly config_id: string;
+            /** @description What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions. */
+            readonly input: unknown;
+            /** @description What the agent is told for this run alone, added to its config's instructions. */
+            readonly instructions?: string;
+            /** @description Cost labels, carried onto every request the run makes alongside the config's own. */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Format: int64
+             * @description How long the run may take before it is given up as a 504. Two minutes when left out.
+             */
+            readonly timeout_ms?: number;
+        };
         readonly CreateScheduledTaskRequest: {
             /** @description The agent config by name, as session create names it. config_id or this, or session_id. */
             readonly agent?: string;
@@ -5944,7 +5992,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has schedule_in_past, schedule_too_far (a one-shot more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (occurrences less than 15 minutes apart) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (occurrences less than 15 minutes apart) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -5960,10 +6008,10 @@ export type components = {
             readonly error: components["schemas"]["ErrorDetail"];
         };
         /**
-         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
          * @enum {string}
          */
-        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable";
+        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -6469,6 +6517,8 @@ export type components = {
              * @description Request to completed response or failed create.
              */
             readonly duration_ms?: number;
+            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure. */
+            readonly error_code?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
             readonly model: string;
@@ -7098,6 +7148,16 @@ export type components = {
             readonly stt?: components["schemas"]["SttOptions"];
             readonly tts?: components["schemas"]["TtsOptions"];
         };
+        readonly Run: {
+            /** @description The last thing the agent said. */
+            readonly final_text: string;
+            /** @description The provider/model routing picked to answer. */
+            readonly model_route: string;
+            /** @description The session the run held. It ended with the run, and being incognito, it cannot be read back. */
+            readonly session_id: string;
+            /** @description What the run's model calls spent. */
+            readonly usage: components["schemas"]["CallUsage"];
+        };
         /**
          * @description Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
          * @enum {string}
@@ -7179,10 +7239,7 @@ export type components = {
             readonly user_id: string;
         };
         readonly ScheduledTaskNext: {
-            /**
-             * @description The next occurrence as the user's clock reads it, in the task's zone.
-             * @example 2026-10-20T09:15:00
-             */
+            /** @description The next occurrence as the user's clock reads it, in the task's zone. */
             readonly at?: string;
             /**
              * @description How long from now instead, an ISO 8601 duration: PT15M.
@@ -7242,10 +7299,7 @@ export type components = {
             readonly next_cursor?: string;
         };
         readonly ScheduledTaskSchedule: {
-            /**
-             * @description The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
-             * @example 2026-10-20T09:00:00
-             */
+            /** @description The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write. */
             readonly at?: string;
             /**
              * @description What the schedule says, in one sentence. Read-only: written by the router, and the same sentence the model reads back.
@@ -8152,6 +8206,7 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly role?: components["schemas"]["AgentRole"];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored. */
@@ -9900,6 +9955,8 @@ export interface operations {
             readonly query?: {
                 /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
                 readonly name?: string;
+                /** @description Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set. */
+                readonly role?: components["schemas"]["AgentRole"];
             };
             readonly header?: never;
             readonly path?: never;
@@ -12511,6 +12568,70 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly createRun: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateRunRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What the agent said last, and what the run spent */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Run"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            /** @description Not the app's backend, or the app's or organization's budget is spent */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The app has as many runs in flight as it may: retry after Retry-After */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The model failed or gave no answer */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The run did not finish within its timeout */
+            readonly 504: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly listScheduledTasks: {
         readonly parameters: {
             readonly query?: {
@@ -12522,8 +12643,8 @@ export interface operations {
                 readonly limit?: number;
                 /** @description Only tasks following up in this session. */
                 readonly session_id?: string;
-                /** @description Only tasks in this state: active, paused, completed or failed. */
-                readonly state?: string;
+                /** @description Only tasks in this state. */
+                readonly state?: "active" | "paused" | "completed" | "failed";
             };
             readonly header?: never;
             readonly path?: never;

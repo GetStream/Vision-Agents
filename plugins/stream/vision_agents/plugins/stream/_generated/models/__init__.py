@@ -29,6 +29,7 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .agent_role import AgentRole
 from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
@@ -250,6 +251,7 @@ from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
+from .list_scheduled_tasks_state import ListScheduledTasksState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
 from .llm_options_format import LlmOptionsFormat
@@ -301,7 +303,6 @@ from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .provider_price import ProviderPrice
-from .quota import Quota
 from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
@@ -499,6 +500,7 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AgentRole",
     "AgentScheduling",
     "AgentStats",
     "AgentTools",
@@ -714,6 +716,7 @@ __all__ = (
     "LibraryVoices",
     "LinkChannelRequest",
     "ListAgentLogsSeverity",
+    "ListScheduledTasksState",
     "ListSimulationRunsState",
     "LlmOptions",
     "LlmOptionsFormat",
@@ -765,7 +768,6 @@ __all__ = (
     "ProviderBenchmark",
     "ProviderHealth",
     "ProviderPrice",
-    "Quota",
     "RCSProfile",
     "RecordingSource",
     "RecordingStatus",

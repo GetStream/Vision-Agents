@@ -109,7 +109,9 @@ func (s *Session) name(event Event) {
 		return
 	}
 	answer, ok := event.(agent.Responded)
-	if !ok || answer.PendingWork || answer.Text == "" {
+	// A line said as written, such as the greeting, is the same on every call, so it says
+	// nothing about what this conversation is.
+	if !ok || answer.PendingWork || answer.Text == "" || agent.Scripted(answer.TurnID) {
 		return
 	}
 	n.answered++

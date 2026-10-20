@@ -407,14 +407,14 @@ async def _declare_settings(
             declared.identity = ChannelIdentity(settings.channels.identity)
         body.channels = declared
     if settings.scheduling is not None:
-        declared = AgentScheduling()
+        scheduling = AgentScheduling()
         if settings.scheduling.enabled is not None:
-            declared.enabled = settings.scheduling.enabled
+            scheduling.enabled = settings.scheduling.enabled
         if settings.scheduling.max_tasks_per_user is not None:
-            declared.max_tasks_per_user = settings.scheduling.max_tasks_per_user
+            scheduling.max_tasks_per_user = settings.scheduling.max_tasks_per_user
         if settings.scheduling.default_timezone:
-            declared.default_timezone = settings.scheduling.default_timezone
-        body.scheduling = declared
+            scheduling.default_timezone = settings.scheduling.default_timezone
+        body.scheduling = scheduling
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

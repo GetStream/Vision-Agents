@@ -100,8 +100,8 @@ def sync_detailed(
      A timeline says what a call cost the caller in waiting. This says why the call went the way it did:
     why the agent waited rather than answering, why it read something as not meant for it, why it
     stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the
-    only thing that explains a call that surprised somebody. They are kept for an hour. A call still
-    running reports the same decisions live on the session socket.
+    only thing that explains a call that surprised somebody. A call still running reports the same
+    decisions live on the session socket.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -138,8 +138,8 @@ def sync(
      A timeline says what a call cost the caller in waiting. This says why the call went the way it did:
     why the agent waited rather than answering, why it read something as not meant for it, why it
     stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the
-    only thing that explains a call that surprised somebody. They are kept for an hour. A call still
-    running reports the same decisions live on the session socket.
+    only thing that explains a call that surprised somebody. A call still running reports the same
+    decisions live on the session socket.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -171,8 +171,8 @@ async def asyncio_detailed(
      A timeline says what a call cost the caller in waiting. This says why the call went the way it did:
     why the agent waited rather than answering, why it read something as not meant for it, why it
     stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the
-    only thing that explains a call that surprised somebody. They are kept for an hour. A call still
-    running reports the same decisions live on the session socket.
+    only thing that explains a call that surprised somebody. A call still running reports the same
+    decisions live on the session socket.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -207,8 +207,8 @@ async def asyncio(
      A timeline says what a call cost the caller in waiting. This says why the call went the way it did:
     why the agent waited rather than answering, why it read something as not meant for it, why it
     stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the
-    only thing that explains a call that surprised somebody. They are kept for an hour. A call still
-    running reports the same decisions live on the session socket.
+    only thing that explains a call that surprised somebody. A call still running reports the same
+    decisions live on the session socket.
 
     Args:
         id (str): The resource, as returned when it was created.

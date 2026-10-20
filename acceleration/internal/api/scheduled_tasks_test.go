@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
@@ -904,6 +906,100 @@ func (s *ScheduledTasksSuite) TestACreateNamingASessionFollowsUpInIt() {
 	body.SessionId = &opened.Id
 	status, _ := s.taskFailure(s.serverClient.actingFor(other), http.MethodPost, "/v1/agents/scheduled-tasks", body)
 	s.Equal(http.StatusNotFound, status, "a session is only its own user's to schedule into")
+}
+
+// An occurrence follows up by carrying the conversation on, so a create naming a session
+// that keeps none is refused rather than failing at every occurrence until it pauses.
+func (s *ScheduledTasksSuite) TestACreateNamingASessionThatKeepsNoConversationIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	incognito := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.Incognito = pointerTo(true)
+	})
+	unkept := store.AgentSession{ID: s.utils.uuid(), CustomerID: s.customerID(), UserID: user.userID, ConfigID: config}
+	s.Require().NoError(s.store.SaveSession(context.Background(), &unkept))
+
+	for name, id := range map[string]string{"incognito": incognito.Id, "a row with no conversation": unkept.ID} {
+		s.Run(name, func() {
+			body := taskRequest(config)
+			body.ConfigId, body.SessionId = nil, &id
+			status, answered := s.taskFailure(s.serverClient.actingFor(user), http.MethodPost, "/v1/agents/scheduled-tasks", body)
+			s.Equal(http.StatusBadRequest, status)
+			s.Contains(answered.Error.Message, "not kept")
+		})
+	}
+	s.Empty(s.tasksOf(user))
+}
+
+// Huma's minLength counts spaces; a title or instructions of nothing else are refused as
+// the caller's mistake, on create and on update.
+func (s *ScheduledTasksSuite) TestATitleOrInstructionsOfOnlySpacesAreRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	backend := s.serverClient.actingFor(user)
+
+	for name, change := range map[string]func(*CreateScheduledTaskRequest){
+		"title":        func(body *CreateScheduledTaskRequest) { body.Title = "   " },
+		"instructions": func(body *CreateScheduledTaskRequest) { body.Instructions = " \n " },
+	} {
+		s.Run(name, func() {
+			body := taskRequest(config)
+			change(&body)
+			status, answered := s.taskFailure(backend, http.MethodPost, "/v1/agents/scheduled-tasks", body)
+			s.Equal(http.StatusBadRequest, status)
+			s.Contains(answered.Error.Message, name+" cannot be empty")
+		})
+	}
+	s.Empty(s.tasksOf(user))
+
+	created := s.createTask(user, taskRequest(config))
+	for _, instructions := range []string{"", "  "} {
+		status, answered := s.taskFailure(backend, http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+			UpdateScheduledTaskRequest{Instructions: &instructions})
+		s.Equal(http.StatusBadRequest, status)
+		s.Contains(answered.Error.Message, "instructions cannot be empty")
+	}
+	s.Equal("Remind them to stretch.", s.tasksOf(user)[0].Instructions)
+}
+
+// A device that names nobody has no tasks of its own, so it lists none: an empty user id
+// must not read as every user. A verified user still lists their own, and a backend
+// naming nobody still lists the customer's.
+func (s *ScheduledTasksSuite) TestADeviceNamingNobodyListsNoTasks() {
+	config := s.agentWithScheduling(nil)
+	user, other := s.data.createUser(), s.data.createUser()
+	mine := s.createTask(user, taskRequest(config))
+	theirs := s.createTask(other, taskRequest(config))
+
+	var nameless ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, s.signedIn(jwt.MapClaims{}, auth.AuthTypeAnonymous, anonymous, "").
+		do(http.MethodGet, "/v1/agents/scheduled-tasks", nil, &nameless))
+	s.Empty(nameless.Items)
+
+	var own ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks", nil, &own))
+	s.Equal([]string{mine.Id}, taskIDs(own))
+
+	var all ScheduledTaskPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/scheduled-tasks", nil, &all))
+	s.ElementsMatch([]string{mine.Id, theirs.Id}, taskIDs(all))
+}
+
+func (s *ScheduledTasksSuite) TestListingByAStateThatIsNoneIsRefused() {
+	user := s.data.createUser()
+
+	status, answered := s.taskFailure(user, http.MethodGet, "/v1/agents/scheduled-tasks?state=cancelled", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeValidationFailed, answered.Error.Code)
+}
+
+func taskIDs(page ScheduledTaskPage) []string {
+	ids := make([]string, 0, len(page.Items))
+	for _, task := range page.Items {
+		ids = append(ids, task.Id)
+	}
+	return ids
 }
 
 func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {

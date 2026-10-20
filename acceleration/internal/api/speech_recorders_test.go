@@ -16,8 +16,8 @@ import (
 )
 
 // SpeechRecordersSuite routes text to speech over live, a vendor that only streams, as
-// Cartesia, Inworld and Breeze do in the built-in config: the live router lists it and the
-// recordings router has no recorder for it.
+// Breeze does in the built-in config: the live router lists it and the recordings router
+// has no recorder for it. Cartesia and Inworld record too.
 type SpeechRecordersSuite struct {
 	RouterSuite
 	// live is the model of the vendor that only streams, new each run: health outlives a

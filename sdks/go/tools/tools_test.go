@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -115,8 +116,8 @@ func TestAFunctionRunsWithTheArgumentsTheModelWrote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output != "sunny in Boulder, CO" {
-		t.Errorf("the function said %q", output)
+	if output.Text != "sunny in Boulder, CO" {
+		t.Errorf("the function said %q", output.Text)
 	}
 }
 
@@ -134,8 +135,8 @@ func TestAnythingButAStringComesBackAsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output != `{"calls":2}` {
-		t.Errorf("the function said %q", output)
+	if output.Text != `{"calls":2}` {
+		t.Errorf("the function said %q", output.Text)
 	}
 }
 
@@ -226,8 +227,8 @@ func TestAToolIsDeclaredByItsFieldsAndRunsWithTheModelsArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output != `{"order_id":"1042","status":"shipped"}` {
-		t.Errorf("the model was answered %s", output)
+	if output.Text != `{"order_id":"1042","status":"shipped"}` {
+		t.Errorf("the model was answered %s", output.Text)
 	}
 }
 
@@ -270,5 +271,45 @@ func TestAToolTheModelCouldNotBeOfferedIsRefused(t *testing.T) {
 	}
 	if len(registry.List()) != 0 {
 		t.Errorf("the registry offers %d tools after refusing all of them", len(registry.List()))
+	}
+}
+
+func TestAToolShowsTheModelPicturesBesideItsWords(t *testing.T) {
+	registry := NewRegistry()
+	err := Register(registry, "photograph_room", "Photograph the room",
+		func(_ context.Context, _ struct{}) (any, error) {
+			return Output{Text: "the kitchen", Images: []Image{{URL: "data:image/png;base64,iVBORw0KGgo=", Detail: "low"}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := registry.Call(t.Context(), "photograph_room", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(output.Wire())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"text":"the kitchen","type":"text"},{"image_url":{"detail":"low","url":"data:image/png;base64,iVBORw0KGgo="},"type":"image_url"}]`
+	if string(wire) != want {
+		t.Errorf("the tool_result output is %s, want %s", wire, want)
+	}
+}
+
+func TestAPictureWithNoWordsIsOnePart(t *testing.T) {
+	wire, err := json.Marshal(Output{Images: []Image{{URL: "https://example.com/a.png"}}}.Wire())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `[{"image_url":{"url":"https://example.com/a.png"},"type":"image_url"}]`; string(wire) != want {
+		t.Errorf("the tool_result output is %s, want %s", wire, want)
+	}
+}
+
+func TestWordsAloneStayAString(t *testing.T) {
+	if wire := (Output{Text: "sunny"}).Wire(); wire != "sunny" {
+		t.Errorf("the tool_result output is %#v, want the string", wire)
 	}
 }
