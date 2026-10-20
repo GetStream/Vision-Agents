@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -143,9 +146,20 @@ private fun SpokenTranscript(session: AgentSession, modifier: Modifier = Modifie
     val turns = conversation.turns
     val status = conversation.status
     val list = rememberLazyListState()
-    val lines = turns.size + if (status != null) 1 else 0
-    LaunchedEffect(lines, turns.lastOrNull()?.text?.length) {
-        if (lines > 0) list.animateScrollToItem(lines - 1)
+    // Kept at the very end, padding included, as the newest line types out and grows, so it never
+    // runs under the call controls. Dragging up to read stops following; reaching the end again
+    // starts it.
+    var following by remember { mutableStateOf(true) }
+    LaunchedEffect(list) {
+        list.interactionSource.interactions.collect { if (it is DragInteraction.Start) following = false }
+    }
+    LaunchedEffect(list) {
+        snapshotFlow { list.canScrollForward to list.isScrollInProgress }.collect { (more, scrolling) ->
+            when {
+                !more -> following = true
+                following && !scrolling -> list.scrollBy(10_000f)
+            }
+        }
     }
 
     LazyColumn(
