@@ -167,6 +167,8 @@ type Manager struct {
 	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
+	// slots caps each connection's connector calls in flight, across every session here.
+	slots callSlots
 
 	mu       sync.Mutex
 	sessions map[string]*Session

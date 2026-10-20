@@ -650,6 +650,29 @@ func (s *ManifestSuite) TestAnUnknownClientRegistrationIsRejected() {
 	s.ErrorContains(err, `client.registration[0]: "brokered" is not one of [operator customer managed dcr cimd]`)
 }
 
+func (s *ManifestSuite) TestACapOnCallsInFlightReachesTheResolvedManifest() {
+	parsed, err := ParseManifest(minimal("rate_limit:\n  max_concurrent_calls: 4\n"))
+	s.Require().NoError(err)
+	resolved, err := parsed.Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+	s.Equal(4, resolved.RateLimit.MaxConcurrentCalls)
+}
+
+func (s *ManifestSuite) TestANegativeCapOnCallsInFlightIsRejected() {
+	_, err := ParseManifest(minimal("rate_limit:\n  max_concurrent_calls: -1\n"))
+	s.ErrorContains(err, "rate_limit.max_concurrent_calls: cannot be negative")
+}
+
+// A manifest without a cap marshals as it did before the field existed, so the seeder finds
+// a stored built-in unchanged (store.sameManifest).
+func (s *ManifestSuite) TestAManifestWithoutACapOnCallsInFlightMarshalsWithoutIt() {
+	parsed, err := ParseManifest(minimal("rate_limit:\n  per: app\n"))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed)
+	s.Require().NoError(err)
+	s.Contains(string(raw), `"rate_limit":{"per":"app"}`)
+}
+
 func (s *ManifestSuite) TestAnUnknownFieldIsRejected() {
 	_, err := ParseManifest(minimal("scope_separator: \",\"\n"))
 	s.ErrorContains(err, "field scope_separator not found")
