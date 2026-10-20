@@ -580,6 +580,36 @@ func (s *StoreSuite) TestALeaseLapsingAfterAHoldWasTakenUpIsParkedLikeAnyOther()
 	s.Equal(2, s.run(claim.Run.ID).Attempts)
 }
 
+func (s *StoreSuite) TestALastAttemptWhoseLeaseLapsesAMomentIsParkedNotFailed() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	runID := claimed[0].Run.ID
+	// Two takeovers ago, and the worker on the third started a moment ago: it
+	// may only be slow, so its delivery is not cut by the attempt cap.
+	started := time.Now().Add(-time.Minute)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("attempts = ?", maxScheduledTaskRunAttempts).Set("started_at = ?", started).
+		Where("id = ?", runID).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", time.Now().Add(-time.Second)).Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Empty(again)
+	stored := s.run(runID)
+	s.Equal(ScheduledTaskRunRunning, stored.State)
+	s.Equal(maxScheduledTaskRunAttempts, stored.Attempts)
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(task.LeaseUntil)
+	s.WithinDuration(started.Add(scheduledTaskStaleRun), *task.LeaseUntil, time.Second, "parked until the run is stale")
+}
+
 func (s *StoreSuite) TestTheNextWakeIsWhenATaskMayBeClaimedNotWhenItWasDue() {
 	at := func(offset time.Duration) *time.Time {
 		when := s.base.Add(offset)
