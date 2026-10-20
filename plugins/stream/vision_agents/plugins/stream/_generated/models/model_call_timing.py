@@ -22,6 +22,9 @@ class ModelCallTiming:
         started_at (datetime.datetime):
         success (bool):
         duration_ms (float | Unset): Request to completed response or failed create.
+        error_code (str | Unset): Why the request did not run to its end, absent when success is true. cancelled is a
+            request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider
+            failure, and its tokens are still billed. Any other code is a failure.
         input_tokens (int | Unset):
         operation_id (str | Unset): Response ID for this operation; retries can share an ID.
         output_tokens (int | Unset):
@@ -34,6 +37,7 @@ class ModelCallTiming:
     started_at: datetime.datetime
     success: bool
     duration_ms: float | Unset = UNSET
+    error_code: str | Unset = UNSET
     input_tokens: int | Unset = UNSET
     operation_id: str | Unset = UNSET
     output_tokens: int | Unset = UNSET
@@ -51,6 +55,8 @@ class ModelCallTiming:
         success = self.success
 
         duration_ms = self.duration_ms
+
+        error_code = self.error_code
 
         input_tokens = self.input_tokens
 
@@ -74,6 +80,8 @@ class ModelCallTiming:
         )
         if duration_ms is not UNSET:
             field_dict["duration_ms"] = duration_ms
+        if error_code is not UNSET:
+            field_dict["error_code"] = error_code
         if input_tokens is not UNSET:
             field_dict["input_tokens"] = input_tokens
         if operation_id is not UNSET:
@@ -100,6 +108,8 @@ class ModelCallTiming:
 
         duration_ms = d.pop("duration_ms", UNSET)
 
+        error_code = d.pop("error_code", UNSET)
+
         input_tokens = d.pop("input_tokens", UNSET)
 
         operation_id = d.pop("operation_id", UNSET)
@@ -116,6 +126,7 @@ class ModelCallTiming:
             started_at=started_at,
             success=success,
             duration_ms=duration_ms,
+            error_code=error_code,
             input_tokens=input_tokens,
             operation_id=operation_id,
             output_tokens=output_tokens,

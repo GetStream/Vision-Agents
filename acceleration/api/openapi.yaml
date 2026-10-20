@@ -4489,6 +4489,9 @@ components:
           description: Request to completed response or failed create.
           format: double
           type: number
+        error_code:
+          description: 'Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.'
+          type: string
         input_tokens:
           format: int64
           type: integer
