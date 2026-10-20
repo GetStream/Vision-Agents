@@ -262,6 +262,23 @@ class TestHuggingFaceLLM:
         _, bodies = huggingface_api
         await assert_who_spoke_is_named(http_llm, InMemoryConversation("", []), bodies)
 
+    async def test_an_input_request_tells_the_model_about_several_people(
+        self, http_llm: LLM, huggingface_api: tuple[str, list[dict]]
+    ):
+        _, bodies = huggingface_api
+        conversation = InMemoryConversation("", [])
+        http_llm.set_conversation(conversation)
+        http_llm.set_instructions("be brief")
+        await answer(http_llm, conversation, ALICE, "Hi")
+        await answer(http_llm, conversation, BOB, "Me too")
+
+        await collect_simple_response(http_llm.create_response(input="Bob: And now?"))
+
+        assert bodies[-1]["messages"] == [
+            {"role": "system", "content": "be brief\n\n" + SEVERAL_SPEAKERS},
+            {"role": "user", "content": "Bob: And now?"},
+        ]
+
     async def test_simple_response_success(
         self, llm, conversation, huggingface_client_mock
     ):
