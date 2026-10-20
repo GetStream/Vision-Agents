@@ -105,6 +105,9 @@ type Spec struct {
 	// ConfigID names the agent config this session was created from, so a call can later
 	// say what the agent was configured as. Empty for a session that spelled itself out.
 	ConfigID string
+	// Role is that config's role (store.AgentConfig.Role). Only a config gives a session one,
+	// so a caller cannot ask for what a role is offered.
+	Role string
 	// AgentName is the name that config was found by, which is what a caller addressed the
 	// agent as. Kept alongside the id because it is what a caller filters their old
 	// conversations on, and because renaming a config must not rewrite what older sessions
@@ -315,6 +318,7 @@ func FromConfig(config store.AgentConfig) Spec {
 	return Spec{
 		CustomerID: config.CustomerID,
 		ConfigID:   config.ID,
+		Role:       config.Role,
 		AgentName:  config.Name,
 		// A text agent holds its conversation in writing, so a session created from one
 		// joins no call unless the request asks for a voice session explicitly.
