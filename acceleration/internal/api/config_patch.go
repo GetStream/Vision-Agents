@@ -250,6 +250,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &agentConfigResponse{Body: stored}, nil
 }

@@ -368,7 +368,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	}
 	// Only a signed event is counted: not a stranger posting to the URL, nor the server
 	// checking the callback.
-	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathEventDelivery,
+	plugins.ReportUse(ctx, s.logger, plugins.PathEventDelivery,
 		"customer", sub.CustomerID, "config", sub.ConfigID, "plugin", sub.PluginID, "event", sub.Event)
 	if delivered.Name != sub.Event || delivered.EventID == "" {
 		return Reply{Status: http.StatusBadRequest, Body: failure("not an event this subscription is for")}
