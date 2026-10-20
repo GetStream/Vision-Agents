@@ -8,6 +8,10 @@ through `POST /v1/agents/runs`. The dashboard's "AI moderator" template
   current content is judged first, and evidence is quoted exactly.
 - `skills/` holds one skill per label family: profanity, harassment, suggestive language, and
   how to talk about actions.
+- `simulations/` holds the reviews Nora must get right: casual against targeted profanity,
+  educational quotation, repeat and overturned history, an innocent message from a banned user,
+  and an injected instruction. Run them after editing the agent
+  (`getstream agents simulate nora`); the AI team runs them before changing this template.
 
 The app may edit all of it. The answer format the worker parses is not here: the router adds it
 (`acceleration/internal/moderator/contract.md`) after every other instruction on each run of a
