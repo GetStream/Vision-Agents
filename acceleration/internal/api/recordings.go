@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -180,6 +182,16 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		return nil, invalidRequest(err.Error())
 	}
 
+	recording := ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: request.Body.Text}
+	// A model that only streams is the caller's to change, so it is refused now rather
+	// than as a failed job.
+	if err := s.streams.Speech.Check(ctx, recording); err != nil {
+		if errors.Is(err, routing.ErrRequest) {
+			return nil, invalidRequest(err.Error())
+		}
+		return nil, err
+	}
+
 	job := store.Recording{
 		CustomerID: customerID,
 		Modality:   string(Tts),
@@ -194,7 +206,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
-		audio, provider, failure := s.streams.Speech.Record(ctx, ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: job.Text})
+		audio, provider, failure := s.streams.Speech.Record(ctx, recording)
 		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs, Voice: audio.Voice})
 		return &recordSpeechResponse{Body: speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
@@ -202,12 +214,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		return nil, err
 	}
 
-	go s.record(job, ttsrouter.Recording{
-		CustomerID: customerID,
-		Tags:       tags,
-		Options:    held,
-		Text:       request.Body.Text,
-	})
+	go s.record(job, recording)
 
 	return &recordSpeechResponse{Body: speechOf(job)}, nil
 }
@@ -536,7 +543,9 @@ func (s *Server) registerRecordings(api huma.API) {
 		Summary:     "Speak a whole text into one audio file, off the live path",
 		Description: "The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same " +
 			"reason transcription is - an audiobook is not a conversation, and nothing is waiting to " +
-			"hear the first chunk.",
+			"hear the first chunk. With inline true it is answered at once instead: the 202 body carries the " +
+			"audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 " +
+			"characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.",
 		DefaultStatus: http.StatusAccepted,
 		Responses: map[string]*huma.Response{
 			"202": {Description: "The job was accepted"},
@@ -622,7 +631,7 @@ func (RecordingStatus) Schema(registry huma.Registry) *huma.Schema {
 type SpeechRequest struct {
 	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll."`
 	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
-	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs." default:"false"`
+	Inline   *bool              `json:"inline,omitempty" doc:"Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job." default:"false"`
 	Options  *TtsOptions        `json:"options,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 	Text     string             `json:"text" doc:"What to say. Whole paragraphs rather than the sentence at a time a socket takes."`

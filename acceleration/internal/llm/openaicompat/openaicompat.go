@@ -48,6 +48,9 @@ const defaultTimeout = 2 * time.Minute
 // schema, so it arrives as an extra field rather than on the delta struct.
 const reasoningField = "reasoning_content"
 
+// replayedReasoningField is where vLLM's chat templates read an earlier turn's thinking.
+const replayedReasoningField = "reasoning"
+
 // A signing provider nests its signature under extra_content, keyed by vendor. Gemini is
 // the one that does, and it refuses a replayed call that comes back without it.
 const (
@@ -86,6 +89,18 @@ type Options struct {
 	// as text, as vLLM does with Gemma 4, so a call written as text is still made and never
 	// spoken.
 	ToolCallText bool
+	// ReplayReasoning sends each earlier assistant turn's thinking back with it, for a model
+	// trained on conversations that kept it, such as PhoneLLM Max.
+	ReplayReasoning bool
+	// ResultsFollowCalls is set for a server that refuses a conversation in which anything
+	// comes between a tool call and its results, as MiniMax's does with a 400: what the
+	// caller said while a tool ran is moved after the results (strictToolOrder).
+	ResultsFollowCalls bool
+	// Prefill opens every reply with these words, which the model continues rather than
+	// repeats, such as an empty thinking block for a model that cannot be told not to
+	// think. It needs a vLLM-style server that takes continue_final_message. It is asked
+	// per request, and empty is none.
+	Prefill func(llm.ResponseParams) string
 	// ForcedCallsFillEveryArgument sends a request that must call with every argument of
 	// every tool required, for a model that otherwise writes only the required ones.
 	ForcedCallsFillEveryArgument bool
@@ -470,8 +485,12 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 	if request.Instructions != "" {
 		messages = append(messages, openai.SystemMessage(request.Instructions))
 	}
+	input := request.Input
+	if l.options.ResultsFollowCalls {
+		input = strictToolOrder(input)
+	}
 	var pendingImages []openai.ChatCompletionContentPartUnionParam
-	for _, message := range request.Input {
+	for _, message := range input {
 		if message.Role != llm.ToolResult && len(pendingImages) > 0 {
 			messages = append(messages, openai.UserMessage(pendingImages))
 			pendingImages = nil
@@ -480,7 +499,11 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		case llm.System:
 			messages = append(messages, openai.SystemMessage(messageText(message)))
 		case llm.Assistant:
-			messages = append(messages, assistantMessage(message, l.options.UnsignedCall))
+			assistant := assistantMessage(message, l.options.UnsignedCall)
+			if l.options.ReplayReasoning && message.Reasoning != "" && assistant.OfAssistant != nil {
+				assistant.OfAssistant.SetExtraFields(map[string]any{replayedReasoningField: message.Reasoning})
+			}
+			messages = append(messages, assistant)
 		case llm.ToolResult:
 			messages = append(messages, openai.ToolMessage(messageText(message), message.ToolCallID))
 			if message.HasImage() {
@@ -494,6 +517,9 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 
 	if len(pendingImages) > 0 {
 		messages = append(messages, openai.UserMessage(pendingImages))
+	}
+	if prefill := l.prefill(request); prefill != "" {
+		messages = append(messages, openai.AssistantMessage(prefill))
 	}
 	params := openai.ChatCompletionNewParams{
 		Model:    l.options.Model,
@@ -662,13 +688,24 @@ func messageText(message llm.Message) string {
 	return llm.TextOf(message.Parts)
 }
 
+// prefill is what this request's reply opens with, or empty for none.
+func (l *LLM) prefill(request llm.ResponseParams) string {
+	if l.options.Prefill == nil {
+		return ""
+	}
+	return l.options.Prefill(request)
+}
+
 // requestOptions applies the request fields outside the OpenAI schema.
 func (l *LLM) requestOptions(request llm.ResponseParams) []option.RequestOption {
-	if l.options.RequestFields == nil {
-		return nil
+	fields := map[string]any{}
+	if l.options.RequestFields != nil {
+		fields = l.options.RequestFields(request, l.options.Capabilities.Effort(request))
 	}
-
-	fields := l.options.RequestFields(request, l.options.Capabilities.Effort(request))
+	if l.prefill(request) != "" {
+		fields["continue_final_message"] = true
+		fields["add_generation_prompt"] = false
+	}
 	options := make([]option.RequestOption, 0, len(fields))
 	for key, value := range fields {
 		options = append(options, option.WithJSONSet(key, value))
@@ -696,6 +733,10 @@ func incomplete(reason string) string {
 // and an extra field is by definition not one of those, so it always reports false here.
 func reasoning(extra map[string]respjson.Field) string {
 	field, ok := extra[reasoningField]
+	if !ok {
+		// vLLM 0.31 streams it as "reasoning", PhoneLLM Max's one-sentence thought included.
+		field, ok = extra[replayedReasoningField]
+	}
 	if !ok {
 		return ""
 	}

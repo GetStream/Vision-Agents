@@ -553,6 +553,8 @@ class TextToSpeech:
         self,
         text: str,
         callback: str = "",
+        *,
+        inline: bool = False,
         **options,
     ) -> Speech:
         """Speak a whole text into one file.
@@ -563,6 +565,10 @@ class TextToSpeech:
         Args:
             text: What to say, in whole paragraphs.
             callback: A URL the finished job is POSTed to.
+            inline: Speak it while the request waits and return the audio in the
+                answer, storing neither a job nor the audio: the cheap way to check that
+                a voice works on an app. At most 16000 characters, no callback, and 90
+                seconds.
             **options: Any field of the config's tts block - `providers`, `voice`,
                 `format`, `speed`, `stability`, `data_policy`, `overwrites`. A voice named
                 `custom:reader` is one of your own and nothing else.
@@ -571,11 +577,20 @@ class TextToSpeech:
             The audio, or the accepted job when a callback was given.
 
         Raises:
-            ValueError: if an option is not one a voice takes.
+            ValueError: if an option is not one a voice takes, or `inline` is asked for
+                with a callback.
             RuntimeError: if the job failed.
         """
+        if inline and callback:
+            # Why: the router answers this pair with a 400 (api/recordings.go), so it is
+            # refused here before a request is made.
+            raise ValueError(
+                "an inline recording is returned in the answer, so it takes no callback"
+            )
         await ensure_router(self._router.config, self._router.backend)
-        body = SpeechRequest(text=text, options=block(TtsOptions, options))
+        body = SpeechRequest(
+            text=text, options=block(TtsOptions, options), inline=inline
+        )
         if self._router.config:
             body.config_id = self._router.config
         if callback:

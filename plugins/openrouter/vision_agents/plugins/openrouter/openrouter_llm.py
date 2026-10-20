@@ -149,7 +149,9 @@ class OpenRouterLLM(LLM):
         # Add all messages from the conversation to the prompt
         if self._conversation is not None:
             for message in self._conversation.messages:
-                messages.append({"role": message.role, "content": message.content})
+                messages.append(
+                    {"role": message.role, "content": message.named_content}
+                )
         return messages
 
     def _convert_tools_to_provider_format(

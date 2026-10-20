@@ -84,6 +84,21 @@ func (s *VoicesSuite) TestAVoiceCannotBeHeardThroughAProviderThatDoesNotHaveIt()
 	s.Contains(failure, "not ready with elevenlabs")
 }
 
+func (s *VoicesSuite) TestAskingForFishsLibrarySaysHowToSpeakInAFishVoice() {
+	status, failure := s.serverClient.failure(http.MethodGet, "/v1/agents/voices/library?provider=fish", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "fish voices cannot be browsed through the router yet; name a fish voice by its model id")
+}
+
+func (s *VoicesSuite) TestAProviderWithNoLibraryIsStillRefusedAsBefore() {
+	status, failure := s.serverClient.failure(http.MethodGet, "/v1/agents/voices/library?provider=breeze", nil)
+
+	// As the base answered it (1b4404556).
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "voices: breeze publishes no voice library")
+}
+
 func (s *VoicesSuite) TestAVoiceWithNothingRecordedCannotBePrepared() {
 	created := s.createVoice(map[string]any{"name": "founder"})
 

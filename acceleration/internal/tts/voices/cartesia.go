@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -158,28 +159,38 @@ func (c *Cartesia) Speak(ctx context.Context, externalID, text string) (Speech, 
 	return speak(ctx, c.client, cartesia.ProviderName, url, "audio/wav", header, payload)
 }
 
-// cartesiaPageLimit is the largest page the endpoint serves, and cartesiaPages bounds how
-// many are read: a library that needs more than a thousand entries to find a voice needs
-// a search box, not a longer list.
+// cartesiaPageLimit is the largest page the endpoint serves: `limit` is 1 to 100
+// (https://docs.cartesia.ai/api-reference/voices/list, read 2026-10-19).
+//
+// cartesiaMaxPages only stops a vendor that never says it is done. Cartesia's library was
+// 1,049 voices over 11 pages on 2026-10-19T18:53:35Z, so a hundred pages is ten thousand
+// voices. It is our own bound, not a vendor's figure.
 const (
 	cartesiaPageLimit = 100
-	cartesiaPages     = 10
+	cartesiaMaxPages  = 100
 )
 
-// List reads Cartesia's library a page at a time. The preview URL is asked for by name,
-// because Cartesia only fills it in when it is expanded.
+// List reads Cartesia's whole library a page at a time, until Cartesia answers that there
+// is no more (`has_more` false or no `next_page`); `next_page` goes back as
+// `starting_after`. The preview URL is asked for by name, because Cartesia only fills it
+// in when it is expanded.
+//
+// A listing that runs past cartesiaMaxPages, or whose cursor comes back to a page already
+// read, is an error rather than the voices read so far: the catalogue then keeps the
+// listing it had, where a shortened one would be held for an hour as if it were complete.
 func (c *Cartesia) List(ctx context.Context) ([]Library, error) {
 	var (
 		found []Library
 		after string
+		read  = map[string]bool{}
 	)
-	for page := 0; page < cartesiaPages; page++ {
-		url := fmt.Sprintf("%s/voices?limit=%d&expand[]=preview_file_url",
+	for page := 0; page < cartesiaMaxPages; page++ {
+		address := fmt.Sprintf("%s/voices?limit=%d&expand[]=preview_file_url",
 			strings.TrimSuffix(c.options.BaseURL, "/"), cartesiaPageLimit)
 		if after != "" {
-			url += "&starting_after=" + after
+			address += "&starting_after=" + url.QueryEscape(after)
 		}
-		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
@@ -205,7 +216,7 @@ func (c *Cartesia) List(ctx context.Context) ([]Library, error) {
 			NextPage string `json:"next_page"`
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			err = refused(cartesia.ProviderName, response)
+			err = listRefused(cartesia.ProviderName, response)
 			response.Body.Close()
 			return nil, err
 		}
@@ -235,11 +246,16 @@ func (c *Cartesia) List(ctx context.Context) ([]Library, error) {
 			})
 		}
 		if !listed.HasMore || listed.NextPage == "" {
-			break
+			return found, nil
 		}
+		if read[listed.NextPage] {
+			return nil, stack.Wrap(fmt.Errorf("voices: cartesia list: next_page %q came back after it was read", listed.NextPage))
+		}
+		read[listed.NextPage] = true
 		after = listed.NextPage
 	}
-	return found, nil
+	return nil, stack.Wrap(fmt.Errorf("voices: cartesia list: still more voices after %d pages of %d",
+		cartesiaMaxPages, cartesiaPageLimit))
 }
 
 // Preview fetches the sample Cartesia holds for the voice. The URL it hands out wants the

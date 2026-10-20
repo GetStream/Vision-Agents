@@ -155,7 +155,7 @@ class BedrockLLM(LLM):
                 messages.append(
                     {
                         "role": message.role,
-                        "content": [{"text": message.content}],
+                        "content": [{"text": message.named_content}],
                     }
                 )
         user_message = {"role": "user", "content": [{"text": text}]}

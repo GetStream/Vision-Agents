@@ -6,10 +6,15 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
@@ -151,6 +156,142 @@ func (s *StreamsSuite) TestMoreKeytermsThanASessionMayNameAreRefusedAtTheStart()
 	s.Equal("error", refused["type"])
 	s.Equal("stt: at most 100 keyterms may be named, and this asks for 101", refused["error"])
 	s.Equal("closed", s.nextFrame(listening)["type"])
+}
+
+func (s *StreamsSuite) TestARefusalReachesACallerStillSendingAudio() {
+	// A refusal larger than the caller's receive buffer, 128 KiB on a Mac
+	// (net.inet.tcp.recvspace), but not than that and the router's send buffer together,
+	// is still on its way when the router ends the socket, the way a small one is on a
+	// slow network.
+	target := "nobody/" + strings.Repeat("x", 200<<10)
+	listening := s.start("/v1/stt/stream", frame{"target": target})
+	speech := audio.PcmData{Samples: make([]int16, 1600), SampleRate: 16_000, Channels: 1}
+	for range 20 {
+		if listening.WriteMessage(websocket.BinaryMessage, speech.Bytes()) != nil {
+			break
+		}
+	}
+	// A caller busy elsewhere, which leaves the rest of the refusal in the router's buffer
+	// while the router ends the socket.
+	time.Sleep(300 * time.Millisecond)
+
+	read, ended := s.ending(listening)
+
+	s.Require().Len(read, 2, "the refusal and the end both arrive, then: %v", ended)
+	s.Equal(fmt.Sprintf("routing: unknown target %q", target), read[0]["error"])
+	s.Equal("closed", read[1]["type"])
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+}
+
+func (s *StreamsSuite) TestAStartPinnedToABatchModelIsRefusedAndLeavesItsHealthAlone() {
+	pinned := "batch/" + batchModel
+	read, _ := s.ending(s.start("/v1/stt/stream", frame{"target": pinned}))
+
+	s.Require().Len(read, 2)
+	s.Equal("routing: "+pinned+" is a batch model for recordings, not live calls; for a live call name en-low-latency",
+		read[0]["error"])
+	s.Never(func() bool {
+		count, err := s.store.DB().NewSelect().Model((*store.Request)(nil)).
+			Where("model = ?", batchModel).Count(context.Background())
+		return err != nil || count > 0
+	}, time.Second, 50*time.Millisecond, "no start_failed row counts against the model")
+}
+
+func (s *StreamsSuite) TestAStartWithNoTargetEndsWithTheSameClose() {
+	s.refusedStartEndsWithItsMessage(frame{"tts": frame{"target": "en-low-latency"}})
+}
+
+func (s *StreamsSuite) TestAStartNamingAnUnknownConfigEndsWithTheSameClose() {
+	s.refusedStartEndsWithItsMessage(frame{"config_id": "no such config " + s.utils.uuid()})
+}
+
+func (s *StreamsSuite) TestAStartWithABadTagEndsWithTheSameClose() {
+	s.refusedStartEndsWithItsMessage(frame{"target": "en-low-latency", "tags": frame{"Not A Key!": "x"}})
+}
+
+func (s *StreamsSuite) refusedStartEndsWithItsMessage(opening frame) {
+	read, ended := s.ending(s.start("/v1/stt/stream", opening))
+
+	s.Require().Len(read, 1)
+	s.Equal("error", read[0]["type"])
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.Equal(read[0]["error"], closed.Text)
+}
+
+func (s *StreamsSuite) TestAFailureThatIsNotUTF8IsSentAsTextThatIs() {
+	reason := closeReason("provider said \xff\xfe and stopped")
+
+	s.True(utf8.ValidString(reason))
+	s.Equal("provider said \uFFFD and stopped", reason, "a run of bad bytes is one replacement")
+}
+
+func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsHungUpOn() {
+	listening := s.start("/v1/stt/stream", frame{"target": "nobody/x"})
+	// Never answers the close: the router's wait for it has to end on its own, in about
+	// closeWait. The read deadline keeps a router that never lets go from hanging the suite.
+	began := time.Now()
+	raw := listening.UnderlyingConn()
+	s.Require().NoError(raw.SetReadDeadline(began.Add(5 * time.Second)))
+	buffer := make([]byte, 4096)
+	for {
+		if _, err := raw.Read(buffer); err != nil {
+			var timeout net.Error
+			s.False(errors.As(err, &timeout) && timeout.Timeout(), "the router still holds the socket: %v", err)
+			s.ErrorIs(err, io.EOF)
+			s.Less(time.Since(began), 1500*time.Millisecond, "the router waits for the close for about a second")
+			return
+		}
+	}
+}
+
+func (s *StreamsSuite) TestARefusalTooLongForACloseFrameIsCutBetweenCharacters() {
+	listening := s.start("/v1/stt/stream", frame{"target": "nobody/" + strings.Repeat("é", 100)})
+
+	read, ended := s.ending(listening)
+
+	s.Require().NotEmpty(read)
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.LessOrEqual(len(closed.Text), 123, "RFC 6455 5.5: a control frame's payload is 125 bytes")
+	s.True(utf8.ValidString(closed.Text))
+	s.True(strings.HasPrefix(read[0]["error"].(string), closed.Text))
+	s.Greater(len(closed.Text), 120, "only what does not fit is cut")
+}
+
+func (s *StreamsSuite) TestASocketTheRouterEndsWithoutAFailureClosesNormally() {
+	// The echo model is new each session: the suite's one transcriber and one voice end
+	// with the first session that closes them.
+	answering := s.start("/v1/llm/stream", frame{"target": "echo/echo-model"})
+	s.Require().Equal("started", s.nextFrame(answering)["type"])
+	// A frame the socket cannot read ends it, the one end the router chooses itself.
+	s.Require().NoError(answering.WriteMessage(websocket.TextMessage, []byte("not json")))
+
+	read, ended := s.ending(answering)
+
+	s.Require().Len(read, 1)
+	s.Equal("closed", read[0]["type"])
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+}
+
+func (s *StreamsSuite) TestACallerThatHangsUpIsAnsweredWithItsOwnClose() {
+	answering := s.start("/v1/llm/stream", frame{"target": "echo/echo-model"})
+	s.Require().Equal("started", s.nextFrame(answering)["type"])
+
+	s.Require().NoError(answering.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseGoingAway, "")))
+	read, ended := s.ending(answering)
+
+	s.Empty(read)
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseGoingAway, closed.Code)
 }
 
 func (s *StreamsSuite) TestAsManyKeytermsAsASessionMayNameGetPastTheCap() {
@@ -483,6 +624,22 @@ func (s *StreamsSuite) TestToolsAModelWillNeverCallAreRefused() {
 	refused := s.nextConversationFrame(conversation)
 	s.Equal("error", refused["type"])
 	s.Contains(refused["error"], "tools")
+}
+
+// ending reads a socket to its end: every JSON frame left on it, and how it ended.
+func (s *StreamsSuite) ending(connection *websocket.Conn) ([]frame, error) {
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	var read []frame
+	for {
+		kind, payload, err := connection.ReadMessage()
+		if err != nil {
+			return read, err
+		}
+		var decoded frame
+		if kind == websocket.TextMessage && json.Unmarshal(payload, &decoded) == nil {
+			read = append(read, decoded)
+		}
+	}
 }
 
 // refused opens a socket on the model that refuses the account, speaks into it and returns

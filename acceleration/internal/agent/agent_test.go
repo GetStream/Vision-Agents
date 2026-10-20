@@ -135,6 +135,8 @@ type stubSTT struct {
 	// holdClose, if set, is waited on by Close, as a provider that flushes a final transcript
 	// before it lets go of its socket.
 	holdClose <-chan struct{}
+	// closes counts the times it was closed.
+	closes atomic.Int64
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
@@ -170,6 +172,7 @@ func (s *stubSTT) Close() error {
 	if hold != nil {
 		<-hold
 	}
+	s.closes.Add(1)
 	s.emitter.Close()
 	return nil
 }
@@ -699,6 +702,9 @@ type AgentSuite struct {
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
+	// holdOpen, if set, is waited on by each transcription session the agent opens, as a
+	// provider still dialling.
+	holdOpen chan struct{}
 	// replacement is the voice opened after the first, for a test whose agent loses one.
 	replacement *stubTTS
 	// subagent is the second model, present only when a test asks for delegation.
@@ -765,6 +771,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edgeFactory = nil
+	s.holdOpen = nil
 	s.remembers = nil
 	s.incognito = false
 	s.knows = nil
@@ -905,6 +912,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
 		s.opened.Add(1)
+		if s.holdOpen != nil {
+			<-s.holdOpen
+		}
 		return s.ears, nil
 	})
 	transcriber, err := sttrouter.New(sttrouter.Options{
@@ -1022,6 +1032,21 @@ func (s *AgentSuite) speak(participant stt.Participant) {
 		Participant: participant,
 		Audio:       audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1},
 	}
+}
+
+// setClock sets the time the agent reads.
+func (s *AgentSuite) setClock(at time.Time) {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	s.agent.now = func() time.Time { return at }
+}
+
+// listening reports whether the agent has a transcription session for a participant.
+func (s *AgentSuite) listening(participantID string) bool {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	_, ok := s.agent.listeners[participantID]
+	return ok
 }
 
 // says makes the transcriber report a settled turn.
@@ -1235,6 +1260,94 @@ func (s *AgentSuite) TestASlowTranscriberToCloseDoesNotDelayTheNextArrival() {
 	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 },
 		"a departed participant's session closing held up the next arrival")
 	close(release)
+}
+
+func (s *AgentSuite) TestAudioFromSomebodyWhoLeftOpensNoTranscriptionSession() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+
+	s.speak(alice)
+	bob := stt.Participant{ID: "bob"}
+	s.speak(bob)
+
+	// Frames are handled in the order they come, so once bob has a session alice's frame
+	// has been dealt with.
+	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
+	s.EqualValues(1, s.opened.Load(), "a session was opened for a participant who left")
+	s.Zero(countOf[Error](s.reported()), "audio from a participant who left was reported as a failure")
+}
+
+func (s *AgentSuite) TestSomebodyStillTalkingAfterALeaveIsTranscribedAgain() {
+	s.join(true)
+	left := time.Now()
+	s.setClock(left)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+
+	// The agent was held up for a minute, say opening somebody else's session, before the
+	// audio that trailed the leave reached it.
+	trailed := left.Add(time.Minute)
+	s.setClock(trailed)
+	bob := stt.Participant{ID: "bob"}
+	s.speak(alice)
+	s.speak(bob)
+	s.eventually(func() bool { return s.listening(bob.ID) }, "bob's audio never arrived")
+	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
+
+	s.setClock(trailed.Add(999 * time.Millisecond))
+	s.speak(alice)
+	carol := stt.Participant{ID: "carol"}
+	s.speak(carol)
+	s.eventually(func() bool { return s.listening(carol.ID) }, "carol's audio never arrived")
+	s.False(s.listening(alice.ID), "audio that trailed a leave opened a transcription session")
+
+	s.setClock(trailed.Add(time.Second))
+	s.speak(alice)
+
+	s.eventually(func() bool { return s.listening(alice.ID) },
+		"a participant still talking after a leave is never transcribed again")
+}
+
+func (s *AgentSuite) TestSomebodyLeavingWhileTheirSessionOpensHasItClosed() {
+	s.join(true)
+	release := make(chan struct{})
+	s.holdOpen = release
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "no session was asked for")
+
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the departure was never reported")
+	close(release)
+
+	s.eventually(func() bool { return s.ears.closes.Load() == 1 },
+		"the session opened for a participant who left was never closed")
+	s.False(s.listening(alice.ID), "a participant who left has a transcription session")
+	s.Empty(s.ears.transcribed(), "a participant who left was transcribed")
+}
+
+func (s *AgentSuite) TestSomebodyWhoComesBackIsTranscribedAgain() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.edge.attending <- Attendance{Participant: alice, Joined: false}
+	s.edge.attending <- Attendance{Participant: alice, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 2 },
+		"the return was never reported")
+
+	s.speak(alice)
+
+	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 },
+		"a participant who came back is not transcribed")
 }
 
 func (s *AgentSuite) TestParticipantAudioIsTranscribed() {
@@ -2448,6 +2561,89 @@ func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
 	}, "the dead transcriber was kept, so nothing this participant says is heard again")
 }
 
+func (s *AgentSuite) TestAnAgentPinnedToABatchTranscriberIsRefusedOnceWhenItJoins() {
+	// On 6d4d0d4a the agent joined and every inbound frame opened a transcriber that was
+	// refused: 100 frames gave 100 "stt" errors (rev1-probes/agent_head_probe.go.txt).
+	agent, built := s.buildTranscribing("stub/batch", nil)
+
+	err := agent.Join(s.ctx)
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
+	s.EqualError(err, "agent: start stt: routing: stub/batch is a batch model for recordings, not live calls; "+
+		"for a live call name stub/stub-model")
+	s.Zero(built.Load(), "nothing was built, so no vendor was dialled")
+	s.False(s.edge.joined, "the call was never joined, so no frame is heard and refused")
+}
+
+func (s *AgentSuite) TestAnAgentWhoseLiveTranscriberFailsToStartTriesAgainOnEachFrame() {
+	// On d1654d42 each frame opened a transcriber, and each failure was one "stt" error.
+	agent, built := s.buildTranscribing("stub/stub-model", errors.New("stub: connect failed"))
+	s.Require().NoError(agent.Join(s.ctx))
+	events := collect(agent)
+	s.T().Cleanup(func() { <-events.done })
+	s.T().Cleanup(func() { _ = agent.Close() })
+
+	for range 3 {
+		s.speak(stt.Participant{ID: "alice"})
+	}
+
+	failed := func() int {
+		count := 0
+		for _, event := range events.seen() {
+			if failure, ok := event.(Error); ok && failure.Context == "stt" {
+				count++
+			}
+		}
+		return count
+	}
+	s.eventually(func() bool { return failed() == 3 }, "a failed start was not tried again on the next frame")
+	s.EqualValues(3, built.Load())
+}
+
+// buildTranscribing builds an agent whose transcriber is pinned to target, over a config
+// that also declares the batch model stub/batch. A start error fails every session opened.
+func (s *AgentSuite) buildTranscribing(target string, start error) (*Agent, *atomic.Int64) {
+	s.edge = newLoopbackEdge()
+	s.model = newStubLLM()
+	s.flow = newStubLLM()
+	s.voice = newStubTTS(true)
+	logger := slog.New(slog.DiscardHandler)
+
+	config := stubConfig()
+	config.Providers = append(config.Providers, routing.ProviderConfig{Provider: "stub", Model: "batch", Languages: []string{"en"}})
+	var built atomic.Int64
+	transcription := sttrouter.NewRegistry()
+	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
+		built.Add(1)
+		return &unstartableSTT{stubSTT: newStubSTT(), err: start}, nil
+	})
+	transcriber, err := sttrouter.New(sttrouter.Options{Config: config, Registry: transcription, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(transcriber.Close)
+	speech := ttsrouter.NewRegistry()
+	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaker, err := ttsrouter.New(ttsrouter.Options{Config: stubConfig(), Registry: speech, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(speaker.Close)
+
+	agent, err := New(Options{
+		Edge: s.edge, Instructions: "be brief", CustomerID: "acme",
+		LLM: s.reasoner(logger), LLMTarget: "en-low-latency",
+		STT: transcriber, STTTarget: target,
+		TTS: speaker, TTSTarget: "en-low-latency", Logger: logger,
+	})
+	s.Require().NoError(err)
+	return agent, &built
+}
+
+// unstartableSTT is a transcriber whose Start fails with err, when it is set.
+type unstartableSTT struct {
+	*stubSTT
+	err error
+}
+
+func (u *unstartableSTT) Start(context.Context) error { return u.err }
+
 func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {
 	// A murmur is meant to overlap. Treating the caller carrying on as barge-in would
 	// report an interruption on every single one.
@@ -3204,6 +3400,56 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 }
 
+func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
+	booking := llm.ToolCall{ID: "c1", Name: "create_reservation", Arguments: `{"name":"Alvarez","time":"7:30"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "book it for Alvarez at 7:30"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booking}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Alvarez","time":"7:30"}`},
+		{Role: llm.User, Content: "yes, please go ahead"},
+	}
+	again := llm.ToolCall{ID: "c2", Name: "create_reservation", Arguments: `{"time": "7:30", "name": "Alvarez"}`}
+	earlier, repeated := answeredSinceCaller(history, again)
+	s.True(repeated)
+	s.Contains(earlier, "Alvarez")
+
+	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "check_availability", Arguments: booking.Arguments})
+	s.False(repeated, "a lookup is free to run again once the caller has spoken")
+
+	history[2].Content = `{"error":"no table at 7:30"}`
+	_, repeated = answeredSinceCaller(history, again)
+	s.False(repeated, "a booking that failed may be tried again")
+}
+
+func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
+	verify := llm.ToolCall{ID: "c1", Name: "verify_account", Arguments: `{"pin":"1044"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "PIN four four seven one"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{verify}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":false}`},
+		{Role: llm.User, Content: "I said four four seven one"},
+	}
+	refused, again := refusedBefore(history, llm.ToolCall{ID: "c2", Name: "verify_account", Arguments: `{"pin": "1044"}`})
+	s.True(again)
+	s.Equal(`{"ok":false}`, refused)
+	s.True(failedResult(alreadyRefused + refused + tryOtherValues))
+
+	_, again = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "verify_account", Arguments: `{"pin":"4471"}`})
+	s.False(again, "new values are worth trying")
+
+	history[2].Content = didNotWork + "timeout"
+	_, again = refusedBefore(history, llm.ToolCall{ID: "c4", Name: "verify_account", Arguments: `{"pin":"1044"}`})
+	s.False(again, "a call that could not be made may be tried again")
+}
+
+func (s *AgentSuite) TestASentenceAboutTheCallerIsNotSaidToThem() {
+	s.True(narrates("The caller said yes after I offered two times."))
+	s.True(narrates("The caller is listening, not reading: tell them the part that answers them."))
+	s.True(narrates("[respond] The user wants a table."))
+	s.False(narrates("The callback number I have is 512 555 0142."))
+	s.False(narrates("Your table is booked."))
+}
+
 func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	for said, heard := range map[string]string{
 		"One moment, checking... I've checked the outage map and there are no outages.": "One moment, checking...",
@@ -3213,6 +3459,70 @@ func (s *AgentSuite) TestAWithheldClaimIsCutFromWhatTheCallerHeard() {
 	} {
 		s.Equal(heard, unsaid(said), said)
 	}
+}
+
+func (s *AgentSuite) TestALookupBacksALookButNotAChange() {
+	looked := []llm.Message{
+		{Role: llm.User, Content: "move my appointment to Tuesday"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_appointment"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"appointments":[{"id":"a1"}]}`},
+	}
+	s.True(backsClaim(looked, "I've checked, you have one on Thursday.", nil))
+	s.False(backsClaim(looked, "Your appointment has been rescheduled to Tuesday.", nil))
+
+	moved := append(looked,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "reschedule_appointment"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"ok":true}`})
+	s.True(backsClaim(moved, "Your appointment has been rescheduled to Tuesday.", nil))
+}
+
+func (s *AgentSuite) TestARefusalIsChasedToTheToolThatLogsIt() {
+	s.True(refuses("I understand you're in pain, but I'm not able to send oxycodone refills over the phone."))
+	s.False(refuses("I can help with that. What's your member ID?"))
+
+	tools := harness.Tools{Tools: []harness.Tool{{Name: "verify_identity"}, {Name: "log_escalation"}}}
+	s.Equal("log_escalation", loggingTool(tools))
+	s.Empty(loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "create_reservation"}}}))
+	s.Equal("create_transfer_summary", loggingTool(harness.Tools{Tools: []harness.Tool{{Name: "apply_credit"}, {Name: "create_transfer_summary"}}}))
+	s.True(refuses("I still can't change your plan under a threat, but I can look into a credit."))
+	s.True(refuses("I can't credit a bill under a threat, but I can look into it."))
+	s.False(refuses("Sorry, I can't hear you very well."))
+	s.True(refuses("On the credit, I did try, but the account isn't eligible for a bill credit, so that one isn't possible."))
+
+	logged := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "log_escalation"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
+		{Role: llm.User, Content: "just send it"},
+	}
+	s.True(calledInCall(logged, "log_escalation"))
+	s.False(calledInCall(logged[2:], "log_escalation"))
+}
+
+func (s *AgentSuite) TestAClaimThatNamesWhatAToolMakesTakesThatTool() {
+	tools := []string{"verify_account", "walk_reboot", "create_ticket", "dispatch_tech"}
+	rebooted := []llm.Message{
+		{Role: llm.User, Content: "please keep going"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "walk_reboot"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`},
+	}
+	s.False(backsClaim(rebooted, "Since the Internet was still down, I opened a ticket for you.", tools))
+	s.True(backsClaim(rebooted, "You're all set, the gateway is back.", tools))
+
+	ticketed := append(rebooted,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "create_ticket"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"id":"T-1842"}`})
+	s.True(backsClaim(ticketed, "I opened a ticket for you.", tools))
+	s.False(backsClaim(ticketed, "Your technician is dispatched for the morning window.", tools))
+}
+
+func (s *AgentSuite) TestWhatFollowsAPromisedStepIsCutFromWhatTheCallerHeard() {
+	said := "Let me verify your account information. I have your PIN as 4471. Is that correct?"
+	s.Equal("Let me verify your account information.", heardOf(said, "[short pause] I have your PIN as 4471."))
+	s.Equal("Let me look.", heardOf("Let me look. Your table is ready, you're booked.", ""))
+	s.True(promisesStep("Let me verify your account information."))
+	s.True(promisesStep("One moment."))
+	s.False(promisesStep("What time would you like?"))
+	s.True(directionTags.MatchString("[checks outage map] I don't see any outages."))
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
@@ -3241,11 +3551,35 @@ func (s *AgentSuite) TestWhatAReplyOwesACallFor() {
 		{"I've checked the outage map and there are no outages.", false, true},
 		{"Alvarez, you're booked: 4 at 7:30.", true, false},
 		{"Checking orders is what I do. Which order is it?", false, false},
+		{"Thank you, Maya. I will reschedule your appointment to Tuesday morning.", true, true},
+		{"I'll book that for you. What name should it be under?", false, false},
+		{"You're verified, Maya. Let me pull up your appointments now.", true, true},
+		{"I have Maya Chen, member ABC123456. Let me verify that now.", false, false},
 		{"Is there anything else I can help you with?", false, false},
 	}
 	for _, c := range cases {
 		s.Equal(c.owes, owesACall(c.said, c.backed), c.said)
 	}
+}
+
+func (s *AgentSuite) TestOnlyAToolThatAnsweredBacksAClaim() {
+	// LFM2.5 told a Voicebench caller "I've got you down for eight at 8:15" after
+	// create_reservation came back "no table at 8:15".
+	caller := llm.Message{Role: llm.User, Content: "book it"}
+	for _, c := range []struct {
+		result string
+		backed bool
+	}{
+		{`{"reservation_id":"r1"}`, true},
+		{`{"error":"no table at 8:15"}`, false},
+		{didNotWork + "no table at 8:15. Tell the caller, in your own words.", false},
+		{`{"ok":false}`, false},
+		{`{"error":""}`, true},
+	} {
+		history := []llm.Message{caller, {Role: llm.ToolResult, Content: c.result}}
+		s.Equal(c.backed, toolRanSinceCaller(history), c.result)
+	}
+	s.True(owesACall("I've got you down for eight at 8:15.", false))
 }
 
 func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {

@@ -1542,7 +1542,7 @@ module GetStream
           required: %w[config_id from_number name].freeze, open: false
         }.freeze,
         "Candidate" => {
-          properties: %w[health model provider].freeze,
+          properties: %w[can_record health model provider].freeze,
           required: %w[health model provider].freeze, open: false
         }.freeze,
         "ChannelAccount" => {

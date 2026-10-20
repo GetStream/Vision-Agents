@@ -89,7 +89,9 @@ def sync_detailed(
 
      The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason
     transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first
-    chunk.
+    chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing
+    is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no
+    callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 
     Args:
         body (SpeechRequest):
@@ -122,7 +124,9 @@ def sync(
 
      The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason
     transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first
-    chunk.
+    chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing
+    is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no
+    callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 
     Args:
         body (SpeechRequest):
@@ -150,7 +154,9 @@ async def asyncio_detailed(
 
      The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason
     transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first
-    chunk.
+    chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing
+    is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no
+    callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 
     Args:
         body (SpeechRequest):
@@ -181,7 +187,9 @@ async def asyncio(
 
      The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason
     transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first
-    chunk.
+    chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing
+    is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no
+    callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 
     Args:
         body (SpeechRequest):

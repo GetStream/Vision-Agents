@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from vision_agents.core.agents.conversation import named
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
@@ -25,6 +26,8 @@ class LLMTurn:
     transcript: str
     participant: Participant
     events: EventManager
+    # Who said the transcript, put ahead of it for the model. None for one person.
+    speaker: str | None = None
     stream: Stream[LLMResponseDelta | LLMResponseFinal] = field(
         init=False, default_factory=Stream
     )
@@ -113,7 +116,7 @@ class LLMTurn:
         with tracer.start_as_current_span("simple_response"):
             try:
                 async for item in llm.simple_response(
-                    self.transcript, self.participant
+                    named(self.speaker, self.transcript), self.participant
                 ):
                     await self.stream.send(item)
                     if isinstance(item, LLMResponseFinal):

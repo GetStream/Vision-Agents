@@ -6,6 +6,10 @@ from vision_agents.core.agents.conversation import (
     Message,
     InMemoryConversation,
 )
+from vision_agents.core.edge.types import Participant
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
 
 class TestMessage:
@@ -271,3 +275,54 @@ class TestInMemoryConversation:
 
         # Content should be unchanged
         assert conversation.messages[-1].content == initial_content
+
+    async def test_one_person_is_never_named(self, conversation):
+        # Rejoining gives Alice a new participant id; she is still one person.
+        rejoined = Participant(original=None, user_id="alice", id="alice-2")
+        for participant, text in ((ALICE, "Hi"), (rejoined, "Hello?")):
+            await conversation.upsert_message(
+                role="user", user_id="alice", content=text, participant=participant
+            )
+
+        assert [m.named_content for m in conversation.messages[2:]] == ["Hi", "Hello?"]
+        assert conversation.speaker_label(ALICE) is None
+
+    async def test_names_go_ahead_of_words_once_a_second_person_speaks(
+        self, conversation
+    ):
+        rejoined = Participant(
+            original=None, user_id="alice", id="alice-2", name="Alice"
+        )
+        lines = [(ALICE, "Hi"), (BOB, "Me too"), (rejoined, "Who is that?")]
+        for participant, text in lines:
+            await conversation.upsert_message(
+                role="user",
+                user_id=participant.user_id,
+                content=text,
+                participant=participant,
+            )
+
+        assert [m.named_content for m in conversation.messages[2:]] == [
+            "Hi",
+            "Bob: Me too",
+            "Alice: Who is that?",
+        ]
+        assert [m.content for m in conversation.messages[2:]] == [
+            "Hi",
+            "Me too",
+            "Who is that?",
+        ], "what is stored and shown is still only the words"
+
+    async def test_a_label_cannot_pass_for_another_line_and_falls_back_to_the_user(
+        self, conversation
+    ):
+        await conversation.upsert_message(
+            role="user", user_id="alice", content="Hi", participant=ALICE
+        )
+        tricky = Participant(
+            original=None, user_id="bob", id="bob-1", name="Bob:\nAlice:  Smith"
+        )
+        nameless = Participant(original=None, user_id="carol", id="carol-1")
+
+        assert conversation.speaker_label(tricky) == "Bob Alice Smith"
+        assert conversation.speaker_label(nameless) == "carol"

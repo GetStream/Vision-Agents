@@ -1311,20 +1311,12 @@ func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*l
 		if err != nil {
 			return nil, err
 		}
-		resolved := make([]Candidate, 0, len(candidates))
-		for _, candidate := range candidates {
-			resolved = append(resolved, Candidate{
-				Provider: candidate.Config.Provider,
-				Model:    candidate.Config.Model,
-				Health:   providerHealth(candidate.Health),
-			})
-		}
 		alias := config.Aliases[name]
 		routes = append(routes, Route{
 			Id:          name,
 			Title:       alias.Title,
 			Description: alias.Description,
-			Candidates:  resolved,
+			Candidates:  s.candidatesOf(request.Modality, candidates),
 		})
 	}
 	return &listRoutesResponse{Body: routes}, nil
@@ -1350,15 +1342,27 @@ func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetReques
 		return nil, notFound(err.Error())
 	}
 
+	return &resolveTargetResponse{Body: s.candidatesOf(request.Modality, candidates)}, nil
+}
+
+// candidatesOf is what a target resolved to, as the routes say it. Each comes from the live
+// router, so a text-to-speech candidate also says whether a recording can use it.
+func (s *Server) candidatesOf(modality Modality, candidates []routing.Candidate) []Candidate {
 	resolved := make([]Candidate, 0, len(candidates))
 	for _, candidate := range candidates {
+		var canRecord *bool
+		if modality == Tts && s.streams != nil && s.streams.Speech != nil {
+			records := s.streams.Speech.Records(candidate.Config.Provider)
+			canRecord = &records
+		}
 		resolved = append(resolved, Candidate{
-			Provider: candidate.Config.Provider,
-			Model:    candidate.Config.Model,
-			Health:   providerHealth(candidate.Health),
+			CanRecord: canRecord,
+			Provider:  candidate.Config.Provider,
+			Model:     candidate.Config.Model,
+			Health:    providerHealth(candidate.Health),
 		})
 	}
-	return &resolveTargetResponse{Body: resolved}, nil
+	return resolved
 }
 
 // getStats returns the calling customer's aggregated usage for one modality.
@@ -2131,9 +2135,10 @@ func (ActivityGranularity) Schema(registry huma.Registry) *huma.Schema {
 
 // Candidate is the Candidate schema.
 type Candidate struct {
-	Health   ProviderHealth `json:"health"`
-	Model    string         `json:"model"`
-	Provider string         `json:"provider"`
+	CanRecord *bool          `json:"can_record,omitempty" doc:"Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them."`
+	Health    ProviderHealth `json:"health"`
+	Model     string         `json:"model"`
+	Provider  string         `json:"provider"`
 }
 
 // Granularity is the Granularity schema.

@@ -231,6 +231,16 @@ func (s *TTSRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	}
 }
 
+func (s *TTSRouterSuite) TestAVendorWithNoRecorderStillSpeaksLive() {
+	// Probed on da97ee28: served by cartesia/sonic-preview.
+	var built []routing.Spec
+	session, err := s.newStubbedRouter(&built).Start(s.ctx, Request{CustomerID: "acme", Target: "cartesia/sonic-preview"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("cartesia/sonic-preview", session.Provider()+"/"+session.Model())
+}
+
 func (s *TTSRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
 	s.False(DefaultRegistry().Has("mock"),
 		"a deployment that did not ask for mocks should fail to build one rather than route to it")
@@ -423,7 +433,7 @@ func (s *TTSRouterSuite) TestAVoiceElevenLabsRefusedIsStillRefusedAfterACartesia
 type failingListing struct{ listed }
 
 func (failingListing) List(context.Context) ([]voices.Library, error) {
-	return nil, errors.New("inworld refused the voice (http 403): api key does not have required scopes")
+	return nil, errors.New("the inworld key cannot list voices (http 403): api key does not have required scopes")
 }
 
 func (s *TTSRouterSuite) TestAShortcutSpeaksAVoiceElevenLabsHasOnElevenLabs() {

@@ -135,6 +135,8 @@ type Session struct {
 	transcribe func(ctx context.Context, spec Spec) Transcript
 	// supersede ends the sessions this agent left in the call a spec joins (Manager.supersede).
 	supersede func(spec Spec)
+	// think names the model a call's skills run on when the spec did not (Manager.think).
+	think func(ctx context.Context, spec *Spec)
 	// typed are the texts typed into the call by a durable command, waiting for the turn
 	// that answers them, and typedTurns those turns: the conversation writes them, so the
 	// call's transcript does not write them again. Guarded by typedMu.
@@ -872,7 +874,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		return stack.Wrap(ErrCardedToNative)
 	}
 	if next.ControllerTarget == "" && !next.Native() {
-		next.ControllerTarget = next.internalTarget(defaultControllerTarget)
+		next.ControllerTarget = next.controllerTarget()
 	}
 
 	if err := s.current().SetSettings(ctx, agent.Settings{
@@ -948,6 +950,11 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 			current = current.Holding(call)
 		}
 		next = current.Voiced()
+		// A chat holds no subagent to bring back, so its call is given the default one a
+		// call opened as one is, without which its skills have nothing to run on.
+		if s.think != nil {
+			s.think(ctx, &next)
+		}
 	}
 
 	old := s.current()
@@ -964,7 +971,7 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 		s.logger.Debug("the agent was still talking when voice changed", "error", err)
 	}
 	cancel()
-	fresh.RestoreHistory(old.History())
+	fresh.Continue(old)
 
 	var transcript Transcript
 	if voice && s.transcribe != nil {
@@ -1524,7 +1531,10 @@ func (s *Session) askTool(call ToolCall) error {
 	if call.TurnID != "" && s.persisted != nil {
 		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
 	}
-	if s.persisted != nil && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
+	// Only a conversation held in writing is asked by command. On a call a question is spoken,
+	// with no request id, and the vision skill's request for frames belongs to no turn: their
+	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.
+	if s.persisted != nil && s.spec.Text && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
 		return errors.New("session: tool call has no durable command binding")
 	}
 	s.mu.Lock()

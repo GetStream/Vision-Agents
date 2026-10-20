@@ -2545,7 +2545,9 @@ type AgentConfig struct {
 	UpdatedAt    time.Time     `json:"updated_at"`
 	Video        *SessionVideo `json:"video,omitempty"`
 	VisibleTools *[]string     `json:"visible_tools,omitempty"`
-	Voice        *string       `json:"voice,omitempty"`
+
+	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
+	Voice *string `json:"voice,omitempty"`
 }
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
@@ -2609,7 +2611,9 @@ type AgentConfigPatch struct {
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
-	Voice        *string   `json:"voice,omitempty"`
+
+	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
+	Voice *string `json:"voice,omitempty"`
 }
 
 // AgentConfigRequest defines model for AgentConfigRequest.
@@ -2694,7 +2698,7 @@ type AgentConfigRequest struct {
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
-	// Voice Provider-specific voice id.
+	// Voice The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
 	Voice *string `json:"voice,omitempty"`
 }
 
@@ -3412,9 +3416,11 @@ type CampaignRequest struct {
 
 // Candidate defines model for Candidate.
 type Candidate struct {
-	Health   ProviderHealth `json:"health"`
-	Model    string         `json:"model"`
-	Provider string         `json:"provider"`
+	// CanRecord Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.
+	CanRecord *bool          `json:"can_record,omitempty"`
+	Health    ProviderHealth `json:"health"`
+	Model     string         `json:"model"`
+	Provider  string         `json:"provider"`
 }
 
 // ChannelAccount One line the app answers on: the number people write to and where its provider delivers. The credentials are write-only, so they are never shown here.
@@ -4405,7 +4411,7 @@ type CreateSessionRequest struct {
 	UserName *string       `json:"user_name,omitempty"`
 	Video    *SessionVideo `json:"video,omitempty"`
 
-	// Voice Provider-specific voice id.
+	// Voice The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
 	Voice *string `json:"voice,omitempty"`
 }
 
@@ -6333,7 +6339,7 @@ type SessionSettingsRequest struct {
 	Tts         *string                          `json:"tts,omitempty"`
 	Verbosity   *SessionSettingsRequestVerbosity `json:"verbosity,omitempty"`
 
-	// Voice The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+	// Voice The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
 	Voice *string `json:"voice,omitempty"`
 }
 
@@ -6719,7 +6725,7 @@ type SpeechRequest struct {
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
 	ConfigId *string `json:"config_id,omitempty"`
 
-	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+	// Inline Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.
 	Inline *bool `json:"inline,omitempty"`
 
 	// Options How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
@@ -7072,7 +7078,9 @@ type SyncAgentRequest struct {
 	Tools *AgentTools   `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
-	Voice *string       `json:"voice,omitempty"`
+
+	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
+	Voice *string `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -7494,7 +7502,7 @@ type UpdateSessionRequest struct {
 	Tts         *string                        `json:"tts,omitempty"`
 	Verbosity   *UpdateSessionRequestVerbosity `json:"verbosity,omitempty"`
 
-	// Voice The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+	// Voice The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
 	Voice *string `json:"voice,omitempty"`
 }
 
@@ -11479,7 +11487,7 @@ type ClientInterface interface {
 
 	// RecordSpeechWithBody Speak a whole text into one audio file, off the live path
 	//
-	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -11488,7 +11496,7 @@ type ClientInterface interface {
 
 	// RecordSpeech Speak a whole text into one audio file, off the live path
 	//
-	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -17022,7 +17030,7 @@ func (c *Client) GetTranscription(ctx context.Context, id string, reqEditors ...
 
 // RecordSpeechWithBody Speak a whole text into one audio file, off the live path
 //
-// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17041,7 +17049,7 @@ func (c *Client) RecordSpeechWithBody(ctx context.Context, contentType string, b
 
 // RecordSpeech Speak a whole text into one audio file, off the live path
 //
-// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -30218,7 +30226,7 @@ type ClientWithResponsesInterface interface {
 
 	// RecordSpeechWithBodyWithResponse Speak a whole text into one audio file, off the live path
 	//
-	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -30227,7 +30235,7 @@ type ClientWithResponsesInterface interface {
 
 	// RecordSpeechWithResponse Speak a whole text into one audio file, off the live path
 	//
-	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+	// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -50952,7 +50960,7 @@ func (c *ClientWithResponses) GetTranscriptionWithResponse(ctx context.Context, 
 
 // RecordSpeechWithBodyWithResponse Speak a whole text into one audio file, off the live path
 //
-// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50967,7 +50975,7 @@ func (c *ClientWithResponses) RecordSpeechWithBodyWithResponse(ctx context.Conte
 
 // RecordSpeechWithResponse Speak a whole text into one audio file, off the live path
 //
-// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

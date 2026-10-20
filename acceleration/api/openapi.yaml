@@ -220,6 +220,7 @@ components:
             type: string
           type: array
         voice:
+          description: 'The voice the agent speaks in, as TtsOptions.voice takes it: a provider''s own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor''s own voice name instead.'
           type: string
       required:
         - created_at
@@ -320,6 +321,7 @@ components:
           maxItems: 64
           type: array
         voice:
+          description: 'The voice the agent speaks in, as TtsOptions.voice takes it: a provider''s own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor''s own voice name instead.'
           type: string
       type: object
     AgentConfigRequest:
@@ -423,7 +425,7 @@ components:
           maxItems: 64
           type: array
         voice:
-          description: Provider-specific voice id.
+          description: 'The voice the agent speaks in: a provider''s own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider''s library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor''s own voice name instead, such as marin at OpenAI.'
           type: string
       required:
         - name
@@ -1547,6 +1549,9 @@ components:
       type: object
     Candidate:
       properties:
+        can_record:
+          description: 'Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them.'
+          type: boolean
         health:
           $ref: '#/components/schemas/ProviderHealth'
         model:
@@ -3128,7 +3133,7 @@ components:
         video:
           $ref: '#/components/schemas/SessionVideo'
         voice:
-          description: Provider-specific voice id.
+          description: 'The voice to speak in: a provider''s own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider''s library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor''s own voice name instead, such as marin at OpenAI.'
           type: string
       type: object
     CreateSipTrunkRequest:
@@ -6032,7 +6037,7 @@ components:
             - high
           type: string
         voice:
-          description: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+          description: 'The voice to speak in: a provider''s own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider''s library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor''s own voice name instead, such as marin at OpenAI. Empty returns to the provider''s default.'
           type: string
       type: object
     SessionSort:
@@ -6641,7 +6646,7 @@ components:
           type: string
         inline:
           default: false
-          description: Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+          description: 'Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job.'
           type: boolean
         options:
           $ref: '#/components/schemas/TtsOptions'
@@ -7123,6 +7128,7 @@ components:
         video:
           $ref: '#/components/schemas/SessionVideo'
         voice:
+          description: 'The voice the agent speaks in, as TtsOptions.voice takes it: a provider''s own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor''s own voice name instead.'
           type: string
       required:
         - name
@@ -7834,7 +7840,7 @@ components:
             - high
           type: string
         voice:
-          description: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+          description: 'The voice to speak in: a provider''s own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider''s library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor''s own voice name instead, such as marin at OpenAI. Empty returns to the provider''s default.'
           type: string
       type: object
     UpdateSipTrunkRequest:
@@ -16379,7 +16385,7 @@ paths:
       summary: One transcription job, and its transcript once it has one
   /v1/tts/recordings:
     post:
-      description: 'The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.'
+      description: 'The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk. With inline true it is answered at once instead: the 202 body carries the audio and nothing is stored, the cheap way to check that synthesis works on an app (at most 16000 characters, no callback, 90 seconds; see SpeechRequest.inline). Speech.voice says which voice spoke it.'
       operationId: recordSpeech
       requestBody:
         content:

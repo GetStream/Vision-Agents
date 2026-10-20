@@ -622,6 +622,43 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A phone on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` now lets the agent look through the
+phone's camera. The call's frames are sampled twice a second through its video filter and the last
+four seconds kept; when the agent's `vision` skill asks for what the camera showed
+(`get_video_frames`), the call's `AgentSession` answers with the frames taken at or before the
+moment the question was taken, newest last, at most eight, as the router's Python video workers
+do. With nothing from the last five seconds it says so as the answer, so the agent asks the person
+to show it again. The Swift assistant example has a camera button in voice mode, with a preview
+of what Juno sees.
+
+### A tool can show the model pictures
+
+A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
+(`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
+whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
+carries them as `tool_result` parts, which the router already took. On a call it hands them to
+the agent's `vision` skill, so a tool can show the agent what a camera sees. In a written
+conversation, which has no vision worker, a conversation model that takes images is shown them
+itself, with the reply that follows the call alone: once the next question comes they stand as a
+note, as a person's photos do. A model that reads only text is told such a tool failed. A tool
+hosted on a dispatch worker answers in words only and is reported as failed when it returns
+pictures. In Go, `tools.Registry.Call` returns a `tools.Output` instead of a string.
+
+### `router.tts.recording()` takes `inline`, and `voice` says it takes your own voices
+
+`await router.tts.recording(text, inline=True)` speaks a short text while the request waits and
+returns the audio in the answer, storing neither a job nor the audio: the cheap way to check
+that synthesis works on an app. It takes at most 16000 characters and 90 seconds, and with a
+`callback` it raises `ValueError`, since the router refuses that pair. Without `inline` the
+request is the same as before. The `voice` of a session, an agent config and a session update,
+and of `stream.TTS`, `Accelerated` and `define_agent`, is now documented the way
+`TtsOptions.voice` is: a provider's own voice id, or one of your voices, with `custom:` to mean
+only yours, so a typo is refused instead of passed to the provider's library. A native (sts)
+session takes the vendor's own voice name instead. The `POST /v1/tts/recordings` docs now
+describe `inline` (AI-1414).
+
 ### `stream.STT` takes `keyterms`
 
 `stream.STT(target, keyterms=[...])` sends words the transcriber would otherwise get wrong,
@@ -2161,13 +2198,26 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A phone's tools work on the call of a person's saved conversation. Every tool call there needed a typed question's request id, which a spoken question and the vision skill's request for camera frames never have, so on a call each was refused with `session: tool call has no durable command binding` and the agent said the tool did not work. A request id is now needed only in a conversation held in writing, as taking the results already was.
+- A chat that starts voice hands its skills over on the call. A session opened on a call is given the default subagent (`llm-thinking`) when its config names none, and one that started in writing was not when voice started, so its call had nothing to run `think`, `recall`, `explain` or `vision` on: a tool's pictures ended as `skill "vision" is not available`. Starting voice now gives it the same default.
+- A tool's pictures reach the `vision` skill on a model that checks a conversation's tool calls. The vision task was handed the conversation with the call that took the picture still open, which OpenAI refused (`400 No tool output found for function call`), so the agent said the analysis did not work. The open call is now answered as still running before the conversation is handed over.
+- A Python agent on a local LLM plugin is told who is speaking once a second person has spoken in the call, as the router's agent is (AI-1420): their words reach the model as `Bob: what about me`. Every person's words read the same before, so the model answered two people as one. A call where one person speaks sends exactly what it did. The name is the call participant's (`Participant.name`, filled by the Stream edge), else their user id. The plugins that rebuild the request from the conversation (anthropic, aws, huggingface, nvidia, openai Chat Completions, openrouter) name every line from then on; the ones that keep their own history (gemini, openai Responses, xai) are sent the named turn. What the conversation stores and shows is still only the words (AI-1439).
+- `stream.STT.start()` gives up on a router that never answers its start frame after 90 seconds, closes the socket and raises `TimeoutError: the router did not start transcribing within 90 s`. It waited forever, so an agent whose router was stuck never joined and never said why (AI-1440).
+- An agent opens no transcription session for a participant who has left the call. Their audio and their departure come apart, so a last frame handled after the leave, or one whose session was still opening, opened a vendor socket that stayed open until the agent closed. A participant who comes back with the same session id is transcribed again, and so is one whose audio still comes a second after the first frame dropped, in case the SFU reported a leave for somebody who stayed (AI-1433).
+- A live transcription pinned to a batch model, such as `deepgram/nova-3`, is refused before the vendor is called: `routing: deepgram/nova-3 is a batch model for recordings, not live calls; for a live call name deepgram/flux-general-en or deepgram/flux-general-multi or stt-fast or stt-accurate`. It was dialled at Deepgram's live endpoint and failed after about 4 s with `deepgram: connect failed`, recording a `start_failed` row against Nova-3. This is the `/v1/stt/stream` `error` frame, and for an agent the 400 that starting its voice session answers with (`agent: start stt: routing: ...`) rather than an `stt` error on every frame of the call; a priority list made only of batch models, and the recorded shortcuts `en-recorded` and `multilingual-recorded`, are refused the same way. A list with a live model in it is served by that model, a recording on Nova-3 is unchanged, and `mock/mock-stt` is now marked live so the load benchmark still streams at it (AI-1431).
+- People on a voice call keep their names after the session switches between voice and writing: the next turn reads `<name>: <words>` and the instructions still say several people are talking. Both were lost until two people spoke again. Two people with the same display name now get distinct labels, in the order they first spoke: `Alex`, then `Alex (2)`, then `Alex (3)`. A label stays the same for the whole session, even if the person rejoins or renames themselves (AI-1437, AI-1438).
+- `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
+- `GET /v1/agents/voices/library` lists every Cartesia voice. It stopped at the first 1,000 (ten pages of 100), and Cartesia had 1,049 on 2026-10-19. `provider=fish` now says Fish voices cannot be browsed through the router yet and to name one by its Fish model id, rather than `fish publishes no voice library`. A provider that will not list voices for the router's key (a 401 or 403) is reported as `the inworld key cannot list voices (http 403)` rather than as a refused voice (AI-1413).
+- A recording on a model that only streams, such as `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2`, is refused when it is sent, with a 400 that names the models that record: `routing: cartesia/sonic-preview can only stream speech, not record it; models that record: elevenlabs/...`. It was accepted and failed with `no factory registered`, in the job or in the inline answer. Only ElevenLabs records; a shortcut that reaches it, such as `tts-quality`, is served by it as before, and so is a priority list with it in. `GET /v1/tts/routes` and `/v1/tts/routes/{target}` now say per candidate whether a recording can use it (`Candidate.can_record`); STT and STS leave it out (AI-1412).
+
 - A voice asked of one vendor only, as `overwrites.<vendor>.voice_id` with no top-level `voice`, is spoken by that vendor or not at all. On a shortcut that reaches several vendors, such as `tts-quality`, another vendor served it with no voice, so in its default (ElevenLabs' is "Spuds Oxley - Grandpa"). Only the named vendor's models are tried now, and if they fail the error names them; a recording asked in a voice for a vendor with no recorder (any but ElevenLabs) is refused as the caller's mistake. With no top-level `voice`, `overwrites.cartesia.voice_id` is now spoken by Cartesia, which never read it. A request that asks for no voice, or for one at the top level, routes as before; STS is unchanged. The voice that spoke is reported, the provider's default included: `voice` on the `/v1/tts/stream` `started` frame and on a speech job (`Speech.voice`) (AI-1411).
 
 - A request that names one model and asks it for an option it does not take is refused naming that model: `routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms`. It read `routing: no provider can express keyterms`, as if the router had looked beyond the model the caller chose. This is the `/v1/stt/stream`, `/v1/tts/stream` and `/v1/sts/stream` `error` frame and every other refusal of a term; a shortcut keeps the old message (#1014, AI-1419).
 - The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (#1014, AI-1419).
 - A live transcription whose vendor fails for good mid-call, such as ElevenLabs refusing an account that has not accepted its terms (`unaccepted_terms`), reports it once: `/v1/stt/stream` sent one more `error` frame per frame of audio after it (779 in one call). The stat row keeps the vendor's reason as its `error_message`, and the model is unavailable in `GET /v1/stt/providers` and ranked last for the next five minutes, however many turns it served before (AI-1417).
+- A `/v1/stt/stream`, `/v1/tts/stream`, `/v1/llm/stream` or `/v1/sts/stream` socket the router ends now closes with a close frame after its last frame: `1000` after a clean end, `1011` after a failure with the failure as the reason (cut to 123 bytes). It dropped the connection instead, so a caller saw `1006`, and a caller still sending audio after a refused start was reset and could lose the `error` frame itself, as `stream.STT(...).start()` did in 2 of 5 runs on staging ("the router closed the socket before it started"). The router now reads and drops what the caller sends for up to a second after its close frame, until the caller answers it (AI-1425).
 
-- `stream.STT.start()` raises the router's refusal as a `RouterError`, such as a model that takes no keyterms or has no API key. It sent the start frame and returned at once, so a refusal arrived only as an `STTErrorEvent`, and an agent nobody subscribed to errors on got no `started`, no error and no transcripts. `start()` now waits for the router's `started` or `error` frame, at most 10 seconds (`asyncio.TimeoutError` after that). An error after `started` is still an `STTErrorEvent`, and the sockets opened later for other participants work as before (AI-1422).
+- `stream.STT.start()` raises the router's refusal as a `RouterError`, such as a model that takes no keyterms or has no API key. It sent the start frame and returned at once, so a refusal arrived only as an `STTErrorEvent`, and an agent nobody subscribed to errors on got no `started`, no error and no transcripts. `start()` now waits for the router's `started` or `error` frame. An error after `started` is still an `STTErrorEvent`, and the sockets opened later for other participants work as before (AI-1422).
 - A Knowledge source whose `<source>#<n>` id reached 64 bytes is indexed: a URL subscribed with `POST /v1/agents/knowledge/urls`, or a document posted to `POST /v1/agents/knowledge` whose `source` is that long. Its passage ids were `<source>#<n>`, and turbopuffer refuses an id of 64 bytes or more (`id string should be less than 64 bytes`), so such a page failed to index. A passage id that would not fit is now a hash of the whole source and the index (`<sha256, base64url>#<n>`); every id that fitted stays the same, so a base filled before needs no re-index (#1010, AI-1408).
 
 - Voicebench reply timing no longer reuses an answer to a later caller turn for earlier turns, and detects quiet speech on the isolated agent track. Methodology v10 separates missing post-caller replies from agent speech that already started while the caller was talking. Native-target diagnostics follow the explicitly selected router instead of a stale environment URL.

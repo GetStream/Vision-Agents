@@ -137,7 +137,7 @@ func (e *ElevenLabs) List(ctx context.Context) ([]Library, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, refused(elevenlabs.ProviderName, response)
+		return nil, listRefused(elevenlabs.ProviderName, response)
 	}
 	var listed struct {
 		Voices []struct {

@@ -7,6 +7,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.provider_health import ProviderHealth
 
@@ -21,11 +23,14 @@ class Candidate:
         health (ProviderHealth):
         model (str):
         provider (str):
+        can_record (bool | Unset): Whether RecordSpeech can use this candidate. Only set for text to speech: most of its
+            vendors only stream, and a recording passes over them.
     """
 
     health: ProviderHealth
     model: str
     provider: str
+    can_record: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +39,8 @@ class Candidate:
         model = self.model
 
         provider = self.provider
+
+        can_record = self.can_record
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -44,6 +51,8 @@ class Candidate:
                 "provider": provider,
             }
         )
+        if can_record is not UNSET:
+            field_dict["can_record"] = can_record
 
         return field_dict
 
@@ -58,10 +67,13 @@ class Candidate:
 
         provider = d.pop("provider")
 
+        can_record = d.pop("can_record", UNSET)
+
         candidate = cls(
             health=health,
             model=model,
             provider=provider,
+            can_record=can_record,
         )
 
         candidate.additional_properties = d

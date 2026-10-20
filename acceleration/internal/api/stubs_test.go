@@ -329,6 +329,20 @@ func (s *refusingSTT) Close() error {
 	return nil
 }
 
+// batchOnlySTT is a batch model dialled live, which Deepgram's live endpoint turns away
+// as it does Nova-3: "deepgram: connect failed" (internal/stt/deepgram/deepgram.go).
+type batchOnlySTT struct{}
+
+// batchModel is new each run, for the reason refusingModel is.
+var batchModel = fmt.Sprintf("batch-%d", time.Now().UnixNano())
+
+func (batchOnlySTT) Start(context.Context) error                     { return errors.New("batch: connect failed") }
+func (batchOnlySTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
+func (batchOnlySTT) Events() <-chan stt.Event                        { return nil }
+func (batchOnlySTT) Close() error                                    { return nil }
+func (batchOnlySTT) Provider() string                                { return "batch" }
+func (batchOnlySTT) Model() string                                   { return batchModel }
+
 // recordingTTS keeps what it was asked to say.
 type recordingTTS struct {
 	emitter *tts.Emitter
@@ -702,7 +716,8 @@ func stsrouterStub() (*stsrouter.Router, error) {
 		Providers: []routing.ProviderConfig{{
 			Provider: "stub", Model: "stub-sts", Languages: []string{"en"}, Realtime: true,
 		}},
-		Aliases: map[string]routing.Alias{"sts-fast": {RequireRealtime: true}},
+		// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
+		Aliases: map[string]routing.Alias{"sts-fast": {Title: "Fast", RequireRealtime: true}},
 	}
 	registry := stsrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (sts.STS, error) {

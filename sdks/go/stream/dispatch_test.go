@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -555,6 +556,30 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 	answered := router.told(t, "tool_result")
 	if answered.String("id") != "call-1" || answered.String("output") != "read android" {
 		t.Errorf("the call was answered %v", answered)
+	}
+	cancel()
+	stopped()
+}
+
+func TestAHostedToolsPicturesAreReportedRatherThanLostOnTheWay(t *testing.T) {
+	router := newPool(t, func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(Frame{"type": "tool_call", "id": "call-1", "session_id": "s", "name": "photograph_room", "arguments": "{}"})
+	})
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "photograph_room", "Photograph the room", func(_ context.Context, _ struct{}) (any, error) {
+		return tools.Output{Text: "the kitchen", Images: []tools.Image{{URL: "https://example.com/kitchen.jpg"}}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := run(t, ctx, worker)
+
+	answered := router.told(t, "tool_result")
+	if answered.String("output") != "" || !strings.Contains(answered.String("error"), "pictures") {
+		t.Errorf("the call was answered %v, want an error saying its pictures cannot be sent", answered)
 	}
 	cancel()
 	stopped()

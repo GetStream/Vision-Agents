@@ -3,6 +3,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
+from vision_agents.core.edge.types import Participant
 from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 
 from vision_agents.testing import collect_simple_response
@@ -33,6 +34,34 @@ class TestClaudeLLM:
         }
         messages2 = ClaudeLLM._normalize_message(advanced)
         assert messages2[0].original is not None
+
+    # Building the Anthropic client stats files, which blockbuster refuses in a loop.
+    @pytest.mark.skip_blockbuster
+    async def test_a_named_turn_already_in_the_conversation_is_sent_once(self):
+        conversation = InMemoryConversation("", [])
+        llm = ClaudeLLM(model="claude-sonnet-4-6")
+        llm.set_conversation(conversation)
+        alice = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+        bob = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+        await conversation.upsert_message(
+            role="user", user_id="alice", content="Hi", participant=alice
+        )
+        await conversation.send_message(role="assistant", user_id="agent", content="Ok")
+        await conversation.upsert_message(
+            role="user", user_id="bob", content="Me too", participant=bob
+        )
+
+        sent = llm._apply_conversation_history(
+            [{"role": "user", "content": "Bob: Me too"}]
+        )
+        await llm.close()
+
+        assert sent == [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+        ]
+        assert len(conversation.messages) == 3, "the turn is not kept a second time"
 
     def test_merge_messages_alternating_roles_unchanged(self, llm: ClaudeLLM):
         messages = [

@@ -506,7 +506,7 @@ class ClaudeLLM(LLM):
         old_messages = [
             m.original
             if isinstance(m.original, dict)
-            else {"role": m.role or "user", "content": m.content or ""}
+            else {"role": m.role or "user", "content": m.named_content or ""}
             for m in self._conversation.messages
         ]
         effective_messages = self._merge_messages(old_messages + messages)
@@ -516,7 +516,7 @@ class ClaudeLLM(LLM):
         if first_new and (
             not last
             or last.role != first_new.get("role")
-            or last.content != first_new.get("content")
+            or last.named_content != first_new.get("content")
         ):
             for msg in self._normalize_message(messages):
                 self._conversation.messages.append(msg)

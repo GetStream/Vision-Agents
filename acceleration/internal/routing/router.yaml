@@ -804,14 +804,16 @@ stt:
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
     # code for "no linguistic content", so no shortcut asking for a language reaches it,
-    # and realtime: false keeps it out of the live shortcuts, which is every one of the
-    # rest. It is reached by naming mock/mock-stt outright, and a deployment that has not
-    # turned mocks on fails to build it rather than routing somewhere else.
+    # one language keeps it out of the multilingual ones, and the rest name their members
+    # with only. realtime: true because the benchmark streams at it, and a live session
+    # pinned to a batch model is refused. It is reached by naming mock/mock-stt outright,
+    # and a deployment that has not turned mocks on fails to build it rather than routing
+    # somewhere else.
     - provider: mock
       model: mock-stt
       description: "Reports turns from the energy of the audio and transcribes a fixed sentence. For load tests."
       languages: [zxx]
-      realtime: false
+      realtime: true
       data_policy:
         trains_on_data: "no"
         retention: none
@@ -2288,6 +2290,21 @@ llm:
       price:
         per_million_input_tokens: 0.24
         per_million_output_tokens: 1.20
+
+    # MiniMax M3.1 Flash, 428B with about 23B active, on MiniMax's API until its weights are
+    # out. It cannot stop thinking, so it runs at the lowest effort.
+    - provider: minimax
+      model: MiniMax-M3.1-Flash
+      description: "MiniMax M3.1 Flash on MiniMax's API, thinking at low effort, which it cannot turn off."
+      context_window: 1000000
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      reasoning_effort: low
+      price:
+        per_million_input_tokens: 0.15
+        per_million_cached_input_tokens: 0.015
+        per_million_output_tokens: 0.60
 
     # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
     # stays off: the live path wants the first word, not a think-then-speak turn.

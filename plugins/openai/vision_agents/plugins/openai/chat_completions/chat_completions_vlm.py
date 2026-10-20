@@ -298,7 +298,7 @@ class ChatCompletionsVLM(VideoLLM):
                 messages.append(
                     {
                         "role": message.role,
-                        "content": message.content,
+                        "content": message.named_content,
                     }
                 )
 

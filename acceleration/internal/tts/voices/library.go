@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
 )
 
 // libraryTTL is how long a provider's catalogue is trusted. Voices are added to a library
@@ -161,7 +162,7 @@ func (c *Catalogue) List(ctx context.Context, provider string) ([]Library, error
 		lister, ok := c.listers[provider]
 		if !ok {
 			c.mu.Unlock()
-			return nil, stack.Wrap(fmt.Errorf("voices: %s publishes no voice library", provider))
+			return nil, noLibrary(provider)
 		}
 		wanted[provider] = lister
 	} else {
@@ -195,13 +196,37 @@ func (c *Catalogue) List(ctx context.Context, provider string) ([]Library, error
 	return found, stack.Wrap(errors.Join(failures...))
 }
 
+// unbrowsable says how to speak in a voice of a provider whose library the router does not
+// read, for the providers where "no library" would be a dead end.
+//
+// Fish lists its public models (GET /model,
+// https://docs.fish.audio/api-reference/endpoint/model/list-models), but on
+// 2026-10-19T18:54Z the unfiltered list stopped at 1,000 models (`window_limited`,
+// `total_is_exact: false`), and a page of 100 took 2.78s (page 1) and 2.93s (page 10), ten
+// pages for one listing, so it is not wired as one. Fish speaks a voice by its model id,
+// sent as `reference_id` (internal/tts/fish voiceFor): "Pass a voice model id
+// (`reference_id`). Find ids in the Voice Library"
+// (https://docs.fish.audio/developer-guide/core-features/text-to-speech, read 2026-10-19).
+var unbrowsable = map[string]string{
+	fish.ProviderName: "fish voices cannot be browsed through the router yet; name a fish voice by its " +
+		"model id (what Fish's API calls reference_id), found in the fish.audio Voice Library",
+}
+
+// noLibrary refuses a provider the catalogue holds no lister for.
+func noLibrary(provider string) error {
+	if note, ok := unbrowsable[provider]; ok {
+		return stack.Wrap(fmt.Errorf("voices: %s", note))
+	}
+	return stack.Wrap(fmt.Errorf("voices: %s publishes no voice library", provider))
+}
+
 // Preview returns a sample of one voice speaking.
 func (c *Catalogue) Preview(ctx context.Context, provider, id string) (Speech, error) {
 	c.mu.Lock()
 	lister, ok := c.listers[provider]
 	c.mu.Unlock()
 	if !ok {
-		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s publishes no voice library", provider))
+		return Speech{}, noLibrary(provider)
 	}
 	return lister.Preview(ctx, id)
 }

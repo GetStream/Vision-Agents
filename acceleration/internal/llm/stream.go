@@ -315,6 +315,7 @@ type ResponseWriter struct {
 	startedAt          time.Time
 	firstTokenAt       time.Time
 	text               strings.Builder
+	reasoning          strings.Builder
 	deltas             int
 	usage              Usage
 	status             ResponseStatus
@@ -367,6 +368,7 @@ func (w *ResponseWriter) ReasoningText(delta string) {
 		return
 	}
 	w.markFirstToken()
+	w.reasoning.WriteString(delta)
 	w.emit(ReasoningTextDelta{ResponseID: w.options.ResponseID, Index: w.next(), Delta: delta})
 }
 
@@ -468,6 +470,7 @@ func (w *ResponseWriter) settle(failure error) {
 		Provider:           w.options.Provider,
 		Model:              w.options.Model,
 		OutputText:         w.text.String(),
+		ReasoningText:      w.reasoning.String(),
 		ToolCalls:          w.assembled(),
 		Usage:              w.usage,
 		Status:             w.status,
