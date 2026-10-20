@@ -72,9 +72,15 @@ private func connect(_ backend: Backend, _ credentials: StreamCredentials) async
 /// The whole of it reaches people watching the reply live: each update carries the next
 /// window of the round being streamed, in the message's `reasoning` field. Read every update
 /// into one of these, from the client's `MessageUpdatedEvent`s rather than the channel's
-/// message list, which can fold several updates into one, and show a step by its id.
+/// message list, which can fold several updates into one, and show a step by its reply and its
+/// id: every reply numbers its steps from `r1`.
 public struct LiveReasoning: Sendable, Hashable {
-    private var steps: [String: Step] = [:]
+    private var steps: [Key: Step] = [:]
+
+    private struct Key: Sendable, Hashable {
+        var message: String
+        var step: String
+    }
 
     private struct Step: Sendable, Hashable {
         var text = ""
@@ -84,9 +90,10 @@ public struct LiveReasoning: Sendable, Hashable {
 
     public init() {}
 
-    /// The thinking of reasoning step `stepID` so far, or nil before any of it arrived.
-    public subscript(stepID: String) -> String? {
-        steps[stepID]?.text
+    /// The thinking of reasoning step `stepID` of reply `messageID` so far, or nil before any
+    /// of it arrived.
+    public subscript(message messageID: String, step stepID: String) -> String? {
+        steps[Key(message: messageID, step: stepID)]?.text
     }
 
     /// Reads the window a live update carries, if it carries one.
@@ -96,15 +103,16 @@ public struct LiveReasoning: Sendable, Hashable {
             case .number(let offset)? = window["offset"],
             case .string(let text)? = window["text"]
         else { return }
-        add(text, at: Int(offset), to: id)
+        add(text, at: Int(offset), to: id, of: message.id)
     }
 
-    /// Adds what `text`, which starts `offset` scalars into step `id`'s thinking, has that is
-    /// not held yet. A window that repeats recent thinking, for somebody who joined midway,
-    /// overlaps what is held; one that starts past it means updates were missed, and is kept
-    /// after a paragraph break rather than run on.
-    mutating func add(_ text: String, at offset: Int, to id: String) {
-        var step = steps[id] ?? Step()
+    /// Adds what `text`, which starts `offset` scalars into the thinking of step `id` of reply
+    /// `message`, has that is not held yet. A window that repeats recent thinking, for somebody
+    /// who joined midway, overlaps what is held; one that starts past it means updates were
+    /// missed, and is kept after a paragraph break rather than run on.
+    mutating func add(_ text: String, at offset: Int, to id: String, of message: String) {
+        let key = Key(message: message, step: id)
+        var step = steps[key] ?? Step()
         let scalars = text.unicodeScalars
         let end = offset + scalars.count
         guard end > step.end else { return }
@@ -113,6 +121,6 @@ public struct LiveReasoning: Sendable, Hashable {
         }
         step.text.unicodeScalars.append(contentsOf: scalars.dropFirst(max(0, step.end - offset)))
         step.end = end
-        steps[id] = step
+        steps[key] = step
     }
 }
