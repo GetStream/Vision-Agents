@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Larkspur support</string>
+    <!-- Stream's composer, asked the way a support app asks. -->
+    <string name="stream_ai_compose_composer_input_placeholder">Ask anything</string>
+</resources>
