@@ -98,6 +98,8 @@ func main() {
 		"for development: show how long each stage of a turn took after the agent's reply in the chat channel")
 	flag.DurationVar(&options.replyHedge, "reply-hedge", config.Defaults().Agent.ReplyHedge,
 		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
+	flag.DurationVar(&options.flowHedge, "flow-hedge", config.Defaults().Agent.FlowHedge,
+		"how long a flow decision may say nothing before it is asked of another candidate as well, 0 asks once")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
 	flag.Parse()
 
@@ -139,6 +141,7 @@ type options struct {
 	demo           bool
 	chatTimings    bool
 	replyHedge     time.Duration
+	flowHedge      time.Duration
 
 	number       string
 	vendor       string
@@ -187,7 +190,7 @@ func run(options options, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	routers, cleanup, err := buildRouters(ctx, options.replyHedge, logger)
+	routers, cleanup, err := buildRouters(ctx, options.replyHedge, options.flowHedge, logger)
 	if err != nil {
 		return err
 	}
@@ -480,7 +483,7 @@ type routers struct {
 
 // buildRouters wires all three routers, using Postgres and Redis when they are configured.
 // The demo is useful without them: it just stops recording usage.
-func buildRouters(ctx context.Context, replyHedge time.Duration, logger *slog.Logger) (routers, func(), error) {
+func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, logger *slog.Logger) (routers, func(), error) {
 	config, err := routing.LoadConfig(os.Getenv(configEnvVar))
 	if err != nil {
 		return routers{}, nil, err
@@ -542,6 +545,7 @@ func buildRouters(ctx context.Context, replyHedge time.Duration, logger *slog.Lo
 		Store:      pgStore,
 		Live:       liveClient,
 		ReplyHedge: replyHedge,
+		FlowHedge:  flowHedge,
 		Logger:     logger,
 	})
 	if err != nil {

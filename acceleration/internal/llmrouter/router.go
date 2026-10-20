@@ -67,7 +67,9 @@ type Options struct {
 	// another candidate of its target as well, and whichever says something first is kept.
 	// Zero hedges nothing.
 	ReplyHedge time.Duration
-	Logger     *slog.Logger
+	// FlowHedge is the same for the flow controller's decisions. Zero hedges none.
+	FlowHedge time.Duration
+	Logger    *slog.Logger
 }
 
 // Screen judges what a response is asked while the model answers it. It returns nil when
@@ -106,6 +108,7 @@ type Router struct {
 	quota      *quota.Limiter
 	screen     Screen
 	replyHedge time.Duration
+	flowHedge  time.Duration
 }
 
 // New validates the options and returns a Router.
@@ -131,7 +134,10 @@ func New(options Options) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core, quota: options.Quota, screen: options.Screen, replyHedge: options.ReplyHedge}, nil
+	return &Router{
+		Router: core, quota: options.Quota, screen: options.Screen,
+		replyHedge: options.ReplyHedge, flowHedge: options.FlowHedge,
+	}, nil
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when one
@@ -157,6 +163,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	session.admit = r.Admit
 	session.screen = r.screen
 	session.hedgeAfter = r.replyHedge
+	session.flowHedgeAfter = r.flowHedge
 	session.hedge = func(ctx context.Context) (*Session, error) {
 		candidates, err := r.Candidates(ctx, core)
 		if err != nil {
