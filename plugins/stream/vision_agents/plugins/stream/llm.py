@@ -154,7 +154,10 @@ class LLM(llm.LLM):
                 {
                     "type": "respond",
                     "id": completion,
-                    "instructions": self._instructions,
+                    # Left empty, the router answers with the config's instructions
+                    # (acceleration/internal/api/streamws.go:883), which the
+                    # several-speakers line alone would replace.
+                    "instructions": self.instructions if self._instructions else "",
                     "messages": self._messages(text, images, content),
                     "max_tokens": self.max_tokens,
                 }

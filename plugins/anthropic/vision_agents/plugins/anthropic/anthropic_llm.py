@@ -121,8 +121,8 @@ class ClaudeLLM(LLM):
         if "stream" not in kwargs:
             kwargs["stream"] = True
 
-        if self._instructions and "system" not in kwargs:
-            kwargs["system"] = self._instructions
+        if self.instructions and "system" not in kwargs:
+            kwargs["system"] = self.instructions
 
         # Add tools if available - use Anthropic format
         tools = self.get_available_functions()

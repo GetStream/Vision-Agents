@@ -13,6 +13,7 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import FunctionRegistry
 from vision_agents.core.llm.events import LLMResponseFinalEvent
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.openai.openai_llm import OpenAILLM
 from vision_agents.plugins.openai.tool_utils import convert_tools_to_openai_format
 from vision_agents.testing import collect_simple_response
@@ -98,6 +99,7 @@ class TestOpenAILLM:
         conversation = InMemoryConversation("", [])
         llm = OpenAILLM(client=client)
         llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
 
         events = EventManager()
         events.register(LLMResponseFinalEvent)
@@ -126,6 +128,13 @@ class TestOpenAILLM:
         # (d1654d42e) sent for it.
         inputs = [body["input"] for body in bodies]
         assert inputs == ["Hi", "Bob: Me too", "Alice: Who is that?"]
+        # Instructions go with every request; one person's are the base sha's (9653cb696).
+        several = "be brief\n\n" + SEVERAL_SPEAKERS
+        assert [body["instructions"] for body in bodies] == [
+            "be brief",
+            several,
+            several,
+        ]
 
 
 class TestOpenAIToolConversion:
