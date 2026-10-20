@@ -1498,6 +1498,17 @@ func (s *ConverseSuite) TestAnUnfinishedTurnWhoseControllerFailedIsPutAgain() {
 	s.Error(actions[0].Err)
 }
 
+func (s *ConverseSuite) TestAFinishedTurnWhoseControllerTimedOutIsAnswered() {
+	ready := s.settle("what time do you open", s.quiet())
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Err:         errors.New("harness: decide flow: context deadline exceeded"),
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(actions), "a slow controller must not cost the caller their answer")
+	s.Equal("what time do you open", actions[0].Text)
+}
+
 func (s *ConverseSuite) TestAFinishedTurnOverTheAgentWhoseControllerFailedTakesTheFloor() {
 	ready := s.settle("make it six people, and gluten instead", s.talking())
 
