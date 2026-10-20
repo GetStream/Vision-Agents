@@ -117,6 +117,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	existing := agentConfigOf(config)
 	before := config.MCPServers
+	heard := config.STT
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
@@ -222,6 +223,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
 	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, heard); !ok {
 		return nil, invalidRequest(message)
 	}
 

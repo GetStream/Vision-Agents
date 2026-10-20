@@ -182,7 +182,7 @@ func (s *StreamsSuite) TestARefusalReachesACallerStillSendingAudio() {
 	s.Equal("closed", read[1]["type"])
 	var closed *websocket.CloseError
 	s.Require().ErrorAs(ended, &closed)
-	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
 }
 
 func (s *StreamsSuite) TestAStartPinnedToABatchModelIsRefusedAndLeavesItsHealthAlone() {
@@ -197,6 +197,26 @@ func (s *StreamsSuite) TestAStartPinnedToABatchModelIsRefusedAndLeavesItsHealthA
 			Where("model = ?", batchModel).Count(context.Background())
 		return err != nil || count > 0
 	}, time.Second, 50*time.Millisecond, "no start_failed row counts against the model")
+}
+
+func (s *StreamsSuite) TestAStartPinnedToABatchModelEndsAsAPolicyViolation() {
+	read, ended := s.ending(s.start("/v1/stt/stream", frame{"target": "batch/" + batchModel}))
+
+	s.Require().NotEmpty(read)
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code, "the caller's to change, not the router's failure")
+	s.True(strings.HasPrefix(read[0]["error"].(string), closed.Text), "the refusal is the reason, cut to fit")
+}
+
+func (s *StreamsSuite) TestAVendorThatFailsToStartEndsAsAnInternalError() {
+	read, ended := s.ending(s.start("/v1/stt/stream", frame{"target": "down/" + downModel}))
+
+	s.Require().NotEmpty(read)
+	s.Contains(read[0]["error"], "batch: connect failed")
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.CloseInternalServerErr, closed.Code)
 }
 
 func (s *StreamsSuite) TestAStartWithNoTargetEndsWithTheSameClose() {
@@ -256,7 +276,7 @@ func (s *StreamsSuite) TestARefusalTooLongForACloseFrameIsCutBetweenCharacters()
 	s.Require().NotEmpty(read)
 	var closed *websocket.CloseError
 	s.Require().ErrorAs(ended, &closed)
-	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
 	s.LessOrEqual(len(closed.Text), 123, "RFC 6455 5.5: a control frame's payload is 125 bytes")
 	s.True(utf8.ValidString(closed.Text))
 	s.True(strings.HasPrefix(read[0]["error"].(string), closed.Text))
