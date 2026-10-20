@@ -503,3 +503,22 @@ func (s *RealtimeSuite) TestAStopHeardDuringAReplyIsNotKeptForTheNext() {
 	s.Equal("next", next.ResponseID)
 	s.Zero(next.TimeToFirstByteMs, "nobody was waiting on the next reply")
 }
+
+func (s *RealtimeSuite) TestAnOpenReplyWithNoAudioIsTimedFromTheStop() {
+	provider := s.newProvider(OpenAI)
+
+	provider.handleMessage(serverEvent{Type: eventSpeechStarted})
+	provider.handleMessage(created("prompted"))
+	provider.handleMessage(serverEvent{Type: eventSpeechStopped})
+	time.Sleep(50 * time.Millisecond)
+	provider.handleMessage(audioDelta("prompted", 2400))
+	provider.handleMessage(done("prompted", "completed", nil))
+
+	var complete sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.ResponseComplete); ok {
+			complete = typed
+		}
+	}
+	s.GreaterOrEqual(complete.TimeToFirstByteMs, 40.0, "the open reply is timed from the stop")
+}

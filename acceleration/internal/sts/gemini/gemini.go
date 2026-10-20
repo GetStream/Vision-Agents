@@ -943,7 +943,12 @@ func (s *STS) finishHearing() {
 		stoppedAt = s.endedAt
 		s.endedAt = time.Time{}
 	}
-	s.heardAt = stoppedAt
+	// A reply already open takes the stop: none that follows answers it.
+	if s.turn != nil {
+		s.turn.HeardAt(stoppedAt)
+	} else {
+		s.heardAt = stoppedAt
+	}
 	participant := s.participant
 	s.mu.Unlock()
 

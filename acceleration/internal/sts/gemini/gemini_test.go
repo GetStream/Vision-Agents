@@ -434,3 +434,63 @@ func (s *GeminiSuite) TestAnUnreadableEndOfSpeechLeavesTheLastWordHeard() {
 	s.False(stopped.At.After(heardBy))
 	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "not the start of the audio stream")
 }
+
+func (s *GeminiSuite) TestAnEndOfSpeechIsNotKeptForTheTurnAfter() {
+	provider := s.newProvider()
+	provider.sentMs, provider.sentAt = 1000, time.Now().Add(-time.Second)
+	provider.handleMessage(heard("hello"))
+	provider.handleMessage(serverMessage{VoiceActivity: &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "0.500s"}})
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+	s.drain(provider)
+
+	provider.handleMessage(heard("again"))
+	heardBy := time.Now()
+	provider.handleMessage(spoke(2400))
+
+	var stopped sts.SpeechStopped
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			stopped = typed
+		}
+	}
+	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "the second turn is timed from its own last word, not the first turn's end")
+}
+
+func (s *GeminiSuite) TestAnActivityOfAnotherTypeLeavesTheLastWordHeard() {
+	provider := s.newProvider()
+	provider.sentMs, provider.sentAt = 1000, time.Now().Add(-time.Second)
+	provider.handleMessage(heard("hello"))
+	heardBy := time.Now()
+	provider.handleMessage(serverMessage{VoiceActivity: &voiceActivity{Type: "TYPE_UNSPECIFIED", AudioOffset: "0.500s"}})
+	provider.handleMessage(spoke(2400))
+
+	var stopped sts.SpeechStopped
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			stopped = typed
+		}
+	}
+	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "only an ACTIVITY_END places the stop")
+}
+
+func (s *GeminiSuite) TestAStopHeardDuringAReplyIsNotKeptForTheNext() {
+	provider := s.newProvider()
+	provider.handleMessage(heard("hello"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(heard("wait"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+	time.Sleep(50 * time.Millisecond)
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+
+	var completes []sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, typed)
+		}
+	}
+	s.Require().Len(completes, 2)
+	s.Zero(completes[1].TimeToFirstByteMs, "nobody was waiting on the next reply")
+}
