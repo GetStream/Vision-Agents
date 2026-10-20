@@ -417,13 +417,16 @@ func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
 	s.Require().Eventually(func() bool {
 		return scheduler.Running() == 0
 	}, 10*time.Second, 10*time.Millisecond, "the hour's wait ended with the claim")
+	// The edit wrote the occurrence missed, so the one-shot is settled past it
+	// rather than delivered again with the instructions it had before.
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond)
 	s.Equal(1, deliver.count())
-	read := s.read(task)
-	s.Equal(store.ScheduledTaskActive, read.State)
-	s.Equal(0, read.ConsecutiveFailures, "a lost claim is not a failure")
-	for _, run := range s.runs(task) {
-		s.NotEqual(store.ScheduledTaskRunFailed, run.State, "a lost claim leaves the run alone")
-	}
+	s.Equal(0, s.read(task).ConsecutiveFailures, "a lost claim is not a failure")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
 }
 
 func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {
@@ -494,4 +497,26 @@ func (s *SchedulerSuite) TestReplayingAMissedRunKeepsTheFailureStreak() {
 	}, 10*time.Second, 10*time.Millisecond)
 	s.Equal(3, s.read(task).ConsecutiveFailures)
 	s.Equal(0, deliver.count())
+}
+
+func (s *SchedulerSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedNotDeliveredAgain() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	// Three workers took it up and died: the store's cap.
+	started := time.Now().Add(-time.Hour)
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due,
+		Attempts: 3, StartedAt: &started}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &stale))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond, "a one-shot whose occurrence failed has failed")
+	s.Empty(deliver.callsFor(task.ID))
+	s.Equal(1, s.read(task).ConsecutiveFailures)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Equal(3, runs[0].Attempts)
 }

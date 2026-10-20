@@ -66,7 +66,7 @@ func (s *StoreSuite) TestTheActiveLimitIsEnforced() {
 	s.task("one", nil)
 
 	over := &ScheduledTask{
-		CustomerID: "acme", UserID: "sam", CallerKind: "authenticated",
+		CustomerID: "acme", ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
 		Title: "Second", Instructions: "Again.", StartLocal: s.base, Timezone: "UTC",
 	}
 	err := s.store.CreateScheduledTask(s.ctx, over, 1)
@@ -75,9 +75,34 @@ func (s *StoreSuite) TestTheActiveLimitIsEnforced() {
 	// A paused task does not count against the limit.
 	s.task("paused", func(task *ScheduledTask) { task.State = ScheduledTaskPaused })
 	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
-		CustomerID: "acme", UserID: "sam", CallerKind: "authenticated",
+		CustomerID: "acme", ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
 		Title: "Third", Instructions: "Again.", StartLocal: s.base, Timezone: "UTC",
 	}, 2))
+}
+
+func (s *StoreSuite) TestTheActiveLimitCountsTheTasksOnTheSameConfigOnly() {
+	s.task("one", nil)
+
+	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+		CustomerID: "acme", ConfigID: "config-2", UserID: "sam", CallerKind: "authenticated",
+		Title: "Elsewhere", Instructions: "Again.", StartLocal: s.base, Timezone: "UTC",
+	}, 1), "a task on another config does not count against this one's limit")
+
+	for config, want := range map[string]int{"config-1": 1, "config-2": 1, "config-3": 0} {
+		count, err := s.store.ActiveScheduledTaskCount(s.ctx, "acme", "sam", config)
+		s.Require().NoError(err)
+		s.Equal(want, count, config)
+	}
+	count, err := s.store.ActiveScheduledTaskCount(s.ctx, "acme", "kim", "config-1")
+	s.Require().NoError(err)
+	s.Zero(count, "another user's tasks are theirs")
+	count, err = s.store.ActiveScheduledTaskCount(s.ctx, "globex", "sam", "config-1")
+	s.Require().NoError(err)
+	s.Zero(count, "another customer's tasks are theirs")
+	s.task("paused", func(task *ScheduledTask) { task.State = ScheduledTaskPaused })
+	count, err = s.store.ActiveScheduledTaskCount(s.ctx, "acme", "sam", "config-1")
+	s.Require().NoError(err)
+	s.Equal(1, count, "a paused task does not count")
 }
 
 func (s *StoreSuite) TestClaimingGivesEachDueTaskToOneWorker() {
@@ -291,7 +316,8 @@ func (s *StoreSuite) TestAPostponedTaskIsHeldUnderItsClaimUntilTheHoldEnds() {
 	s.Empty(again)
 
 	// The hold ends: the run is taken up at once under the same run, however
-	// recently it started, because nobody is delivering it.
+	// recently it started, because nobody is delivering it. It started before
+	// the hold was recorded, as every held run did.
 	ended := time.Now().Add(-time.Minute)
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
 		Set("lease_until = ?", ended).
@@ -299,6 +325,7 @@ func (s *StoreSuite) TestAPostponedTaskIsHeldUnderItsClaimUntilTheHoldEnds() {
 	s.Require().NoError(err)
 	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 		Set("postponed_until = ?", ended).
+		Set("started_at = ?", ended.Add(-time.Second)).
 		Where("id = ?", claimed[0].Run.ID).Exec(s.ctx)
 	s.Require().NoError(err)
 	taken, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
@@ -342,4 +369,219 @@ func (s *StoreSuite) TestAUserTimezoneIsStoredAndMoved() {
 	s.Require().NoError(s.store.db.NewSelect().Model(&user).
 		Where("customer_id = ?", "acme").Where("id = ?", "sam").Scan(s.ctx))
 	s.Equal("authenticated", user.Kind, "moving a zone never rewrites what the credential proved")
+}
+
+// held claims the due task id and holds its occurrence until until, as quiet
+// hours do, returning the claim.
+func (s *StoreSuite) held(id string, until time.Time) ClaimedScheduledTask {
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	s.Require().Equal(id, claimed[0].Task.ID)
+	held, err := s.store.PostponeScheduledTask(s.ctx, "acme", id, claimed[0].Run.ID, claimed[0].ClaimID, until)
+	s.Require().NoError(err)
+	s.Require().True(held)
+	return claimed[0]
+}
+
+// run reads one run back.
+func (s *StoreSuite) run(id string) ScheduledTaskRun {
+	var run ScheduledTaskRun
+	s.Require().NoError(s.store.db.NewSelect().Model(&run).Where("id = ?", id).Scan(s.ctx))
+	return run
+}
+
+func (s *StoreSuite) TestPausingATaskWritesItsHeldOccurrenceMissed() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	s.task("two", func(task *ScheduledTask) { task.NextRunAt = nil })
+	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+		ID: "one", CustomerID: "globex", UserID: "sam", Title: "Theirs", Instructions: "Again.",
+		StartLocal: s.base, Timezone: "UTC",
+	}, 0))
+	claim := s.held("one", time.Now().Add(8*time.Hour))
+	// What the pause must leave alone: an earlier occurrence already delivered,
+	// a run made by hand, and the running runs of another task and of another
+	// customer's task under the same id.
+	delivered := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due.Add(-24 * time.Hour), State: ScheduledTaskRunDelivered}
+	manual := &ScheduledTaskRun{TaskID: "one", CustomerID: "acme", ScheduledFor: due, Trigger: ScheduledTaskTriggerManual}
+	other := &ScheduledTaskRun{TaskID: "two", CustomerID: "acme", ScheduledFor: due}
+	theirs := &ScheduledTaskRun{TaskID: "one", CustomerID: "globex", ScheduledFor: due}
+	for _, run := range []*ScheduledTaskRun{delivered, manual, other, theirs} {
+		s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, run))
+	}
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	missed := s.run(claim.Run.ID)
+	s.Equal(ScheduledTaskRunMissed, missed.State, "the held occurrence is settled, not left running for good")
+	s.NotNil(missed.FinishedAt)
+	s.Equal(ScheduledTaskRunDelivered, s.run(delivered.ID).State)
+	s.Equal(ScheduledTaskRunRunning, s.run(manual.ID).State, "a run by hand records its own outcome")
+	s.Equal(ScheduledTaskRunRunning, s.run(other.ID).State)
+	s.Equal(ScheduledTaskRunRunning, s.run(theirs.ID).State)
+}
+
+func (s *StoreSuite) TestAnEditKeepingTheNextRunSettlesTheOccurrenceRatherThanDeliveringItAgain() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	task.Instructions = "Remind Sam to drink water."
+	s.Require().NoError(s.store.SaveScheduledTask(s.ctx, &task))
+
+	// The edit cleared the claim and kept the next run, so the task is due
+	// again at once: its occurrence is only advanced past.
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(again, 1)
+	s.True(again[0].AlreadySettled, "the old instructions are not delivered")
+	s.Equal(claimed[0].Run.ID, again[0].Run.ID)
+	s.Equal(ScheduledTaskRunMissed, again[0].Run.State)
+}
+
+// lapse ages a run past the stale window and lets its task's lease run out,
+// as a worker that died leaves them.
+func (s *StoreSuite) lapse(taskID, runID string) {
+	_, err := s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("started_at = ?", time.Now().Add(-time.Hour)).
+		Where("id = ?", runID).Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", time.Now().Add(-time.Minute)).
+		Where("id = ?", taskID).Exec(s.ctx)
+	s.Require().NoError(err)
+}
+
+func (s *StoreSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCap() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	runID := claimed[0].Run.ID
+
+	for attempts := 2; attempts <= maxScheduledTaskRunAttempts; attempts++ {
+		s.lapse("one", runID)
+		taken, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+		s.Require().NoError(err)
+		s.Require().Len(taken, 1)
+		s.False(taken[0].AlreadySettled, "attempt %d is still taken over", attempts)
+		s.Equal(attempts, taken[0].Run.Attempts)
+	}
+
+	s.lapse("one", runID)
+	failed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(failed, 1)
+	s.True(failed[0].AlreadySettled, "the worker settles the task without delivering again")
+	s.Equal(ScheduledTaskRunFailed, failed[0].Run.State)
+	stored := s.run(runID)
+	s.Equal(ScheduledTaskRunFailed, stored.State)
+	s.Equal(3, stored.Attempts, "the first claim and two takeovers")
+	s.Require().NotNil(stored.Error)
+	s.Contains(*stored.Error, "worker was lost")
+	s.NotNil(stored.FinishedAt)
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(failed[0].ClaimID, task.ClaimID, "the settle runs under a claim of its own")
+}
+
+func (s *StoreSuite) TestALeaseLapsingAfterAHoldWasTakenUpIsParkedLikeAnyOther() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claim := s.held("one", time.Now().Add(time.Hour))
+	ended := time.Now().Add(-time.Minute)
+	_, err := s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", ended).Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("postponed_until = ?", ended).Set("started_at = ?", ended.Add(-time.Second)).
+		Where("id = ?", claim.Run.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+	taken, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(taken, 1, "the hold ended, so the run is taken up at once")
+
+	// The worker that took it up stops renewing a moment later: it may only be
+	// slow, so the run waits out the stale window like any other.
+	_, err = s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("lease_until = ?", time.Now().Add(-time.Second)).Where("id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+	again, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Empty(again)
+	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Require().NotNil(task.LeaseUntil)
+	s.WithinDuration(taken[0].Run.StartedAt.Add(scheduledTaskStaleRun), *task.LeaseUntil, time.Second, "parked until the run is stale")
+	s.Equal(2, s.run(claim.Run.ID).Attempts)
+}
+
+func (s *StoreSuite) TestTheNextWakeIsWhenATaskMayBeClaimedNotWhenItWasDue() {
+	at := func(offset time.Duration) *time.Time {
+		when := s.base.Add(offset)
+		return &when
+	}
+	lease := func(id string, until *time.Time) {
+		_, err := s.store.db.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("lease_until = ?", until).Where("id = ?", id).Exec(s.ctx)
+		s.Require().NoError(err)
+	}
+	wake := func() time.Time {
+		next, due, err := s.store.NextDueScheduledTask(s.ctx)
+		s.Require().NoError(err)
+		s.Require().True(due)
+		return next
+	}
+	// Neither a paused task nor one with no next run wakes anybody.
+	s.task("paused", func(task *ScheduledTask) { task.NextRunAt, task.State = at(-3*time.Hour), ScheduledTaskPaused })
+	s.task("over", func(task *ScheduledTask) { task.NextRunAt = nil })
+	lease("over", at(-3*time.Hour))
+	s.task("held", func(task *ScheduledTask) { task.NextRunAt = at(-time.Minute) })
+	lease("held", at(2*time.Hour))
+
+	s.Equal(s.base.Add(2*time.Hour), wake(), "a held task wakes the worker when its hold ends")
+
+	// A lease that ran out before the next run leaves the next run.
+	s.task("lapsed", func(task *ScheduledTask) { task.NextRunAt = at(30 * time.Minute) })
+	lease("lapsed", at(-time.Hour))
+	s.Equal(s.base.Add(30*time.Minute), wake())
+}
+
+func (s *StoreSuite) TestTheLastRunOfEveryTaskIsReadAtOnce() {
+	for _, id := range []string{"one", "two", "three", "four"} {
+		s.task(id, nil)
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+		ID: "one", CustomerID: "globex", UserID: "sam", Title: "Theirs", Instructions: "Again.",
+		StartLocal: s.base, Timezone: "UTC",
+	}, 0))
+	finished := func(customer, task string, at time.Time) {
+		run := &ScheduledTaskRun{TaskID: task, CustomerID: customer, ScheduledFor: at,
+			State: ScheduledTaskRunDelivered, FinishedAt: &at}
+		s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, run))
+	}
+	finished("acme", "one", s.base.Add(-2*time.Hour))
+	finished("acme", "one", s.base.Add(-time.Hour))
+	finished("globex", "one", s.base)
+	finished("acme", "four", s.base)
+	// Two's only run is still going.
+	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &ScheduledTaskRun{TaskID: "two", CustomerID: "acme", ScheduledFor: s.base}))
+
+	last, err := s.store.LastScheduledTaskRunsAt(s.ctx, "acme", []string{"one", "two", "three"})
+	s.Require().NoError(err)
+	s.Equal(map[string]time.Time{"one": s.base.Add(-time.Hour)}, last,
+		"the newest finished run of each task asked for, of this customer only")
+
+	none, err := s.store.LastScheduledTaskRunsAt(s.ctx, "acme", nil)
+	s.Require().NoError(err)
+	s.Empty(none)
 }

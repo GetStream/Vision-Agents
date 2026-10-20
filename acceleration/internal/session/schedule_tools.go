@@ -530,12 +530,12 @@ func (r *scheduleRunner) snoozeTarget(task store.ScheduledTask, args updateArgs,
 }
 
 // room refuses the change when putting the task back among the active ones
-// would take its user over the limit.
+// would take its user over this agent's limit.
 func (r *scheduleRunner) room(ctx context.Context, task *store.ScheduledTask) ([]llm.ContentPart, error) {
 	if task.State == store.ScheduledTaskActive {
 		return nil, nil
 	}
-	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.spec.Caller.UserID)
+	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.spec.Caller.UserID, task.ConfigID)
 	if err != nil {
 		return nil, err
 	}
