@@ -117,8 +117,8 @@ object Demo {
      * Refunds an order, once the person says it may.
      *
      * The agent decides a refund is owed; the person decides whether it goes ahead. Each call
-     * waits in the session's `approvals` until they answer, on the reply's step, where Stream's
-     * AI components ask.
+     * waits in the session's `approvals` until they answer: on the reply's step in Chat, where
+     * Stream's AI components ask, or on the card over the call in Voice.
      */
     private val issueRefund = AgentTool(
         name = "issue_refund",

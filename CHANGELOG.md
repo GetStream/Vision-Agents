@@ -639,7 +639,8 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 `examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
 against `sdks/kotlin` as it is in the checkout. Its Chat screen shows the conversation with
 Stream Chat's AI components: the reply streaming in, its reasoning, each tool call, and the
-refund's question on the reply. CI builds it beside the Kotlin SDK.
+refund's question on the reply. Its Voice screen puts the agent on a call and writes out what
+was said, with the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
 
 ### A session can join a Stream call that already exists
 
@@ -2146,6 +2147,14 @@ Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
 ## Bug Fixes
+
+### A Kotlin voice call asks only for the microphone
+
+`VoiceSession` joined an agent's call with Stream Video's default foreground service, which
+refuses to start without the camera permission because the call allows video. The call went
+on, with no service holding it. It now runs Stream's audio-call service, and the client it
+builds asks for the camera only while the camera is on. A call type the app configured on its
+own `StreamVideo` is left as it is.
 
 - A chat that opened before its person connected an account uses the account once they have. A session binding with no connection chosen waits for a login; asked for the account after the person connected it outside the chat, from their app with a consent its backend began, it began a second consent and showed another `connector_authorization` card. It now opens on the caller's one connected connection, as a session opening then would have, with no second consent. With two connected, it still asks.
 - `stream.STT` credits each transcript to the participant whose audio it is of. It sent every participant's audio over one router socket and credited each transcript to whoever sent the last frame, so a line still arriving when the next person started talking went to them. Each participant now has a socket of their own: the one `start` opens goes to whoever speaks first, and the others open on a participant's first frame. A socket the router refuses for a later participant is reported once as an `STTErrorEvent` and that participant's audio is dropped; one participant still uses exactly one socket (AI-1403).

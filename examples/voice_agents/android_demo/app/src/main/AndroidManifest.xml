@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- From Android 17, reaching the router and the backend on the Mac (10.0.2.2 or its
+         address on the Wi-Fi) takes this, asked for at runtime. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- Dictating a question into the composer. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
