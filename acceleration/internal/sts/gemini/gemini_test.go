@@ -3,6 +3,7 @@ package gemini
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -120,6 +121,43 @@ func (s *GeminiSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() {
 	s.False(complete.Interrupted)
 	s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait is timed from the last word heard")
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
+}
+
+// The words of a reply can come before its audio. They still find the caller's turn
+// settled first, so each reply's wait starts at its own caller's last word.
+func (s *GeminiSuite) TestAReplyWhoseWordsComeFirstStillFollowsTheCallerStopping() {
+	provider := s.newProvider()
+	provider.participant = sts.Participant{ID: "alice"}
+
+	for _, words := range []string{"my favorite color is blue", "and green"} {
+		provider.handleMessage(heard(words))
+		time.Sleep(20 * time.Millisecond)
+		provider.handleMessage(serverMessage{ServerContent: &serverContent{OutputTranscription: &transcription{Text: "Nice."}}})
+		provider.handleMessage(spoke(2400))
+		provider.handleMessage(turnComplete())
+
+		events := s.drain(provider)
+		var kinds []string
+		for _, event := range events {
+			kinds = append(kinds, fmt.Sprintf("%T", event))
+		}
+		s.Require().Equal([]string{
+			"sts.SpeechStarted", "sts.InputTranscript", "sts.InputTranscript", "sts.SpeechStopped",
+			"sts.ResponseStarted", "sts.OutputTranscript", "sts.AudioChunk", "sts.ResponseComplete",
+		}, kinds, "the caller stops before the reply to them starts")
+
+		settled := events[2].(sts.InputTranscript)
+		s.Equal(stt.ModeFinal, settled.Mode)
+		s.Equal(words, settled.Text, "what the reply answers is known when it starts")
+		stopped := events[3].(sts.SpeechStopped)
+		begun := events[4].(sts.ResponseStarted)
+		s.False(begun.At.Before(stopped.At))
+
+		complete := events[7].(sts.ResponseComplete)
+		s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait is timed from this caller's last word")
+		s.Less(complete.TimeToFirstByteMs, 100.0, "not from the turn before")
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (s *GeminiSuite) TestTheServerInterruptingSettlesTheReplyAsCutOff() {

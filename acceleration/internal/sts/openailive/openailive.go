@@ -748,7 +748,7 @@ func (s *STS) handleMessage(event serverEvent) {
 		}
 	case eventOutputTranscript:
 		if event.Delta != "" {
-			turn := s.currentTurn()
+			turn := s.replying()
 			s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: event.Delta})
 		}
 	case eventResponseEvent:
@@ -855,7 +855,6 @@ func (s *STS) finishHearing() {
 func (s *STS) spoke(raw []byte) {
 	s.dropTheClock()
 	s.mu.Lock()
-	opening := s.turn == nil
 	muted := s.muted
 	s.mu.Unlock()
 
@@ -865,11 +864,21 @@ func (s *STS) spoke(raw []byte) {
 		s.keepAlive(nil)
 		return
 	}
+	turn := s.replying()
+	s.emitter.Send(turn.Chunk(audio.FromBytes(raw, SampleRate, 1)))
+}
+
+// replying is the reply in flight. Whichever of its words or its audio comes first opens
+// it, and opening it settles the caller's turn first: a reply opened while the caller is
+// still heard would begin before their wait did and be timed from the turn before.
+func (s *STS) replying() *sts.Turn {
+	s.mu.Lock()
+	opening := s.turn == nil
+	s.mu.Unlock()
 	if opening {
 		s.finishHearing()
 	}
-	turn := s.currentTurn()
-	s.emitter.Send(turn.Chunk(audio.FromBytes(raw, SampleRate, 1)))
+	return s.currentTurn()
 }
 
 // currentTurn is the reply in flight, opened now if the model has begun one, which is how

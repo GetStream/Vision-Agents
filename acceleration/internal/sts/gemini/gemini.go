@@ -796,6 +796,10 @@ func (s *STS) handleContent(server serverContent) {
 		s.heard(server.InputTranscription.Text)
 	}
 	if server.OutputTranscription != nil && server.OutputTranscription.Text != "" {
+		// The words can come before the audio, so they settle the caller's turn first,
+		// as spoke and asked do: a reply opened while the caller is still heard would
+		// begin before their wait did and be timed from the turn before.
+		s.finishHearing()
 		turn := s.currentTurn()
 		s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: server.OutputTranscription.Text})
 	}
