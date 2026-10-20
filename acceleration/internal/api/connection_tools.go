@@ -258,10 +258,10 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	// (begin), so its empty save moves it the same way. It is not core.Static: a 4xx other
 	// than 401 on a validate (refusedStatic) says nothing of a credential it does not have.
 	revision := connection.DefinitionRevision
-	static := core.IsStatic(s.connectors.Schemes, connection.AuthScheme) || connection.AuthScheme == none.Name
+	savedAgain := none.SavedAgain(s.connectors.Schemes, connection.AuthScheme)
 	var manifest core.ResolvedManifest
 	moved := false
-	if static {
+	if savedAgain {
 		latest, err := s.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
 		if err != nil {
 			return nil, err
@@ -330,7 +330,7 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		state.ExpiresAt = time.Time{}
 		// A move to another revision begins a new grant, as a reconnect's does: the tools pinned
 		// for the old one (store.ConnectorToolPin) are pinned again on the next session.
-		if static && state.DefinitionRevision != revision {
+		if savedAgain && state.DefinitionRevision != revision {
 			state.DefinitionRevision = revision
 			state.ConnectedAt = time.Now().UTC()
 		}
@@ -691,14 +691,14 @@ func (s *Server) validationAfter(ctx context.Context, connection store.Connector
 	// connected. A token or key is moved off it by saving it again (putConnectionCredentials),
 	// never by a consent, so the validate says that, with the code of a rejected one: the
 	// remedy a program branches on is the same (AI-1002). An OAuth connection fails as before.
-	if now.Status == store.ConnectionConnected && core.IsStatic(s.connectors.Schemes, now.AuthScheme) {
+	if now.Status == store.ConnectionConnected && none.SavedAgain(s.connectors.Schemes, now.AuthScheme) {
 		reason, broken, err := s.store.BrokenConnectorRevision(ctx, now.ConnectorID, now.DefinitionRevision)
 		if err != nil {
 			return nil, err
 		}
 		if broken {
 			return &validationResponse{Body: ConnectionValidation{ConnectionID: now.ID, Status: validationNeedsReauthorization,
-				Code: codeCredentialRejected, Error: fmt.Sprintf("Revision %d of %s is marked broken (%s); save the token or key "+
+				Code: codeCredentialRejected, Error: fmt.Sprintf("Revision %d of %s is marked broken (%s); save its credentials "+
 					"again with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision",
 					now.DefinitionRevision, now.ConnectorID, reason)}}, nil
 		}
@@ -709,7 +709,7 @@ func (s *Server) validationAfter(ctx context.Context, connection store.Connector
 			Error: "no credentials yet: start a consent or set its credentials"}}, nil
 	case store.ConnectionNeedsReauthorization:
 		validation := ConnectionValidation{ConnectionID: now.ID, Status: validationNeedsReauthorization, Error: now.LastError}
-		if core.IsStatic(s.connectors.Schemes, now.AuthScheme) {
+		if none.SavedAgain(s.connectors.Schemes, now.AuthScheme) {
 			validation.Code = codeCredentialRejected
 		}
 		return &validationResponse{Body: validation}, nil
