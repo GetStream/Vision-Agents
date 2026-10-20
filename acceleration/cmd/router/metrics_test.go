@@ -1,15 +1,36 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
 )
+
+// logged is what a logger wrote, safe to read while the logger is still in use.
+type logged struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logged) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logged) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
 
 type MetricsSuite struct {
 	suite.Suite
@@ -71,4 +92,34 @@ func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {
 
 	_, err := s.scrape()
 	s.Error(err, "the listener still answers after the router stopped it")
+}
+
+func (s *MetricsSuite) TestNoAddressOpensNoListener() {
+	lines := &logged{}
+
+	stop := serveMetrics("", slog.New(slog.NewTextHandler(lines, nil)))
+	defer stop()
+
+	// With an empty address the server would listen on ":http" and either log that it is
+	// serving or fail to bind and log a warning.
+	s.Never(func() bool { return lines.String() != "" }, 200*time.Millisecond, 10*time.Millisecond,
+		"serveMetrics started a listener without an address")
+}
+
+func (s *MetricsSuite) TestStoppedMetricsDoNotWarnAboutNotServing() {
+	lines := &logged{}
+	stop := serveMetrics(s.addr, slog.New(slog.NewTextHandler(lines, nil)))
+	s.Require().Eventually(func() bool {
+		response, err := s.scrape()
+		if err != nil {
+			return false
+		}
+		response.Body.Close()
+		return true
+	}, 5*time.Second, 10*time.Millisecond, "the metrics listener never answered")
+
+	stop()
+
+	s.Never(func() bool { return strings.Contains(lines.String(), "level=WARN") }, 300*time.Millisecond, 10*time.Millisecond,
+		"a stopped listener logged a warning")
 }

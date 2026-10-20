@@ -175,6 +175,7 @@ func (s *AgentSuite) TestAnUtteranceTheAgentLeftBehindIsNoOverlap() {
 
 func (s *AgentSuite) TestAWarningNamesTheSessionAndTheCall() {
 	s.logs = &logLines{}
+	s.callID = "call-1"
 	s.join(true)
 
 	s.voiceSends(2, interleaved()...)
@@ -182,7 +183,7 @@ func (s *AgentSuite) TestAWarningNamesTheSessionAndTheCall() {
 	warnings := s.logs.records(overlapWarning)
 	s.Require().Len(warnings, 1)
 	s.Equal("session-1", warnings[0]["session"])
-	s.Contains(warnings[0], "call")
+	s.Equal("call-1", warnings[0]["call"])
 }
 
 // OverlapSuite covers what noticing an overlap costs on the path every frame takes.
@@ -210,4 +211,16 @@ func (s *OverlapSuite) TestAFrameOfAPairAlreadyWarnedAboutAllocatesNothing() {
 	s.overlap.published("tool-b", 10)
 
 	s.Zero(testing.AllocsPerRun(100, func() { s.overlap.published("tool-b", 10) }))
+}
+
+func (s *OverlapSuite) TestAFinishedUtteranceIsForgotten() {
+	s.overlap.published("turn-a", 10)
+	s.overlap.published("tool-b", 10)
+	s.Require().NotEmpty(s.overlap.warned)
+
+	s.overlap.finished("turn-a")
+	s.overlap.finished("tool-b")
+
+	s.Empty(s.overlap.playing)
+	s.Empty(s.overlap.warned)
 }

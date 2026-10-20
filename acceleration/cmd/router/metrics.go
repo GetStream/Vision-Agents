@@ -11,8 +11,12 @@ import (
 )
 
 // serveMetrics serves Prometheus metrics at /metrics on an address of their own, until the
-// returned function stops it.
+// returned function stops it. An empty address serves nothing: the server would listen on
+// ":http".
 func serveMetrics(addr string, logger *slog.Logger) (stop func()) {
+	if addr == "" {
+		return func() {}
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{EnableOpenMetrics: true}))
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}

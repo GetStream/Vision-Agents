@@ -761,6 +761,8 @@ type AgentSuite struct {
 	voiceAsked routing.Spec
 	// logs is where the agent's log lines are written, when a test reads them.
 	logs *logLines
+	// callID is the call the agent serves, empty unless a test names one.
+	callID string
 
 	agent  *Agent
 	events *collector
@@ -993,6 +995,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		AgentID:            s.agentID,
 		AppID:              "router",
 		SessionID:          "session-1",
+		CallID:             s.callID,
 		Incognito:          s.incognito,
 		Store:              s.records,
 		Live:               s.live,
