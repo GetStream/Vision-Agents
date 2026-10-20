@@ -56,6 +56,10 @@ type Hearing struct {
 	Participant stt.Participant
 	Text        string
 	Language    string
+	// LineID names the line these words are, from the first of them until they are heard
+	// or let go. It is what the transcript stores the line under, so a watcher can tell
+	// the words still arriving and the stored line apart from a second one.
+	LineID string
 }
 
 func (Hearing) isAgentEvent() {}
@@ -65,8 +69,14 @@ func (Hearing) isAgentEvent() {}
 // acting on one would mean answering half a sentence.
 type Heard struct {
 	Participant stt.Participant
-	Text        string
-	Language    string
+	// Text is the line as the participant said it: without words a transcriber restated
+	// from the line before, and with any held from earlier in the same line in front. The
+	// words the turn is answered on can differ, and are Responding's Prompt.
+	Text     string
+	Language string
+	// LineID is the line the words were heard as while they arrived, which the transcript
+	// stores them under.
+	LineID string
 }
 
 func (Heard) isAgentEvent() {}
@@ -90,6 +100,10 @@ type Decided struct {
 	Text string
 	// LatencyMs is what the flow controller took to rule. Zero where nothing was asked.
 	LatencyMs float64
+	// LineID is the caller's line the judgement was about, when it was about one: the line
+	// an ignore lets go of, so a watcher drops the words it was showing, or the line a turn
+	// queued, held or answered was heard as.
+	LineID string
 }
 
 func (Decided) isAgentEvent() {}
