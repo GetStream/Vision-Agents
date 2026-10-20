@@ -31,7 +31,12 @@ func TestOpenAILiveSuite(t *testing.T) {
 // newProvider returns a provider that is wired up but never connected, so the event
 // mapping can be exercised without touching the network.
 func (s *OpenAILiveSuite) newProvider() *STS {
-	provider, err := New(Options{APIKey: "test-key", ReplyGap: replyGap, Logger: slog.New(slog.DiscardHandler)})
+	return s.newProviderWithGap(replyGap)
+}
+
+// newProviderWithGap is newProvider with its own quiet that settles a reply.
+func (s *OpenAILiveSuite) newProviderWithGap(gap time.Duration) *STS {
+	provider, err := New(Options{APIKey: "test-key", ReplyGap: gap, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = provider.Close() })
 	return provider
@@ -216,14 +221,17 @@ func (s *OpenAILiveSuite) TestAReplyWhoseWordsComeFirstStillFollowsTheCallerStop
 }
 
 func (s *OpenAILiveSuite) TestAudioWithoutAPauseIsOneReply() {
-	provider := s.newProvider()
+	// A gap far above a scheduler stall: the pieces below must not be split by a slow run.
+	const gap = 300 * time.Millisecond
+	provider := s.newProviderWithGap(gap)
 
 	provider.handleMessage(s.frame(spoke(240)))
 	provider.handleMessage(s.frame(said("Hello ")))
 	provider.handleMessage(s.frame(spoke(240)))
 	provider.handleMessage(s.frame(said("there.")))
 
-	events := s.settled(provider)
+	time.Sleep(2 * gap)
+	events := s.drain(provider)
 	var starts, chunks int
 	var responseID string
 	for _, event := range events {
