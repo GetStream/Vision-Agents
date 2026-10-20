@@ -42,6 +42,14 @@ from .llm_types import NormalizedToolCallItem, ToolSchema
 
 T = TypeVar("T")
 
+# What the model is told once a second person has spoken, worded as the router's agent
+# words it (acceleration/internal/agent/agent.go:1848). A reply is spoken, so one that
+# opened on a name the way their turns do would be heard saying it.
+SEVERAL_SPEAKERS = (
+    "Several people are talking in this call. Each of their messages starts with "
+    "the name of who said it, then a colon. Never start your reply with such a label."
+)
+
 
 @dataclass(frozen=True)
 class ImageContent:
@@ -224,6 +232,17 @@ class LLM(Component):
         raise ValueError(
             f"{self.provider_name or type(self).__name__} does not support image responses"
         )
+
+    @property
+    def instructions(self) -> str:
+        """The system prompt for the next request.
+
+        The agent's instructions, and once a second person has spoken, how their names
+        are written ahead of their words.
+        """
+        if self._conversation is None or not self._conversation.several_speakers:
+            return self._instructions
+        return "\n\n".join(p for p in (self._instructions, SEVERAL_SPEAKERS) if p)
 
     @property
     def responses(self) -> LLMResponses:

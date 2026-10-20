@@ -11,13 +11,11 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from av import VideoFrame
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
 from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
-from vision_agents.core.agents.inference.llm_turn import LLMTurn
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import EventManager
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.core.llm import LLM as BaseLLM
-from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.plugins.huggingface import LLM, VLM
 
 from conftest import skip_blockbuster
@@ -97,36 +95,18 @@ async def http_vlm(huggingface_api: tuple[str, list[dict]]) -> AsyncIterator[VLM
     await vlm_.close()
 
 
-async def answer(
-    llm: BaseLLM, conversation: Conversation, participant: Participant, text: str
-) -> None:
-    """What the agent does with a participant's words: keep them, then ask the LLM."""
-    await conversation.upsert_message(
-        role="user", user_id=participant.user_id, content=text, participant=participant
-    )
-    events = EventManager()
-    events.register(LLMResponseFinalEvent)
-    turn = LLMTurn(
-        transcript=text,
-        participant=participant,
-        events=events,
-        speaker=conversation.speaker_label(participant),
-    )
-    turn.start(llm)
-    await turn.stream.collect()
-    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
-
-
 async def assert_who_spoke_is_named(
     llm: BaseLLM, conversation: Conversation, bodies: list[dict]
 ) -> None:
     """Two turns of one person go as they did, then the turns of two are named."""
     llm.set_conversation(conversation)
+    llm.set_instructions("be brief")
 
     await answer(llm, conversation, ALICE, "Hi")
     await answer(llm, conversation, ALICE, "Are you there?")
-    # One person: what the base sha (486427184) sent for the same two turns.
+    # One person: what the base sha (9653cb696) sent for the same two turns.
     assert bodies[-1]["messages"] == [
+        {"role": "system", "content": "be brief"},
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Ok"},
         {"role": "user", "content": "Are you there?"},
@@ -134,7 +114,11 @@ async def assert_who_spoke_is_named(
 
     await answer(llm, conversation, BOB, "Me too")
     await answer(llm, conversation, ALICE, "Who is that?")
-    assert bodies[-1]["messages"][2:] == [
+    assert bodies[-1]["messages"][0] == {
+        "role": "system",
+        "content": "be brief\n\n" + SEVERAL_SPEAKERS,
+    }
+    assert bodies[-1]["messages"][3:] == [
         {"role": "user", "content": "Are you there?"},
         {"role": "assistant", "content": "Ok"},
         {"role": "user", "content": "Bob: Me too"},

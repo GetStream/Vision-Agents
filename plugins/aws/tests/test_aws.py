@@ -7,15 +7,12 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from dotenv import load_dotenv
-from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
-from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import EventManager
-from vision_agents.core.llm import LLM
-from vision_agents.core.llm.events import LLMResponseFinalEvent
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.aws.aws_llm import BedrockLLM
 
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
 
 load_dotenv()
 
@@ -49,26 +46,6 @@ async def bedrock_api(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[list[dic
     await server.close()
 
 
-async def answer(
-    llm: LLM, conversation: Conversation, participant: Participant, text: str
-) -> None:
-    """What the agent does with a participant's words: keep them, then ask the LLM."""
-    await conversation.upsert_message(
-        role="user", user_id=participant.user_id, content=text, participant=participant
-    )
-    events = EventManager()
-    events.register(LLMResponseFinalEvent)
-    turn = LLMTurn(
-        transcript=text,
-        participant=participant,
-        events=events,
-        speaker=conversation.speaker_label(participant),
-    )
-    turn.start(llm)
-    await turn.stream.collect()
-    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
-
-
 class TestBedrockLLM:
     async def test_who_spoke_is_named_once_a_second_person_has(
         self, bedrock_api: list[dict]
@@ -78,10 +55,12 @@ class TestBedrockLLM:
             model="test", aws_access_key_id="test", aws_secret_access_key="test"
         )
         llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
 
         await answer(llm, conversation, ALICE, "Hi")
         await answer(llm, conversation, ALICE, "Are you there?")
-        # One person: what the base sha (486427184) sent for the same two turns.
+        # One person: what the base sha (9653cb696) sent for the same two turns.
+        assert bedrock_api[-1]["system"] == [{"text": "be brief"}]
         assert bedrock_api[-1]["messages"] == [
             {"role": "user", "content": [{"text": "Hi"}]},
             {"role": "assistant", "content": [{"text": "Ok"}]},
@@ -90,6 +69,9 @@ class TestBedrockLLM:
 
         await answer(llm, conversation, BOB, "Me too")
         await answer(llm, conversation, ALICE, "Who is that?")
+        assert bedrock_api[-1]["system"] == [
+            {"text": "be brief\n\n" + SEVERAL_SPEAKERS}
+        ]
         assert bedrock_api[-1]["messages"][2:] == [
             {"role": "user", "content": [{"text": "Are you there?"}]},
             {"role": "assistant", "content": [{"text": "Ok"}]},

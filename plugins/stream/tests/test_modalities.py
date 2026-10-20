@@ -9,9 +9,10 @@ from aiohttp.test_utils import TestServer
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.llm import ImageContent
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS, ImageContent
 from vision_agents.plugins import stream
 from vision_agents.plugins.stream._backend import CUSTOMER_ENV, URL_ENV
+from vision_agents.testing import answer
 
 STT_TARGET = os.getenv("STREAM_ACCELERATION_STT", "en-low-latency")
 TTS_TARGET = os.getenv("STREAM_ACCELERATION_TTS", "en-low-latency")
@@ -252,6 +253,52 @@ class TestLLM:
                     },
                 ],
             },
+        ]
+
+    @pytest.mark.parametrize(
+        ("instructions", "told"),
+        [
+            ("be brief", "be brief\n\n" + SEVERAL_SPEAKERS),
+            # Empty asks the router for the config's instructions, so it stays empty.
+            ("", ""),
+        ],
+    )
+    async def test_the_router_is_told_several_people_are_talking(
+        self, conversation: InMemoryConversation, instructions: str, told: str
+    ) -> None:
+        responded: list[dict[str, object]] = []
+
+        async def llm_stream(request: web.Request) -> web.WebSocketResponse:
+            socket = web.WebSocketResponse()
+            await socket.prepare(request)
+            async for message in socket:
+                frame = json.loads(message.data)
+                if frame["type"] == "respond":
+                    responded.append(frame)
+                    await socket.send_json({"type": "complete", "text": "ok"})
+            return socket
+
+        app = web.Application()
+        app.router.add_get("/v1/llm/stream", llm_stream)
+        ada = Participant(original=None, user_id="ada", id="ada-1", name="Ada")
+        bob = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
+        async with TestServer(app) as server:
+            model = stream.LLM(
+                target="llm-fast",
+                url=str(server.make_url("")).rstrip("/"),
+                customer_id="test",
+            )
+            model.set_conversation(conversation)
+            model.set_instructions(instructions)
+            async with model:
+                for participant, text in ((ada, "Hi"), (ada, "Hello?"), (bob, "Hey")):
+                    await answer(model, conversation, participant, text)
+
+        # One person: what the base sha (9653cb696) sent.
+        assert [frame["instructions"] for frame in responded] == [
+            instructions,
+            instructions,
+            told,
         ]
 
     def test_ordered_content_preserves_interleaving(self):

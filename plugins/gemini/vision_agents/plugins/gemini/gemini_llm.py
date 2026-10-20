@@ -122,7 +122,7 @@ class GeminiLLM(LLM):
 
         Args:
             system_instruction: Optional system instruction to include. If not provided,
-                uses self._instructions to ensure instructions are always passed.
+                uses self.instructions to ensure instructions are always passed.
             base_config: Optional base config to extend (takes precedence over self._base_config)
 
         Returns:
@@ -138,7 +138,7 @@ class GeminiLLM(LLM):
         # Always include system instruction - passing any config to send_message_stream
         # overrides the chat-level system instruction, so we must include it every time
         effective_instruction = (
-            system_instruction if system_instruction else self._instructions
+            system_instruction if system_instruction else self.instructions
         )
         if effective_instruction:
             config.system_instruction = effective_instruction
@@ -178,7 +178,7 @@ class GeminiLLM(LLM):
         """
         # initialize chat if needed
         if self.chat is None:
-            chat_config = self._build_config(system_instruction=self._instructions)
+            chat_config = self._build_config(system_instruction=self.instructions)
             self.chat = self.client.chats.create(model=self.model, config=chat_config)
 
         # Add tools if available - Gemini uses GenerateContentConfig
@@ -188,8 +188,13 @@ class GeminiLLM(LLM):
             conv_tools = convert_tools_to_provider_format(tools_spec)
             config = self._build_config()
             config.tools = [*(config.tools or []), *conv_tools]  # type: ignore[assignment, list-item]
-        elif self.thinking_level or self.media_resolution:
-            # Only pass config if we need to set thinking_level or media_resolution
+        elif (
+            self.thinking_level
+            or self.media_resolution
+            or self.instructions != self._instructions
+        ):
+            # Only pass config if we need to set thinking_level or media_resolution,
+            # or once a second person has spoken: the chat holds the instructions from before
             # Don't pass an empty config as it overrides the system_instruction from chat creation
             config = self._build_config()
         # If no tools and no thinking/media config needed, don't pass config
@@ -553,7 +558,7 @@ class GeminiLLM(LLM):
 
         # If we filtered anything out, recreate the chat with cleaned history
         if len(cleaned_history) < len(history):
-            config = self._build_config(system_instruction=self._instructions)
+            config = self._build_config(system_instruction=self.instructions)
             self.chat = self.client.chats.create(
                 model=self.model, config=config, history=cleaned_history
             )
