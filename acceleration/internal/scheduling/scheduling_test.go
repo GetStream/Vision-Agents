@@ -216,20 +216,39 @@ func TestFromStoredRoundTrips(t *testing.T) {
 	require.Equal(t, schedule.Upcoming(monday, 3), rebuilt.Upcoming(monday, 3))
 }
 
-func TestAMoveLandsNoSoonerThanMinMove(t *testing.T) {
+func TestAMoveLandsNoSoonerThanMinMoveUnlessItKeepsTheCurrentRun(t *testing.T) {
 	// A clock read mid-second, as a request's is: in PT15M still passes.
 	now := monday.Add(500 * time.Millisecond)
-	for in, refused := range map[string]bool{"PT1M": true, "PT14M": true, "PT15M": false, "PT2H": false} {
-		schedule, err := Parse(Input{In: in, Timezone: "UTC"}, now)
-		require.NoError(t, err)
+	dueIn := func(d time.Duration) *time.Time {
+		due := now.Add(d)
+		return &due
+	}
+	for name, test := range map[string]struct {
+		in      string
+		current *time.Time
+		refused bool
+	}{
+		"nothing pending, a minute":        {in: "PT1M", refused: true},
+		"nothing pending, 14 minutes":      {in: "PT14M", refused: true},
+		"nothing pending, 15 minutes":      {in: "PT15M"},
+		"nothing pending, two hours":       {in: "PT2H"},
+		"earlier than the run, under 15":   {in: "PT1M", current: dueIn(3 * time.Minute), refused: true},
+		"later than the run, under 15":     {in: "PT10M", current: dueIn(3 * time.Minute)},
+		"at the run":                       {in: "PT3M", current: dueIn(3*time.Minute - 500*time.Millisecond)},
+		"a run already due does not count": {in: "PT1M", current: dueIn(-time.Minute), refused: true},
+		"earlier than a far run, over 15":  {in: "PT20M", current: dueIn(2 * time.Hour)},
+		"earlier than a far run, under 15": {in: "PT14M", current: dueIn(2 * time.Hour), refused: true},
+	} {
+		schedule, err := Parse(Input{In: test.in, Timezone: "UTC"}, now)
+		require.NoError(t, err, name)
 		next, _ := schedule.First()
-		err = CheckMove(next, now)
-		if !refused {
-			require.NoError(t, err, in)
+		err = CheckMove(next, test.current, now)
+		if !test.refused {
+			require.NoError(t, err, name)
 			continue
 		}
 		failure, ok := err.(*Error)
-		require.True(t, ok, "%s: refusal is not a scheduling.Error: %v", in, err)
-		require.Equal(t, CodeIntervalTooShort, failure.Code, in)
+		require.True(t, ok, "%s: refusal is not a scheduling.Error: %v", name, err)
+		require.Equal(t, CodeIntervalTooShort, failure.Code, name)
 	}
 }

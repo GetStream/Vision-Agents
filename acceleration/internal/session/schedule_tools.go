@@ -481,6 +481,14 @@ func (r *scheduleRunner) rescheduled(task *store.ScheduledTask, args updateArgs,
 	if !ok {
 		return nil, refusal(scheduling.CodeScheduleInPast, "that schedule has no occurrence left; its last one has passed")
 	}
+	// A reschedule without at or in re-parses the stored start, a change of
+	// title, instructions or repeat, not a move of the run.
+	if args.At != nil || args.In != nil {
+		if err := scheduling.CheckMove(next, task.NextRunAt, now); err != nil {
+			parts, _ := refusalOf(err)
+			return nil, parts
+		}
+	}
 	task.StartLocal = parsed.StartLocal
 	task.Timezone = parsed.Timezone
 	task.RRule = parsed.Repeat
@@ -514,7 +522,7 @@ func (r *scheduleRunner) snoozeTarget(task store.ScheduledTask, args updateArgs,
 	if !ok {
 		return time.Time{}, refusal(scheduling.CodeScheduleInPast, "that time has passed; snooze to a time in the future")
 	}
-	if err := scheduling.CheckMove(target, now); err != nil {
+	if err := scheduling.CheckMove(target, task.NextRunAt, now); err != nil {
 		parts, _ := refusalOf(err)
 		return time.Time{}, parts
 	}
