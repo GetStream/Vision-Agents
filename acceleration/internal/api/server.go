@@ -549,9 +549,6 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	return server, nil
 }
 
-// Drain sends every dispatch worker connected here to reconnect, which lands it on whichever
-// process is taking work now. A worker told the socket is going away reconnects; one told it
-// closed normally stops waiting for work at all.
 // SetSchedulerKick hands the server the scheduled-task worker's wake-up, so
 // a task created, changed or run by hand is claimed without waiting for the
 // worker's next look at the store.
@@ -564,6 +561,9 @@ func (s *Server) kickScheduled() {
 	}
 }
 
+// Drain sends every dispatch worker connected here to reconnect, which lands it on whichever
+// process is taking work now. A worker told the socket is going away reconnects; one told it
+// closed normally stops waiting for work at all.
 func (s *Server) Drain() {
 	s.drainOnce.Do(func() { close(s.draining) })
 }
