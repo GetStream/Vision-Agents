@@ -684,6 +684,19 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
 
+### A recording moves to the next model when the vendor fails it
+
+`POST /v1/tts/recordings` on a shortcut or a priority list no longer fails when the model chosen
+fails the recording itself: an error status (a 5xx, a 429, a 402 out of credits), a timeout or
+an answer that cannot be read. The text goes to the next model the request resolved to, in the
+order of the priority list or the shortcut's ranking, and the job names the model that spoke it.
+The failure is still counted against the failing model's health. A model that refuses this
+request alone (a text over Inworld's 2,000-unit limit, a format the vendor cannot make) hands it
+on too, without a health hit. When every model fails, the job fails with no provider or model
+and an error naming each model's reason, cut to 300 bytes each. A pinned model fails as before.
+A recording with nothing to say is refused before any vendor is asked, and no longer counts
+against the model (AI-1465).
+
 ### An Android demo, the Android half of swift_demo
 
 `examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
@@ -2304,6 +2317,8 @@ The router's CORS answer now allows PATCH, so a page calling the router directly
 agent config (`patchAgentConfig`) or change a scheduled task (`updateScheduledTask`). A browser
 refused both at the preflight before.
 
+- A phone session ends on its own: 10 seconds after the last person leaves the call, and when a phone call is never answered (90 seconds for an outbound call, 30 seconds for an inbound one). The agent stops talking and leaves rather than finishing its sentence to an empty call. The Python SDK now tells the router a session is a phone call, as the Go SDK does, so a Python agent on a phone call can also transfer the caller to a person. Sessions that are not phone calls are unchanged.
+
 ### A Kotlin voice call asks only for the microphone
 
 `VoiceSession` joined an agent's call with Stream Video's default foreground service, which
@@ -2312,6 +2327,7 @@ on, with no service holding it. It now runs Stream's audio-call service, and the
 builds asks for the camera only while the camera is on. A call type the app configured on its
 own `StreamVideo` is left as it is.
 
+- A model call its caller cancelled (a superseded flow decision, a losing hedge, a barge-in) is reported as cancelled, not as a success: the router log, the session socket's `model_call` frame and the call timeline's `ModelCallTiming` say `success: false` with `error_code: "cancelled"`, and still carry its tokens, since it is billed. A failure has any other `error_code`. Live and stored views of one call used to disagree: the frame said it succeeded, the timeline that it failed. The agent log writes a cancelled request at info, as `llm request cancelled` (AI-1466).
 - A flow decision that has said nothing for `ROUTER_FLOW_HEDGE` (`400ms` by default, `0` turns it off, `cmd/agent -flow-hedge`) is asked of another candidate of `llm-flow` as well, and whichever says something first rules on the turn, as a late reply already is under `ROUTER_REPLY_HEDGE`. A flow controller that stalled on its first token made the caller wait out its 3 s deadline on every turn it did, and the turn was then answered with no ruling (#1040).
 - A line the agent says on a call (`say`, and the greeting) is in its transcript and its responses, and the model knows it was said. It went straight to the voice with no reply announced, so the Chat channel and `responses.items` never had it, and the caller's answer to a greeting's question reached the model and the flow controller with no question before it. A line that opens the call is told to the model in its instructions rather than as a first turn, which chat templates that need a user turn first refuse; a conversation is not named after its greeting (#1040).
 - The agent's spoken replies in a call's Chat channel carry `ai_generated`, as replies in a conversation held in writing already did, so Stream's AI components render them as the assistant's (#1040).

@@ -15,9 +15,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
-// scheduledTasksVersion is 20261103150000_scheduled_tasks.sql. It comes after
-// agentRoleVersion, accelerate's newest when the branch merged it, which staging has applied.
-const scheduledTasksVersion int64 = 20261103150000
+// scheduledTasksVersion is 20261105120000_scheduled_tasks.sql. It comes after
+// cancelled_request_log (20261104120000), accelerate's newest when the branch merged it,
+// which staging has applied.
+const scheduledTasksVersion int64 = 20261105120000
+
+// stagingVersion is the version staging is at, the one the migration must apply on top of.
+const stagingVersion int64 = 20261104120000
 
 // scheduledTaskIndexes are the indexes the migration creates, N14's two included.
 var scheduledTaskIndexes = []string{
@@ -66,7 +70,7 @@ func (s *ScheduledTasksMigrationSuite) SetupTest() {
 	s.Require().NoError(err)
 	goose.SetBaseFS(migrations.FS)
 	s.Require().NoError(goose.SetDialect("postgres"))
-	s.Require().NoError(goose.UpToContext(s.ctx, db.DB().DB, ".", agentRoleVersion))
+	s.Require().NoError(goose.UpToContext(s.ctx, db.DB().DB, ".", stagingVersion))
 	s.db = db
 }
 
@@ -79,7 +83,7 @@ func (s *ScheduledTasksMigrationSuite) TestTheMigrationAppliesComesOffAndApplies
 	s.Equal(scheduledTaskIndexes, s.indexes())
 	s.Equal(4, s.addedColumns())
 
-	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", agentRoleVersion))
+	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", stagingVersion))
 	s.Empty(s.indexes())
 	s.Zero(s.addedColumns())
 

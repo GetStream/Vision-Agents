@@ -37,10 +37,12 @@ from ._generated.models import (
     SessionCall,
     SessionMemory,
     SessionMemoryFilter,
+    SessionPhone,
     SessionTool,
     SessionToolParameters,
     SessionVideo,
 )
+from ._generated.types import UNSET, Unset
 from ._socket import Socket
 from .config import ensure_agent
 from .knowledge import Knowledge
@@ -54,6 +56,11 @@ USER_KEY = "user_id"
 # AUTHORIZATION_REQUIRED is what a user plugin's tool answers while the end user has not
 # connected their account; its attachment is the button a chat client shows.
 AUTHORIZATION_REQUIRED = "authorization_required"
+
+
+# MAX_RING_SECONDS is the longest an outbound call can ring and still be inside the
+# router's start timeout for a phone session.
+MAX_RING_SECONDS = 60
 
 
 class Accelerated(OmniLLM):
@@ -334,6 +341,7 @@ class Accelerated(OmniLLM):
             # A session's call is agent:<session id>, so holding the session by the call's
             # id puts the backend's agent in the call this one joined.
             request.id = call.call_id
+            request.phone = self._phone(call)
         elif call.call_id:
             # Any other call is named as it is. The router picks the session id, since a
             # session id is never used twice and a second session on this call is not refused.
@@ -387,6 +395,20 @@ class Accelerated(OmniLLM):
         if call.memory_filter:
             request.memory = self._memory(call.memory_filter)
         return request
+
+    def _phone(self, call: RemoteCall) -> SessionPhone | Unset:
+        """What marks the session as a phone call, so the router ends it when nobody answers."""
+        phone = call.phone
+        if phone is None:
+            return UNSET
+        # The router gives up on an outbound call after 90 seconds, which would cut short
+        # one that was told to ring longer.
+        if phone.ring_timeout is not None and phone.ring_timeout > MAX_RING_SECONDS:
+            return UNSET
+        session_phone = SessionPhone(number=phone.number)
+        if phone.vendor_call_id:
+            session_phone.vendor_call_id = phone.vendor_call_id
+        return session_phone
 
     def _tools(self) -> list[SessionTool]:
         """The functions registered here, as the model will be offered them."""
@@ -453,7 +475,7 @@ class Accelerated(OmniLLM):
                 self._pending_model_calls.setdefault(turn_id, []).append(frame)
             logger.info(
                 "model call timing call=%s turn=%s operation=%s purpose=%s provider=%s model=%s "
-                "ttft_ms=%s duration_ms=%s success=%s",
+                "ttft_ms=%s duration_ms=%s success=%s error_code=%s",
                 self.session.call_id if self.session else "",
                 frame.get("turn_id", ""),
                 frame.get("operation_id", ""),
@@ -463,6 +485,7 @@ class Accelerated(OmniLLM):
                 frame.get("ttft_ms", 0),
                 frame.get("duration_ms", 0),
                 frame.get("success", False),
+                frame.get("error_code", ""),
             )
             return
 

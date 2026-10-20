@@ -6517,6 +6517,8 @@ export type components = {
              * @description Request to completed response or failed create.
              */
             readonly duration_ms?: number;
+            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure. */
+            readonly error_code?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
             readonly model: string;

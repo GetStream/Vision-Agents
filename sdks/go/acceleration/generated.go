@@ -5500,9 +5500,12 @@ type Modality string
 // ModelCallTiming defines model for ModelCallTiming.
 type ModelCallTiming struct {
 	// DurationMs Request to completed response or failed create.
-	DurationMs  *float64 `json:"duration_ms,omitempty"`
-	InputTokens *int64   `json:"input_tokens,omitempty"`
-	Model       string   `json:"model"`
+	DurationMs *float64 `json:"duration_ms,omitempty"`
+
+	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+	ErrorCode   *string `json:"error_code,omitempty"`
+	InputTokens *int64  `json:"input_tokens,omitempty"`
+	Model       string  `json:"model"`
 
 	// OperationId Response ID for this operation; retries can share an ID.
 	OperationId  *string `json:"operation_id,omitempty"`

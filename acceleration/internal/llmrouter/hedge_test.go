@@ -199,13 +199,17 @@ func (r *rig) script(name string) *llmtest.Script {
 	return r.scripts[name][0]
 }
 
-// called is which providers a model call was reported for, and whether it went well.
-func (r *rig) called() map[string]bool {
+// called is which providers a model call was reported for, and how it ended: served, or the
+// code of why it was not.
+func (r *rig) called() map[string]string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	called := map[string]bool{}
+	called := map[string]string{}
 	for _, timing := range r.timings {
-		called[timing.Provider] = timing.Success
+		called[timing.Provider] = timing.ErrorCode
+		if timing.Success {
+			called[timing.Provider] = "served"
+		}
 	}
 	return called
 }
@@ -255,7 +259,7 @@ func TestALateReplyIsAskedOfAnotherCandidateAndTheHedgeCanWin(t *testing.T) {
 		require.Equal(t, "beta", response.Provider)
 		require.Equal(t, "Hello", response.OutputText)
 		require.False(t, r.script("beta").Abandoned())
-		require.Equal(t, map[string]bool{"alpha": true, "beta": true}, r.called(),
+		require.Equal(t, map[string]string{"alpha": routing.ErrorCancelled, "beta": "served"}, r.called(),
 			"both calls were reported, the original as one that was cut short")
 	})
 }
@@ -273,7 +277,7 @@ func TestALateReplyThatTheOriginalStillAnswersFirstCancelsTheHedge(t *testing.T)
 		require.True(t, r.script("beta").Abandoned(), "the hedge was stopped the moment it lost")
 		require.Equal(t, llm.StatusCancelled, r.script("beta").Stream().Response().Status)
 		require.Equal(t, "alpha", r.finish("alpha", asked).Provider)
-		require.Equal(t, map[string]bool{"alpha": true, "beta": true}, r.called())
+		require.Equal(t, map[string]string{"alpha": "served", "beta": routing.ErrorCancelled}, r.called())
 		r.session.mu.Lock()
 		held := len(r.session.children)
 		r.session.mu.Unlock()
@@ -313,7 +317,7 @@ func TestARequestStillBeingAskedIsHedgedToo(t *testing.T) {
 		require.True(t, asked.answered())
 		require.Equal(t, "beta", r.finish("beta", asked).Provider)
 		require.Zero(t, r.requests("alpha"), "the original was cancelled while it was still being asked")
-		require.Equal(t, map[string]bool{"alpha": false, "beta": true}, r.called(),
+		require.Equal(t, map[string]string{"alpha": routing.ErrorCancelled, "beta": "served"}, r.called(),
 			"a request cancelled before it was answered is reported as any cancelled one is")
 	})
 }
@@ -330,28 +334,31 @@ func TestNothingIsHedgedWithoutAnotherCandidate(t *testing.T) {
 		require.True(t, asked.answered())
 		require.NoError(t, asked.err)
 		require.Equal(t, "Late, but alone", r.finish("alpha", asked).OutputText)
-		require.Equal(t, map[string]bool{"alpha": true}, r.called())
+		require.Equal(t, map[string]string{"alpha": "served"}, r.called())
 	})
 }
 
 func TestAHedgeThatFailsLeavesTheOriginalGoing(t *testing.T) {
-	for name, trouble := range map[string]func(*rig){
-		"when it cannot be asked": func(r *rig) {
+	for name, test := range map[string]struct {
+		trouble func(*rig)
+		code    string
+	}{
+		"when it cannot be asked": {func(r *rig) {
 			r.fail("beta", errors.New("beta is down"))
 			pass(lateAfter)
-		},
-		"when its answer fails": func(r *rig) {
+		}, "create_failed"},
+		"when its answer fails": {func(r *rig) {
 			pass(lateAfter)
 			r.script("beta").Fail(errors.New("beta stopped"), "stream")
 			synctest.Wait()
-		},
+		}, "provider_error"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				r := newRig(t, lateAfter, "alpha", "beta")
 				asked := r.ask(context.Background(), r.params())
 
-				trouble(r)
+				test.trouble(r)
 				require.False(t, asked.answered())
 				require.False(t, r.script("alpha").Abandoned(), "the original was left alone")
 				r.say("alpha", "Hello")
@@ -359,7 +366,7 @@ func TestAHedgeThatFailsLeavesTheOriginalGoing(t *testing.T) {
 				require.NoError(t, asked.err)
 
 				require.Equal(t, "alpha", r.finish("alpha", asked).Provider)
-				require.Equal(t, map[string]bool{"alpha": true, "beta": false}, r.called(),
+				require.Equal(t, map[string]string{"alpha": "served", "beta": test.code}, r.called(),
 					"the hedge was reported as the failure it was")
 			})
 		})
@@ -424,7 +431,7 @@ func TestACallerWhoHangsUpDuringTheRaceStopsBothRequests(t *testing.T) {
 		require.ErrorIs(t, asked.err, context.Canceled)
 		require.True(t, r.script("alpha").Abandoned())
 		require.True(t, r.script("beta").Abandoned())
-		require.Equal(t, map[string]bool{"alpha": true, "beta": true}, r.called())
+		require.Equal(t, map[string]string{"alpha": routing.ErrorCancelled, "beta": routing.ErrorCancelled}, r.called())
 	})
 }
 
