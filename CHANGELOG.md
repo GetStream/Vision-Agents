@@ -2298,6 +2298,12 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+### A web page may send PATCH
+
+The router's CORS answer now allows PATCH, so a page calling the router directly can patch an
+agent config (`patchAgentConfig`) or change a scheduled task (`updateScheduledTask`). A browser
+refused both at the preflight before.
+
 ### A Kotlin voice call asks only for the microphone
 
 `VoiceSession` joined an agent's call with Stream Video's default foreground service, which
