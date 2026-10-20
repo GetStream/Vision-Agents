@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1643,4 +1644,132 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMet
 		}
 		s.Emptyf(provider.InputModalities, "%s is text-only", provider.Name())
 	}
+}
+
+// failingUse is a Walk's use that fails for the models in failing, with their error, and
+// keeps every candidate it was handed, in order.
+func failingUse(asked *[]string, failing map[string]error) func(*stubProvider, ProviderConfig) error {
+	return func(provider *stubProvider, config ProviderConfig) error {
+		*asked = append(*asked, config.Name())
+		provider.Close()
+		return failing[config.Name()]
+	}
+}
+
+func (s *RoutingSuite) TestAWalkHandsTheNextCandidateOnWhenTheFirstFailsInUse() {
+	var logged bytes.Buffer
+	router := s.newRouter()
+	router.logger = slog.New(slog.NewTextHandler(&logged, nil))
+	var asked []string
+
+	config, err := router.Walk(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}},
+		failingUse(&asked, map[string]error{"quick/en": errors.New("quick: 500")}))
+
+	s.Require().NoError(err)
+	s.Equal("lush/multi", config.Name())
+	s.Equal([]string{"quick/en", "lush/multi"}, asked)
+	s.NotContains(logged.String(), "failed to start", "quick/en started; its vendor failed it after")
+}
+
+func (s *RoutingSuite) TestAWalkWhoseOnlyCandidateFailsInUseReturnsItsErrorAndConfigAsTheyAre() {
+	router := s.newRouter()
+	var asked []string
+
+	config, err := router.Walk(s.ctx, Request{CustomerID: "acme", Target: "quick/en"},
+		failingUse(&asked, map[string]error{"quick/en": errors.New("quick: 500")}))
+
+	s.EqualError(err, "quick: 500", "as a caller of Select reported it")
+	s.Equal("quick/en", config.Name())
+}
+
+func (s *RoutingSuite) TestAWalkEveryCandidateFailsInUseNamesEachInTheOrderMet() {
+	router := s.newRouter()
+	var asked []string
+
+	config, err := router.Walk(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}},
+		failingUse(&asked, map[string]error{"quick/en": errors.New("quick: 500"), "lush/multi": errors.New("lush: 429")}))
+
+	s.EqualError(err, "quick/en: quick: 500\nlush/multi: lush: 429")
+	s.NotErrorIs(err, ErrRequest)
+	s.Equal(ProviderConfig{}, config, "nobody served it")
+}
+
+func (s *RoutingSuite) TestAWalkWithARefusalAmongItsFailuresIsTheCallersToChangeAndSaysBoth() {
+	router := s.newRouter()
+	var asked []string
+
+	_, err := router.Walk(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}},
+		failingUse(&asked, map[string]error{"quick/en": Refused(errors.New("quick: too long")), "lush/multi": errors.New("lush: 429")}))
+
+	s.Require().ErrorIs(err, ErrRequest)
+	s.EqualError(err, "quick/en: quick: too long\nlush/multi: lush: 429")
+}
+
+func (s *RoutingSuite) TestAWalkWhoseCallerHasGoneAsksNoFurtherCandidate() {
+	router := s.newRouter()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	var asked []string
+
+	_, err := router.Walk(ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}},
+		func(provider *stubProvider, config ProviderConfig) error {
+			asked = append(asked, config.Name())
+			cancel()
+			return context.Canceled
+		})
+
+	s.Require().ErrorIs(err, context.Canceled)
+	s.Equal([]string{"quick/en"}, asked)
+}
+
+func (s *RoutingSuite) TestASelectWhoseContextHasEndedStillStartsTheFirstCandidateAsBefore() {
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, config, err := s.newRouter().Select(ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err, "a stub starts whatever the context; Select leaves that to the provider")
+	s.Equal("quick/en", config.Name())
+}
+
+func (s *RoutingSuite) TestAWalkNeverServesAnOverwriteOnAnotherVendorAfterItsOwnModelFails() {
+	// quick/en has a threshold and quick/multi a backend, as in
+	// TestAnOverwriteOneModelCannotReadIsTriedOnTheSameVendorsOtherModels.
+	var built []string
+	registry := NewRegistry[*stubProvider]()
+	for _, vendor := range []string{"quick", "lush"} {
+		registry.Register(vendor, func(spec Spec) (*stubProvider, error) {
+			built = append(built, vendor+"/"+spec.Model)
+			var err error
+			if vendor == "quick" && spec.Model == "en" {
+				err = spec.Settings(&struct {
+					Threshold float64 `json:"threshold"`
+				}{})
+			} else {
+				err = spec.Settings(&struct {
+					Backend string `json:"backend"`
+				}{})
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &stubProvider{model: spec.Model}, nil
+		})
+	}
+	router, err := New(Options[*stubProvider]{Modality: STT, Config: s.config(), Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	var asked []string
+
+	config, err := router.Walk(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"quick/en", "lush/multi", "quick/multi"},
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"backend":"b2"}`)}},
+	}, failingUse(&asked, map[string]error{"quick/multi": errors.New("quick: 500")}))
+
+	s.Require().ErrorIs(err, ErrOverwrite)
+	s.ErrorContains(err, "quick/multi: quick: 500")
+	s.Equal(ProviderConfig{}, config, "nobody served it")
+	s.Equal([]string{"quick/multi"}, asked)
+	s.Equal([]string{"quick/en", "quick/multi"}, built, "lush is handed its own block, so it would drop quick's")
 }

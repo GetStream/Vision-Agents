@@ -658,6 +658,19 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
 
+### A recording moves to the next model when the vendor fails it
+
+`POST /v1/tts/recordings` on a shortcut or a priority list no longer fails when the model chosen
+fails the recording itself: an error status (a 5xx, a 429, a 402 out of credits), a timeout or
+an answer that cannot be read. The text goes to the next model the request resolved to, in the
+order of the priority list or the shortcut's ranking, and the job names the model that spoke it.
+The failure is still counted against the failing model's health. A model that refuses this
+request alone (a text over Inworld's 2,000-unit limit, a format the vendor cannot make) hands it
+on too, without a health hit. When every model fails, the job fails with no provider or model
+and an error naming each model's reason, cut to 300 bytes each. A pinned model fails as before.
+A recording with nothing to say is refused before any vendor is asked, and no longer counts
+against the model (AI-1465).
+
 ### An Android demo, the Android half of swift_demo
 
 `examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built

@@ -179,18 +179,60 @@ func (r *Recordings) Check(ctx context.Context, recording Recording) error {
 		strings.Join(streamed, ", "), strings.Join(recorders, ", "))))
 }
 
-// Record selects a voice and speaks the whole text, falling back to the next candidate
-// when one fails to start.
+// Record selects a voice and speaks the whole text.
+//
+// A candidate that fails to start, or whose vendor fails the recording (an error status,
+// a timeout, an answer that cannot be read), hands the text to the next one Select would
+// have started, in Select's order (routing.Router.Walk): a priority list as written, a
+// shortcut as ranked, with what a voice, a policy or an overwrite rules out left out. A
+// candidate that refuses this request alone, as Inworld refuses a text over its limit,
+// hands it on too, and is not counted against the model, whose health is every
+// customer's. A request with one candidate to ask has nowhere to fall back to and fails as
+// it always has.
 func (r *Recordings) Record(
 	ctx context.Context,
 	recording Recording,
 ) (tts.Recorded, routing.ProviderConfig, error) {
+	// Nothing to say is refused by every vendor (tts.Recording.Validate), so no candidate
+	// is asked, and none is counted as failing for it.
+	if err := (tts.Recording{Text: recording.Text}).Validate(); err != nil {
+		return tts.Recorded{}, routing.ProviderConfig{}, routing.Refused(err)
+	}
 	request := recording.request()
 
-	provider, config, err := r.Select(ctx, request)
-	if err != nil {
+	var recorded tts.Recorded
+	// failed is the vendor's own answer, whole, for a walk that asked only one candidate.
+	var failed error
+	served, err := r.Walk(ctx, request, func(provider tts.Recorder, config routing.ProviderConfig) error {
+		recorded, failed = r.speak(ctx, provider, config, request.Owner(), recording)
+		if failed != nil {
+			return clipped{err: failed}
+		}
+		return nil
+	})
+	switch {
+	case err == nil:
+		return recorded, served, nil
+	// The one candidate asked failed and no other was met: it fails as it always has.
+	case served.Provider != "":
+		return tts.Recorded{}, served, failed
+	// What Select refuses before any candidate is asked, it refuses in the words it always has.
+	case failed == nil:
 		return tts.Recorded{}, routing.ProviderConfig{}, err
 	}
+	return tts.Recorded{}, routing.ProviderConfig{}, stack.Wrap(fmt.Errorf(
+		"ttsrouter: no candidate recorded the text: %w", err))
+}
+
+// speak records the text with one started recorder, which it closes, and counts a
+// failure against the model.
+func (r *Recordings) speak(
+	ctx context.Context,
+	provider tts.Recorder,
+	config routing.ProviderConfig,
+	owner routing.Owner,
+	recording Recording,
+) (tts.Recorded, error) {
 	defer provider.Close()
 
 	startedAt := time.Now()
@@ -212,11 +254,11 @@ func (r *Recordings) Record(
 	// A text Inworld takes no more of is the caller's to shorten, and says nothing about the
 	// model's health, which is every customer's (as routing.Select does for ErrRequest).
 	if errors.Is(err, inworld.ErrTextTooLong) {
-		return tts.Recorded{}, config, routing.Refused(err)
+		return tts.Recorded{}, routing.Refused(err)
 	}
 
 	stat := routing.Stat{
-		Owner:     request.Owner(),
+		Owner:     owner,
 		StartedAt: startedAt.UTC(),
 		LatencyMs: routing.MsSince(startedAt),
 		Success:   err == nil,
@@ -231,15 +273,34 @@ func (r *Recordings) Record(
 	}
 	r.Recorder().Record(config, stat)
 	if err != nil {
-		return tts.Recorded{}, config, err
+		return tts.Recorded{}, err
 	}
 	// Not the voice asked for: a recorder that cannot say leaves it empty rather than claim
 	// a voice it may have dropped.
 	if voiced, ok := provider.(tts.Voiced); ok {
 		recorded.Voice = voiced.Voice()
 	}
-	return recorded, config, nil
+	return recorded, nil
 }
+
+// maxTriedError is how much of one candidate's error a failed recording reports. Ours, not
+// a vendor's: enough for the model, the status and the start of the vendor's reason, whose
+// body is passed on whole and has no bound of its own.
+const maxTriedError = 300
+
+// clipped is one candidate's error cut to maxTriedError bytes, so a job that tried every
+// candidate says why each failed in a message of bounded length.
+type clipped struct{ err error }
+
+func (c clipped) Error() string {
+	message := c.err.Error()
+	if len(message) <= maxTriedError {
+		return message
+	}
+	return strings.ToValidUTF8(message[:maxTriedError], "") + "..."
+}
+
+func (c clipped) Unwrap() error { return c.err }
 
 // first is the one language a provider that takes a single code should be told about.
 func first(languages []string) string {
