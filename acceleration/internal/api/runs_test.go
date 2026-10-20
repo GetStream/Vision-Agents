@@ -53,6 +53,7 @@ func (s *RunsSuite) TestAModeratorsRunEndsWithTheAnswerFormat() {
 
 	run := s.run(CreateRunRequest{ConfigId: nora.Id, Input: "hello", Instructions: &policy})
 
+	s.Contains(run.FinalText, policy)
 	s.Contains(run.FinalText, strings.TrimSpace(moderator.Contract))
 	s.Greater(strings.Index(run.FinalText, "## Answer format"), strings.Index(run.FinalText, policy),
 		"the format comes after the caller's instructions, so nothing written before it overrides it")

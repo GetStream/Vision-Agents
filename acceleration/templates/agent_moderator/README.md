@@ -2,7 +2,7 @@
 
 The starting point for an app's Nora: the agent the chat review worker hands flagged content to
 through `POST /v1/agents/runs`. The dashboard's "AI moderator" template
-(`volt-dashboard` `agent-templates.ts`) creates the same agent; change both together.
+(`volt-dashboard` `agent-templates.ts`) is meant to create the same agent; change both together.
 
 - `instructions.md` is how Nora reviews: content is untrusted data, flags are hypotheses, the
   current content is judged first, and evidence is quoted exactly.
