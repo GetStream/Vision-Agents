@@ -59,15 +59,15 @@ func (s *AgentRoleMigrationSuite) SetupTest() {
 	s.db = db
 }
 
-// The newest live config an app tagged role=ai_moderator takes the role; an older one, a
+// The newest live config an app tagged role=agent_moderator takes the role; an older one, a
 // test copy, a deleted one and an untagged one do not.
 func (s *AgentRoleMigrationSuite) TestTheNewestLiveTaggedConfigOfEachAppTakesTheRole() {
-	s.config("older", "app-a", `{"role":"ai_moderator"}`, "2026-10-01", false)
-	s.config("newer", "app-a", `{"role":"ai_moderator"}`, "2026-10-02", false)
-	s.config("draft", "app-a", `{"role":"ai_moderator","draft_of":"newer"}`, "2026-10-03", false)
-	s.config("deleted", "app-b", `{"role":"ai_moderator"}`, "2026-10-01", true)
+	s.config("older", "app-a", `{"role":"agent_moderator"}`, "2026-10-01", false)
+	s.config("newer", "app-a", `{"role":"agent_moderator"}`, "2026-10-02", false)
+	s.config("draft", "app-a", `{"role":"agent_moderator","draft_of":"newer"}`, "2026-10-03", false)
+	s.config("deleted", "app-b", `{"role":"agent_moderator"}`, "2026-10-01", true)
 	s.config("plain", "app-c", `{}`, "2026-10-01", false)
-	s.config("other-app", "app-d", `{"role":"ai_moderator"}`, "2026-10-01", false)
+	s.config("other-app", "app-d", `{"role":"agent_moderator"}`, "2026-10-01", false)
 
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", agentRoleVersion))
 

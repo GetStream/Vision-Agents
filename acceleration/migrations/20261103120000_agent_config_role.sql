@@ -5,13 +5,13 @@
 -- the agent the chat worker hands flagged messages to for review.
 ALTER TABLE agent_configs ADD COLUMN role TEXT NOT NULL DEFAULT '';
 
--- The dashboard marked Nora with the tag role=ai_moderator before there was a column: the
+-- The dashboard marked Nora with the tag role=agent_moderator before there was a column: the
 -- newest live config so tagged in each app takes the role. A test copy (tagged draft_of)
 -- carries the tag of the config it copies, so it is left out, as it is from the index below.
 UPDATE agent_configs SET role = 'agent_moderator'
 WHERE id IN (
     SELECT DISTINCT ON (customer_id) id FROM agent_configs
-    WHERE tags->>'role' = 'ai_moderator'
+    WHERE tags->>'role' = 'agent_moderator'
       AND deleted_at IS NULL
       AND coalesce(tags->>'draft_of', '') = ''
     ORDER BY customer_id, created_at DESC

@@ -643,8 +643,8 @@ the app's one moderator, or an empty list. One live config per app holds a role:
 second is a 409 `role_taken`, a deleted config frees it, and a test copy (tagged `draft_of`) may
 carry the role of the config it copies without being found by it. A save that leaves `role` out
 keeps the stored one, so a client that does not know the field cannot take it away. Configs the
-dashboard tagged `role: ai_moderator` before the field existed take the role, as
-`agent_moderator`, when the router migrates: the newest live one in each app (AI-1472).
+dashboard tagged `role: agent_moderator` before the field existed take the role when the router
+migrates: the newest live one in each app (AI-1472).
 
 ### An Android demo, the Android half of swift_demo
 
