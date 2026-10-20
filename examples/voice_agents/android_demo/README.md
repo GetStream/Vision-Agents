@@ -30,7 +30,8 @@ And run it on an emulator, then ask about an order in the Chat tab or tap talk i
 
 The emulator reaches your Mac's localhost as `10.0.2.2`, so it works as it stands. On a
 device, add `demo.routerUrl` and `demo.backendUrl` with your Mac's address on the network,
-for example `http://192.168.1.20:8080` and `http://192.168.1.20:8099`.
+for example `http://192.168.1.20:8080` and `http://192.168.1.20:8099`. From Android 17 either
+one is the local network, which the app asks for when it opens.
 
 The app builds against `sdks/kotlin` through an included build, so a change to the SDK shows
 up in the app without publishing it. Stream Chat 7.15.0 is on `https://stream-io-repo.com`
