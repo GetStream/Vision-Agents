@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -83,6 +85,35 @@ func (s *SpecSuite) TestThePromptSaysNoDayWithoutAZone() {
 	spec.SchedulingTools = true
 
 	s.NotContains(spec.prompt(), "Today is ")
+}
+
+// The values below were read off prompt() and clockLine() at cbd35d7cf, before the clock
+// line moved: a session without the clock line is told exactly what it was told then.
+func (s *SpecSuite) TestThePromptOfAnAgentWithoutTheClockLineIsUnchanged() {
+	spec := Spec{Navigating: true, Instructions: "Be brief.", ServerInstructions: "Keep links whole."}
+	want := agent.NavigatingInstructions + "\n\nBe brief.\n\nKeep links whole."
+
+	s.Equal(want, spec.prompt())
+	spec.SchedulingTools = true
+	s.Equal(want, spec.prompt(), "no zone, so no clock line")
+}
+
+func (s *SpecSuite) TestTheClockLineComesAfterTheInstructionsSoTheyStayTheCachedPrefix() {
+	spec := Spec{Instructions: "Be brief.", ServerInstructions: "Keep links whole.", Timezone: "Europe/Amsterdam"}
+	instructions := spec.prompt()
+	spec.SchedulingTools = true
+
+	prompt := spec.prompt()
+	s.Equal("Be brief.\n\nKeep links whole.", instructions)
+	s.True(strings.HasPrefix(prompt, instructions+"\n\nToday is "), prompt)
+	s.True(strings.HasSuffix(prompt, " for the user (Europe/Amsterdam)."), prompt)
+}
+
+func (s *SpecSuite) TestTheClockLineReadsTheUsersDay() {
+	spec := Spec{Timezone: "Europe/Amsterdam"}
+
+	s.Equal("Today is Wednesday, 21 October 2026 for the user (Europe/Amsterdam).",
+		spec.clockLine(time.Date(2026, 10, 20, 23, 30, 0, 0, time.UTC)))
 }
 
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {

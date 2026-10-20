@@ -446,6 +446,192 @@ func (s *ScheduledTasksSuite) TestTheAgentListsSnoozesAndCancelsItsTasks() {
 	s.Empty(s.tasksOf(user))
 }
 
+func (s *ScheduledTasksSuite) TestTheAgentCannotSnoozeATaskSoonerThanAQuarterHour() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.ranResult(watching)
+	s.await(watching, "responded")
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + tasks[0].ID + `","action":"snooze","in":"PT1M"}`})
+	s.say(user, opened.Id, "do it again in a minute")
+	s.Contains(s.ranResult(watching), `"error":"interval_too_short"`)
+	s.Equal(*tasks[0].NextRunAt, *s.taskReloaded(tasks[0]).NextRunAt)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotRescheduleATaskSoonerThanAQuarterHour() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","in":"PT1M"}`})
+	s.say(user, opened.Id, "make it a minute from now")
+	s.Contains(s.ranResult(watching), `"error":"interval_too_short"`)
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id, nil, &read))
+	s.Equal(created.NextRunAt, read.NextRunAt)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentMovesATaskPastItsNextRunUnderAQuarterHourButNotBeforeIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.In = pointerTo("PT5M")
+	created := s.createTask(user, body)
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	update := func(arguments string) string {
+		s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+			Arguments: `{"id":"` + created.Id + `",` + arguments + `}`})
+		s.say(user, opened.Id, "change it")
+		result := s.ranResult(watching)
+		s.await(watching, "responded")
+		return result
+	}
+
+	s.Contains(update(`"action":"snooze","in":"PT2M"`), `"error":"interval_too_short"`)
+	s.Contains(update(`"action":"reschedule","in":"PT2M"`), `"error":"interval_too_short"`)
+
+	s.NotContains(update(`"action":"snooze","in":"PT10M"`), `"error"`)
+	s.WithinDuration(time.Now().Add(10*time.Minute), *s.taskReloaded(store.ScheduledTask{ID: created.Id}).NextRunAt, time.Minute)
+	s.NotContains(update(`"action":"reschedule","in":"PT12M"`), `"error"`)
+	s.WithinDuration(time.Now().Add(12*time.Minute), *s.taskReloaded(store.ScheduledTask{ID: created.Id}).NextRunAt, time.Minute)
+
+	// A reschedule that names no time re-parses the task's own, and moves no run.
+	s.NotContains(update(`"action":"reschedule","title":"Walk"`), `"error"`)
+	s.Equal("Walk", s.taskReloaded(store.ScheduledTask{ID: created.Id}).Title)
+}
+
+func (s *ScheduledTasksSuite) seedListedTask(config string, user *testClient, state string) {
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
+		StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+}
+
+func (s *ScheduledTasksSuite) listedTasks(config string, user *testClient) (int, string) {
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "list_scheduled_tasks", Arguments: `{}`})
+	s.say(user, opened.Id, "what have I got coming up")
+	var listed struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
+		More string `json:"more"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(s.ranResult(watching)), &listed))
+	return len(listed.Tasks), listed.More
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentListsEveryRunningTaskWhenTheLimitIsAboveTheDefault() {
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Scheduling.MaxTasksPerUser = pointerTo(scheduling.MaxActivePerUser + 5)
+	})
+	user := s.data.createUser()
+	for range scheduling.MaxActivePerUser + 5 {
+		s.seedListedTask(config, user, store.ScheduledTaskActive)
+	}
+
+	listed, more := s.listedTasks(config, user)
+	s.Equal(scheduling.MaxActivePerUser+5, listed)
+	s.Empty(more)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentListsAtLeastTheDefaultWhenTheLimitIsBelowIt() {
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Scheduling.MaxTasksPerUser = pointerTo(3)
+	})
+	user := s.data.createUser()
+	for range scheduling.MaxActivePerUser + 1 {
+		s.seedListedTask(config, user, store.ScheduledTaskCompleted)
+	}
+
+	listed, more := s.listedTasks(config, user)
+	s.Equal(scheduling.MaxActivePerUser, listed)
+	s.NotEmpty(more)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotRewriteWhatABackendToldItToDo() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	theirs := s.createTask(user, taskRequest(config))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + theirs.Id + `","action":"reschedule","instructions":"Tell them a joke instead."}`})
+	s.say(user, opened.Id, "make the stretch reminder a joke")
+	s.Contains(s.ranResult(watching), `"error":"server_side_only"`)
+	s.await(watching, "responded")
+	stored, err := s.store.ScheduledTask(context.Background(), s.customerID(), theirs.Id)
+	s.Require().NoError(err)
+	s.Equal("Remind them to stretch.", stored.Instructions)
+
+	// A task the agent made itself is still its own to rewrite.
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Water","instructions":"Remind them to drink water.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	s.say(user, opened.Id, "remind me to drink water in two hours")
+	var made struct {
+		ID string `json:"id"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(s.ranResult(watching)), &made))
+	s.await(watching, "responded")
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + made.ID + `","action":"reschedule","instructions":"Remind them to drink two glasses."}`})
+	s.say(user, opened.Id, "make it two glasses")
+	s.NotContains(s.ranResult(watching), `"error"`)
+	stored, err = s.store.ScheduledTask(context.Background(), s.customerID(), made.ID)
+	s.Require().NoError(err)
+	s.Equal("Remind them to drink two glasses.", stored.Instructions)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentListsRunningTasksFirstAndSaysWhenThereAreMore() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	seed := func(state string) string {
+		task := store.ScheduledTask{
+			CustomerID: s.customerID(), ConfigID: config, UserID: user.userID,
+			CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
+			StartLocal: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Timezone: "Europe/Amsterdam", State: state,
+		}
+		s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+		return task.ID
+	}
+	// The running ones are the oldest, so newest first alone would bury them.
+	running := []string{seed(store.ScheduledTaskActive), seed(store.ScheduledTaskPaused)}
+	for range scheduling.MaxActivePerUser {
+		seed(store.ScheduledTaskCompleted)
+	}
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "list_scheduled_tasks", Arguments: `{}`})
+	s.say(user, opened.Id, "what have I got coming up")
+	var listed struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
+		More string `json:"more"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(s.ranResult(watching)), &listed))
+	s.Require().Len(listed.Tasks, scheduling.MaxActivePerUser)
+	s.Equal(running, []string{listed.Tasks[0].ID, listed.Tasks[1].ID})
+	s.NotEmpty(listed.More)
+}
+
 func (s *ScheduledTasksSuite) TestAnotherConversationWithTheAgentSeesTheTaskAndAnotherUserDoesNot() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
@@ -956,6 +1142,76 @@ func (s *ScheduledTasksSuite) TestADeviceMayChangeTitleScheduleAndNextButNotInst
 	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
 	s.Require().NoError(err)
 	s.WithinDuration(before.Add(30*time.Minute), next, 2*time.Minute)
+}
+
+func (s *ScheduledTasksSuite) TestANextSoonerThanAQuarterHourIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+
+	status, answered := s.taskFailure(user, http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Next: &ScheduledTaskNext{In: pointerTo("PT1M")}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(scheduling.CodeIntervalTooShort, answered.Error.Code)
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path, nil, &read))
+	s.Equal(created.NextRunAt, read.NextRunAt)
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Next: &ScheduledTaskNext{In: pointerTo("PT15M")}}, &updated))
+	s.NotEqual(created.NextRunAt, updated.NextRunAt)
+}
+
+func (s *ScheduledTasksSuite) TestANextOrScheduleMovedUnderAQuarterHourIsRefusedOnlyWhenEarlierThanTheCurrentRun() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.In = pointerTo("PT3M")
+	created := s.createTask(user, body)
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	refuse := func(update UpdateScheduledTaskRequest) {
+		status, answered := s.taskFailure(user, http.MethodPatch, path, update)
+		s.Equal(http.StatusBadRequest, status)
+		s.Equal(scheduling.CodeIntervalTooShort, answered.Error.Code)
+		var read ScheduledTask
+		s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path, nil, &read))
+		s.Equal(created.NextRunAt, read.NextRunAt)
+	}
+
+	refuse(UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{In: pointerTo("PT1M")}})
+	refuse(UpdateScheduledTaskRequest{Next: &ScheduledTaskNext{In: pointerTo("PT2M")}})
+
+	// Later than the run due in three minutes, though under fifteen from now.
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Next: &ScheduledTaskNext{In: pointerTo("PT10M")}}, &updated))
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{In: pointerTo("PT12M")}}, &updated))
+	s.Require().NotNil(updated.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
+	s.Require().NoError(err)
+	s.WithinDuration(time.Now().Add(12*time.Minute), next, 2*time.Minute)
+}
+
+func (s *ScheduledTasksSuite) TestANextMovedWithTheScheduleIsCheckedAgainstTheRunBeforeTheUpdate() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.In = pointerTo("PT5M")
+	created := s.createTask(user, body)
+
+	// Ten minutes is later than the run due in five, though earlier than the
+	// twenty the same update gives the schedule.
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{In: pointerTo("PT20M")},
+			Next: &ScheduledTaskNext{In: pointerTo("PT10M")}}, &updated))
+	s.Require().NotNil(updated.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *updated.NextRunAt)
+	s.Require().NoError(err)
+	s.WithinDuration(time.Now().Add(10*time.Minute), next, 2*time.Minute)
 }
 
 func (s *ScheduledTasksSuite) TestARepeatWrittenFromAPastDateStartsAtItsNextOccurrence() {

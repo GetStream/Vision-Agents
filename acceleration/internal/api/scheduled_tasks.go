@@ -354,8 +354,9 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		task.QuietHours = quiet
 	}
 	now := time.Now()
+	current := task.NextRunAt
 	if body.Schedule != nil {
-		if err := s.rescheduleTask(&task, *body.Schedule, now); err != nil {
+		if err := s.rescheduleTask(&task, *body.Schedule, current, now); err != nil {
 			return nil, err
 		}
 	}
@@ -373,6 +374,9 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		if !ok {
 			return nil, scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 				Message: "that time has passed; give a time in the future"})
+		}
+		if err := scheduling.CheckMove(next, current, now); err != nil {
+			return nil, scheduleFailure(err)
 		}
 		task.NextRunAt = &next
 		if task.RRule == "" {
@@ -434,7 +438,7 @@ func quietHoursOf(written *ScheduledTaskQuietHours) (*store.ScheduledTaskQuietHo
 
 // rescheduleTask replaces a task's schedule with the one written, keeping the
 // task's zone when the new one names none.
-func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTaskSchedule, now time.Time) error {
+func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTaskSchedule, current *time.Time, now time.Time) error {
 	zone := value(written.Timezone)
 	if zone == "" {
 		zone = task.Timezone
@@ -458,6 +462,9 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 		if !ok {
 			return scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 				Message: "that schedule has no occurrence left; its last one has passed"})
+		}
+		if err := scheduling.CheckMove(next, current, now); err != nil {
+			return scheduleFailure(err)
 		}
 		task.NextRunAt = &next
 	}
@@ -855,8 +862,8 @@ type CreateScheduledTaskRequest struct {
 type UpdateScheduledTaskRequest struct {
 	Title        *string                  `json:"title,omitempty" doc:"A short name the user will recognise." maxLength:"80"`
 	Instructions *string                  `json:"instructions,omitempty" doc:"What the agent is told when the task comes due. Server-side only: a device sending it is refused." maxLength:"2000"`
-	Schedule     *ScheduledTaskSchedule   `json:"schedule,omitempty" doc:"Replaces the whole schedule, except a timezone left out of it keeps the task's."`
-	Next         *ScheduledTaskNext       `json:"next,omitempty" doc:"Moves the next occurrence only: a snooze, or a skip when it lands past the following one."`
+	Schedule     *ScheduledTaskSchedule   `json:"schedule,omitempty" doc:"Replaces the whole schedule, except a timezone left out of it keeps the task's. Its first occurrence follows the rule of next: 15 minutes from now at the soonest, unless it lands no earlier than the current next occurrence."`
+	Next         *ScheduledTaskNext       `json:"next,omitempty" doc:"Moves the next occurrence only: a snooze, or a skip when it lands past the following one. It lands 15 minutes from now at the soonest, unless it lands no earlier than the current next occurrence; sooner is refused with interval_too_short."`
 	DeliverTo    *[]string                `json:"deliver_to,omitempty" doc:"Replaces where an occurrence is delivered, in order. An empty list is the conversation alone."`
 	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"Replaces the part of the day an occurrence is held through. Both boundaries empty clears the hold."`
 }

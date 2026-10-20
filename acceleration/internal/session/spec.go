@@ -766,8 +766,6 @@ func (s Spec) LLMOverwrites() options.LLM {
 	}
 }
 
-// prompt is what the agent is told to be. An agent that placed the call is told how to get
-// through whatever answers, ahead of whatever it was told to do once it has.
 // clockLine is the one line that tells the agent what day it is for the user,
 // accurate to the day so the provider's prompt cache survives: a session that
 // runs past midnight keeps yesterday's date until its next tool result, which
@@ -783,21 +781,25 @@ func (s Spec) clockLine(now time.Time) string {
 	return "Today is " + now.In(loc).Format("Monday, 2 January 2006") + " for the user (" + s.Timezone + ")."
 }
 
+// prompt is what the agent is told to be. An agent that placed the call is told how to get
+// through whatever answers, ahead of whatever it was told to do once it has. The clock line
+// comes last: it differs by zone and day, and the provider caches a prompt by its prefix, so
+// the sessions of one config keep sharing what comes before it.
 func (s Spec) prompt() string {
 	var parts []string
 	if s.Navigating {
 		parts = append(parts, agent.NavigatingInstructions)
-	}
-	if s.SchedulingTools {
-		if line := s.clockLine(time.Now()); line != "" {
-			parts = append(parts, line)
-		}
 	}
 	if s.Instructions != "" {
 		parts = append(parts, s.Instructions)
 	}
 	if s.ServerInstructions != "" {
 		parts = append(parts, s.ServerInstructions)
+	}
+	if s.SchedulingTools {
+		if line := s.clockLine(time.Now()); line != "" {
+			parts = append(parts, line)
+		}
 	}
 	return strings.Join(parts, "\n\n")
 }

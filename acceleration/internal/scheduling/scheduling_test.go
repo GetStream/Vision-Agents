@@ -216,6 +216,43 @@ func TestFromStoredRoundTrips(t *testing.T) {
 	require.Equal(t, schedule.Upcoming(monday, 3), rebuilt.Upcoming(monday, 3))
 }
 
+func TestAMoveLandsNoSoonerThanMinMoveUnlessItKeepsTheCurrentRun(t *testing.T) {
+	// A clock read mid-second, as a request's is: in PT15M still passes.
+	now := monday.Add(500 * time.Millisecond)
+	dueIn := func(d time.Duration) *time.Time {
+		due := now.Add(d)
+		return &due
+	}
+	for name, test := range map[string]struct {
+		in      string
+		current *time.Time
+		refused bool
+	}{
+		"nothing pending, a minute":        {in: "PT1M", refused: true},
+		"nothing pending, 14 minutes":      {in: "PT14M", refused: true},
+		"nothing pending, 15 minutes":      {in: "PT15M"},
+		"nothing pending, two hours":       {in: "PT2H"},
+		"earlier than the run, under 15":   {in: "PT1M", current: dueIn(3 * time.Minute), refused: true},
+		"later than the run, under 15":     {in: "PT10M", current: dueIn(3 * time.Minute)},
+		"at the run":                       {in: "PT3M", current: dueIn(3*time.Minute - 500*time.Millisecond)},
+		"a run already due does not count": {in: "PT1M", current: dueIn(-time.Minute), refused: true},
+		"earlier than a far run, over 15":  {in: "PT20M", current: dueIn(2 * time.Hour)},
+		"earlier than a far run, under 15": {in: "PT14M", current: dueIn(2 * time.Hour), refused: true},
+	} {
+		schedule, err := Parse(Input{In: test.in, Timezone: "UTC"}, now)
+		require.NoError(t, err, name)
+		next, _ := schedule.First()
+		err = CheckMove(next, test.current, now)
+		if !test.refused {
+			require.NoError(t, err, name)
+			continue
+		}
+		failure, ok := err.(*Error)
+		require.True(t, ok, "%s: refusal is not a scheduling.Error: %v", name, err)
+		require.Equal(t, CodeIntervalTooShort, failure.Code, name)
+	}
+}
+
 // Europe/Berlin falls back on Sun 25 Oct 2026 at 01:00 UTC: 03:00 CEST becomes
 // 02:00 CET, so 02:00 to 03:00 reads twice, first at +02:00, then at +01:00.
 
