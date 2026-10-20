@@ -41,9 +41,13 @@ CREATE TABLE scheduled_tasks (
     next_run_at TIMESTAMPTZ,
     state TEXT NOT NULL DEFAULT 'active',
     -- channels is where an occurrence is delivered, in order, as JSON list of
-    -- channel names. Phase 1 knows only "conversation".
+    -- channel names (conversation, sms, whatsapp, imessage, phone).
     channels JSONB NOT NULL DEFAULT '["conversation"]',
     custom JSONB NOT NULL DEFAULT '{}',
+    -- quiet_hours is the span of the user's local day an occurrence is held
+    -- through rather than delivered into, as {start, end} in "22:00" form, read
+    -- in the task's own zone. Null is no hold.
+    quiet_hours JSONB,
     -- lease_until and claim_id are the worker's claim: claim_id fences a late
     -- finish from advancing a schedule somebody changed under it.
     lease_until TIMESTAMPTZ,
@@ -60,6 +64,10 @@ CREATE INDEX scheduled_tasks_due_idx ON scheduled_tasks (next_run_at)
 CREATE INDEX scheduled_tasks_user_idx ON scheduled_tasks (customer_id, user_id, created_at DESC, id DESC);
 CREATE INDEX scheduled_tasks_session_idx ON scheduled_tasks (customer_id, session_id)
     WHERE session_id <> '';
+-- Deleting a session deletes the tasks made in it as well as those that follow
+-- up in it (DeleteScheduledTasksForSession).
+CREATE INDEX scheduled_tasks_origin_session_idx ON scheduled_tasks (customer_id, origin_session_id)
+    WHERE origin_session_id <> '';
 
 CREATE TABLE scheduled_task_runs (
     id TEXT PRIMARY KEY,
@@ -77,6 +85,11 @@ CREATE TABLE scheduled_task_runs (
     session_id TEXT NOT NULL DEFAULT '',
     attempts INT NOT NULL DEFAULT 0,
     error TEXT,
+    -- postponed_until is when the hold on a run ends, recorded when the worker
+    -- holds the occurrence (quiet hours), so when the task is claimed again the
+    -- occurrence's age is counted from the hold's end and not from when it came
+    -- due: a reminder held overnight is delivered in the morning, not missed.
+    postponed_until TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -101,7 +114,23 @@ ALTER TABLE users ADD COLUMN timezone TEXT;
 -- there is, which is scheduling off.
 ALTER TABLE agent_configs ADD COLUMN scheduling JSONB NOT NULL DEFAULT '{}';
 
+-- from_address is who a delivered message came from. A line's deliveries
+-- were only ever its dedup record; with it, the last time a person wrote is
+-- readable, which is what WhatsApp's 24-hour window is counted from.
+ALTER TABLE channel_deliveries ADD COLUMN from_address TEXT NOT NULL DEFAULT '';
+-- LastChannelMessageAt reads the newest delivery from one address on one line.
+CREATE INDEX channel_deliveries_from_idx
+    ON channel_deliveries (account_id, from_address, received_at DESC);
+
+-- thread is where a message is sent to reach this person again: the chat,
+-- for iMessage, whose replies are posted to a conversation rather than to a
+-- person. Empty for the channels that reply to the address itself.
+ALTER TABLE channel_identities ADD COLUMN thread TEXT NOT NULL DEFAULT '';
+
 -- +goose Down
+ALTER TABLE channel_identities DROP COLUMN thread;
+DROP INDEX channel_deliveries_from_idx;
+ALTER TABLE channel_deliveries DROP COLUMN from_address;
 ALTER TABLE agent_configs DROP COLUMN scheduling;
 ALTER TABLE users DROP COLUMN timezone;
 DROP TABLE scheduled_task_runs;
