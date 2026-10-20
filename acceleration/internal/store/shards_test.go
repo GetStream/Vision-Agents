@@ -47,6 +47,37 @@ func (s *ShardedStoreSuite) TestARequestsLogIsInTheSharedDatabase() {
 	s.Zero(inShard)
 }
 
+// requestLogged is the log row a request the agent made writes, in a shard. Each test names its
+// own customer, since nothing clears the log between tests.
+func (s *ShardedStoreSuite) requestLogged(customer string, success bool, errorCode string) AgentLog {
+	s.Require().NoError(s.other.StartCall(s.ctx, &Call{ID: "call", CustomerID: customer, AgentID: "agent", ConfigID: "cfg", StartedAt: s.base}))
+	s.Require().NoError(s.other.RecordRequest(s.ctx, &Request{Modality: "llm", CustomerID: customer, AgentID: "agent", Provider: "openai", Model: "gpt",
+		StartedAt: s.base.Add(time.Second), InputTokens: 10, OutputTokens: 4, Success: success, ErrorCode: errorCode}))
+	logs, err := s.store.AgentLogs(s.ctx, LogFilter{CustomerID: customer, Limit: 10})
+	s.Require().NoError(err)
+	s.Require().Len(logs, 1)
+	logged, err := s.store.AgentLog(s.ctx, customer, logs[0].ID)
+	s.Require().NoError(err)
+	return *logged
+}
+
+func (s *ShardedStoreSuite) TestAFailedRequestIsLoggedAsAnError() {
+	logged := s.requestLogged("failed-log", false, "provider_error")
+
+	s.Equal("llm request failed", logged.Message)
+	s.Equal("error", logged.Severity)
+	s.Equal("provider_error", logged.Details["error_code"])
+}
+
+func (s *ShardedStoreSuite) TestARequestItsCallerCancelledIsLoggedAsNoError() {
+	logged := s.requestLogged("cancelled-log", false, ErrorCancelled)
+
+	s.Equal("llm request cancelled", logged.Message)
+	s.Equal("info", logged.Severity, "a superseded flow decision or a barge-in is routine")
+	s.Equal(ErrorCancelled, logged.Details["error_code"])
+	s.EqualValues(4, logged.Details["output_tokens"], "what it generated is still there")
+}
+
 func (s *ShardedStoreSuite) TestASessionCarriedOnInAnotherShardIsListedOnce() {
 	s.opened("chat", "app", s.base, func(session *AgentSession) { session.Title = "before" })
 	s.Require().NoError(s.store.CloseSession(s.ctx, "chat", s.base.Add(time.Minute)))

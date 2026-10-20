@@ -1,15 +1,20 @@
 package llmrouter
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -159,4 +164,108 @@ func TestWhatEndsAResponseDecidesHowItIsCounted(t *testing.T) {
 func TestOnlyAFirstTokenMakesALatency(t *testing.T) {
 	require.Zero(t, measuredLatency(llm.Response{}, 20), "headers alone are no first token")
 	require.Equal(t, 35.0, measuredLatency(llm.Response{TimeToFirstTokenMs: 15}, 35))
+}
+
+// loggedTiming is a line the session logged, read back from JSON.
+type loggedTiming struct {
+	Message   string `json:"msg"`
+	Success   bool   `json:"success"`
+	ErrorCode string `json:"error_code"`
+}
+
+// timingLogged is the one "model call timing" line among those logged.
+func timingLogged(t *testing.T, logs *bytes.Buffer) loggedTiming {
+	t.Helper()
+	var found []loggedTiming
+	for decoder := json.NewDecoder(logs); decoder.More(); {
+		var line loggedTiming
+		require.NoError(t, decoder.Decode(&line))
+		if line.Message == "model call timing" {
+			found = append(found, line)
+		}
+	}
+	require.Len(t, found, 1)
+	return found[0]
+}
+
+func TestAResponseIsTimedAsItEnded(t *testing.T) {
+	for name, test := range map[string]struct {
+		end       func(*testing.T, *llmtest.Script, *llm.Stream)
+		success   bool
+		errorCode string
+	}{
+		"run to its end": {func(_ *testing.T, script *llmtest.Script, _ *llm.Stream) { script.Done() }, true, ""},
+		// A superseded flow decision, a losing hedge and a barge-in all end this way.
+		"closed by its caller": {func(t *testing.T, _ *llmtest.Script, stream *llm.Stream) {
+			require.NoError(t, stream.Close())
+		}, false, routing.ErrorCancelled},
+		"failed by the provider": {func(_ *testing.T, script *llmtest.Script, _ *llm.Stream) {
+			script.Fail(errors.New("upstream reset"), "stream")
+		}, false, "provider_error"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			session, provider, sink := sinkSession(t)
+			var timings []llm.CallTiming
+			stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt(),
+				OnTiming: func(timing llm.CallTiming) { timings = append(timings, timing) }})
+			require.NoError(t, err)
+			provider.script(0).OutputText("half a sen")
+			provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 4})
+			require.True(t, stream.Next())
+			require.True(t, stream.Next())
+			test.end(t, provider.script(0), stream)
+			_ = drain(stream)
+
+			require.Len(t, timings, 1)
+			require.Equal(t, test.success, timings[0].Success)
+			require.Equal(t, test.errorCode, timings[0].ErrorCode)
+			row := sink.only(t)
+			require.Equal(t, row.Success, timings[0].Success, "the call is reported live as it is stored")
+			require.Equal(t, row.ErrorCode, timings[0].ErrorCode)
+			require.EqualValues(t, 10, timings[0].InputTokens, "what it read is reported however it ended")
+			require.EqualValues(t, 4, timings[0].OutputTokens)
+
+			logged := timingLogged(t, &logs)
+			require.Equal(t, test.success, logged.Success)
+			require.Equal(t, test.errorCode, logged.ErrorCode)
+		})
+	}
+}
+
+func TestARequestThatWasNeverAnsweredIsTimedAsItEnded(t *testing.T) {
+	for name, test := range map[string]struct {
+		trouble   func(*rig, context.CancelFunc)
+		errorCode string
+	}{
+		"refused by the provider": {func(r *rig, _ context.CancelFunc) { r.fail("alpha", errors.New("alpha is down")) }, "create_failed"},
+		"given up by its caller": {func(r *rig, hangUp context.CancelFunc) {
+			r.slow("alpha", time.Second)
+			time.AfterFunc(time.Millisecond, hangUp)
+		}, routing.ErrorCancelled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			synctest.Test(t, func(t *testing.T) {
+				r := newRig(t, 0, "alpha")
+				ctx, hangUp := context.WithCancel(context.Background())
+				defer hangUp()
+				test.trouble(r, hangUp)
+
+				_, err := r.session.Create(ctx, r.params())
+				require.Error(t, err)
+
+				require.Equal(t, map[string]string{"alpha": test.errorCode}, r.called())
+			})
+			logged := timingLogged(t, &logs)
+			require.False(t, logged.Success)
+			require.Equal(t, test.errorCode, logged.ErrorCode)
+		})
+	}
 }
