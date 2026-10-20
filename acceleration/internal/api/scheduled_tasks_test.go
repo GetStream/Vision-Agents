@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -1338,6 +1339,7 @@ func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSche
 	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path+"/runs", nil, &page))
 	s.Require().Len(page.Items, 1)
 	s.Equal(store.ScheduledTaskDeliveredConversation, page.Items[0].DeliveredTo)
+	s.Nil(page.Items[0].Error, "a run that landed lists no reason")
 	s.True(s.model().heard("Remind them to stretch."), "the model was never sent the instructions")
 
 	var read ScheduledTask
@@ -1758,8 +1760,156 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunFailed
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
 	s.Require().NotNil(runs[0].Error)
-	s.Contains(*runs[0].Error, "phone", "the run says the call is what could not be made")
+	s.Equal(scheduling.ReasonFailed, *runs[0].Error, "a device is told a short reason, not the vendor's words")
 	s.Equal(1, s.taskReloaded(task).ConsecutiveFailures)
+}
+
+func (s *ScheduledTasksSuite) TestARunByHandThatFailsListsItsReasonAndNotItsWords() {
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := s.openScheduling(user, config, nil)
+	created := s.taskOn(user, config, opened.Id, []string{"phone"})
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, path+"/run", nil, nil))
+
+	var page ScheduledTaskRunPage
+	s.Require().Eventually(func() bool {
+		s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path+"/runs", nil, &page))
+		return len(page.Items) == 1 && page.Items[0].State == store.ScheduledTaskRunFailed
+	}, 30*time.Second, 250*time.Millisecond, "the run by hand never finished failing")
+	s.Require().NotNil(page.Items[0].Error)
+	s.Equal(scheduling.ReasonFailed, *page.Items[0].Error)
+}
+
+func (s *ScheduledTasksSuite) TestATaskForSomebodyWhoNeverTextedHasNoNumberToRing() {
+	s.retryAtOnce()
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"phone"})
+	// Due before the worker starts, so its first look claims it.
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.Equal(scheduling.ReasonNoNumber, *s.failedRun(s.tasksOf(user)[0]).Error)
+}
+
+func (s *ScheduledTasksSuite) TestATaskForAnAgentWithoutANumberHasNoLineToRingFrom() {
+	s.retryAtOnce()
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: config, Kind: "sms", Address: s.writerNumber(), UserID: user.userID,
+	}))
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"phone"})
+	// Due before the worker starts, so its first look claims it.
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.Equal(scheduling.ReasonNoLine, *s.failedRun(s.tasksOf(user)[0]).Error)
+}
+
+func (s *ScheduledTasksSuite) TestACallTaskForSomebodyOnACallWithTheAgentIsUserOnCall() {
+	s.retryAtOnce()
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.StartVoice = pointerTo(true)
+	})
+	s.taskOn(user, config, opened.Id, []string{"phone"})
+	// Due before the worker starts, so its first look claims it.
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.Equal(scheduling.ReasonOnACall, *s.failedRun(s.tasksOf(user)[0]).Error)
+}
+
+func (s *ScheduledTasksSuite) TestACallThatOutlastsTheWaitIsUserOnCall() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, func(request *CreateSessionRequest) {
+		request.StartVoice = pointerTo(true)
+	})
+	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
+	s.Require().True(live)
+
+	err := waitOutCall(context.Background(), found, 0)
+	s.Equal(scheduling.ReasonOnACall, scheduling.ReasonOf(err), "%v", err)
+}
+
+func (s *ScheduledTasksSuite) TestACallNobodyPicksUpIsNotAnswered() {
+	window := scheduledPhoneWindow
+	scheduledPhoneWindow = 50 * time.Millisecond
+	s.T().Cleanup(func() { scheduledPhoneWindow = window })
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
+	s.Require().True(live)
+
+	err := s.router.holdCall(context.Background(), found)
+	s.Equal(scheduling.ReasonNotAnswered, scheduling.ReasonOf(err), "the ring ran out: %v", err)
+
+	scheduledPhoneWindow = time.Minute
+	held := make(chan error, 1)
+	go func() { held <- s.router.holdCall(context.Background(), found) }()
+	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
+	select {
+	case err := <-held:
+		s.Equal(scheduling.ReasonNotAnswered, scheduling.ReasonOf(err), "the call ended unanswered: %v", err)
+	case <-time.After(30 * time.Second):
+		s.Fail("the call that ended was still held")
+	}
+}
+
+// ownerOf is the owner the user's sessions are held under.
+func (s *ScheduledTasksSuite) ownerOf(user *testClient) session.Owner {
+	return scheduledDelivery{CustomerID: s.customerID(), UserID: user.userID, CallerKind: "authenticated"}.owner()
+}
+
+func (s *ScheduledTasksSuite) TestAReplyNeverWrittenIsNoReply() {
+	s.retryAtOnce()
+	window := scheduledReplyWindow
+	scheduledReplyWindow = time.Second
+	s.T().Cleanup(func() { scheduledReplyWindow = window })
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	opened := s.openScheduling(user, config, nil)
+	s.T().Cleanup(s.model().holdScheduled())
+	s.taskOn(user, config, opened.Id, []string{"whatsapp"})
+	// Due before the worker starts, so its first look claims it.
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.Equal(scheduling.ReasonNoReply, *s.failedRun(s.tasksOf(user)[0]).Error)
+	s.Empty(s.sink.to(writer))
+}
+
+func (s *ScheduledTasksSuite) TestAFailureOnEveryChannelIsListedUnderTheFirstChannelsReason() {
+	s.retryAtOnce()
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	// The person never wrote, so WhatsApp is out of its window; the call
+	// rings the same number and cannot be placed here.
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: config, Kind: "whatsapp", Address: writer, UserID: user.userID,
+	}))
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"whatsapp", "phone"})
+	// Due before the worker starts, so its first look claims it.
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.Equal(scheduling.ReasonUnreachable, *s.failedRun(s.tasksOf(user)[0]).Error)
 }
 
 // retryAtOnce has a failed occurrence tried again straight away, twice.
@@ -1802,7 +1952,7 @@ func (s *ScheduledTasksSuite) TestATaskOutsideWhatsAppsWindowRunsNoTurnForIt() {
 	s.makeDue(task)
 
 	run := s.failedRun(task)
-	s.Contains(*run.Error, "window")
+	s.Equal(scheduling.ReasonUnreachable, *run.Error)
 	s.Zero(s.model().turnsOn("<scheduled_task"), "no turn was paid for words WhatsApp would refuse")
 }
 
@@ -1823,7 +1973,7 @@ func (s *ScheduledTasksSuite) TestATaskForSomebodyWhoOptedOutRunsNoTurnForThem()
 	s.makeDue(task)
 
 	run := s.failedRun(task)
-	s.Contains(*run.Error, "opted out")
+	s.Equal(scheduling.ReasonUnreachable, *run.Error)
 	s.Zero(s.model().turnsOn("<scheduled_task"), "no turn was paid for words the gate would refuse")
 	s.Empty(s.sink.to(writer))
 }
@@ -1893,7 +2043,7 @@ func (s *ScheduledTasksSuite) TestAReplyThatFailedIsNotWaitedOnWhenTheOccurrence
 	s.runWorker()
 
 	run := s.failedRun(task)
-	s.Contains(*run.Error, "the reply to this occurrence was failed", "the retry read the failed reply back at once")
+	s.Equal(scheduling.ReasonReplyFailed, *run.Error, "the retry read the failed reply back at once")
 	s.Equal(1, s.model().turnsOn("<scheduled_task"), "the retry ran no second turn")
 	s.Empty(s.sink.to(writer))
 }
