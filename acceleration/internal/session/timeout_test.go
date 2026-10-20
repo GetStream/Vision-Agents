@@ -205,3 +205,21 @@ func (s *SessionSuite) TestTimeoutCallsOnAnEndedSessionDoNothing() {
 	case <-time.After(3 * testTimeout):
 	}
 }
+
+func (s *SessionSuite) TestATimeoutClearedDuringAVoiceChangeDoesNotEndTheSession() {
+	s.manages()
+	created := s.joins(Spec{})
+
+	// Stands in for StopVoice clearing the timeout while the timer that fired waits on it.
+	created.commandMu.Lock()
+	created.SetTimeout(0)
+	created.mu.Lock()
+	timer := created.timeout
+	created.mu.Unlock()
+	time.Sleep(testTimeout)
+	s.False(timer.Stop(), "the timer had not fired")
+	created.ClearTimeout()
+	created.commandMu.Unlock()
+
+	s.outlives(created)
+}

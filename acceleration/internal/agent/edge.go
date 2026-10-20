@@ -91,6 +91,7 @@ type Playout interface {
 // speaks, audio says nothing about who is listening.
 type Roster interface {
 	// Attendance reports who comes and goes, starting with whoever was already there when
-	// the edge joined. The channel closes when the edge leaves.
+	// the edge joined. The channel closes when the edge leaves. Those already in the call
+	// must be queued on it before Join returns.
 	Attendance() <-chan Attendance
 }

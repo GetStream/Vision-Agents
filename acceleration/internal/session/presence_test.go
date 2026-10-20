@@ -109,6 +109,25 @@ func (s *SessionSuite) TestAPhoneSessionEndsAfterTheLastPersonLeaves() {
 	s.True(s.edges[0].gone(), "the agent is still in the call")
 }
 
+func (s *SessionSuite) TestALeaveFromSomebodyNeverInTheCallDoesNotMoveTheHangup() {
+	s.manages()
+	created := s.rings(inbound(), caller)
+	events := s.watches(created)
+
+	s.call().leaves(caller)
+	s.saw(events, caller, false)
+	created.mu.Lock()
+	armed := created.timeoutArmed
+	created.mu.Unlock()
+
+	s.call().leaves(visitor)
+	s.saw(events, visitor, false)
+
+	created.mu.Lock()
+	defer created.mu.Unlock()
+	s.Equal(armed, created.timeoutArmed, "the stray leave touched the timeout")
+}
+
 func (s *SessionSuite) TestAPhoneCallWithAnotherPersonKeepsRunning() {
 	s.manages()
 	created := s.rings(inbound(), caller, visitor)

@@ -990,26 +990,26 @@ class TestAgent:
         agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
 
         async with agent.answer(
-            InboundCall(call_id="phone-1", called_number="+15125551234"),
+            InboundCall(call_id="phone-1", called_number="+15125550100"),
             wait_for_end=False,
         ):
             pass
 
         assert llm.joined is not None
-        assert llm.joined.phone == RemotePhone(number="+15125551234")
+        assert llm.joined.phone == RemotePhone(number="+15125550100")
 
     async def test_joining_an_inbound_call_tells_the_pipeline_which_number_rang(self):
         llm = DummyRemotePipeline()
         agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
 
         async with agent.join(
-            InboundCall(call_id="phone-1", called_number="+15125551234"),
+            InboundCall(call_id="phone-1", called_number="+15125550100"),
             wait_for_end=False,
         ):
             pass
 
         assert llm.joined is not None
-        assert llm.joined.phone == RemotePhone(number="+15125551234")
+        assert llm.joined.phone == RemotePhone(number="+15125550100")
 
     async def test_joining_a_call_that_is_not_a_phone_call_sends_no_phone(
         self, call: Call
@@ -1030,7 +1030,7 @@ class TestAgent:
         agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
 
         async with agent.answer(
-            InboundCall(call_id="phone-1", called_number="+15125551234"),
+            InboundCall(call_id="phone-1", called_number="+15125550100"),
             wait_for_end=False,
         ):
             pass

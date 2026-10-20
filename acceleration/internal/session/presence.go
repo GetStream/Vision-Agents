@@ -101,7 +101,7 @@ func (s *Session) observe(run *presence, event Event) {
 	}
 	switch reported := event.(type) {
 	case agent.ParticipantJoined:
-		if agents(spec.UserID, reported.Participant) {
+		if isAgent(spec.UserID, reported.Participant) {
 			return
 		}
 		run.people[reported.Participant.ID] = struct{}{}
@@ -112,7 +112,7 @@ func (s *Session) observe(run *presence, event Event) {
 			s.ClearTimeout()
 		}
 	case agent.ParticipantLeft:
-		if agents(spec.UserID, reported.Participant) {
+		if _, ok := run.people[reported.Participant.ID]; !ok {
 			return
 		}
 		delete(run.people, reported.Participant.ID)
@@ -141,8 +141,8 @@ func (s *Session) observe(run *presence, event Event) {
 	}
 }
 
-// agents reports whether a participant is the agent itself under another user, such as
+// isAgent reports whether a participant is the agent itself under another user, such as
 // the "-video" one a Python agent with video processors joins: they are nobody to talk to.
-func agents(agentUserID string, p stt.Participant) bool {
+func isAgent(agentUserID string, p stt.Participant) bool {
 	return p.UserID == agentUserID || strings.HasPrefix(p.UserID, agentUserID+"-")
 }

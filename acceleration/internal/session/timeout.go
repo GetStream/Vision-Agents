@@ -35,17 +35,21 @@ func (s *Session) stopTimeout() {
 }
 
 // timedOut ends the session, unless the timer that fired was moved, cleared or stopped by
-// the session closing in the meantime. The ending is called holding no lock: it closes the
-// session, which takes s.mu.
+// the session closing in the meantime. It waits out a voice start or stop under way, which
+// may clear the timeout. The ending is called holding no lock: it closes the session, which
+// takes commandMu and s.mu.
 func (s *Session) timedOut(armed uint64) {
+	s.commandMu.Lock()
 	s.mu.Lock()
 	if s.closing || armed != s.timeoutArmed {
 		s.mu.Unlock()
+		s.commandMu.Unlock()
 		return
 	}
 	s.timeout = nil
 	end := s.end
 	s.mu.Unlock()
+	s.commandMu.Unlock()
 	if end != nil {
 		end()
 	}

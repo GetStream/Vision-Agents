@@ -178,8 +178,8 @@ type Session struct {
 	state         State
 	modality      string
 	// timeout is the timer that ends the session (SetTimeout), nil when it has none, and
-	// timeoutArmed counts the timers set, so one that was moved or cleared while it was
-	// firing does not end the session.
+	// timeoutArmed changes whenever the timeout is set, cleared or stopped by closing, so one
+	// that was moved or cleared while it was firing does not end the session.
 	timeout      *time.Timer
 	timeoutArmed uint64
 	// closing is set once close has begun, after which the timeout stays as it is: the
