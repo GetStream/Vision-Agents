@@ -41,8 +41,8 @@ func ReportUse(ctx context.Context, logger *slog.Logger, path string, args ...an
 	hub.CaptureEvent(event)
 }
 
-// maxTagValue is the longest tag value Sentry keeps, in characters; it drops a tag whose
-// value is longer (https://docs.sentry.io/platforms/go/enriching-events/tags/).
+// maxTagValue is the longest tag value Sentry keeps, in characters; it keeps at most this many
+// of a longer one (https://docs.sentry.io/platforms/go/enriching-events/tags/).
 const maxTagValue = 200
 
 func tagValue(v string) string {

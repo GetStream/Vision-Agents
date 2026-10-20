@@ -79,13 +79,13 @@ func (s *ReportUseSuite) TestAUseWithNoViaIsAnIssueOfItsPathAlone() {
 }
 
 func (s *ReportUseSuite) TestATagValueOverTheLimitIsCutToIt() {
-	long := strings.Repeat("é", maxTagValue+50)
+	long := strings.Repeat("é", 250)
 
 	ReportUse(s.request(), s.logger, PathSessionTools, "plugin", []string{long})
 
 	s.Require().Len(s.transport.Events(), 1)
 	tag := s.transport.Events()[0].Tags["plugin"]
-	s.Equal(maxTagValue, len([]rune(tag)))
+	s.Equal(200, len([]rune(tag)))
 	s.Equal("[", tag[:1])
 }
 
