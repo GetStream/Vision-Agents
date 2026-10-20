@@ -2081,7 +2081,12 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 // A line that cannot be written is not worth failing the turn over: the caller hears
 // nothing, which is what they would have heard anyway.
 func (a *Agent) checkIn(participant stt.Participant, purpose string) {
-	a.logHeard("checkin", participant.ID, "purpose", purpose)
+	if participant.ID == "" {
+		// Nobody has been heard in words yet, so the line is for everyone who was heard.
+		a.logHeardFromEveryone("checkin", "purpose", purpose)
+	} else {
+		a.logHeard("checkin", participant.ID, "purpose", purpose)
+	}
 	a.mu.Lock()
 	if a.composing || a.tts == nil {
 		a.mu.Unlock()

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -191,4 +193,62 @@ func (s *AgentSuite) TestCountingWhatIsHeardChangesNothingTheCallerHearsOrIsAnsw
 		{Role: llm.User, Content: "book a table"},
 		{Role: llm.Assistant, Content: "Hello there. How are you?"},
 	}, s.agent.History())
+}
+
+func (s *AgentSuite) TestATurnIsReportedForItsOwnCallerWhenSomebodyElseSpokeLast() {
+	s.joinHeard()
+	alice, bob := stt.Participant{ID: "alice"}, stt.Participant{ID: "bob"}
+	s.speakFor(alice, 2)
+	s.speakFor(bob, 1)
+
+	s.says(alice, "book a table")
+	s.mutters(bob, "and")
+	s.eventually(func() bool { return s.agent.heardFrom("bob").partials.Load() == 1 },
+		"bob's words never arrived")
+	s.Equal("bob", s.agent.floor().LastParticipant.ID)
+
+	line := s.heardAt("turn", "alice")
+	s.Equal(float64(2), line["frames"], "alice's frames, not bob's")
+	for _, record := range s.logs.records(heardLine) {
+		s.NotEqual("bob", record["participant"], "bob's turn never settled")
+	}
+}
+
+func (s *AgentSuite) TestACheckInBeforeAnyWordsSaysWhatWasHeardFromEveryone() {
+	s.joinHeard()
+	alice, bob := stt.Participant{ID: "alice"}, stt.Participant{ID: "bob"}
+	s.speakFor(alice, 3)
+	s.speakFor(bob, 1)
+
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+
+	line := s.heardAt("checkin", "alice")
+	s.Equal(idlePurpose, line["purpose"])
+	s.Equal(float64(3), line["frames"])
+	s.Equal(float64(1), s.heardAt("checkin", "bob")["frames"])
+	for _, record := range s.logs.records(heardLine) {
+		s.NotEqual("", record["participant"], "nobody is not who was heard")
+	}
+}
+
+func (s *AgentSuite) TestAPartialAloneCountsAsWordsHeardAtACheckIn() {
+	s.joinHeard()
+	alice := stt.Participant{ID: "alice"}
+	s.speakFor(alice, 1)
+
+	s.mutters(alice, "book")
+	s.eventually(func() bool { return s.agent.heardFrom("alice").partials.Load() == 1 },
+		"the partial never arrived")
+	s.agent.checkIn(alice, idlePurpose)
+
+	line := s.heardAt("checkin", "alice")
+	s.Equal(float64(0), line["finals"])
+	s.GreaterOrEqual(line["since_words_ms"], float64(0), "a partial is words heard")
+}
+
+func (s *AgentSuite) TestHowLongAgoIsInMilliseconds() {
+	s.Equal(int64(-1), sinceMs(0), "never")
+	ago := sinceMs(time.Now().Add(-1500 * time.Millisecond).UnixNano())
+	s.GreaterOrEqual(ago, int64(1500))
+	s.Less(ago, int64(1900))
 }

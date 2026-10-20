@@ -83,12 +83,12 @@ func (a *Agent) logHeard(moment, participantID string, extra ...any) {
 }
 
 // logHeardFromEveryone reports every participant heard from, in a stable order.
-func (a *Agent) logHeardFromEveryone(moment string) {
+func (a *Agent) logHeardFromEveryone(moment string, extra ...any) {
 	a.mu.Lock()
 	participants := slices.Sorted(maps.Keys(a.hearings))
 	a.mu.Unlock()
 	for _, participant := range participants {
-		a.logHeard(moment, participant)
+		a.logHeard(moment, participant, extra...)
 	}
 }
 
