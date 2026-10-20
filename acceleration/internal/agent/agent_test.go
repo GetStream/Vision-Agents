@@ -208,6 +208,8 @@ type stubLLM struct {
 	callsOn int
 	// senders are who each request was asked in the name of, in the order asked.
 	senders []routing.Caller
+	// scheduled is whether each request was asked as a turn a scheduled task fired.
+	scheduled []bool
 
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can interrupt while Create has not come back.
@@ -251,6 +253,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.asked = append(s.asked, params)
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
+	s.scheduled = append(s.scheduled, routing.ScheduledTurn(ctx))
 	hold, completion, refuses := s.holdCreate, s.holdCompletion, s.refuses
 	s.mu.Unlock()
 
@@ -384,6 +387,13 @@ func (s *stubLLM) sentBy() []routing.Caller {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]routing.Caller(nil), s.senders...)
+}
+
+// askedScheduled is whether each request was asked as a turn a scheduled task fired.
+func (s *stubLLM) askedScheduled() []bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]bool(nil), s.scheduled...)
 }
 
 func (s *stubLLM) requests() []llm.ResponseParams {
@@ -2193,6 +2203,28 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the answer coming back never started a turn")
 	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
+}
+
+func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {
+	// A scheduled turn is the customer's spend, decided where the model is asked, so the
+	// mark has to reach it, the reply that finishes the turn included, and the next turn
+	// somebody sends is not marked.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`, "Hello."}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is 15% of 84.20", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 && !s.agent.floor().Talking },
+		"the answer coming back never finished the turn")
+
+	_, err = s.agent.RespondTo(s.ctx, "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next turn was never asked")
+	s.Equal([]bool{true, true, false}, s.model.askedScheduled())
 }
 
 func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {

@@ -605,6 +605,77 @@ func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
 	s.Empty(s.tasksOf(user), "the deleted conversation's tasks went with it")
 }
 
+func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
+	// The user agreed to the task once, not to each time it runs: the turn it
+	// fires in their own conversation is the customer's spend, and the turn
+	// they type next is theirs again.
+	s.capTheDay(2)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Llm = pointerTo("counted/counted-model")
+	})
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, nil)
+	s.makeDue(s.tasksOf(user)[0])
+	s.runWorker()
+
+	s.delivered(s.tasksOf(user)[0])
+	s.awaitAnswers(1)
+	s.Equal("2", s.leftOfTheDay(user), "the scheduled turn spent none of the user's day")
+
+	s.respondAs(user, opened.Id, "and what else")
+	s.awaitAnswers(2)
+	s.Equal("1", s.leftOfTheDay(user), "the user's own turn after it is counted on their day")
+}
+
+func (s *ScheduledTasksSuite) TestAUsersOwnTurnInTheirConversationIsCountedOnTheirDay() {
+	// Unchanged by scheduling being on: what the user types is theirs.
+	s.capTheDay(2)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Llm = pointerTo("counted/counted-model")
+	})
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+
+	s.respondAs(user, opened.Id, "how much does a call cost")
+	s.awaitAnswers(1)
+	s.Equal("1", s.leftOfTheDay(user))
+}
+
+// capTheDay sets, through the app's own policy, the messages one of its users
+// may ask for in a day.
+func (s *ScheduledTasksSuite) capTheDay(messages int64) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/app",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": messages}}, nil))
+}
+
+// leftOfTheDay is what is left of the user's day, as a session they open is
+// told.
+func (s *ScheduledTasksSuite) leftOfTheDay(user *testClient) string {
+	response := user.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	return response.Header.Get("X-Quota-Remaining")
+}
+
+// respondAs has the user type text into their conversation with their own
+// token.
+func (s *ScheduledTasksSuite) respondAs(user *testClient, id, text string) {
+	status, failure := user.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/responses",
+		CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusAccepted, status, failure)
+}
+
+// awaitAnswers waits until the app's answers have all been recorded. A day is
+// debited just before an answer's request row is, so a row means its debit,
+// if there was going to be one, has landed.
+func (s *ScheduledTasksSuite) awaitAnswers(answers int) {
+	s.Require().Eventually(func() bool {
+		var rows []store.Request
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID()).Scan(s.T().Context())
+		return err == nil && len(rows) >= answers
+	}, settleFor, 50*time.Millisecond, "%d answers were never recorded", answers)
+}
+
 // createTask has the backend schedule a task for the user, as a customer's
 // own system does.
 func (s *ScheduledTasksSuite) createTask(user *testClient, body CreateScheduledTaskRequest) ScheduledTask {
