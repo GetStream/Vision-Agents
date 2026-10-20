@@ -139,6 +139,25 @@ func (s *ConcurrencySuite) TestANonCancellableCallInterruptedWhileWaitingIsNotSe
 	s.Equal(store.InvocationClientTimeout, s.rowOf(primary, "held").ErrorType)
 }
 
+// TestANonCancellableCallGivesItsSlotBack: a call left running past its turn frees its slot
+// once it is answered, so the next call on the connection is sent.
+func (s *ConcurrencySuite) TestANonCancellableCallGivesItsSlotBack() {
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	no := false
+	held := s.fixed("held", primary, "whoami")
+	held.Policy = &store.BindingPolicy{Cancellable: &no}
+	held.TimeoutMs = 300
+	d := s.attachAll(held)
+
+	first, err := s.call(d, "held__whoami", "{}")
+	s.Require().NoError(err)
+	next, err := s.call(d, "held__whoami", "{}")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"primary", "primary"}, []string{first, next})
+}
+
 // TestACallThatFailsGivesItsSlotBack: a call the timeout cut off frees its slot, so the call
 // waiting behind it is sent rather than held to its own timeout.
 func (s *ConcurrencySuite) TestACallThatFailsGivesItsSlotBack() {
