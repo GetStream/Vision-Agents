@@ -206,8 +206,18 @@ func (s *AgentSuite) TestATurnIsReportedForItsOwnCallerWhenSomebodyElseSpokeLast
 	s.eventually(func() bool { return s.agent.floor().LastParticipant.ID == "bob" },
 		"bob's words never arrived")
 
-	line := s.heardAt("turn", "alice")
-	s.Equal(float64(2), line["frames"], "alice's frames, not bob's")
+	var first map[string]any
+	s.eventually(func() bool {
+		for _, record := range s.logs.records(heardLine) {
+			if record["moment"] == "turn" {
+				first = record
+				return true
+			}
+		}
+		return false
+	}, "no turn settled")
+	s.Equal("alice", first["participant"], "the first turn to settle is alice's, though bob spoke last")
+	s.Equal(float64(2), first["frames"], "alice's frames, not bob's")
 }
 
 func (s *AgentSuite) TestACheckInBeforeAnyWordsSaysWhatWasHeardFromEveryone() {
