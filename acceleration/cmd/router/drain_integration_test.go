@@ -40,7 +40,7 @@ func (s *DrainSuite) SetupSuite() {
 	settings.Postgres.DSN = testenv.Database(dsn, "drain")
 	db, err := openStore(s.ctx, settings)
 	s.Require().NoError(err)
-	s.T().Cleanup(db.Close)
+	s.T().Cleanup(func() { db.Close() })
 	s.db = db
 }
 
