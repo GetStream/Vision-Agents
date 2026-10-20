@@ -1390,10 +1390,10 @@ func stopServing(s stopping) error {
 		case <-ticker.C:
 			continue
 		case <-again:
-			s.logger.Info("told again to stop, ending the sessions still running", "sessions", held)
+			s.logger.Info("told again to stop, ending the sessions still running", "held", held)
 		case <-timeout.C:
 			s.logger.Warn("the drain ran out, ending the sessions still running",
-				"sessions", held, "drain", s.drain, "setting", "shutdown.drain")
+				"held", held, "drain", s.drain, "setting", "shutdown.drain")
 		}
 		break
 	}

@@ -230,8 +230,11 @@ func (s *SchedulerSuite) TestARecurringTaskSkipsOccurrencesOlderThanAnHour() {
 		return deliver.count() == 1
 	}, 10*time.Second, 10*time.Millisecond)
 	s.Equal(latest, deliver.calls[0].Run.ScheduledFor)
-	runs := s.runs(task)
-	s.Require().Len(runs, 2)
+	var runs []store.ScheduledTaskRun
+	s.Require().Eventually(func() bool {
+		runs = s.runs(task)
+		return len(runs) == 2 && runs[0].State != store.ScheduledTaskRunRunning && runs[1].State != store.ScheduledTaskRunRunning
+	}, 10*time.Second, 10*time.Millisecond)
 	states := []string{runs[0].State, runs[1].State}
 	s.Contains(states, store.ScheduledTaskRunMissed)
 	s.Contains(states, store.ScheduledTaskRunDelivered)
@@ -379,6 +382,9 @@ func (s *SchedulerSuite) TestPausingATaskStopsItsDeliveryInFlight() {
 	attempts, _ := deliver.state()
 	s.Equal(1, attempts, "a stopped delivery is not tried again")
 	s.Equal(store.ScheduledTaskPaused, s.read(task).State, "the pause decides, not the worker")
+	for _, run := range s.runs(task) {
+		s.NotEqual(store.ScheduledTaskRunFailed, run.State, "a lost claim leaves the run alone")
+	}
 }
 
 func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
@@ -401,6 +407,9 @@ func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
 	read := s.read(task)
 	s.Equal(store.ScheduledTaskActive, read.State)
 	s.Equal(0, read.ConsecutiveFailures, "a lost claim is not a failure")
+	for _, run := range s.runs(task) {
+		s.NotEqual(store.ScheduledTaskRunFailed, run.State, "a lost claim leaves the run alone")
+	}
 }
 
 func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {
