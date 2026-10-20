@@ -671,6 +671,22 @@ func (s *ScheduledTasksSuite) TestATaskIsRefusedInWordsWhenNoZoneIsKnown() {
 	s.Empty(s.tasksOf(user))
 }
 
+func (s *ScheduledTasksSuite) TestTheAgentIsToldWhichRepeatsAreSupported() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","at":"2027-01-04T09:00",` +
+			`"repeat":"FREQ=YEARLY;BYDAY=1MO","timezone":"Europe/Amsterdam"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch on the first Monday of every year")
+
+	result := s.ranResult(watching)
+	s.Contains(result, `"error":"invalid_repeat"`)
+	s.Contains(result, "FREQ=YEARLY alone, on the start's date")
+	s.Empty(s.tasksOf(user))
+}
+
 func (s *ScheduledTasksSuite) TestTheAgentIsToldWhenTheUserHasTooManyTasks() {
 	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
 		request.Scheduling.MaxTasksPerUser = pointerTo(1)
@@ -1076,6 +1092,47 @@ func (s *ScheduledTasksSuite) TestBadSchedulesAreRefusedWithTheirCodes() {
 		})
 	}
 	s.Empty(s.tasksOf(user))
+}
+
+func (s *ScheduledTasksSuite) TestARepeatItsDescriptionWouldMisstateIsRefused() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule = ScheduledTaskSchedule{At: pointerTo("2026-01-05T09:00:00"), Repeat: pointerTo("FREQ=DAILY;BYDAY=MO,WE"),
+		Timezone: pointerTo("Europe/Amsterdam")}
+	status, answered := s.taskFailure(s.serverClient.actingFor(user), http.MethodPost, "/v1/agents/scheduled-tasks", body)
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(scheduling.CodeInvalidRepeat, answered.Error.Code)
+	s.Contains(answered.Error.Message, "supported: FREQ=DAILY; FREQ=WEEKLY, alone or with BYDAY=MO,WE,FR")
+	s.Empty(s.tasksOf(user))
+
+	body.Schedule.Repeat = pointerTo("FREQ=WEEKLY;BYDAY=MO,WE")
+	created := s.createTask(user, body)
+	s.Equal("Weekly on Mon, Wed at 09:00 (Europe/Amsterdam)", created.Schedule.Description)
+
+	status, answered = s.taskFailure(user, http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{At: pointerTo("2026-01-05T09:00:00"),
+			Repeat: pointerTo("FREQ=YEARLY;BYDAY=1MO")}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(scheduling.CodeInvalidRepeat, answered.Error.Code)
+	s.Equal("FREQ=WEEKLY;BYDAY=MO,WE", s.tasksOf(user)[0].RRule, "a refused change leaves the task as it was")
+}
+
+func (s *ScheduledTasksSuite) TestATaskStoredWithARepeatNowRefusedStillReadsBack() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule = ScheduledTaskSchedule{At: pointerTo("2026-01-05T09:00:00"), Repeat: pointerTo("FREQ=WEEKLY;BYDAY=MO,WE"),
+		Timezone: pointerTo("Europe/Amsterdam")}
+	created := s.createTask(user, body)
+	task, err := s.store.ScheduledTask(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	task.RRule = "FREQ=DAILY;BYDAY=MO,WE"
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &task))
+
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id, nil, &read))
+	s.Equal("Daily at 09:00 (Europe/Amsterdam)", read.Schedule.Description, "read as the base read it")
 }
 
 func (s *ScheduledTasksSuite) TestTooManyTasksAnswersConflict() {
