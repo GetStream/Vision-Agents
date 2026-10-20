@@ -1993,7 +1993,7 @@ func schedulingOf(scheduling *AgentScheduling) store.AgentScheduling {
 	return store.AgentScheduling{
 		Enabled:         value(scheduling.Enabled),
 		MaxTasksPerUser: value(scheduling.MaxTasksPerUser),
-		DefaultTimezone: value(scheduling.DefaultTimezone),
+		DefaultTimezone: strings.TrimSpace(value(scheduling.DefaultTimezone)),
 	}
 }
 
@@ -2010,7 +2010,7 @@ func schedulingOr(stored store.AgentScheduling, scheduling *AgentScheduling) sto
 		stored.MaxTasksPerUser = *scheduling.MaxTasksPerUser
 	}
 	if scheduling.DefaultTimezone != nil {
-		stored.DefaultTimezone = *scheduling.DefaultTimezone
+		stored.DefaultTimezone = strings.TrimSpace(*scheduling.DefaultTimezone)
 	}
 	return stored
 }

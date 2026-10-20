@@ -43,17 +43,13 @@ const (
 	CodeInvalidSchedule  = "invalid_schedule"
 )
 
-// MinInterval is the closest two occurrences of one task may be.
-const MinInterval = 15 * time.Minute
-
 // MaxActivePerUser is the default cap on a user's active tasks, used when the
 // agent config does not set one.
 const MaxActivePerUser = 25
 
 const (
-	maxCount       = 1000
-	maxSteps       = 20000
-	intervalSample = 50
+	maxCount = 1000
+	maxSteps = 20000
 )
 
 // Input is a schedule as a caller wrote it, before anything is resolved. The
@@ -80,6 +76,10 @@ type Schedule struct {
 
 	location *time.Location
 	rule     *repeatRule
+	// start is the instant StartLocal names when the caller named one (an in,
+	// or an at with an offset), so a reading in a fall-back hour's second
+	// pass is not resolved to its first; zero for a plain wall-clock reading.
+	start time.Time
 }
 
 type repeatRule struct {
@@ -111,10 +111,11 @@ var weekdayOrder = []string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
 // Location returns the schedule's zone.
 func (s *Schedule) Location() *time.Location { return s.location }
 
-// LoadZone resolves an IANA zone name, or refuses it.
+// LoadZone resolves an IANA zone name, or refuses it. "Local" is refused: Go
+// reads it as the router's own zone, which is nobody's.
 func LoadZone(name string) (*time.Location, error) {
 	loc, err := time.LoadLocation(strings.TrimSpace(name))
-	if err != nil {
+	if err != nil || loc == time.Local {
 		return nil, fail(CodeInvalidTimezone, "%q is not a timezone I know; use an IANA name such as Europe/Amsterdam", name)
 	}
 	return loc, nil
@@ -158,15 +159,23 @@ func Parse(input Input, now time.Time) (*Schedule, error) {
 		return nil, err
 	}
 
-	var startLocal time.Time
+	var startLocal, start time.Time
 	if in != "" {
-		duration, err := parseDuration(in)
+		days, clock, err := parseDuration(in)
 		if err != nil {
 			return nil, err
 		}
-		startLocal = wallOf(now.Add(duration).In(loc))
+		// Days are calendar days (RFC 5545 3.3.6 calls them nominal): P1D is
+		// the same clock reading tomorrow, 23 or 25 hours away across a
+		// daylight-saving change. Hours and less are exact.
+		from := now
+		if days > 0 {
+			from = ResolveLocal(wallOf(now.In(loc)).AddDate(0, 0, days), loc)
+		}
+		start = from.Add(clock).Truncate(time.Second).UTC()
+		startLocal = wallOf(start.In(loc))
 	} else {
-		startLocal, err = parseAt(at, loc, now, rule == nil)
+		startLocal, start, err = parseAt(at, loc, now, rule == nil)
 		if err != nil {
 			return nil, err
 		}
@@ -189,6 +198,7 @@ func Parse(input Input, now time.Time) (*Schedule, error) {
 		Until:      until,
 		location:   loc,
 		rule:       rule,
+		start:      start,
 	}
 	if rule != nil {
 		built, err := rule.build(startLocal)
@@ -209,11 +219,6 @@ func Parse(input Input, now time.Time) (*Schedule, error) {
 		}
 		if first.After(now.AddDate(1, 0, 0)) {
 			return nil, fail(CodeScheduleTooFar, "that is more than a year away; a task can be at most a year ahead")
-		}
-	}
-	if rule != nil {
-		if err := schedule.checkInterval(); err != nil {
-			return nil, err
 		}
 	}
 	return schedule, nil
@@ -297,7 +302,7 @@ func (s *Schedule) occurrences() func() (time.Time, bool) {
 				return time.Time{}, false
 			}
 			done = true
-			return ResolveLocal(s.StartLocal, s.location), true
+			return s.resolve(s.StartLocal), true
 		}
 	}
 	iterator := s.rule.rrule.Iterator()
@@ -318,28 +323,30 @@ func (s *Schedule) occurrences() func() (time.Time, bool) {
 			if !s.Until.IsZero() && dateOf(wall).After(s.Until) {
 				return time.Time{}, false
 			}
-			return ResolveLocal(wall, s.location), true
+			return s.resolve(wall), true
 		}
 	}
 }
 
-func (s *Schedule) checkInterval() error {
-	upcoming := s.Upcoming(time.Time{}, intervalSample)
-	for i := 1; i < len(upcoming); i++ {
-		if upcoming[i].Sub(upcoming[i-1]) < MinInterval {
-			return fail(CodeIntervalTooShort, "those occurrences are less than 15 minutes apart; a task can repeat at most every 15 minutes")
-		}
+// resolve is the instant a wall-clock occurrence names: the one the caller
+// named for the start, else ResolveLocal's.
+func (s *Schedule) resolve(wall time.Time) time.Time {
+	if !s.start.IsZero() && wall.Equal(s.StartLocal) {
+		return s.start
 	}
-	return nil
+	return ResolveLocal(wall, s.location)
 }
 
-func parseAt(at string, loc *time.Location, now time.Time, oneShot bool) (time.Time, error) {
+// parseAt reads at as a wall-clock reading and, when it carries an offset,
+// the instant it names.
+func parseAt(at string, loc *time.Location, now time.Time, oneShot bool) (time.Time, time.Time, error) {
 	if instant, err := time.Parse(time.RFC3339, at); err == nil {
-		return wallOf(instant.In(loc)), nil
+		instant = instant.Truncate(time.Second).UTC()
+		return wallOf(instant.In(loc)), instant, nil
 	}
 	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
 		if parsed, err := time.ParseInLocation(layout, at, time.UTC); err == nil {
-			return wallOf(parsed), nil
+			return wallOf(parsed), time.Time{}, nil
 		}
 	}
 	for _, layout := range []string{"15:04:05", "15:04"} {
@@ -350,10 +357,10 @@ func parseAt(at string, loc *time.Location, now time.Time, oneShot bool) (time.T
 			if oneShot && !ResolveLocal(start, loc).After(now) {
 				start = start.AddDate(0, 0, 1)
 			}
-			return start, nil
+			return start, time.Time{}, nil
 		}
 	}
-	return time.Time{}, fail(CodeInvalidSchedule, "at %q is not a date and time I can read; use 2026-10-20T09:00, 09:00 for the next one, or a time with an offset", at)
+	return time.Time{}, time.Time{}, fail(CodeInvalidSchedule, "at %q is not a date and time I can read; use 2026-10-20T09:00, 09:00 for the next one, or a time with an offset", at)
 }
 
 func parseUntil(until string) (time.Time, error) {
@@ -370,24 +377,25 @@ func parseUntil(until string) (time.Time, error) {
 
 var durationPattern = regexp.MustCompile(`^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$`)
 
-func parseDuration(in string) (time.Duration, error) {
+// parseDuration splits an ISO 8601 duration into its calendar days (weeks
+// count as seven) and the exact time after them.
+func parseDuration(in string) (int, time.Duration, error) {
 	match := durationPattern.FindStringSubmatch(strings.TrimSpace(in))
 	if match == nil {
-		return 0, fail(CodeInvalidSchedule, "in %q is not an ISO 8601 duration; use PT20M, PT2H or P1D", in)
+		return 0, 0, fail(CodeInvalidSchedule, "in %q is not an ISO 8601 duration; use PT20M, PT2H or P1D", in)
 	}
 	part := func(text string) float64 {
 		value, _ := strconv.ParseFloat(text, 64)
 		return value
 	}
-	days := part(match[1])*7 + part(match[2])
-	duration := time.Duration(days*24)*time.Hour +
-		time.Duration(part(match[3]))*time.Hour +
+	days := int(part(match[1]))*7 + int(part(match[2]))
+	clock := time.Duration(part(match[3]))*time.Hour +
 		time.Duration(part(match[4]))*time.Minute +
 		time.Duration(part(match[5])*float64(time.Second))
-	if duration <= 0 {
-		return 0, fail(CodeInvalidSchedule, "in must be in the future; %q is not", in)
+	if days <= 0 && clock <= 0 {
+		return 0, 0, fail(CodeInvalidSchedule, "in must be in the future; %q is not", in)
 	}
-	return duration, nil
+	return days, clock, nil
 }
 
 func parseRepeat(repeat string) (*repeatRule, error) {

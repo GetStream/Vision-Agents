@@ -223,15 +223,18 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 	if err != nil {
 		return nil, scheduleFailure(err)
 	}
+	now := time.Now()
 	parsed, err := scheduling.Parse(scheduling.Input{
 		At: value(body.Schedule.At), In: value(body.Schedule.In),
 		Repeat: value(body.Schedule.Repeat), Until: value(body.Schedule.Until),
 		Timezone: zone,
-	}, time.Now())
+	}, now)
 	if err != nil {
 		return nil, scheduleFailure(err)
 	}
-	next, ok := parsed.First()
+	// A repeat's first occurrence may have passed (09:00 daily, written at
+	// 10:00); it starts at the next one, as the agent's tools do.
+	next, ok := parsed.Next(now)
 	if !ok {
 		return nil, scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 			Message: "that schedule has no occurrence left; its last one has passed"})
@@ -451,7 +454,7 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 		task.UntilDate = &until
 	}
 	if task.State == store.ScheduledTaskActive || task.State == store.ScheduledTaskPaused {
-		next, ok := parsed.First()
+		next, ok := parsed.Next(now)
 		if !ok {
 			return scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 				Message: "that schedule has no occurrence left; its last one has passed"})
