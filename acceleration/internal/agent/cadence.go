@@ -607,17 +607,31 @@ func answeredPrefix(answered, text string) string {
 		return ""
 	}
 	fields := strings.Fields(before)
-	if readingOut(fields[len(fields)-1]) {
+	if readingOut(fields) {
 		return ""
 	}
 	return answered
 }
 
-// readingOut reports whether a word is a piece of something read out a piece at a time: a
-// number, a number said as a word (which Gemini commits a number as once the caller stops),
-// or a letter spelled out.
-func readingOut(word string) bool {
-	if strings.ContainsFunc(word, unicode.IsDigit) || len([]rune(word)) == 1 {
+// readingOut reports whether the last of these words is a piece of something read out a piece
+// at a time: a number, a number said as a word (which Gemini commits a number as once the
+// caller stops), or a letter spelled out. A letter alone is a word ("I", "a"); it is spelled
+// out when a piece of the same thing comes before it ("A B C").
+func readingOut(words []string) bool {
+	last := words[len(words)-1]
+	if numberPiece(last) {
+		return true
+	}
+	if len([]rune(last)) != 1 || len(words) < 2 {
+		return false
+	}
+	before := words[len(words)-2]
+	return len([]rune(before)) == 1 || numberPiece(before)
+}
+
+// numberPiece reports whether a word is a number or a number said as a word.
+func numberPiece(word string) bool {
+	if strings.ContainsFunc(word, unicode.IsDigit) {
 		return true
 	}
 	_, digit := spokenDigits[word]

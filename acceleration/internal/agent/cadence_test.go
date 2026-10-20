@@ -207,6 +207,23 @@ func (s *CadenceSuite) TestLettersSpelledOutAreSaidWhole() {
 	s.Equal("my member ID is A B C 1 2 3", s.ready().Said())
 }
 
+func (s *CadenceSuite) TestAnIOrAnAIsAWordNotALetterBeingSpelled() {
+	// Answered on "It came on gradually I", the run that goes on is new words, not a spelling
+	// to keep whole; local run of 2026-10-20 repeated the whole run after the lone "I".
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 5, Text: "It came on gradually I",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 5, Text: "It came on gradually I sit at a desk all day",
+	})
+
+	s.Equal("sit at a desk all day", s.ready().Said())
+}
+
 func (s *CadenceSuite) TestARunTheTranscriberDoesNotNumberIsSaidWhole() {
 	// Without a number the same words could be the caller starting again, so nothing is
 	// taken as already answered.
