@@ -23,6 +23,19 @@ var (
 		// One is an agent speaking normally, two an overlap, three or more a pile-up.
 		Buckets: []float64{1, 2, 3},
 	}, []string{"provider"})
+	playoutDroppedFrames = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_playout_dropped_frames_total",
+		Help:      "Frames of the agent's speech thrown away from the edge's outgoing queue before the call took them, on an interruption",
+	}, []string{"provider"})
+	playoutQueuePeak = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "router",
+		Name:      "agent_playout_queue_peak_seconds",
+		Help:      "The most speech the edge's outgoing queue held at once while an utterance was open",
+		// 100 ms to 6.4 s. The queue lets a writer go at 400 ms (streamedge.playoutFrames), and
+		// a chunk is queued whole on top of that, so a long one is seen as a deep queue.
+		Buckets: prometheus.ExponentialBuckets(0.1, 2, 7),
+	}, []string{"provider"})
 	// The tool name is left out: a caller names its own tools, so it is customer data
 	// without a bound.
 	toolCallSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
