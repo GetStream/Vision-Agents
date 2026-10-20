@@ -349,7 +349,9 @@ func (s *ScheduledTasksSuite) runWorker() {
 	worker := scheduling.NewScheduler(s.store, s.router.DeliverScheduledTask, slog.New(slog.DiscardHandler))
 	worker.Start(context.Background())
 	s.worker = worker
+	s.router.SetSchedulerKick(worker.Kick)
 	s.T().Cleanup(func() {
+		s.router.SetSchedulerKick(nil)
 		worker.Close()
 		s.worker = nil
 	})
@@ -827,6 +829,62 @@ func (s *ScheduledTasksSuite) TestADueTaskFollowsUpInTheConversationItWasSchedul
 	s.True(model.heard("<scheduled_task"), "the model was never sent the task")
 	s.True(model.heard("Remind them to stretch."), "the model was never sent the instructions")
 	s.True(model.heard("not a message from the user"), "the model was not told what the follow-up is")
+}
+
+// The worker sleeps up to a lease (a minute) when nothing is due sooner; a
+// task the agent makes or changes wakes it, so one due in seconds is
+// delivered in seconds, well inside that minute.
+func (s *ScheduledTasksSuite) TestATaskTheAgentMakesDueInSecondsIsDeliveredWithoutWaitingForTheWorker() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.runWorker()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT3S","timezone":"UTC"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch in three seconds")
+	s.ranResult(watching)
+
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+	s.deliveredWithin(tasks[0], 20*time.Second)
+}
+
+func (s *ScheduledTasksSuite) TestATaskTheAgentResumesDueInSecondsIsDeliveredWithoutWaitingForTheWorker() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.runWorker()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"UTC"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.ranResult(watching)
+	s.await(watching, "responded")
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+	// Paused, its one time seconds away, written straight to the store so
+	// nothing wakes the worker but the resume.
+	soon := time.Now().UTC().Add(5 * time.Second).Truncate(time.Second)
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("state = ?", store.ScheduledTaskPaused).Set("start_local = ?", soon).Set("next_run_at = ?", soon).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", tasks[0].ID).
+		Exec(context.Background())
+	s.Require().NoError(err)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + tasks[0].ID + `","action":"resume"}`})
+	s.say(user, opened.Id, "go ahead after all")
+	s.ranResult(watching)
+	s.deliveredWithin(tasks[0], 20*time.Second)
+}
+
+// deliveredWithin waits up to within for the task's latest run to be delivered.
+func (s *ScheduledTasksSuite) deliveredWithin(task store.ScheduledTask, within time.Duration) {
+	s.Eventually(func() bool {
+		runs := s.runsOf(task)
+		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunDelivered
+	}, within, 250*time.Millisecond, "the occurrence was not delivered within %s", within)
 }
 
 func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurrence() {

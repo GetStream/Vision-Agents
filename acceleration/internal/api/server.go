@@ -551,8 +551,14 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 
 // SetSchedulerKick hands the server the scheduled-task worker's wake-up, so
 // a task created, changed or run by hand is claimed without waiting for the
-// worker's next look at the store.
-func (s *Server) SetSchedulerKick(kick func()) { s.kickScheduler = kick }
+// worker's next look at the store, and so is one the agent's scheduling tools
+// make or change.
+func (s *Server) SetSchedulerKick(kick func()) {
+	s.kickScheduler = kick
+	if s.sessions != nil {
+		s.sessions.SetSchedulerKick(kick)
+	}
+}
 
 // kickScheduled wakes the scheduled-task worker, when this process runs one.
 func (s *Server) kickScheduled() {

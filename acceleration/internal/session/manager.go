@@ -170,12 +170,24 @@ type Manager struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
-	closed   bool
+	// kickScheduler wakes the scheduled-task worker after a scheduling tool
+	// makes or changes a task (SetSchedulerKick); nil where no worker runs.
+	kickScheduler func()
+	closed        bool
 	// closing counts the sessions taken off the map whose Close has not returned. They are
 	// still writing how they ended, so a draining router waits on them and Shutdown keeps
 	// the recorders open for them (ended).
 	closing int
 	ended   sync.WaitGroup
+}
+
+// SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
+// a task the agent makes or changes is claimed without waiting for the
+// worker's next look at the store. Sessions opened from now on use it.
+func (m *Manager) SetSchedulerKick(kick func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.kickScheduler = kick
 }
 
 // NewManager validates the options and returns a Manager. It starts nothing.
