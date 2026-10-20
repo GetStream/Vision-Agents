@@ -658,6 +658,16 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
 
+### Simulations for the moderator template
+
+`acceleration/templates/agent_moderator/simulations/moderation.yaml` holds eight reviews Nora
+must get right, ported from the Nora prototype's evals: casual profanity in an adult market and
+the same words in an education app, an educational quotation, targeted abuse, repeat confirmed
+harassment, an overturned incident that must not escalate, an innocent message from a user with
+prior bans, and an instruction injected into the message. A simulation talks to Nora in chat
+rather than through a run, so each one hands over the policy with its cases, and its assertion
+judges the verdicts rather than the answer format. Run them after editing the agent with
+`getstream agents simulate nora` (AI-1506).
 ### The app's moderator reads the app's moderation data
 
 A session or run of an `agent_moderator` config is offered six read-only tools on the app's
