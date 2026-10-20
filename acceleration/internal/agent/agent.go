@@ -355,7 +355,7 @@ type Agent struct {
 	// label their words go under. Once there are two, every new turn names who said it,
 	// because the model cannot tell them apart otherwise. Turns typed with RespondTo are
 	// the caller's and are never counted.
-	speakers map[string]string
+	speakers map[string]nameTag
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -600,7 +600,7 @@ func New(options Options) (*Agent, error) {
 		departed:         map[string]time.Time{},
 		now:              time.Now,
 		voices:           map[string]string{},
-		speakers:         map[string]string{},
+		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
@@ -1566,6 +1566,10 @@ func (a *Agent) ask(ready candidate) {
 		reply = lastAssistantSaid(history)
 	}
 	anotherVoice := a.anotherVoiceLocked(ready)
+	participant := ready.Participant.Name
+	if participant == "" {
+		participant = a.speakerLocked(ready.Participant).label
+	}
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the
@@ -1579,7 +1583,7 @@ func (a *Agent) ask(ready candidate) {
 		ID:           ready.ID,
 		Instructions: instructions,
 		History:      history,
-		Participant:  participantName(ready.Participant),
+		Participant:  participant,
 		Text:         ready.Text,
 		Speaking:     speaking,
 		Reply:        reply,
@@ -1638,16 +1642,6 @@ type heard struct {
 	confidence   float64
 	// typed is a turn written rather than spoken, such as the instruction opening a call.
 	typed bool
-}
-
-func participantName(participant stt.Participant) string {
-	if participant.Name != "" {
-		return participant.Name
-	}
-	if participant.UserID != "" {
-		return participant.UserID
-	}
-	return participant.ID
 }
 
 func lastAssistantSaid(history []llm.Message) string {
@@ -1854,7 +1848,7 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	turn := llm.Message{Role: llm.User, Content: text}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
-		turn.Speaker = a.labelLocked(participant)
+		turn.Speaker = a.speakerLocked(participant).label
 	}
 	return turn
 }
@@ -1864,33 +1858,55 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
 	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
 	if participant.ID != typedCaller {
-		a.speakers[personOf(participant)] = a.labelLocked(participant)
+		a.speakers[personOf(participant)] = a.speakerLocked(participant)
 	}
 }
 
-// labelLocked is the label a person's words go under. It is fixed by their first answered
-// turn, unless that turn had no display name and went under their user ID: the name, once
-// it is known, replaces it. A person whose name another already goes under is numbered,
-// "Alex (2)", in the order they first spoke, so the model tells them apart without being
-// told their user.
-func (a *Agent) labelLocked(participant stt.Participant) string {
+// nameTag is how a person counted in speakers is labelled.
+type nameTag struct {
+	// label goes ahead of their words.
+	label string
+	// fallback is the label they were given for having no display name at their first
+	// answered turn. Empty for a person who had one.
+	fallback string
+}
+
+// speakerLocked is the label a person's words go under. It is fixed by their first
+// answered turn, unless that turn had no display name: such people go under "Speaker 1",
+// "Speaker 2" and on, in the order they first spoke, until their name is known and
+// replaces it. A person whose name another already goes under is numbered, "Alex (2)", in
+// the order they first spoke, so the model tells them apart without being told their user
+// or participant ID, which are the app's and mean nothing to it.
+func (a *Agent) speakerLocked(participant stt.Participant) nameTag {
 	person := personOf(participant)
 	name := speakerLabel(participant)
-	label, ok := a.speakers[person]
-	if ok && label != participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID}) {
-		return label
+	current, ok := a.speakers[person]
+	if ok && (name == "" || current.label != current.fallback) {
+		return current
 	}
 	var taken []string
-	for other, otherLabel := range a.speakers {
+	fallbacks := 0
+	for other, otherSpeaker := range a.speakers {
 		if other != person {
-			taken = append(taken, otherLabel)
+			taken = append(taken, otherSpeaker.label)
+		}
+		if otherSpeaker.fallback != "" {
+			fallbacks++
 		}
 	}
-	label = name
+	nameless := name == ""
+	if nameless {
+		// "Speaker N" is the wording Kanat chose on AI-1458 (2026-10-19).
+		name = fmt.Sprintf("Speaker %d", fallbacks+1)
+	}
+	label := name
 	for n := 2; slices.Contains(taken, label); n++ {
 		label = fmt.Sprintf("%s (%d)", name, n)
 	}
-	return label
+	if nameless {
+		return nameTag{label: label, fallback: label}
+	}
+	return nameTag{label: label, fallback: current.fallback}
 }
 
 // personOf is who a participant is. A person who rejoins gets a new ID but keeps their
@@ -1902,14 +1918,11 @@ func personOf(participant stt.Participant) string {
 	return participant.ID
 }
 
-// speakerLabel is a participant's name as it goes ahead of their words. A line break or a
-// colon in a display name could pass for the start of another person's line, so they go.
+// speakerLabel is a participant's display name as it goes ahead of their words, empty
+// when they have none. A line break or a colon in a display name could pass for the start
+// of another person's line, so they go.
 func speakerLabel(participant stt.Participant) string {
-	label := strings.Join(strings.Fields(strings.ReplaceAll(participantName(participant), ":", "")), " ")
-	if label == "" {
-		return participantName(stt.Participant{ID: participant.ID, UserID: participant.UserID})
-	}
-	return label
+	return strings.Join(strings.Fields(strings.ReplaceAll(participant.Name, ":", "")), " ")
 }
 
 func (a *Agent) replayLocked() []llm.Message {
