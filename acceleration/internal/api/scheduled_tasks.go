@@ -815,8 +815,8 @@ func (s *Server) registerScheduledTasks(api huma.API) {
 // ScheduledTaskSchedule is the schedule object, the same on create, on update and in
 // responses: responses only ever carry at, never in.
 type ScheduledTaskSchedule struct {
-	At          *string `json:"at,omitempty" doc:"The first occurrence as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write."`
-	In          *string `json:"in,omitempty" doc:"How long from now instead, an ISO 8601 duration: PT20M, P1D. Resolved on write; a response never carries it." example:"PT20M"`
+	At          *string `json:"at,omitempty" doc:"When it first runs, as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write."`
+	In          *string `json:"in,omitempty" doc:"How long from now instead, an ISO 8601 duration: PT20M, P1D. Days are calendar days: P1D is the same time tomorrow. Resolved on write; a response never carries it." example:"PT20M"`
 	Timezone    *string `json:"timezone,omitempty" doc:"An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's stored zone, then the agent's default_timezone; on update, to the task's own zone." example:"Europe/Amsterdam"`
 	Repeat      *string `json:"repeat,omitempty" doc:"Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1." example:"FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"`
 	Until       *string `json:"until,omitempty" doc:"The last local date it repeats on, inclusive, 2026-12-31." example:"2026-12-31"`

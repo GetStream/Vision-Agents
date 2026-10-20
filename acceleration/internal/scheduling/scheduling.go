@@ -49,7 +49,9 @@ const MaxActivePerUser = 25
 
 const (
 	maxCount = 1000
-	maxSteps = 20000
+	// maxInHours is a leap year: the most a year ahead can be.
+	maxInHours = 366 * 24
+	maxSteps   = 20000
 )
 
 // Input is a schedule as a caller wrote it, before anything is resolved. The
@@ -387,6 +389,12 @@ func parseDuration(in string) (int, time.Duration, error) {
 	part := func(text string) float64 {
 		value, _ := strconv.ParseFloat(text, 64)
 		return value
+	}
+	// A start past the one-year horizon Parse holds a one-shot to is refused
+	// before the conversion below can overflow.
+	hours := (part(match[1])*7+part(match[2]))*24 + part(match[3]) + part(match[4])/60 + part(match[5])/3600
+	if hours > maxInHours {
+		return 0, 0, fail(CodeScheduleTooFar, "in %q is more than a year away; a task can be at most a year ahead", in)
 	}
 	days := int(part(match[1]))*7 + int(part(match[2]))
 	clock := time.Duration(part(match[3]))*time.Hour +

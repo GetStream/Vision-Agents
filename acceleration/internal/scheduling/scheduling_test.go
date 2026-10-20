@@ -300,3 +300,36 @@ func TestAMonthlyRepeatFromThe31stSkipsShortMonths(t *testing.T) {
 	}
 	require.Equal(t, []string{"2026-10-31", "2026-11-30", "2026-12-31"}, days)
 }
+
+func TestARepeatFromAnAtWithAnOffsetKeepsRecurring(t *testing.T) {
+	// The first occurrence is the named instant; the later ones are the
+	// same clock reading on later days, not that instant again.
+	schedule := parse(t, Input{At: "2026-01-01T09:00:00+01:00", Repeat: "FREQ=DAILY", Timezone: "Europe/Berlin"})
+	first, ok := schedule.First()
+	require.True(t, ok)
+	require.Equal(t, "2026-01-01T08:00:00Z", first.Format(time.RFC3339))
+	next, ok := schedule.Next(monday)
+	require.True(t, ok)
+	require.Equal(t, "2026-10-20T07:00:00Z", next.Format(time.RFC3339))
+}
+
+func TestARepeatFromAnInListsDistinctOccurrences(t *testing.T) {
+	schedule := parse(t, Input{In: "PT1H", Repeat: "FREQ=DAILY", Timezone: "UTC"})
+	var got []string
+	for _, at := range schedule.Upcoming(monday, 3) {
+		got = append(got, at.Format(time.RFC3339))
+	}
+	require.Equal(t, []string{"2026-10-19T13:00:00Z", "2026-10-20T13:00:00Z", "2026-10-21T13:00:00Z"}, got)
+}
+
+func TestAnInBeyondAYearIsRefusedBeforeItOverflows(t *testing.T) {
+	for _, in := range []string{"P367D", "P99999999999D", "P9999999999999999999D", "PT99999999999H", "P53W"} {
+		for _, repeat := range []string{"", "FREQ=DAILY"} {
+			require.Equal(t, CodeScheduleTooFar, codeOf(t, Input{In: in, Repeat: repeat, Timezone: "UTC"}), "%s %q", in, repeat)
+		}
+	}
+	for _, repeat := range []string{"", "FREQ=DAILY"} {
+		_, err := Parse(Input{In: "P364D", Repeat: repeat, Timezone: "UTC"}, monday)
+		require.NoError(t, err, repeat)
+	}
+}
