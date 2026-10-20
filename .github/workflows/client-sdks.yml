@@ -9,6 +9,7 @@ on:
       - 'sdks/swift/**'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
+      - 'examples/voice_agents/android_demo/**'
       - 'acceleration/api/openapi.yaml'
       - '.github/workflows/client-sdks.yml'
   pull_request:
@@ -18,6 +19,7 @@ on:
       - 'sdks/swift/**'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
+      - 'examples/voice_agents/android_demo/**'
       - 'acceleration/api/openapi.yaml'
       - '.github/workflows/client-sdks.yml'
 
@@ -44,6 +46,7 @@ jobs:
           filters: |
             kotlin:
               - 'sdks/kotlin/**'
+              - 'examples/voice_agents/android_demo/**'
               - 'acceleration/api/openapi.yaml'
               - '.github/workflows/client-sdks.yml'
             dart:
@@ -79,15 +82,20 @@ jobs:
 
       # PostureTest reads acceleration/api/openapi.yaml, so a spec change that opens or
       # closes an operation the SDK calls fails here.
-      - name: Test core and build ui, rtc and chat
-        run: ./gradlew :core:test :ui:assembleRelease :rtc:assembleRelease :chat:assembleRelease
+      - name: Test and build core
+        run: ./gradlew :core:testDebugUnitTest :core:assembleRelease
+
+      # Against core as it is in this checkout, through an included build.
+      - name: Build android_demo
+        working-directory: examples/voice_agents/android_demo
+        run: ./gradlew :app:assembleDebug
 
       - uses: astral-sh/setup-uv@v6
 
       - name: Generated models match the spec
         run: |
           uv run generate.py
-          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/core/generated)
+          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/android/core/generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
   dart:
