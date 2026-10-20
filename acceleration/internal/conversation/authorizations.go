@@ -129,6 +129,27 @@ func (c *Conversation) BeginFollowUp(id, text string) (CommandReceipt, error) {
 	return receipt, nil
 }
 
+// AbandonFollowUp cancels a follow-up whose turn never started and forgets its id, so the
+// same follow-up delivered again starts rather than being answered Duplicate with nothing
+// run for it.
+func (c *Conversation) AbandonFollowUp(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if m := c.data.Current; m != nil && m.CommandID == id {
+		c.finish("cancelled")
+	}
+	delete(c.data.Commands, id)
+}
+
+// FollowUpReply is how the reply to the follow-up under id stands: its state and, once it
+// has finished, what it said. known is false for an id the conversation does not hold.
+func (c *Conversation) FollowUpReply(id string) (state, text string, known bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	record, known := c.data.Commands[id]
+	return record.State, record.Reply, known
+}
+
 // rememberAsked keeps a finished reply that asked for a login, to mark it once the login is
 // made. Only the latest few are kept: an older button is one nobody is waiting on.
 func (c *Conversation) rememberAsked(m Message) {

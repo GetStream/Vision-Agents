@@ -642,7 +642,9 @@ func (s *Session) FollowUp(ctx context.Context, id, text string) error {
 	}
 	turnID, err := s.current().RespondTo(ctx, text, nil, options.LLM{})
 	if err != nil {
-		s.persisted.Cancel()
+		// No turn started, so a caller retrying the same id must start one, not be told
+		// it is already there.
+		s.persisted.AbandonFollowUp(receipt.CommandID)
 		return stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
@@ -650,6 +652,15 @@ func (s *Session) FollowUp(ctx context.Context, id, text string) error {
 		s.openTurn(turnID, text)
 	}
 	return nil
+}
+
+// FollowUpReply is how the reply to the follow-up under id stands: its state and, once it
+// has finished, what it said. known is false when the conversation holds no such follow-up.
+func (s *Session) FollowUpReply(id string) (state, text string, known bool) {
+	if s.persisted == nil {
+		return "", "", false
+	}
+	return s.persisted.FollowUpReply(id)
 }
 
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering
