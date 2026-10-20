@@ -643,6 +643,9 @@ func (s *ConfigsSuite) TestPatchingAConfigOntoABatchTranscriberIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "is a batch model for recordings, not live calls")
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal("en-low-latency", value(read.Stt), "the stored config is as it was")
 }
 
 func (s *ConfigsSuite) TestAConfigStoredWithABatchTranscriberCanStillBeEdited() {
@@ -660,6 +663,16 @@ func (s *ConfigsSuite) TestAConfigStoredWithABatchTranscriberCanStillBeEdited() 
 	s.Equal("Be brief.", value(updated.Instructions))
 	s.Equal("Be briefer.", value(patched.Instructions))
 	s.Equal(pinned, value(patched.Stt))
+}
+
+func (s *ConfigsSuite) TestADeploymentWithoutATranscriberRouterRefusesNoConfig() {
+	config := store.AgentConfig{Mode: store.AgentModeVoice, STT: "batch/" + batchModel}
+
+	for name, server := range map[string]*Server{"no streams": {}, "no stt router": {streams: &Streams{}}} {
+		_, ok := server.liveSTTComplaint(config, "")
+
+		s.True(ok, name)
+	}
 }
 
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {

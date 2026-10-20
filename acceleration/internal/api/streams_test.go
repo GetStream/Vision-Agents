@@ -182,7 +182,7 @@ func (s *StreamsSuite) TestARefusalReachesACallerStillSendingAudio() {
 	s.Equal("closed", read[1]["type"])
 	var closed *websocket.CloseError
 	s.Require().ErrorAs(ended, &closed)
-	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
 }
 
 func (s *StreamsSuite) TestAStartPinnedToABatchModelIsRefusedAndLeavesItsHealthAlone() {
@@ -276,7 +276,7 @@ func (s *StreamsSuite) TestARefusalTooLongForACloseFrameIsCutBetweenCharacters()
 	s.Require().NotEmpty(read)
 	var closed *websocket.CloseError
 	s.Require().ErrorAs(ended, &closed)
-	s.Equal(websocket.CloseInternalServerErr, closed.Code)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
 	s.LessOrEqual(len(closed.Text), 123, "RFC 6455 5.5: a control frame's payload is 125 bytes")
 	s.True(utf8.ValidString(closed.Text))
 	s.True(strings.HasPrefix(read[0]["error"].(string), closed.Text))
