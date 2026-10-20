@@ -56,6 +56,8 @@ type dispatcher struct {
 	stepUps *stepUps
 	// limiter holds calls after a provider's 429 (Connectors.Limiter); nil limits nothing.
 	limiter *core.Limiter
+	// slots caps each connection's calls in flight (Manager.slots); nil caps nothing.
+	slots *callSlots
 	// logger is the session's (Manager.logger): a call that failed or was refused says so on
 	// it (record).
 	logger *slog.Logger
@@ -74,6 +76,9 @@ type route struct {
 	// limit is the key the provider's rate limit counts the call under
 	// (core.ResolvedManifest.RateLimitKey), "" when its manifest names none.
 	limit string
+	// maxInFlight is how many of the connection's calls may be in flight at once
+	// (rate_limit.max_concurrent_calls), 0 for no cap.
+	maxInFlight int
 	// declared are the argument names the tool's input schema lists under properties: the only
 	// names a call's row keeps (argumentShape).
 	declared map[string]bool
@@ -315,6 +320,11 @@ func (d *dispatcher) Close() {
 // holds: the Retry-After, at most core.MaxBlock. The router never sends the call again by
 // itself (Kanat, 2026-10-07, D8).
 //
+// A connection whose manifest caps its calls in flight (rate_limit.max_concurrent_calls)
+// sends a call over the cap once one of them ends (callSlots). The wait is part of the
+// binding's timeout: a call still waiting when it runs out is not sent, and the model reads
+// connector_busy, so a runaway loop slows down instead of reaching the provider.
+//
 // It also says how the call failed, for its row and its log line: no kind when it answered,
 // else one of the store.Invocation* values.
 func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
@@ -345,14 +355,22 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	}
 }
 
-// send runs one tool inside the provider's rate limit, the binding's timeout and the result
-// cap, cancelled with ctx.
+// send runs one tool inside the provider's rate limit, the cap on calls in flight, the
+// binding's timeout and the result cap, cancelled with ctx.
 func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
 		return llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied, message: heldByTheRouter(wait)}, nil
 	}
 	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
 	defer cancel()
+	release, err := d.slots.take(bounded, r.connection.ID, r.maxInFlight)
+	if err != nil {
+		if ctx.Err() == nil {
+			return llm.TextParts(busy(call.Name, r.maxInFlight)), failure{kind: store.InvocationDenied, message: heldByTheCap(r.maxInFlight)}, nil
+		}
+		return nil, failure{kind: store.InvocationClientTimeout}, stack.Wrap(fmt.Errorf("session: %s was not sent: %w", call.Name, err))
+	}
+	defer release()
 	observed, exchange := core.WithExchange(bounded)
 	result, err := r.toolset.Call(observed, call)
 	if err != nil {
@@ -440,6 +458,20 @@ func rateLimited(name string, wait time.Duration) string {
 // "rate limited by the router: retry after <seconds>s".
 func heldByTheRouter(wait time.Duration) string {
 	return fmt.Sprintf("rate limited by the router: retry after %ds", retryAfterSeconds(wait))
+}
+
+// busy is what the model reads of a call that waited its whole timeout behind the
+// connection's limit of calls in flight, and was not sent.
+func busy(name string, limit int) string {
+	return fmt.Sprintf("connector_busy: %s was not run: the connector's limit of calls at once (%d) was reached, "+
+		"and none of them ended in time. Call it again once one has answered.", name, limit)
+}
+
+// heldByTheCap is the error_message, and the log line's provider_message, of a call busy
+// answered. The form is fixed, for a reader to match on: "held by the router: in-flight
+// limit <limit> reached on the connection".
+func heldByTheCap(limit int) string {
+	return fmt.Sprintf("held by the router: in-flight limit %d reached on the connection", limit)
 }
 
 // retryAfterSeconds is wait in whole seconds rounded up, as Retry-After's delay-seconds are

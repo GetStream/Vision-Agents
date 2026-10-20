@@ -312,6 +312,11 @@ type accountsProvider struct {
 	answers map[string]fixedAnswer
 	// servers are the accounts' MCP servers, by account.
 	servers map[string]*mcpsdk.Server
+	// gate, when set, holds every tools/call until it is closed (hold). running counts the
+	// tools/call of an account being answered now, gate wait included, and peak the most
+	// there were at once.
+	gate          chan struct{}
+	running, peak map[string]int
 }
 
 // slowFor is how long slow takes before it answers, longer than any test lets it run; it
@@ -320,7 +325,7 @@ const slowFor = 2 * time.Second
 
 func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}, limited: map[string]string{},
-		answers: map[string]fixedAnswer{}}
+		answers: map[string]fixedAnswer{}, running: map[string]int{}, peak: map[string]int{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
 		servers[account] = accountServer(account)
@@ -357,11 +362,26 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		p.methods[account] = append(p.methods[account], message.Method)
 		if message.Method == "tools/call" {
 			p.called[account]++
+			p.running[account]++
+			p.peak[account] = max(p.peak[account], p.running[account])
+			defer func() {
+				p.mu.Lock()
+				defer p.mu.Unlock()
+				p.running[account]--
+			}()
 		}
+		gate := p.gate
 		streams := p.streams
 		retryAfter, limited := p.limited[account]
 		fixed, answers := p.answers[account]
 		p.mu.Unlock()
+		if gate != nil && message.Method == "tools/call" {
+			select {
+			case <-gate:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		if answers && message.Method == "tools/call" {
 			for name, values := range fixed.header {
 				w.Header()[name] = values
@@ -483,7 +503,7 @@ func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
-	p.answers = map[string]fixedAnswer{}
+	p.answers, p.gate, p.peak = map[string]fixedAnswer{}, nil, map[string]int{}
 	for account := range p.servers {
 		p.servers[account] = accountServer(account)
 	}
@@ -538,6 +558,30 @@ func (p *accountsProvider) lift() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.limited = map[string]string{}
+}
+
+// hold has every tools/call wait until release is called, so a test can count the calls in
+// flight at once (inFlight).
+func (p *accountsProvider) hold() (release func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	gate := make(chan struct{})
+	p.gate = gate
+	return sync.OnceFunc(func() { close(gate) })
+}
+
+// inFlight is how many tools/call of account are being answered now.
+func (p *accountsProvider) inFlight(account string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.running[account]
+}
+
+// mostInFlight is the most tools/call of account there were at once.
+func (p *accountsProvider) mostInFlight(account string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.peak[account]
 }
 
 // calls is how many tools/call reached account.
