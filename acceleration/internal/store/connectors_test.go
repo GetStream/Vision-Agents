@@ -1107,47 +1107,64 @@ func (s *StoreSuite) seedInternalAcme() {
 	s.seed(strings.Replace(strings.Replace(internalAcme, "revision: 1", "revision: 2", 1), "name: Acme", "name: Acme Two", 1))
 }
 
-var yes, no = true, false
-
 var acmeEverywhere = map[string]bool{"list": true, "latest": true, "get": true, "statuses": true, "connection": true, "oauth client": true}
 
 var acmeNowhere = map[string]bool{"list": false, "latest": false, "get": false, "statuses": false, "connection": false, "oauth client": false}
 
 func (s *StoreSuite) TestAnInternalBuiltInIsHiddenFromAnAppWithoutTheFlag() {
 	s.seedInternalAcme()
+	off := false
 
 	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})), "an app whose settings say nothing")
-	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{InternalConnectors: &no})), "an app whose flag is false")
+	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{InternalConnectors: &off})), "an app whose flag is false")
 	s.Equal(acmeNowhere, s.acmeSeenBy("no-app-row"), "a customer with no app row")
 }
 
 func (s *StoreSuite) TestAnAppWithTheFlagSeesAnInternalBuiltIn() {
 	s.seedInternalAcme()
+	on := true
 
-	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{InternalConnectors: &yes})))
+	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{InternalConnectors: &on})))
 }
 
 func (s *StoreSuite) TestOneAppsFlagDoesNotShowAnInternalBuiltInToAnother() {
 	s.seedInternalAcme()
-	s.appWith(AppSettings{InternalConnectors: &yes})
+	on := true
+	s.appWith(AppSettings{InternalConnectors: &on})
 
 	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})))
 }
 
-// No shipped built-in is internal yet, so every app, flagged or not, sees the catalog it saw
-// before the flag existed: the 23 ids a probe of ListConnectorDefinitions listed on 3f4cf612e
-// for an app row and for a customer with none, each found by LatestConnectorDefinition and
-// ConnectorDefinition at its latest revision.
-func (s *StoreSuite) TestWithNoInternalBuiltInShippedEveryAppSeesTheCatalogItSawBefore() {
+// An app without the flag, or a customer with no app row, sees the catalog it saw before the flag
+// existed: every embedded built-in that is not internal, each found by LatestConnectorDefinition
+// and ConnectorDefinition at its latest revision. An app with the flag sees the internal ones too.
+func (s *StoreSuite) TestWithoutTheFlagEveryAppSeesTheCatalogItSawBefore() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
-	before := []string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	var before, all []string
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".yaml") {
+			continue
+		}
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		manifest, err := core.ParseManifest(raw)
+		s.Require().NoError(err)
+		all = append(all, manifest.ID)
+		if !manifest.Internal {
+			before = append(before, manifest.ID)
+		}
+	}
+	slices.Sort(before)
+	slices.Sort(all)
+	on := true
 
-	for _, customer := range []string{s.appWith(AppSettings{}), s.appWith(AppSettings{InternalConnectors: &yes}), "no-app-row"} {
+	for customer, want := range map[string][]string{s.appWith(AppSettings{}): before, "no-app-row": before, s.appWith(AppSettings{InternalConnectors: &on}): all} {
 		list, err := s.store.ListConnectorDefinitions(s.ctx, customer, ConnectorDefinitionFilter{Limit: 200})
 		s.Require().NoError(err)
-		s.Equal(before, definitionIDs(list))
+		s.Equal(want, definitionIDs(list))
 		for _, definition := range list {
-			s.False(definition.Manifest.Internal, definition.ID)
 			latest, err := s.store.LatestConnectorDefinition(s.ctx, customer, definition.ID)
 			s.Require().NoError(err)
 			_, err = s.store.ConnectorDefinition(s.ctx, customer, definition.ID, latest.Revision)
