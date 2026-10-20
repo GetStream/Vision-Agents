@@ -573,7 +573,7 @@ func (s *Server) deliverManualRun(task store.ScheduledTask, run store.ScheduledT
 	state := store.ScheduledTaskRunDelivered
 	failure := ""
 	if err != nil {
-		state, failure = store.ScheduledTaskRunFailed, err.Error()
+		state, failure = store.ScheduledTaskRunFailed, scheduling.ReasonOf(err)
 		s.logger.Error("a scheduled task run by hand did not land",
 			"task", task.ID, "run", run.ID, "error", err)
 	}
@@ -906,13 +906,13 @@ type ScheduledTaskRun struct {
 	TaskId       string     `json:"task_id"`
 	ScheduledFor string     `json:"scheduled_for" doc:"When the occurrence was due, RFC 3339 with the task zone's offset."`
 	Trigger      string     `json:"trigger" doc:"schedule when it came due, manual when it was run by hand." enum:"schedule,manual"`
-	State        string     `json:"state" doc:"running (retries included), delivered, failed, or missed (it fell outside the grace period)." enum:"running,delivered,failed,missed"`
+	State        string     `json:"state" doc:"running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late)." enum:"running,delivered,failed,missed"`
 	DeliveredTo  string     `json:"delivered_to" doc:"Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands."`
 	SessionId    string     `json:"session_id"`
 	Attempts     int        `json:"attempts"`
 	StartedAt    *time.Time `json:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
-	Error        *string    `json:"error" doc:"Why it failed, when it did. Null otherwise."`
+	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called. Null otherwise."`
 }
 
 // ScheduledTaskPage is a page of scheduled tasks.

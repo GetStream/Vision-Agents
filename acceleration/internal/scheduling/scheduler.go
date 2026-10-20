@@ -79,6 +79,64 @@ func (p *Postponed) Error() string {
 	return "held until " + p.Until.Format("2006-01-02 15:04 MST")
 }
 
+// Missed is an occurrence the delivery found too late to make, such as a
+// call that would ring long after the time the user asked for: the run is
+// written missed, as one past its grace is, and not tried again.
+type Missed struct {
+	Err error
+}
+
+func (m *Missed) Error() string { return m.Err.Error() }
+func (m *Missed) Unwrap() error { return m.Err }
+
+// Failure is a failed attempt as its run records it. Reason is one of the
+// Reason codes, which a device is shown; Err is the whole story, which can
+// name numbers, vendors and internals, and goes to the logs only. Final says
+// another attempt would only repeat it, or ring the user a second time, so
+// it is not retried.
+type Failure struct {
+	Reason string
+	Final  bool
+	Err    error
+}
+
+func (f *Failure) Error() string { return f.Err.Error() }
+func (f *Failure) Unwrap() error { return f.Err }
+
+// The reasons a failed run gives: short codes a device may show or act on.
+const (
+	ReasonFailed        = "delivery_failed"
+	ReasonOutOfTime     = "timed_out"
+	ReasonUnreadable    = "schedule_unreadable"
+	ReasonOnACall       = "user_on_call"
+	ReasonUnreachable   = "channel_unreachable"
+	ReasonNoReply       = "no_reply"
+	ReasonReplyFailed   = "reply_failed"
+	ReasonNoNumber      = "no_phone_number"
+	ReasonNoLine        = "no_agent_number"
+	ReasonNotAnswered   = "not_answered"
+	ReasonAlreadyCalled = "already_called"
+)
+
+// ReasonOf is the code a failed attempt is recorded under.
+func ReasonOf(err error) string {
+	if errors.Is(err, errOutOfTime) {
+		return ReasonOutOfTime
+	}
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.Reason
+	}
+	return ReasonFailed
+}
+
+// final reports whether a failed attempt is not to be tried again.
+func final(err error) bool {
+	var failure *Failure
+	var missed *Missed
+	return errors.As(err, &missed) || errors.As(err, &failure) && failure.Final
+}
+
 // Scheduler runs the scheduled tasks that come due, on every router: each
 // occurrence is claimed by one worker, delivered once, and the task advanced
 // under the claim that held it.
@@ -231,9 +289,11 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 	if err != nil {
 		// A stored schedule that no longer reads can never run; say so on this
 		// occurrence and pause the task instead of retrying it forever.
+		s.logger.Error("a scheduled task's stored schedule does not read",
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "error", err)
 		s.finish(claim, store.ScheduledTaskOutcome{
 			RunState: store.ScheduledTaskRunFailed,
-			Error:    "the stored schedule does not read: " + err.Error(),
+			Error:    ReasonUnreadable,
 			State:    store.ScheduledTaskPaused,
 		})
 		return
@@ -259,9 +319,14 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 	deliveredTo, sessionID, failure := s.deliverWithRetries(ctx, claim)
 	stopRenewing()
 	var held *Postponed
+	var late *Missed
 	switch {
 	case failure != nil && errors.As(failure, &held):
 		s.postpone(claim, held.Until)
+	case failure != nil && errors.As(failure, &late):
+		s.logger.Info("a scheduled task was too late to deliver",
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "error", failure)
+		s.finish(claim, s.missedOutcome(claim, schedule))
 	case failure == nil:
 		next, state := s.after(schedule, claim.Run.ScheduledFor, false, 0)
 		s.finish(claim, store.ScheduledTaskOutcome{
@@ -280,10 +345,12 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 		if ctx.Err() != nil {
 			failure = fmt.Errorf("%w after %s: %w", errOutOfTime, s.budget, failure)
 		}
+		s.logger.Warn("a scheduled task failed to deliver",
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "error", failure)
 		failures := task.ConsecutiveFailures + 1
 		next, state := s.after(schedule, claim.Run.ScheduledFor, true, failures)
 		s.finish(claim, store.ScheduledTaskOutcome{
-			RunState: store.ScheduledTaskRunFailed, Error: failure.Error(),
+			RunState: store.ScheduledTaskRunFailed, Error: ReasonOf(failure),
 			NextRunAt: next, State: state, ConsecutiveFailures: failures,
 		})
 	}
@@ -301,31 +368,41 @@ func (s *Scheduler) missed(claim store.ClaimedScheduledTask, schedule *Schedule)
 	}
 	age := s.now().Sub(due)
 	task := claim.Task
-	switch {
-	case task.RRule == "" && age > oneShotGrace:
-		return &store.ScheduledTaskOutcome{
+	if task.RRule == "" && age > oneShotGrace || task.RRule != "" && age > repeatGrace {
+		missed := s.missedOutcome(claim, schedule)
+		return &missed
+	}
+	return nil
+}
+
+// missedOutcome is a missed occurrence's outcome: a one-shot is over, a
+// repeating task moves on to its next occurrence, and the failure streak is
+// left as it is.
+func (s *Scheduler) missedOutcome(claim store.ClaimedScheduledTask, schedule *Schedule) store.ScheduledTaskOutcome {
+	task := claim.Task
+	if task.RRule == "" {
+		return store.ScheduledTaskOutcome{
 			RunState: store.ScheduledTaskRunMissed, State: store.ScheduledTaskCompleted,
 			ConsecutiveFailures: task.ConsecutiveFailures,
 		}
-	case task.RRule != "" && age > repeatGrace:
-		next, state := s.after(schedule, claim.Run.ScheduledFor, false, task.ConsecutiveFailures)
-		return &store.ScheduledTaskOutcome{
-			RunState: store.ScheduledTaskRunMissed, NextRunAt: next, State: state,
-			ConsecutiveFailures: task.ConsecutiveFailures,
-		}
 	}
-	return nil
+	next, state := s.after(schedule, claim.Run.ScheduledFor, false, task.ConsecutiveFailures)
+	return store.ScheduledTaskOutcome{
+		RunState: store.ScheduledTaskRunMissed, NextRunAt: next, State: state,
+		ConsecutiveFailures: task.ConsecutiveFailures,
+	}
 }
 
 // deliverWithRetries delivers once, then again after each wait, until one
 // attempt lands or the waits run out. A held delivery is not retried: the
 // hold says when it is worth trying again, and that is longer than any wait
-// here.
+// here. Nor is a missed or final one: trying again would only ring the user
+// again, or late.
 func (s *Scheduler) deliverWithRetries(ctx context.Context, claim store.ClaimedScheduledTask) (string, string, error) {
 	deliveredTo, sessionID, err := s.deliver(ctx, claim)
 	for _, wait := range s.retries {
 		var held *Postponed
-		if err == nil || errors.As(err, &held) {
+		if err == nil || errors.As(err, &held) || final(err) {
 			return deliveredTo, sessionID, err
 		}
 		timer := time.NewTimer(wait)
@@ -448,8 +525,6 @@ func (s *Scheduler) finish(claim store.ClaimedScheduledTask, outcome store.Sched
 		log.Error("could not record a scheduled task run", "error", err)
 	case !applied:
 		log.Info("a scheduled task changed under its run; the schedule was left alone")
-	case outcome.RunState == store.ScheduledTaskRunFailed:
-		log.Warn("a scheduled task failed to deliver", "error", outcome.Error)
 	}
 }
 

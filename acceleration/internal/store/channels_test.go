@@ -131,6 +131,23 @@ func (s *StoreSuite) TestAnIdentityIsFoundByItsUserAndKeepsItsThread() {
 	s.ErrorIs(err, ErrUnknownChannelIdentity, "another app's identity is not this one's")
 }
 
+func (s *StoreSuite) TestAUserKnownAtTwoNumbersIsReachedAtTheOneSettledLast() {
+	customerID, configID, userID := newID(), newID(), "user-"+newID()
+	first := ChannelIdentity{CustomerID: customerID, ConfigID: configID, Kind: "sms", Address: "+15550001111", UserID: userID}
+	s.Require().NoError(s.store.SaveChannelIdentity(s.ctx, &first))
+	second := ChannelIdentity{CustomerID: customerID, ConfigID: configID, Kind: "sms", Address: "+15550002222", UserID: userID}
+	s.Require().NoError(s.store.SaveChannelIdentity(s.ctx, &second))
+
+	held, err := s.store.ChannelIdentityByUser(s.ctx, customerID, configID, "sms", userID)
+	s.Require().NoError(err)
+	s.Equal("+15550002222", held.Address)
+
+	s.Require().NoError(s.store.SaveChannelIdentity(s.ctx, &first))
+	held, err = s.store.ChannelIdentityByUser(s.ctx, customerID, configID, "sms", userID)
+	s.Require().NoError(err)
+	s.Equal("+15550001111", held.Address, "the number they settled on again is the one reached")
+}
+
 func (s *StoreSuite) TestTheAgentOnANumberIsTheOneThatNamedIt() {
 	customerID := newID()
 	e164 := "+1555" + newID()[:7]

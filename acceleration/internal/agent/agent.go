@@ -2072,6 +2072,10 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 	}
 	a.composing = true
 	ctx := a.ctx
+	// A line said into a turn a scheduled task fired is that turn's spend.
+	if a.scheduled {
+		ctx = routing.WithScheduledTurn(ctx)
+	}
 	a.mu.Unlock()
 
 	asked := time.Now()

@@ -194,7 +194,100 @@ func (s *SchedulerSuite) TestAFailedOccurrenceIsRetriedThenCountedFailed() {
 	runs := s.runs(task)
 	s.Require().Len(runs, 1)
 	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
-	s.Contains(*runs[0].Error, "would not take it")
+	s.Equal(ReasonFailed, *runs[0].Error, "the error's own words stay in the logs")
+}
+
+func (s *SchedulerSuite) TestAFailureIsRecordedUnderItsReasonAndNotItsWords() {
+	deliver := &deliverer{err: &Failure{Reason: ReasonNoNumber,
+		Err: errors.New("+15550100 has never texted on whatsapp")}}
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond, time.Millisecond}
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Len(deliver.callsFor(task.ID), 3, "a failure that is not final is retried")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(ReasonNoNumber, *runs[0].Error)
+}
+
+func (s *SchedulerSuite) TestAFinalFailureIsNotRetried() {
+	deliver := &deliverer{err: &Failure{Reason: ReasonNotAnswered, Final: true,
+		Err: errors.New("the call was not answered")}}
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond, time.Millisecond}
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Len(deliver.callsFor(task.ID), 1, "a call nobody answered is not rung again")
+	s.Equal(1, s.read(task).ConsecutiveFailures)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Equal(ReasonNotAnswered, *runs[0].Error)
+}
+
+func (s *SchedulerSuite) TestAnOccurrenceTheDeliveryFoundTooLateIsMissedOnceAndNotCountedFailed() {
+	deliver := &deliverer{err: &Missed{Err: errors.New("the call is 20 minutes late")}}
+	task := s.task(time.Now().UTC().Add(-20*time.Minute).Truncate(time.Second), func(task *store.ScheduledTask) {
+		task.ConsecutiveFailures = 2
+	})
+	s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond, time.Millisecond}
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Len(deliver.callsFor(task.ID), 1, "a missed occurrence is not tried again")
+	s.Equal(2, s.read(task).ConsecutiveFailures, "a missed occurrence leaves the streak as it is")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
+	s.Nil(runs[0].Error)
+}
+
+func (s *SchedulerSuite) TestARepeatingOccurrenceTheDeliveryFoundTooLateMovesOnToTheNext() {
+	deliver := &deliverer{err: &Missed{Err: errors.New("the call is 20 minutes late")}}
+	due := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+	})
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond)
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskActive, read.State)
+	s.WithinDuration(due.AddDate(0, 0, 1), *read.NextRunAt, time.Second)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
+}
+
+func (s *SchedulerSuite) TestAScheduleThatDoesNotReadFailsUnderItsReason() {
+	deliver := &deliverer{}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), func(task *store.ScheduledTask) {
+		task.RRule = "FREQ=SOMETIMES"
+	})
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskPaused
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Empty(deliver.callsFor(task.ID))
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(ReasonUnreadable, *runs[0].Error)
 }
 
 func (s *SchedulerSuite) TestAFifthFailureInARowFailsTheTask() {
@@ -442,7 +535,7 @@ func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {
 	runs := s.runs(task)
 	s.Require().Len(runs, 1)
 	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
-	s.Contains(*runs[0].Error, "ran out of time after 200ms")
+	s.Equal(ReasonOutOfTime, *runs[0].Error)
 }
 
 func (s *SchedulerSuite) TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelivery() {

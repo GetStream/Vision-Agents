@@ -5884,7 +5884,7 @@ components:
           description: 'Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.'
           type: string
         error:
-          description: Why it failed, when it did. Null otherwise.
+          description: 'Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called. Null otherwise.'
           nullable: true
           type: string
         finished_at:
@@ -5903,7 +5903,7 @@ components:
           nullable: true
           type: string
         state:
-          description: running (retries included), delivered, failed, or missed (it fell outside the grace period).
+          description: running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
           enum:
             - running
             - delivered

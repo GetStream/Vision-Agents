@@ -239,6 +239,9 @@ type stubLLM struct {
 	// composed are the requests for a line, kept apart from asked so a test counting the
 	// turns the model was asked for is not thrown by them.
 	composed []llm.ResponseParams
+	// composedScheduled is whether each request for a line was asked as a turn a scheduled
+	// task fired.
+	composedScheduled []bool
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script{}} }
@@ -247,7 +250,7 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	if strings.HasPrefix(params.ID, composePrefix) {
-		return s.compose(params)
+		return s.compose(ctx, params)
 	}
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
@@ -317,9 +320,10 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	return script.Stream(), nil
 }
 
-func (s *stubLLM) compose(params llm.ResponseParams) (*llm.Stream, error) {
+func (s *stubLLM) compose(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.composed = append(s.composed, params)
+	s.composedScheduled = append(s.composedScheduled, routing.ScheduledTurn(ctx))
 	var line string
 	if len(s.composes) > 0 {
 		line = s.composes[min(len(s.composed), len(s.composes))-1]
@@ -346,6 +350,14 @@ func (s *stubLLM) composeRequests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]llm.ResponseParams(nil), s.composed...)
+}
+
+// composedAsScheduled is whether each request for a line was asked as a turn a scheduled
+// task fired.
+func (s *stubLLM) composedAsScheduled() []bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]bool(nil), s.composedScheduled...)
 }
 
 // writes streams a piece of a response the test is writing itself.
@@ -2212,6 +2224,36 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the answer coming back never started a turn")
 	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
+}
+
+func (s *AgentSuite) TestALineSaidIntoAScheduledTurnIsAskedOfTheModelAsScheduled() {
+	// Asking whether there is anything else after a reminder is part of the reminder: the
+	// customer's spend, as the turn was.
+	s.join(true)
+	s.model.composes = []string{"Anything else?"}
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the scheduled turn never finished")
+
+	s.agent.checkIn(stt.Participant{ID: "alice"}, idlePurpose)
+
+	s.eventually(func() bool { return len(s.model.composedAsScheduled()) == 1 }, "no line was asked for")
+	s.Equal([]bool{true}, s.model.composedAsScheduled())
+}
+
+func (s *AgentSuite) TestALineSaidIntoAnOrdinaryTurnIsNotAskedAsScheduled() {
+	s.join(true)
+	s.model.composes = []string{"Anything else?"}
+	_, err := s.agent.RespondTo(s.ctx, "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the turn never finished")
+
+	s.agent.checkIn(stt.Participant{ID: "alice"}, idlePurpose)
+
+	s.eventually(func() bool { return len(s.model.composedAsScheduled()) == 1 }, "no line was asked for")
+	s.Equal([]bool{false}, s.model.composedAsScheduled())
 }
 
 func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {

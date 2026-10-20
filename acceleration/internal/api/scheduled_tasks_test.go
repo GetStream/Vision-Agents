@@ -1701,7 +1701,10 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunFailed
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
 	s.Require().NotNil(runs[0].Error)
-	s.Contains(*runs[0].Error, "phone", "the run says the call is what could not be made")
+	// The last retry tried to ring too: a call that could not be placed is
+	// given back, and is no call already placed.
+	s.Equal(scheduling.ReasonFailed, *runs[0].Error, "a device is told a short reason, not the vendor's words")
+	s.Empty(runs[0].SessionID, "the call that could not be placed was given back")
 	s.Equal(1, s.taskReloaded(task).ConsecutiveFailures)
 }
 
@@ -1745,7 +1748,7 @@ func (s *ScheduledTasksSuite) TestATaskOutsideWhatsAppsWindowRunsNoTurnForIt() {
 	s.makeDue(task)
 
 	run := s.failedRun(task)
-	s.Contains(*run.Error, "window")
+	s.Equal(scheduling.ReasonUnreachable, *run.Error)
 	s.Zero(s.model().turnsOn("<scheduled_task"), "no turn was paid for words WhatsApp would refuse")
 }
 
@@ -1766,7 +1769,7 @@ func (s *ScheduledTasksSuite) TestATaskForSomebodyWhoOptedOutRunsNoTurnForThem()
 	s.makeDue(task)
 
 	run := s.failedRun(task)
-	s.Contains(*run.Error, "opted out")
+	s.Equal(scheduling.ReasonUnreachable, *run.Error)
 	s.Zero(s.model().turnsOn("<scheduled_task"), "no turn was paid for words the gate would refuse")
 	s.Empty(s.sink.to(writer))
 }
@@ -1836,7 +1839,7 @@ func (s *ScheduledTasksSuite) TestAReplyThatFailedIsNotWaitedOnWhenTheOccurrence
 	s.runWorker()
 
 	run := s.failedRun(task)
-	s.Contains(*run.Error, "the reply to this occurrence was failed", "the retry read the failed reply back at once")
+	s.Equal(scheduling.ReasonReplyFailed, *run.Error, "the retry read the failed reply back at once")
 	s.Equal(1, s.model().turnsOn("<scheduled_task"), "the retry ran no second turn")
 	s.Empty(s.sink.to(writer))
 }

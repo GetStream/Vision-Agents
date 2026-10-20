@@ -190,7 +190,8 @@ func (s *Store) ChannelIdentity(ctx context.Context, customerID, configID, kind,
 
 // ChannelIdentityByUser is where one end user is reached on a channel: the
 // identity an agent holds for them on it, written by whichever of their
-// messages settled who they are.
+// messages settled who they are. A user known at more than one address is
+// reached at the one settled last.
 func (s *Store) ChannelIdentityByUser(ctx context.Context, customerID, configID, kind, userID string) (ChannelIdentity, error) {
 	if customerID == "" || configID == "" || kind == "" || userID == "" {
 		return ChannelIdentity{}, ErrUnknownChannelIdentity
@@ -202,6 +203,7 @@ func (s *Store) ChannelIdentityByUser(ctx context.Context, customerID, configID,
 		Where("config_id = ?", configID).
 		Where("kind = ?", kind).
 		Where("user_id = ?", userID).
+		Order("updated_at DESC", "id DESC").
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
