@@ -481,7 +481,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	}
 
 	var failures, refusals []error
-	// met is every candidate's error in the order met, and used the last candidate whose
+	// met is the error of every candidate asked, in the order met, and used the last candidate whose
 	// use failed, with usedErr its error. They matter only once use has failed, which
 	// Select's never does.
 	var met []error
@@ -503,7 +503,6 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		}
 		if !r.registry.Has(candidate.Config.Provider) {
 			failures = append(failures, fmt.Errorf("%s: no factory registered", candidate.Config.Name()))
-			met = append(met, failures[len(failures)-1])
 			continue
 		}
 

@@ -826,7 +826,7 @@ func (s *RecordingsSuite) TestARecordingEveryCandidateFailsNamesEachCandidatesEr
 		elevenLabsHost: http.StatusInternalServerError, cartesiaHost: http.StatusTooManyRequests,
 	})
 
-	// mock has no recorder, so it is named as Select names it, and passed over.
+	// mock has no recorder: it was never asked, so the walk does not name it.
 	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
 		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "mock", "cartesia"}}, Text: "hello"})
 
@@ -834,10 +834,25 @@ func (s *RecordingsSuite) TestARecordingEveryCandidateFailsNamesEachCandidatesEr
 	s.NotErrorIs(err, routing.ErrRequest, "the providers failed, not the caller")
 	s.Equal("ttsrouter: no candidate recorded the text: "+
 		`elevenlabs/eleven_v3: elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`+"\n"+
-		"mock/mock-tts: no factory registered\n"+
 		`cartesia/sonic-3.6: cartesia: record: 429 Too Many Requests: {"detail":"down"}`, err.Error())
 	s.Equal(routing.ProviderConfig{}, served, "nobody spoke it")
 	s.Equal([]string{elevenLabsHost, cartesiaHost}, stub.asked)
+}
+
+// The control below takes its expected values from 1c5fa58db, the base: a list whose only
+// recorder is one model is the one-candidate case wherever the streaming-only vendor stands.
+func (s *RecordingsSuite) TestARecordingListedWithAStreamingOnlyVendorFailsAsBeforeNamingOneModel() {
+	for _, providers := range [][]string{{"mock", "elevenlabs"}, {"elevenlabs", "mock"}} {
+		recordings, stub := s.speaking(map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+		_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
+			Options: options.TTS{Target: "en-recorded", Providers: providers}, Text: "hello"})
+
+		s.Require().Error(err, providers)
+		s.Equal("elevenlabs/eleven_v3", served.Name(), providers)
+		s.Equal(`elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`, err.Error(), providers)
+		s.Equal([]string{elevenLabsHost}, stub.asked, providers)
+	}
 }
 
 func (s *RecordingsSuite) TestAFailedRecordingSaysAtMostTheStartOfEachVendorsAnswer() {
