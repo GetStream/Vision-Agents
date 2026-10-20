@@ -634,6 +634,16 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### The router serves Prometheus metrics, and warns when the agent talks over itself
+
+`metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
+on a listener of its own, never the public one; it is empty by default, which serves none.
+When a voice publishes the audio of two utterances of one session interleaved, which the
+caller hears as the agent speaking over itself, the router logs one warning for the pair
+naming both syntheses and turns, and counts it in `router_agent_speech_overlaps_total` and
+`router_agent_speech_overlap_seconds_total` (label `provider`). The agent's log lines now
+carry `session` and `call`. What is spoken is unchanged (AI-1550).
+
 ### An agent config has a `role`, and the app's moderator agent is found by it
 
 `AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the

@@ -1287,6 +1287,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if settings.PprofAddr != "" {
 		go servePprof(settings.PprofAddr, logger)
 	}
+	stopMetrics := serveMetrics(settings.MetricsAddr, logger)
+	defer stopMetrics()
 
 	select {
 	case err := <-listening:
