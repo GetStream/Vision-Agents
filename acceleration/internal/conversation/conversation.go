@@ -850,6 +850,11 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		}
 		record.AssistantMessageID = m.ID
 		record.State = m.State
+		// Only a follow-up, which has no message of a person's, is read back; its
+		// latest message is the one a retry after an abandoned turn answered with.
+		if record.UserMessageID == "" {
+			record.Reply = m.Text
+		}
 		commands[m.CommandID] = record
 	}
 	return commands

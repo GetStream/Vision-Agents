@@ -855,7 +855,6 @@ func TestAFollowUpsReplyIsReadBackLiveAndAcrossRestart(t *testing.T) {
 func TestAPersonsCommandKeepsNoSecondCopyOfItsReply(t *testing.T) {
 	_, client := newChat(t)
 	service := NewForChat(client)
-	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
 	_, err = c.BeginCommand("question", "what is due?", "")
@@ -866,6 +865,44 @@ func TestAPersonsCommandKeepsNoSecondCopyOfItsReply(t *testing.T) {
 	state, text, _ := c.FollowUpReply("question")
 	require.Equal(t, "completed", state)
 	require.Empty(t, text, "only a follow-up is read back; a person's reply is in Stream")
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	state, text, known := c.FollowUpReply("question")
+	require.True(t, known)
+	require.Equal(t, "completed", state)
+	require.Empty(t, text, "a person's command read back from Stream keeps no copy of its reply either")
+}
+
+func TestARetriedFollowUpsReplyIsReadBackAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	c.AbandonFollowUp("st_run")
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "time for standup"})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	state, text, known := c.FollowUpReply("st_run")
+	require.True(t, known)
+	require.Equal(t, "completed", state)
+	require.Equal(t, "time for standup", text, "the retry's reply, not the abandoned turn's empty one")
 }
 
 func TestAnAbandonedFollowUpStartsWhenDeliveredAgain(t *testing.T) {
