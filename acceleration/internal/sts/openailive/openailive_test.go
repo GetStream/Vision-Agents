@@ -1,6 +1,7 @@
 package openailive
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -50,8 +52,26 @@ func said(text string) string {
 	return `{"type":"session.output_transcript.delta","delta":"` + text + `","start_ms":900,"end_ms":1100}`
 }
 
+// spoke is a piece of the model's speech: every sample at 1000, well above audio.AudibleSample.
 func spoke(samples int) string {
-	return `{"type":"session.output_audio.delta","delta":"` + base64.StdEncoding.EncodeToString(make([]byte, samples*2)) + `"}`
+	return `{"type":"session.output_audio.delta","delta":"` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xe8, 0x03}, samples)) + `"}`
+}
+
+// quiet is a piece of the digital silence the model streams between replies, with the most
+// a sample can be and still not be heard.
+func quiet(samples int) string {
+	pcm := audio.PcmData{Samples: make([]int16, samples)}
+	pcm.Samples[0] = audio.AudibleSample - 1
+	return `{"type":"session.output_audio.delta","delta":"` + base64.StdEncoding.EncodeToString(pcm.Bytes()) + `"}`
+}
+
+// streamQuiet sends silence the way the model does between replies, a 100 ms piece every
+// 10 ms, for long enough that any reply or mute it kept alive would outlast the test's gap.
+func (s *OpenAILiveSuite) streamQuiet(provider *STS) {
+	for range 15 {
+		provider.handleMessage(s.frame(quiet(2400)))
+		time.Sleep(replyGap / 3)
+	}
 }
 
 // drain collects the events emitted so far without blocking on an empty channel.
@@ -239,6 +259,57 @@ func (s *OpenAILiveSuite) TestAPauseLongerThanTheGapStartsTheNextReply() {
 	s.Equal(2, completes(second)[0].Generation)
 }
 
+// The model streams silence for the whole session. Silence opens no reply, and the silence
+// after one does not keep it open, so each reply is settled before the next.
+func (s *OpenAILiveSuite) TestSilenceBetweenRepliesOpensNoReplyAndEndsTheOneBefore() {
+	provider := s.newProvider()
+
+	s.streamQuiet(provider)
+	s.Empty(s.drain(provider), "the silence when the session starts is no reply")
+
+	provider.handleMessage(s.frame(spoke(240)))
+	s.streamQuiet(provider)
+	first := s.drain(provider)
+	provider.handleMessage(s.frame(spoke(240)))
+	s.streamQuiet(provider)
+	second := s.drain(provider)
+
+	var starts int
+	for _, event := range append(first, second...) {
+		if _, ok := event.(sts.ResponseStarted); ok {
+			starts++
+		}
+	}
+	s.Equal(2, starts)
+	s.Require().Len(completes(first), 1, "the silence after a reply settles it")
+	s.Equal(1, completes(first)[0].Generation)
+	s.False(completes(first)[0].Interrupted)
+	s.Require().Len(completes(second), 1)
+	s.Equal(2, completes(second)[0].Generation)
+}
+
+// A pause between words is part of the reply: it goes out with it, and speech after it
+// within the gap is the same reply.
+func (s *OpenAILiveSuite) TestSilenceInsideAReplyGoesOutWithIt() {
+	provider := s.newProvider()
+
+	provider.handleMessage(s.frame(spoke(240)))
+	provider.handleMessage(s.frame(quiet(240)))
+	provider.handleMessage(s.frame(spoke(240)))
+
+	events := s.settled(provider)
+	var chunks int
+	for _, event := range events {
+		if chunk, ok := event.(sts.AudioChunk); ok {
+			chunks++
+			s.Equal(1, chunk.Generation)
+		}
+	}
+	s.Equal(3, chunks)
+	s.Require().Len(completes(events), 1)
+	s.InDelta(30, completes(events)[0].AudioDurationMs, 0.001, "the pause is part of how long the reply played")
+}
+
 // Hearing the caller during a reply says nothing about whether the reply was cut off. The
 // API transcribes the caller asynchronously, so the deltas for the utterance being answered
 // normally land after the answer has started. Only Interrupt settles a reply as cut off.
@@ -277,6 +348,27 @@ func (s *OpenAILiveSuite) TestALocalInterruptMutesTheRestOfTheReply() {
 	s.Require().Len(chunks, 2, "one before the interrupt, one from the next reply")
 	s.Equal(1, chunks[0].Generation)
 	s.Equal(2, chunks[1].Generation)
+}
+
+// A mute ends once the model falls silent, even though its silence keeps streaming.
+func (s *OpenAILiveSuite) TestAMuteEndsWhileTheModelStreamsSilence() {
+	provider := s.newProvider()
+
+	provider.handleMessage(s.frame(spoke(240)))
+	s.Require().NoError(provider.Interrupt(0))
+	provider.handleMessage(s.frame(spoke(240)))
+	s.streamQuiet(provider)
+	s.drain(provider)
+	provider.handleMessage(s.frame(spoke(240)))
+
+	var chunks []sts.AudioChunk
+	for _, event := range s.settled(provider) {
+		if chunk, ok := event.(sts.AudioChunk); ok {
+			chunks = append(chunks, chunk)
+		}
+	}
+	s.Require().Len(chunks, 1, "the next reply is heard")
+	s.Equal(2, chunks[0].Generation)
 }
 
 // A caller who barges in is still being heard when the rest of the cut-off reply's words
