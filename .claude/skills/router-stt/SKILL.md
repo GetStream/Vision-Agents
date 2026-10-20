@@ -24,7 +24,9 @@ The other way round, a live session pinned to a `realtime: false` model (`deepgr
 shortcut with only such candidates (`en-recorded`), or to a priority list holding only those, is
 refused before any vendor is dialled, naming the vendor's live models and the live shortcuts
 (`ModalityConfig.Live`). An agent checks its STT target once as it joins, so the session start
-is refused rather than every frame of the call.
+is refused rather than every frame of the call. A voice agent config is checked as it is saved
+(`liveSTTComplaint`), unless it has an STS model, is a text agent, or keeps the `stt` it had
+stored. The socket closes with 1008, the code for a request the router refused.
 
 ## The top five, and what each calls the same thing
 
