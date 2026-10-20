@@ -428,6 +428,7 @@ func TestARepeatItsDescriptionWouldMisstateIsRefused(t *testing.T) {
 		"FREQ=MONTHLY;BYDAY=2TU;BYMONTHDAY=13": "BYDAY with BYMONTHDAY",             // "on day 13"; 13 Apr 2027
 		"FREQ=MONTHLY;BYMONTHDAY=-3":           "BYMONTHDAY=-3 is not supported",    // "day -3"
 		"FREQ=MONTHLY;BYMONTHDAY=1,-31":        "BYMONTHDAY=-31 is not supported",   // "day 1, -31"
+		"FREQ=MONTHLY;BYDAY=MO":                "BYDAY=MO with FREQ=MONTHLY",        // "Monthly"; every Monday
 		"FREQ=MONTHLY;BYDAY=-3FR":              "BYDAY=-3FR is not supported",       // "the -3th Fri"
 		"FREQ=MONTHLY;BYDAY=6FR":               "BYDAY=6FR is not supported",        // refused as schedule_in_past: never fires
 		"FREQ=MONTHLY;BYMONTHDAY=1,1":          "BYMONTHDAY names 1 twice",          // "on day 1, 1"
@@ -466,6 +467,8 @@ func TestAMonthlyRepeatPastTheMonthsEndSaysItSkipsMonths(t *testing.T) {
 			[]string{"Thu 2026-10-29", "Sun 2026-11-29", "Tue 2026-12-29", "Fri 2027-01-29"}},
 		{"2026-10-28T09:00", "FREQ=MONTHLY;BYMONTHDAY=30,31", "Monthly on day 30, 31 (months without day 30 or 31 are skipped)",
 			[]string{"Fri 2026-10-30", "Sat 2026-10-31", "Mon 2026-11-30", "Wed 2026-12-30"}},
+		{"2026-10-28T09:00", "FREQ=MONTHLY", "Monthly",
+			[]string{"Wed 2026-10-28", "Sat 2026-11-28", "Mon 2026-12-28", "Thu 2027-01-28"}},
 		{"2026-10-28T09:00", "FREQ=MONTHLY;BYMONTHDAY=28", "Monthly on day 28",
 			[]string{"Wed 2026-10-28", "Sat 2026-11-28", "Mon 2026-12-28", "Thu 2027-01-28"}},
 	} {
@@ -482,6 +485,10 @@ func TestAMonthlyRepeatPastTheMonthsEndSaysItSkipsMonths(t *testing.T) {
 func TestAYearlyRepeatFromTheLeapDayFiresOnlyInLeapYears(t *testing.T) {
 	schedule := parse(t, Input{At: "2028-02-29T09:00", Repeat: "FREQ=YEARLY", Timezone: "UTC"})
 	require.Equal(t, "Yearly on 29 February (leap years only) at 09:00 (UTC)", schedule.Describe())
+	for at, text := range map[string]string{"2027-02-02T09:00": "Yearly on 2 February", "2027-03-29T09:00": "Yearly on 29 March"} {
+		other := parse(t, Input{At: at, Repeat: "FREQ=YEARLY", Timezone: "UTC"})
+		require.Equal(t, text+" at 09:00 (UTC)", other.Describe())
+	}
 	var years []int
 	for _, occurrence := range schedule.Upcoming(time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC), 3) {
 		years = append(years, occurrence.Year())
