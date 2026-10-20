@@ -3395,6 +3395,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
 	overlapping := newOverlap(voice.Provider(), a.abandonedTurn, a.logger)
+	queue := newPlayout(a.options.Edge, voice.Provider())
 
 	for event := range voice.Events() {
 		switch typed := event.(type) {
@@ -3436,6 +3437,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
 
 		case tts.SynthesisStarted:
+			queue.started(typed.SynthesisID)
 			a.logger.Info("the voice took an utterance",
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"kind", a.turns.originOf(turnOf(typed.SynthesisID)).kind,
@@ -3444,11 +3446,12 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 		case tts.SynthesisComplete:
 			overlapping.finished(typed.SynthesisID)
 			a.settleVoice(voice)
-			a.logger.Info("finished speaking",
+			a.logger.Info("finished speaking", append([]any{
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"kind", a.turns.originOf(turnOf(typed.SynthesisID)).kind,
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
-				"interrupted", typed.Interrupted)
+				"interrupted", typed.Interrupted,
+			}, queue.finished(typed.SynthesisID)...)...)
 			a.respondQueued()
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
 			if !typed.Interrupted {
