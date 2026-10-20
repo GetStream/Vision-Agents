@@ -363,6 +363,15 @@ class TestInMemoryConversation:
             ),
             pytest.param(
                 [
+                    ("u-1", "s-1", "", "hello"),
+                    ("u-2", "s-2", "Bob", "hi"),
+                    ("u-1", "s-1", "Speaker 1", "it is me"),
+                ],
+                ["hello", "Bob: hi", "Speaker 1: it is me"],
+                id="a name the same as their own fallback label is not numbered",
+            ),
+            pytest.param(
+                [
                     ("u-1", "s-1", "Alex", "hello"),
                     ("u-2", "s-2", "Alex", "hi"),
                     ("u-1", "s-1", "Alexander", "me again"),
