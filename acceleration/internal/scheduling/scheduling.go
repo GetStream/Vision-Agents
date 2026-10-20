@@ -43,6 +43,30 @@ const (
 	CodeInvalidSchedule  = "invalid_schedule"
 )
 
+// MinMove is the soonest a moved run (a snooze, or a next set by hand) may
+// land from now, unless it lands no earlier than the run it moves. Without it
+// a caller re-arming a task a minute ahead, again and again, buys a turn a
+// minute per task: 25 tasks are 25 turns a minute for one user. It is its own
+// constant; the doc of the next field of UpdateScheduledTaskRequest
+// (api/scheduled_tasks.go) says the same 15 minutes in words.
+const MinMove = 15 * time.Minute
+
+// CheckMove refuses a moved run that is both earlier than the run it moves
+// (current, nil when none is pending) and sooner than MinMove from now. A move
+// to or past the current run cannot raise how often the task runs. A current
+// run already due does not count: moving it is a re-arm from now. Now is read
+// to the second, as a schedule holds its times, so in PT15M passes.
+func CheckMove(next time.Time, current *time.Time, now time.Time) error {
+	now = now.Truncate(time.Second)
+	if current != nil && current.After(now) && !next.Before(*current) {
+		return nil
+	}
+	if next.Sub(now) < MinMove {
+		return fail(CodeIntervalTooShort, "a run can be moved to %d minutes from now at the soonest, unless it moves to or past the run it replaces", int(MinMove/time.Minute))
+	}
+	return nil
+}
+
 // MaxActivePerUser is the default cap on a user's active tasks, used when the
 // agent config does not set one.
 const MaxActivePerUser = 25
