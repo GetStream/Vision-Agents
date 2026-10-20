@@ -395,13 +395,13 @@ func (s *AgentSuite) TestLosingTheLiveSocketRecoversTheConversationAndAudio() {
 	oldSession := s.agent.speech()
 	_, err := s.agent.RespondTo(s.ctx, "The delivery is for 12 Oak Street", nil, options.LLM{})
 	s.Require().NoError(err)
-	s.nativeSend(oldPeer, `{"type":"session.output_audio.delta","delta":"AQACAA=="}`)
+	s.nativeSend(oldPeer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
 	s.nativeSend(oldPeer, `{"type":"session.output_transcript.delta","delta":"Your order is on its way."}`)
 	s.Require().Eventually(func() bool {
 		return len(s.edge.heard()) == 1 && countOf[ResponseDelta](s.events.seen()) == 1
 	}, settleFor, time.Millisecond)
 	oldReply, _ := firstOf[Responding](s.events.seen())
-	s.Equal([]int16{1, 2}, s.edge.heard()[0].Samples)
+	s.Equal([]int16{1000, 2000}, s.edge.heard()[0].Samples)
 	s.nativeSend(oldPeer, `{"type":"session.input_transcript.delta","delta":"unfinished caller words"}`)
 	s.Eventually(func() bool {
 		for _, event := range s.events.seen() {
@@ -436,14 +436,14 @@ func (s *AgentSuite) TestLosingTheLiveSocketRecoversTheConversationAndAudio() {
 	s.Equal(audio.Resample(pcm, openailive.SampleRate, 1).Bytes(), data)
 
 	before := len(s.events.seen())
-	s.nativeSend(newPeer, `{"type":"session.output_audio.delta","delta":"AwAEAA=="}`)
+	s.nativeSend(newPeer, `{"type":"session.output_audio.delta","delta":"uAugDw=="}`)
 	s.Require().Eventually(func() bool {
 		return len(s.edge.heard()) == 1 && countOf[Responding](s.events.seen()[before:]) == 1
 	}, settleFor, time.Millisecond)
 	newReply, ok := firstOf[Responding](s.events.seen()[before:])
 	s.Require().True(ok)
 	s.NotEqual(oldReply.TurnID, newReply.TurnID)
-	s.Equal([]int16{3, 4}, s.edge.heard()[0].Samples)
+	s.Equal([]int16{3000, 4000}, s.edge.heard()[0].Samples)
 	s.Zero(countOf[Left](s.events.seen()))
 	s.Zero(countOf[Error](s.events.seen()), "a recovered socket loss is not an agent error")
 	s.Equal(int32(2), fixture.attempts.Load())
@@ -498,7 +498,7 @@ func (s *AgentSuite) TestNonfatalNativeAPIErrorKeepsTheSession() {
 	peer := s.nextNativePeer(fixture.peers)
 	s.nativeSend(peer, `{"type":"error","error":{"code":"transient","message":"request rejected"}}`)
 	s.Eventually(func() bool { return countOf[Error](s.events.seen()) == 1 }, settleFor, time.Millisecond)
-	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
 	s.Eventually(func() bool { return len(s.edge.heard()) == 1 }, settleFor, time.Millisecond)
 	s.Equal(1, int(fixture.attempts.Load()))
 	s.Zero(countOf[Left](s.events.seen()))
