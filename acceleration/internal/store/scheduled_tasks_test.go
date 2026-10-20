@@ -343,3 +343,88 @@ func (s *StoreSuite) TestAUserTimezoneIsStoredAndMoved() {
 		Where("customer_id = ?", "acme").Where("id = ?", "sam").Scan(s.ctx))
 	s.Equal("authenticated", user.Kind, "moving a zone never rewrites what the credential proved")
 }
+
+func (s *StoreSuite) TestDeletingAConfigPausesOnlyItsActiveTasks() {
+	created := s.task("one", nil)
+	s.task("done", func(task *ScheduledTask) { task.State = ScheduledTaskCompleted })
+	s.task("other-config", func(task *ScheduledTask) { task.ConfigID = "config-2" })
+	s.task("no-config", func(task *ScheduledTask) { task.ConfigID = "" })
+	s.task("other-customer", func(task *ScheduledTask) { task.CustomerID = "globex" })
+
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1"))
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", ""))
+
+	for id, want := range map[string]string{
+		"one":          ScheduledTaskPaused,
+		"done":         ScheduledTaskCompleted,
+		"other-config": ScheduledTaskActive,
+		"no-config":    ScheduledTaskActive,
+	} {
+		task, err := s.store.ScheduledTask(s.ctx, "acme", id)
+		s.Require().NoError(err)
+		s.Equal(want, task.State, id)
+	}
+	paused, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.True(paused.UpdatedAt.After(created.UpdatedAt), "the pause is a change to the task")
+	other, err := s.store.ScheduledTask(s.ctx, "globex", "other-customer")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskActive, other.State, "another customer's config of the same id is not this one")
+}
+
+func (s *StoreSuite) TestAClaimInFlightCannotResumeADeletedConfigsTask() {
+	due := s.base.Add(-time.Minute)
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	s.Require().NoError(s.store.PauseScheduledTasksForConfig(s.ctx, "acme", "config-1"))
+
+	next := s.base.Add(24 * time.Hour)
+	applied, err := s.store.FinishScheduledTaskRun(s.ctx, "acme", claimed[0].Run.ID, claimed[0].ClaimID, ScheduledTaskOutcome{
+		RunState: ScheduledTaskRunDelivered, DeliveredTo: ScheduledTaskDeliveredConversation,
+		NextRunAt: &next, State: ScheduledTaskActive,
+	})
+	s.Require().NoError(err)
+	s.False(applied, "the pause fenced the claim")
+	after, err := s.store.ScheduledTask(s.ctx, "acme", "one")
+	s.Require().NoError(err)
+	s.Equal(ScheduledTaskPaused, after.State)
+}
+
+func (s *StoreSuite) TestAnUnchangedUserTimezoneIsNotWrittenAgain() {
+	s.Require().NoError(s.store.SetUserTimezone(s.ctx, "acme", "sam", "authenticated", "Europe/Amsterdam"))
+	written := s.userRowVersion("sam")
+
+	s.Require().NoError(s.store.SetUserTimezone(s.ctx, "acme", "sam", "authenticated", "Europe/Amsterdam"))
+	s.Equal(written, s.userRowVersion("sam"), "the same zone again leaves the row alone")
+
+	s.Require().NoError(s.store.SetUserTimezone(s.ctx, "acme", "sam", "authenticated", "Asia/Tokyo"))
+	s.NotEqual(written, s.userRowVersion("sam"))
+	zone, err := s.store.UserTimezone(s.ctx, "acme", "sam")
+	s.Require().NoError(err)
+	s.Equal("Asia/Tokyo", zone)
+}
+
+// userRowVersion is the transaction that last wrote acme's user's row, which moves on
+// every write to it, even one that sets a column to what it held.
+func (s *StoreSuite) userRowVersion(userID string) string {
+	var version string
+	s.Require().NoError(s.store.db.QueryRowContext(s.ctx,
+		"SELECT xmin::text FROM users WHERE customer_id = ? AND id = ?", "acme", userID).Scan(&version))
+	return version
+}
+
+func (s *StoreSuite) TestAUserWithNoZoneYetIsGivenOne() {
+	// A row written before zones were kept holds none, not an empty one.
+	_, err := s.store.db.ExecContext(s.ctx,
+		"INSERT INTO users (customer_id, id, kind, name, timezone) VALUES ('acme', 'sam', 'authenticated', '', NULL)")
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.store.SetUserTimezone(s.ctx, "acme", "sam", "authenticated", "Europe/Amsterdam"))
+
+	zone, err := s.store.UserTimezone(s.ctx, "acme", "sam")
+	s.Require().NoError(err)
+	s.Equal("Europe/Amsterdam", zone)
+}

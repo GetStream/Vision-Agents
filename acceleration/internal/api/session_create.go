@@ -71,9 +71,10 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 
 // rememberTimezone stores the zone a session was opened in as its user's zone, so what a
 // task scheduled later runs at is the hour this user means. The latest explicit zone wins,
-// a session that names none says nothing, and an incognito session speaks for nobody.
+// a session that names none says nothing, and an incognito session speaks for nobody. Nor
+// does an anonymous caller: the user id it goes by is a claim nobody checked (recordUser).
 func (s *Server) rememberTimezone(ctx context.Context, customerID string, spec session.Spec) {
-	if s.store == nil || spec.Timezone == "" || spec.Incognito {
+	if s.store == nil || spec.Timezone == "" || spec.Incognito || KindFrom(ctx) == auth.KindAnonymous {
 		return
 	}
 	caller := CallerFrom(ctx)

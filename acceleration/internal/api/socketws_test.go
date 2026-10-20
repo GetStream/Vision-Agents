@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -210,4 +211,28 @@ func (s *SocketSessionSuite) TestADeviceOpensASocketSessionWithoutAHistory() {
 				settleFor, 20*time.Millisecond, "the agent never spoke on the device's socket")
 		})
 	}
+}
+
+// opensIn opens a socket session for device in the zone, and waits until it is answered.
+func (s *SocketSessionSuite) opensIn(device *testClient, zone string) {
+	connection := device.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "session": map[string]any{"timezone": zone, "greeting": map[string]any{"text": s.utils.uuid()}},
+	}))
+	answered := s.readFrame(connection)
+	s.Require().Equal("session", answered["type"], "the socket answered %v", answered)
+}
+
+func (s *SocketSessionSuite) TestAnAnonymousSocketCannotMoveAUsersTimezone() {
+	user := s.data.createUser()
+	s.opensIn(user, "Europe/Amsterdam")
+	zone, err := s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	s.Equal("Europe/Amsterdam", zone, "a signed-in user's socket records their zone")
+
+	s.opensIn(s.data.claiming(user.userID), "Asia/Tokyo")
+
+	zone, err = s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	s.Equal("Europe/Amsterdam", zone, "a name nobody checked speaks for nobody's zone")
 }

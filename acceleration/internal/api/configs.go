@@ -283,6 +283,12 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
+	// A deleted config's tasks have no agent left to run on: paused, they stop failing
+	// every occurrence and counting against their users' limit, and stay readable.
+	if err := s.store.PauseScheduledTasksForConfig(ctx, customerID, request.Id); err != nil {
+		s.logger.Error("could not pause a deleted config's scheduled tasks",
+			"config", request.Id, "error", err)
+	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditAgentConfig, ResourceID: existing.ID, ResourceName: existing.Name,
 		Action: store.AuditDeleted, Changes: auditDiff(agentConfigOf(existing), nil),

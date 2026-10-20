@@ -885,6 +885,22 @@ func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
 	s.Empty(s.tasksOf(user), "the deleted conversation's tasks went with it")
 }
 
+func (s *ScheduledTasksSuite) TestDeletingAConfigPausesItsTasks() {
+	deleted, kept := s.agentWithScheduling(nil), s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	orphaned := s.createTask(user, taskRequest(deleted))
+	other := s.createTask(user, taskRequest(kept))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+deleted, nil, nil))
+
+	states := map[string]string{}
+	for _, task := range s.tasksOf(user) {
+		states[task.ID] = task.State
+	}
+	s.Equal(map[string]string{orphaned.Id: store.ScheduledTaskPaused, other.Id: store.ScheduledTaskActive}, states,
+		"a task of a deleted agent has nothing to run on, and stops counting against the user's limit")
+}
+
 func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 	// The user agreed to the task once, not to each time it runs: the turn it
 	// fires in their own conversation is the customer's spend, and the turn
