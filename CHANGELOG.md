@@ -634,6 +634,16 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### The router serves Prometheus metrics, and warns when the agent talks over itself
+
+`metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
+on a listener of its own, never the public one; it is empty by default, which serves none.
+When a voice publishes the audio of two utterances of one session interleaved, which the
+caller hears as the agent speaking over itself, the router logs one warning for the pair
+naming both syntheses and turns, and counts it in `router_agent_speech_overlaps_total` and
+`router_agent_speech_overlap_seconds_total` (label `provider`). The agent's log lines now
+carry `session` and `call`. What is spoken is unchanged (AI-1550).
+
 ### A connector manifest can cap a connection's calls in flight
 
 `rate_limit.max_concurrent_calls` in a connector's manifest caps how many of one connection's tool calls a router sends at once. A call over the cap waits for one to end, within its binding's `timeout_ms`; if it is still waiting then, it is not sent and the model reads a `connector_busy` result, and the call's row in the invocation log is `denied` with the message `held by the router: in-flight limit <n> reached on the connection`. The cap is per connection and per router process. A manifest without the field has no cap, as before.
@@ -688,6 +698,35 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 /v1/agents/runs` adds it after the config's and the caller's instructions on every run of an
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
+
+### Simulations for the moderator template
+
+`acceleration/templates/agent_moderator/simulations/moderation.yaml` holds eight reviews Nora
+must get right, ported from the Nora prototype's evals: casual profanity in an adult market and
+the same words in an education app, an educational quotation, targeted abuse, repeat confirmed
+harassment, an overturned incident that must not escalate, an innocent message from a user with
+prior bans, and an instruction injected into the message. A simulation talks to Nora in chat
+rather than through a run, so each one hands over the policy with its cases, and its assertion
+judges the verdicts rather than the answer format. Run them after editing the agent with
+`getstream agents simulate nora` (AI-1506).
+### The app's moderator reads the app's moderation data
+
+A session or run of an `agent_moderator` config is offered six read-only tools on the app's
+moderation data: `query_review_queue`, `get_review_queue_item` (with its flags and actions),
+`query_moderation_configs` (with their LLM labels), `query_moderation_rules`, `list_blocklists`
+and `query_moderation_logs`. They act with the Stream identity the router already holds for the
+app, so no secret is passed in. They are offered only to a session the customer's backend
+opens (a server-side caller), never one an end user's device opens, and only in an app of the
+customer's own: a session in the deployment's shared app is offered none. Reading the review queue never locks an item, and a
+tool the caller declares under the same name stays the caller's (AI-1504).
+### The moderator template proposes configuration changes from Ask Nora
+
+`acceleration/templates/agent_moderator/skills/suggest_policy.md` moves the Nora proof of
+concept's configuration suggestions into the template. From the live policy, the last 7 days of
+reviews (or the days the moderator names) and where Nora disagreed with the first layer, it
+proposes up to 8 changes to label actions, LLM labels and severities, the app context, blocklists,
+rules and the flooding filter, each with the counts behind it, as the JSON the dashboard saves.
+It only proposes: nothing changes until the moderator confirms in the dashboard (AI-1505).
 
 ### A recording moves to the next model when the vendor fails it
 
@@ -2351,7 +2390,9 @@ own `StreamVideo` is left as it is.
 - A `/v1/{modality}/stream` socket that routing refuses, such as a live transcription pinned to a batch model, closes with 1008 (policy violation) instead of 1011. Any other failure still closes with 1011, and the reason is the same refusal (AI-1456).
 - People on a voice call keep their names after the session switches between voice and writing: the next turn reads `<name>: <words>` and the instructions still say several people are talking. Both were lost until two people spoke again. Two people with the same display name now get distinct labels, in the order they first spoke: `Alex`, then `Alex (2)`, then `Alex (3)`. A label stays the same for the whole session, even if the person rejoins or renames themselves (AI-1437, AI-1438).
 - `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
+- A voice agent on GPT-Live (`openai/gpt-live-1*`) files each reply as its own turn. The model streams audio for the whole session, digital silence between replies included, so one reply opened when the agent joined and closed only when it left, and a reply the caller cut off kept every later one muted. A reply now opens on the model's words or on audio with something to hear in it, and closes after 800 ms with neither (AI-1533).
 - A voice agent on Gemini Live (`gemini/*`) files every reply as its own turn. When the model's words came before its audio, the reply opened before the caller's turn was settled, so `GET /v1/agents/calls/{id}/timeline` lost the first turn and filed each later one under the next reply, with the previous caller's words and a round trip of about 12 s; the session socket's `responding` prompt was the turn before. The caller's turn is now settled, and the wait timed from their last word, before the reply opens. GPT-Live (`openai/gpt-live-1*`) opened a reply on its words the same way and gets the same fix (AI-1464).
+- A speech-to-speech turn's round trip runs from the moment the model's own detector decided the caller had finished, on Gemini Live (`gemini/*`) as on GPT-Realtime. Gemini's was timed from the caller's last transcribed words, which arrive with the reply, so it read 0-4 ms; it is now placed from the `audioOffset` of the server's `ACTIVITY_END` and reads about 160-370 ms on `gemini-3.8-live`. On GPT-Realtime (`openai/gpt-realtime*`), a stop heard while a reply to `Prompt` was still open timed the next reply from it: a follow-up 12 s later read a 13,030 ms round trip. That stop now belongs to the open reply, and the next reply is not timed from it (AI-1534, AI-1535).
 - `GET /v1/agents/voices/library` lists every Cartesia voice. It stopped at the first 1,000 (ten pages of 100), and Cartesia had 1,049 on 2026-10-19. `provider=fish` now says Fish voices cannot be browsed through the router yet and to name one by its Fish model id, rather than `fish publishes no voice library`. A provider that will not list voices for the router's key (a 401 or 403) is reported as `the inworld key cannot list voices (http 403)` rather than as a refused voice (AI-1413).
 - A recording on a model that only streams, such as `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2`, is refused when it is sent, with a 400 that names the models that record: `routing: cartesia/sonic-preview can only stream speech, not record it; models that record: elevenlabs/...`. It was accepted and failed with `no factory registered`, in the job or in the inline answer. Only ElevenLabs records; a shortcut that reaches it, such as `tts-quality`, is served by it as before, and so is a priority list with it in. `GET /v1/tts/routes` and `/v1/tts/routes/{target}` now say per candidate whether a recording can use it (`Candidate.can_record`); STT and STS leave it out (AI-1412).
 

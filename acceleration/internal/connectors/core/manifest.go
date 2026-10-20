@@ -38,6 +38,10 @@ type Manifest struct {
 	// cf62af0d). Nothing that connects reads them.
 	Category    string `yaml:"category,omitempty" json:"category,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Internal is a connector only Stream's own apps see: those whose settings say
+	// internal_connectors (store.AppSettings). Left out of the JSON when false, so the JSON of
+	// every manifest stored before it stays as it was.
+	Internal bool `yaml:"internal,omitempty" json:"internal,omitempty"`
 	// Setup is what a person does at the provider before the first consent, as the plugin
 	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
 	// dashboard's setup page can show it over a connector (architecture doc on

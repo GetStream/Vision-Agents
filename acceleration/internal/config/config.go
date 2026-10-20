@@ -79,6 +79,9 @@ type Config struct {
 	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
 	// means no profiling endpoint.
 	PprofAddr string `koanf:"pprof_addr"`
+	// MetricsAddr serves Prometheus metrics at /metrics on its own listener, never the
+	// public one. Empty means no metrics endpoint.
+	MetricsAddr string `koanf:"metrics_addr"`
 	// Shard names the part of a deployment this router is in, when its calls are kept apart
 	// from what every part shares (see Postgres.ShardDSN and Redis.Shard). Empty is a
 	// deployment of one part.
@@ -341,6 +344,7 @@ var variables = map[string]string{
 	"voices_bucket_url":  "ROUTER_VOICES_BUCKET_URL",
 	"mock_providers":     "ROUTER_MOCK_PROVIDERS",
 	"pprof_addr":         "ROUTER_PPROF_ADDR",
+	"metrics_addr":       "ROUTER_METRICS_ADDR",
 	"shard":              "ROUTER_SHARD",
 	"postgres.dsn":       "ROUTER_POSTGRES_DSN",
 	"postgres.shard_dsn": "ROUTER_POSTGRES_SHARD_DSN",
@@ -643,6 +647,7 @@ func (c Config) export() error {
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"pprof_addr":                    c.PprofAddr,
+		"metrics_addr":                  c.MetricsAddr,
 		"shard":                         c.Shard,
 		"postgres.dsn":                  c.Postgres.DSN,
 		"postgres.shard_dsn":            c.Postgres.ShardDSN,

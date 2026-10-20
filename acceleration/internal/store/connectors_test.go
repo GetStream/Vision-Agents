@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing/fstest"
@@ -1030,4 +1031,144 @@ func (s *StoreSuite) TestAForcedDeleteAndASaveBindingItsConnectionDoNotDeadlock(
 
 	s.NoError(<-deleted)
 	s.ErrorIs(<-saved, ErrNoConnectorDefinition, "the connector is gone")
+}
+
+// internalAcme is a built-in only an app marked internal sees, at revision 1, with a client
+// the app registers.
+const internalAcme = `
+id: acme
+revision: 1
+name: Acme
+internal: true
+endpoints:
+  mcp: https://mcp.acme.example/mcp
+schemes: [oauth2_code, test_key]
+client:
+  registration: [customer]
+sources:
+  - kind: mcp
+    endpoint: mcp
+`
+
+// appWith stores an app with the settings given and returns its id, which is the customer id
+// its connectors are read under.
+func (s *StoreSuite) appWith(settings AppSettings) string {
+	org := Organization{Name: "acme"}
+	s.Require().NoError(s.store.CreateOrganization(s.ctx, &org))
+	app := App{OrganizationID: org.ID, Name: "production", Settings: settings}
+	s.Require().NoError(s.store.CreateApp(s.ctx, &app))
+	return app.ID
+}
+
+// acmeSeenBy is, for each read that hands an app a definition, whether it finds acme for the
+// customer. Revision 2 is stored first, so a connection pinned to revision 1 is outdated
+// exactly when the statuses read sees acme.
+func (s *StoreSuite) acmeSeenBy(customerID string) map[string]bool {
+	seen := map[string]bool{}
+
+	list, err := s.store.ListConnectorDefinitions(s.ctx, customerID, ConnectorDefinitionFilter{})
+	s.Require().NoError(err)
+	seen["list"] = slices.Contains(definitionIDs(list), "acme")
+
+	_, err = s.store.LatestConnectorDefinition(s.ctx, customerID, "acme")
+	seen["latest"] = s.found(err)
+
+	_, err = s.store.ConnectorDefinition(s.ctx, customerID, "acme", 1)
+	seen["get"] = s.found(err)
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, customerID,
+		[]ConnectorConnection{{ID: "pinned", CustomerID: customerID, ConnectorID: "acme", DefinitionRevision: 1}})
+	s.Require().NoError(err)
+	seen["statuses"] = statuses["pinned"].Status == DefinitionOutdated
+
+	err = s.store.CreateConnectorConnection(s.ctx, testSchemes, &ConnectorConnection{CustomerID: customerID,
+		ConnectorID: "acme", DefinitionRevision: 1, OwnerType: OwnerApp, AuthScheme: "test_key"})
+	seen["connection"] = s.found(err)
+
+	_, err = s.store.PutConnectorOAuthClient(s.ctx, &ConnectorOAuthClient{CustomerID: customerID, ConnectorID: "acme",
+		Registration: core.ClientCustomer, ClientID: "client", SecretSealed: []byte("sealed secret"), KEKVersion: 1})
+	seen["oauth client"] = s.found(err)
+	return seen
+}
+
+// found is whether a read found the definition: nil, or an error that is not
+// ErrNoConnectorDefinition stops the test.
+func (s *StoreSuite) found(err error) bool {
+	if errors.Is(err, ErrNoConnectorDefinition) {
+		return false
+	}
+	s.Require().NoError(err)
+	return true
+}
+
+// seedInternalAcme stores internalAcme at revisions 1 and 2.
+func (s *StoreSuite) seedInternalAcme() {
+	s.seed(internalAcme)
+	s.seed(strings.Replace(strings.Replace(internalAcme, "revision: 1", "revision: 2", 1), "name: Acme", "name: Acme Two", 1))
+}
+
+var acmeEverywhere = map[string]bool{"list": true, "latest": true, "get": true, "statuses": true, "connection": true, "oauth client": true}
+
+var acmeNowhere = map[string]bool{"list": false, "latest": false, "get": false, "statuses": false, "connection": false, "oauth client": false}
+
+func (s *StoreSuite) TestAnInternalBuiltInIsHiddenFromAnAppWithoutTheFlag() {
+	s.seedInternalAcme()
+	off := false
+
+	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})), "an app whose settings say nothing")
+	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{InternalConnectors: &off})), "an app whose flag is false")
+	s.Equal(acmeNowhere, s.acmeSeenBy("no-app-row"), "a customer with no app row")
+}
+
+func (s *StoreSuite) TestAnAppWithTheFlagSeesAnInternalBuiltIn() {
+	s.seedInternalAcme()
+	on := true
+
+	s.Equal(acmeEverywhere, s.acmeSeenBy(s.appWith(AppSettings{InternalConnectors: &on})))
+}
+
+func (s *StoreSuite) TestOneAppsFlagDoesNotShowAnInternalBuiltInToAnother() {
+	s.seedInternalAcme()
+	on := true
+	s.appWith(AppSettings{InternalConnectors: &on})
+
+	s.Equal(acmeNowhere, s.acmeSeenBy(s.appWith(AppSettings{})))
+}
+
+// An app without the flag, or a customer with no app row, sees the catalog it saw before the flag
+// existed: every embedded built-in that is not internal, each found by LatestConnectorDefinition
+// and ConnectorDefinition at its latest revision. An app with the flag sees the internal ones too.
+func (s *StoreSuite) TestWithoutTheFlagEveryAppSeesTheCatalogItSawBefore() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	var before, all []string
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".yaml") {
+			continue
+		}
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		manifest, err := core.ParseManifest(raw)
+		s.Require().NoError(err)
+		all = append(all, manifest.ID)
+		if !manifest.Internal {
+			before = append(before, manifest.ID)
+		}
+	}
+	slices.Sort(before)
+	slices.Sort(all)
+	on := true
+
+	for customer, want := range map[string][]string{s.appWith(AppSettings{}): before, "no-app-row": before, s.appWith(AppSettings{InternalConnectors: &on}): all} {
+		list, err := s.store.ListConnectorDefinitions(s.ctx, customer, ConnectorDefinitionFilter{Limit: 200})
+		s.Require().NoError(err)
+		s.Equal(want, definitionIDs(list))
+		for _, definition := range list {
+			latest, err := s.store.LatestConnectorDefinition(s.ctx, customer, definition.ID)
+			s.Require().NoError(err)
+			_, err = s.store.ConnectorDefinition(s.ctx, customer, definition.ID, latest.Revision)
+			s.Require().NoError(err)
+		}
+	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -80,7 +81,7 @@ func (s *connectorFixture) SetupSuite() {
 	s.Require().NoError(err)
 	s.provider = newAccountsProvider(s)
 	s.registry = core.Registry{
-		Schemes:     map[string]core.Scheme{bearer.Name: consented{bearer.New()}},
+		Schemes:     map[string]core.Scheme{bearer.Name: consented{bearer.New()}, none.Name: none.New()},
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	credentials, err := pgsealed.New(db, s.sealer)
@@ -131,7 +132,7 @@ inputs:
     enum: [primary, secondary, moved]
 endpoints:
   mcp: %s/{account}/mcp
-schemes: [bearer]
+schemes: [bearer, none]
 sources:
   - kind: mcp
     endpoint: mcp

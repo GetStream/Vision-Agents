@@ -146,7 +146,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -261,7 +261,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -1071,11 +1071,11 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 // many plugin entries no binding replaces: a migrated config keeps its entries beside the
 // bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
 // an unbound entry is real use.
-func (s *Server) warnPluginsSaved(config store.AgentConfig) {
+func (s *Server) warnPluginsSaved(ctx context.Context, config store.AgentConfig) {
 	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
 		return
 	}
-	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
+	plugins.ReportUse(ctx, s.logger, plugins.PathConfigSave,
 		"customer", config.CustomerID, "config", config.ID,
 		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
 		"plugin_events", len(config.PluginEvents))
