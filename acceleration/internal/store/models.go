@@ -1472,6 +1472,10 @@ type AppSettings struct {
 	// out on the way.
 	AllowAnonymous *bool `json:"allow_anonymous,omitempty"`
 	AllowGuest     *bool `json:"allow_guest,omitempty"`
+	// InternalConnectors is whether the app sees the connectors whose manifest says internal
+	// (visibleTo in connectors.go). Stream sets it on its own apps; no operation writes
+	// settings, so an app cannot set it on itself. Nil is no.
+	InternalConnectors *bool `json:"internal_connectors,omitempty"`
 }
 
 // AnonymousAllowed reports whether the app takes callers who presented no token.
