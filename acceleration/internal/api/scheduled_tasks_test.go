@@ -913,6 +913,23 @@ func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI
 	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
 }
 
+func (s *ScheduledTasksSuite) TestAConfigThatCannotBeReadIsNotReportedAsDeletedOnResume() {
+	// A task with no config id makes the config lookup fail without the config
+	// being gone: that is a failure of the lookup, not an unknown config.
+	user := s.data.createUser()
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), UserID: user.userID,
+		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
+		StartLocal: time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "Europe/Amsterdam",
+		State: store.ScheduledTaskPaused,
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+
+	var rendered ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+task.ID+"/resume", nil, &rendered))
+	s.Equal(store.ScheduledTaskActive, rendered.State)
+}
+
 func (s *ScheduledTasksSuite) TestTheAgentCannotResumeATaskOfAConfigDeletedUnderItsSession() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
