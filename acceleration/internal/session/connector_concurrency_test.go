@@ -29,7 +29,7 @@ func TestConcurrencySuite(t *testing.T) {
 }
 
 // TestWithoutACapEveryCallIsInFlightAtOnce: the control. A manifest with no cap sends all five
-// calls at once, as the base did (probe on 3f4cf612e: 5 in flight).
+// calls at once, as the base did (probe on 6f6ae2e2e: 5 in flight).
 func (s *ConcurrencySuite) TestWithoutACapEveryCallIsInFlightAtOnce() {
 	primary := s.connection("", "primary")
 	d := s.attachAll(s.fixed("crm", primary, "whoami"))
@@ -108,6 +108,29 @@ func (s *ConcurrencySuite) TestACallInterruptedWhileWaitingIsNotSent() {
 	s.ErrorIs(err, context.DeadlineExceeded)
 	s.Equal([]string{"primary"}, first())
 	s.Equal(1, s.provider.calls("primary"))
+}
+
+// TestACallThatFailsGivesItsSlotBack: a call the timeout cut off frees its slot, so the next
+// call on the connection is sent rather than held.
+func (s *ConcurrencySuite) TestACallThatFailsGivesItsSlotBack() {
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	cutOff := s.fixed("quick", primary, "whoami")
+	cutOff.TimeoutMs = 200
+	next := s.fixed("crm", primary, "whoami")
+	next.TimeoutMs = 1000
+	d := s.attachAll(cutOff, next)
+	release := s.provider.hold()
+	defer release()
+
+	cut, err := s.call(d, "quick__whoami", "{}")
+	s.Require().NoError(err)
+	s.Require().Contains(cut, "outcome_unknown")
+	release()
+	said, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().NoError(err)
+	s.Equal("primary", said)
 }
 
 // TestTheCapIsPerConnection: a cap of one on one connection holds nothing of another
