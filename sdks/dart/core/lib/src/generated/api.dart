@@ -472,6 +472,7 @@ final class CreateSessionRequest {
     this.sts,
     this.stt,
     this.tags,
+    this.timezone,
     this.title,
     this.toolTimeoutMs,
     this.tools,
@@ -617,6 +618,10 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _strings(value, 'CreateSessionRequest.tags'),
       },
+      timezone: switch (json['timezone']) {
+        null => null,
+        final Object value => _string(value, 'CreateSessionRequest.timezone'),
+      },
       title: switch (json['title']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.title'),
@@ -684,6 +689,7 @@ final class CreateSessionRequest {
   final String? sts;
   final String? stt;
   final Map<String, String>? tags;
+  final String? timezone;
   final String? title;
   final int? toolTimeoutMs;
   final List<SessionTool>? tools;
@@ -725,6 +731,7 @@ final class CreateSessionRequest {
     'sts': ?sts,
     'stt': ?stt,
     'tags': ?tags,
+    'timezone': ?timezone,
     'title': ?title,
     'tool_timeout_ms': ?toolTimeoutMs,
     if (tools case final value?) 'tools': [for (final item in value) item.toJson()],
