@@ -622,6 +622,20 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### Inworld records speech
+
+`POST /v1/tts/recordings` can be served by Inworld, pinned (`inworld/inworld-tts-2`,
+`inworld/inworld-tts-2-flash`, `inworld/inworld-tts-2-batch`), named in a priority list
+(`["inworld"]`, `["elevenlabs","inworld"]`), or reached from a shortcut when the models ahead of
+it cannot be built. It records on Inworld's `/tts/v1/voice` in the voice, model, delivery mode
+and language its live voice uses, and `can_record` is now true for it in `GET /v1/tts/routes`.
+`en-recorded` and `multilingual-recorded` still prefer ElevenLabs v3, then Cartesia. `format`
+takes `mp3_<rate>_<kbps>`, `pcm_<rate>`, `wav_<rate>`, `ulaw_<rate>` and `alaw_<rate>` from 8000
+to 48000 Hz, `mp3_44100_128` when left out. Any other format, a speed, volume or emotion, and a
+text over 2,000 UTF-16 code units fail the job and name it: the request is accepted (202) and the
+job ends `failed`. A live Inworld voice asked for a format is refused as the caller's mistake.
+Breeze still only streams (AI-1463).
+
 ### Cartesia records speech
 
 `POST /v1/tts/recordings` can be served by Cartesia, pinned (`cartesia/sonic-preview`,
@@ -634,7 +648,7 @@ ElevenLabs v3. `format` takes `mp3_<rate>_<kbps>`, `pcm_<rate>`, `wav_<rate>`, `
 speed, volume or emotion, fails the job and names it: the request is accepted (202) and the job
 ends `failed`. A live Cartesia voice asked for a format is refused as the caller's mistake.
 Recorded shortcuts (`en-recorded`, `multilingual-recorded`) with a language hint of bn, gu, he, ka, kn, ml, mr, or, pa, te, th, tl or ur now record on Cartesia: ElevenLabs v3 lacks them and they were refused before.
-Inworld and Breeze still only stream (AI-1462).
+Breeze still only streams (AI-1462).
 
 ### A phone on a call can show the agent its camera
 
