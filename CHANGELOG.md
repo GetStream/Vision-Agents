@@ -633,6 +633,7 @@ ElevenLabs v3. `format` takes `mp3_<rate>_<kbps>`, `pcm_<rate>`, `wav_<rate>`, `
 `alaw_<rate>` at the rates Cartesia offers, `mp3_44100_128` when left out. Any other format, and a
 speed, volume or emotion, fails the job and names it: the request is accepted (202) and the job
 ends `failed`. A live Cartesia voice asked for a format is refused as the caller's mistake.
+Recorded shortcuts (`en-recorded`, `multilingual-recorded`) with a language hint of bn, gu, he, ka, kn, ml, mr, or, pa, te, th, tl or ur now record on Cartesia: ElevenLabs v3 lacks them and they were refused before.
 Inworld and Breeze still only stream (AI-1462).
 
 ### A phone on a call can show the agent its camera

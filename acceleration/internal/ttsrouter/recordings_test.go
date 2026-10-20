@@ -344,6 +344,23 @@ func (s *RecordingsSuite) TestAPriorityListNamingCartesiaIsServedByItsBatchModel
 	}
 }
 
+func (s *RecordingsSuite) TestARecordingInAFormatIsServedByCartesiasBatchModelPinnedOrListed() {
+	for name, opts := range map[string]options.TTS{
+		"pinned": {Target: "cartesia/sonic-3.6", Format: "pcm_16000"},
+		"listed": {Target: "en-recorded", Providers: []string{"cartesia"}, Format: "pcm_16000"},
+	} {
+		s.Run(name, func() {
+			s.asked = nil
+			served, err := s.recordOn(opts)
+
+			s.Require().NoError(err)
+			s.Equal("cartesia/sonic-3.6", served)
+			s.Require().Len(s.asked, 1)
+			s.Equal("pcm_16000", s.asked[0].Format)
+		})
+	}
+}
+
 func (s *RecordingsSuite) TestAPriorityListOfElevenLabsThenCartesiaFallsBackToCartesia() {
 	recordings := s.newRecordings()
 	s.T().Setenv("ELEVENLABS_API_KEY", "")
