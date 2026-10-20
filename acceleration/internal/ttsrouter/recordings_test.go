@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -186,6 +187,15 @@ func (s *RecordingsSuite) speakingInworld() (*Recordings, *inworldStub) {
 // speaking routes over the built-in config with every vendor's own factory, whose
 // recorders speak to a vendorStub answering statuses, swapped in for http.DefaultTransport.
 func (s *RecordingsSuite) speaking(statuses map[string]int) (*Recordings, *vendorStub) {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	return s.speakingWith(config[routing.TTS], nil, statuses)
+}
+
+// speakingWith is speaking over a config and behind a gate of the test's own.
+func (s *RecordingsSuite) speakingWith(
+	config routing.ModalityConfig, gate routing.Gate, statuses map[string]int,
+) (*Recordings, *vendorStub) {
 	for _, key := range []string{"ELEVENLABS_API_KEY", "CARTESIA_API_KEY", "INWORLD_API_KEY"} {
 		s.T().Setenv(key, "test-key")
 	}
@@ -193,13 +203,18 @@ func (s *RecordingsSuite) speaking(statuses map[string]int) (*Recordings, *vendo
 	real := http.DefaultTransport
 	http.DefaultTransport = stub
 	s.T().Cleanup(func() { http.DefaultTransport = real })
-	config, err := routing.DefaultConfig()
-	s.Require().NoError(err)
 
-	recordings, err := NewRecordings(Options{Config: config[routing.TTS], Recorders: DefaultRecorderRegistry()})
+	recordings, err := NewRecordings(Options{Config: config, Recorders: DefaultRecorderRegistry(), Gate: gate})
 	s.Require().NoError(err)
 	s.T().Cleanup(recordings.Close)
 	return recordings, stub
+}
+
+// allowing is a policy that allows only its models.
+type allowing []string
+
+func (a allowing) Admit(context.Context, string) (routing.Admission, error) {
+	return routing.Admission{Models: a}, nil
 }
 
 func (s *RecordingsSuite) record(voice string, overwrite string) error {
@@ -811,7 +826,7 @@ func (s *RecordingsSuite) TestARecordingEveryCandidateFailsNamesEachCandidatesEr
 		elevenLabsHost: http.StatusInternalServerError, cartesiaHost: http.StatusTooManyRequests,
 	})
 
-	// mock has no recorder, so it is passed over rather than named.
+	// mock has no recorder, so it is named as Select names it, and passed over.
 	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme",
 		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "mock", "cartesia"}}, Text: "hello"})
 
@@ -819,6 +834,7 @@ func (s *RecordingsSuite) TestARecordingEveryCandidateFailsNamesEachCandidatesEr
 	s.NotErrorIs(err, routing.ErrRequest, "the providers failed, not the caller")
 	s.Equal("ttsrouter: no candidate recorded the text: "+
 		`elevenlabs/eleven_v3: elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`+"\n"+
+		"mock/mock-tts: no factory registered\n"+
 		`cartesia/sonic-3.6: cartesia: record: 429 Too Many Requests: {"detail":"down"}`, err.Error())
 	s.Equal(routing.ProviderConfig{}, served, "nobody spoke it")
 	s.Equal([]string{elevenLabsHost, cartesiaHost}, stub.asked)
@@ -835,7 +851,8 @@ func (s *RecordingsSuite) TestAFailedRecordingSaysAtMostTheStartOfEachVendorsAns
 
 	s.Require().Error(err)
 	for _, line := range strings.Split(err.Error(), "\n") {
-		s.LessOrEqual(len(line), len("ttsrouter: no candidate recorded the text: ")+maxTriedError+len("..."))
+		s.LessOrEqual(len(line),
+			len("ttsrouter: no candidate recorded the text: ")+len("elevenlabs/eleven_v3: ")+maxTriedError+len("..."))
 	}
 }
 
@@ -876,4 +893,59 @@ func (s *RecordingsSuite) TestARecordingWithNothingToSayIsRefusedWithoutAskingAV
 	s.Require().ErrorIs(err, routing.ErrRequest)
 	s.ErrorContains(err, "there is nothing to say")
 	s.Empty(stub.asked)
+}
+
+// The controls below take their expected values from 1c5fa58db, the base: what Select
+// rules out for a voice, a policy or an overwrite is never asked, so a walk that met one
+// candidate fails as the base did, naming it.
+func (s *RecordingsSuite) TestARecordingWhoseVoiceOnlyElevenLabsKnowsFailsWithElevenLabsAsBefore() {
+	recordings, stub := s.speaking(map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme", Text: "hello",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"},
+			Overwrites: map[string]json.RawMessage{"elevenlabs": json.RawMessage(`{"voice_id":"abcdefghijklmnopqrst"}`)}}})
+
+	s.EqualError(err, `elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`)
+	s.NotErrorIs(err, routing.ErrRequest, "the vendor failed, not the caller")
+	s.Equal("elevenlabs/eleven_v3", served.Name())
+	s.Equal([]string{elevenLabsHost}, stub.asked, "Cartesia never had the voice")
+}
+
+func (s *RecordingsSuite) TestARecordingWhosePolicyAllowsOnlyElevenLabsFailsWithElevenLabsAsBefore() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	recordings, stub := s.speakingWith(config[routing.TTS], allowing{"elevenlabs/eleven_v3"},
+		map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme", Text: "hello",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"}}})
+
+	s.EqualError(err, `elevenlabs: record: 500 Internal Server Error: {"detail":"down"}`)
+	s.Equal("elevenlabs/eleven_v3", served.Name())
+	s.Equal([]string{elevenLabsHost}, stub.asked, "the policy does not allow Cartesia")
+}
+
+func (s *RecordingsSuite) TestAnOverwriteOneElevenLabsModelRefusedIsNotDroppedOnAnotherVendorWhenTheNextFails() {
+	// A deployment with a second ElevenLabs batch model: eleven_v3 refuses the style
+	// overwrite, eleven_multilingual_v2 takes it and fails at the vendor. Probed on
+	// 1c5fa58db: failed, eleven_multilingual_v2's 500, and Cartesia was never asked.
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	tts := config[routing.TTS]
+	tts.Providers = slices.Clone(tts.Providers)
+	for i := range tts.Providers {
+		if tts.Providers[i].Name() == "elevenlabs/eleven_multilingual_v2" {
+			tts.Providers[i].Realtime = false
+		}
+	}
+	recordings, stub := s.speakingWith(tts, nil, map[string]int{elevenLabsHost: http.StatusInternalServerError})
+
+	_, served, err := recordings.Record(s.ctx, Recording{CustomerID: "acme", Text: "hello",
+		Options: options.TTS{Target: "en-recorded", Providers: []string{"elevenlabs", "cartesia"},
+			Overwrites: map[string]json.RawMessage{"elevenlabs": json.RawMessage(`{"voice_settings":{"style":0.5}}`)}}})
+
+	s.Require().ErrorIs(err, routing.ErrOverwrite)
+	s.ErrorContains(err, `elevenlabs/eleven_multilingual_v2: elevenlabs: record: 500 Internal Server Error`)
+	s.Equal(routing.ProviderConfig{}, served, "nobody spoke it")
+	s.Equal([]string{elevenLabsHost}, stub.asked, "Cartesia would drop the style in silence")
 }

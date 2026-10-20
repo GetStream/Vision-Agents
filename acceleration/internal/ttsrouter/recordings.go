@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -183,12 +182,13 @@ func (r *Recordings) Check(ctx context.Context, recording Recording) error {
 // Record selects a voice and speaks the whole text.
 //
 // A candidate that fails to start, or whose vendor fails the recording (an error status,
-// a timeout, an answer that cannot be read), hands the text to the next one the request
-// resolved to, in that order: a priority list as written, a shortcut as ranked. A
+// a timeout, an answer that cannot be read), hands the text to the next one Select would
+// have started, in Select's order (routing.Router.Walk): a priority list as written, a
+// shortcut as ranked, with what a voice, a policy or an overwrite rules out left out. A
 // candidate that refuses this request alone, as Inworld refuses a text over its limit,
 // hands it on too, and is not counted against the model, whose health is every
-// customer's. A request that resolves to one candidate has nowhere to fall back to and
-// fails as it always has.
+// customer's. A request with one candidate to ask has nowhere to fall back to and fails as
+// it always has.
 func (r *Recordings) Record(
 	ctx context.Context,
 	recording Recording,
@@ -199,54 +199,29 @@ func (r *Recordings) Record(
 		return tts.Recorded{}, routing.ProviderConfig{}, routing.Refused(err)
 	}
 	request := recording.request()
-	// Taken before the first is selected, so the failure recorded below does not reorder
-	// what is left. A request that resolves to nothing is Select's to refuse.
-	candidates, _ := r.Candidates(ctx, request)
-	candidates = slices.DeleteFunc(candidates, func(candidate routing.Candidate) bool {
-		return !r.Records(candidate.Config.Provider)
-	})
 
-	// The first is selected as the request was written, so what Select refuses, it
-	// refuses in the words it always has: which candidates a voice or an overwrite rules
-	// out is decided over all of them.
-	provider, config, err := r.Select(ctx, request)
-	if err != nil {
+	var recorded tts.Recorded
+	// failed is the vendor's own answer, whole, for a walk that asked only one candidate.
+	var failed error
+	served, err := r.Walk(ctx, request, func(provider tts.Recorder, config routing.ProviderConfig) error {
+		recorded, failed = r.speak(ctx, provider, config, request.Owner(), recording)
+		if failed != nil {
+			return clipped{err: failed}
+		}
+		return nil
+	})
+	switch {
+	case err == nil:
+		return recorded, served, nil
+	// The one candidate asked failed and no other was met: it fails as it always has.
+	case served.Provider != "":
+		return tts.Recorded{}, served, failed
+	// What Select refuses before any candidate is asked, it refuses in the words it always has.
+	case failed == nil:
 		return tts.Recorded{}, routing.ProviderConfig{}, err
 	}
-	recorded, err := r.speak(ctx, provider, config, request.Owner(), recording)
-	served := slices.IndexFunc(candidates, func(candidate routing.Candidate) bool {
-		return candidate.Config.Name() == config.Name()
-	})
-	if err == nil || served == -1 || served == len(candidates)-1 {
-		return recorded, config, err
-	}
-
-	tried := []error{clipped{err: fmt.Errorf("%s: %w", config.Name(), err)}}
-	// The ones before it were refused or failed to start in Select.
-	for _, candidate := range candidates[served+1:] {
-		// A caller who has gone, or a deadline that has passed, is not served by the next.
-		if ctx.Err() != nil {
-			break
-		}
-		// The list would win over the target, so it is cleared to ask this one alone.
-		one := request
-		one.Target = candidate.Config.Name()
-		one.Providers = nil
-		provider, config, err := r.Select(ctx, one)
-		if err == nil {
-			recorded, err = r.speak(ctx, provider, config, request.Owner(), recording)
-			if err == nil {
-				return recorded, config, nil
-			}
-			err = fmt.Errorf("%s: %w", config.Name(), err)
-		}
-		tried = append(tried, clipped{err: err})
-	}
-
-	// A refusal among them keeps its routing.ErrRequest: what the caller asked for is what
-	// they can fix, even when another candidate also failed, as in routing.Select.
 	return tts.Recorded{}, routing.ProviderConfig{}, stack.Wrap(fmt.Errorf(
-		"ttsrouter: no candidate recorded the text: %w", errors.Join(tried...)))
+		"ttsrouter: no candidate recorded the text: %w", err))
 }
 
 // speak records the text with one started recorder, which it closes, and counts a
