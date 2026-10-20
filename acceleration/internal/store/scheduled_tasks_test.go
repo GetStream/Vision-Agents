@@ -3,7 +3,11 @@
 package store
 
 import (
+	"context"
+	"strings"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // task stores a scheduled task for acme's user sam, due in an hour, defaulting
@@ -605,6 +609,36 @@ func (s *StoreSuite) TestTheNextWakeIsWhenATaskMayBeClaimedNotWhenItWasDue() {
 	s.task("lapsed", func(task *ScheduledTask) { task.NextRunAt = at(30 * time.Minute) })
 	lease("lapsed", at(-time.Hour))
 	s.Equal(s.base.Add(30*time.Minute), wake())
+}
+
+// queries keeps the text of every query a pool sends.
+type queries struct{ sent []string }
+
+func (*queries) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context { return ctx }
+func (q *queries) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	q.sent = append(q.sent, event.Query)
+}
+
+// The worker asks when to wake after every look, so the soonest wake is read
+// off scheduled_tasks_wake_idx in order, not by sorting every active task.
+func (s *StoreSuite) TestTheNextWakeIsReadOffItsIndex() {
+	sent := &queries{}
+	watched := &Store{db: s.store.db.WithQueryHook(sent)}
+	_, _, err := watched.NextDueScheduledTask(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Len(sent.sent, 1)
+
+	var plan []string
+	err = s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			return err
+		}
+		return tx.NewRaw("EXPLAIN "+sent.sent[0]).Scan(ctx, &plan)
+	})
+	s.Require().NoError(err)
+	read := strings.Join(plan, "\n")
+	s.Contains(read, "Index Scan using scheduled_tasks_wake_idx", read)
+	s.NotContains(read, "Sort", read)
 }
 
 func (s *StoreSuite) TestTheLastRunOfEveryTaskIsReadAtOnce() {
