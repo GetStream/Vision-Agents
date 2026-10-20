@@ -374,3 +374,79 @@ func TestAnInBeyondAYearIsRefusedBeforeItOverflows(t *testing.T) {
 	_, err := Parse(Input{In: "P366D", Repeat: "FREQ=DAILY", Timezone: "UTC"}, monday)
 	require.NoError(t, err)
 }
+
+// upcomingDays is a schedule's next three occurrences from monday, as dates.
+func upcomingDays(schedule *Schedule) []string {
+	var days []string
+	for _, occurrence := range schedule.Upcoming(monday, 3) {
+		days = append(days, occurrence.Format("Mon 2006-01-02"))
+	}
+	return days
+}
+
+func TestARepeatIsDescribedAsItFires(t *testing.T) {
+	// Each text and its dates were read on the base, before refusals were
+	// added: the repeats still accepted keep both.
+	for repeat, want := range map[string]struct {
+		text string
+		days []string
+	}{
+		"FREQ=DAILY":                        {"Daily", []string{"Mon 2026-11-02", "Tue 2026-11-03", "Wed 2026-11-04"}},
+		"FREQ=DAILY;INTERVAL=2":             {"Every 2 days", []string{"Mon 2026-11-02", "Wed 2026-11-04", "Fri 2026-11-06"}},
+		"FREQ=WEEKLY":                       {"Weekly", []string{"Mon 2026-11-02", "Mon 2026-11-09", "Mon 2026-11-16"}},
+		"FREQ=WEEKLY;BYDAY=MO,WE":           {"Weekly on Mon, Wed", []string{"Mon 2026-11-02", "Wed 2026-11-04", "Mon 2026-11-09"}},
+		"FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR":  {"Every weekday", []string{"Mon 2026-11-02", "Tue 2026-11-03", "Wed 2026-11-04"}},
+		"FREQ=WEEKLY;INTERVAL=2;BYDAY=FR":   {"Every 2 weeks on Fri", []string{"Fri 2026-11-06", "Fri 2026-11-20", "Fri 2026-12-04"}},
+		"FREQ=MONTHLY":                      {"Monthly", []string{"Mon 2026-11-02", "Wed 2026-12-02", "Sat 2027-01-02"}},
+		"FREQ=MONTHLY;BYMONTHDAY=1,15":      {"Monthly on day 1, 15", []string{"Sun 2026-11-15", "Tue 2026-12-01", "Tue 2026-12-15"}},
+		"FREQ=MONTHLY;BYMONTHDAY=-1":        {"Monthly on day -1", []string{"Mon 2026-11-30", "Thu 2026-12-31", "Sun 2027-01-31"}},
+		"FREQ=MONTHLY;BYDAY=1MO":            {"Monthly on the first Mon", []string{"Mon 2026-11-02", "Mon 2026-12-07", "Mon 2027-01-04"}},
+		"FREQ=MONTHLY;BYDAY=5FR":            {"Monthly on the fifth Fri", []string{"Fri 2027-01-29", "Fri 2027-04-30", "Fri 2027-07-30"}},
+		"FREQ=MONTHLY;BYDAY=-2FR":           {"Monthly on the second to last Fri", []string{"Fri 2026-11-20", "Fri 2026-12-18", "Fri 2027-01-22"}},
+		"FREQ=MONTHLY;INTERVAL=3;BYDAY=1MO": {"Every 3 months on the first Mon", []string{"Mon 2026-11-02", "Mon 2027-02-01", "Mon 2027-05-03"}},
+		"FREQ=YEARLY":                       {"Yearly on 2 November", []string{"Mon 2026-11-02", "Tue 2027-11-02", "Thu 2028-11-02"}},
+	} {
+		schedule := parse(t, Input{At: "2026-11-02T09:00", Repeat: repeat, Timezone: "UTC"})
+		require.Equal(t, want.text+" at 09:00 (UTC)", schedule.Describe(), repeat)
+		require.Equal(t, want.days, upcomingDays(schedule), repeat)
+	}
+}
+
+func TestARepeatItsDescriptionWouldMisstateIsRefused(t *testing.T) {
+	// The comment is what Describe said on the base, and the dates what fired.
+	for repeat, refusal := range map[string]string{
+		"FREQ=DAILY;BYDAY=MO,WE":               "BYDAY with FREQ=DAILY",             // "Daily"; Mon, Wed, Mon
+		"FREQ=DAILY;BYMONTHDAY=1":              "BYMONTHDAY with FREQ=DAILY",        // "Daily"; 1 Dec, 1 Jan
+		"FREQ=WEEKLY;BYMONTHDAY=1":             "BYMONTHDAY with FREQ=WEEKLY",       // "Weekly"; 1 Dec, 1 Jan
+		"FREQ=WEEKLY;BYDAY=MO,MO":              "BYDAY names MO twice",              // "Weekly on Mon, Mon"
+		"FREQ=WEEKLY;BYDAY=1MO":                "only meaningful with FREQ=MONTHLY", // refused on the base too
+		"FREQ=MONTHLY;BYDAY=1MO,3WE":           "more than one BYDAY",               // "on the first Mon"; 2 Nov, 18 Nov
+		"FREQ=MONTHLY;BYDAY=2TU;BYMONTHDAY=13": "BYDAY with BYMONTHDAY",             // "on day 13"; 13 Apr 2027
+		"FREQ=MONTHLY;BYDAY=-3FR":              "BYDAY=-3FR is not supported",       // "the -3th Fri"
+		"FREQ=MONTHLY;BYDAY=6FR":               "BYDAY=6FR is not supported",        // refused as schedule_in_past: never fires
+		"FREQ=MONTHLY;BYMONTHDAY=1,1":          "BYMONTHDAY names 1 twice",          // "on day 1, 1"
+		"FREQ=YEARLY;INTERVAL=2":               "INTERVAL with FREQ=YEARLY",         // "Yearly on 2 November"; 2026, 2028
+		"FREQ=YEARLY;BYDAY=1MO":                "BYDAY with FREQ=YEARLY",            // "first Mon of November"; 4 Jan 2027
+		"FREQ=YEARLY;BYMONTHDAY=1":             "BYMONTHDAY with FREQ=YEARLY",       // "Yearly on 2 November"; 1 Dec, 1 Jan
+	} {
+		_, err := Parse(Input{At: "2026-11-02T09:00", Repeat: repeat, Timezone: "UTC"}, monday)
+		failure, ok := err.(*Error)
+		require.True(t, ok, "%s: refusal is not a scheduling.Error: %v", repeat, err)
+		require.Equal(t, CodeInvalidRepeat, failure.Code, repeat)
+		require.Contains(t, failure.Message, refusal, repeat)
+	}
+}
+
+func TestARefusalSaysWhichRepeatsAreSupported(t *testing.T) {
+	_, err := Parse(Input{At: "2026-11-02T09:00", Repeat: "FREQ=YEARLY;BYDAY=1MO", Timezone: "UTC"}, monday)
+	require.ErrorContains(t, err, "FREQ=MONTHLY, alone, with BYMONTHDAY=1,15 or with one BYDAY such as 1MO or -1FR")
+}
+
+func TestAStoredRepeatNowRefusedStillRuns(t *testing.T) {
+	// A task stored before its shape was refused is read as it was: the
+	// worker keeps firing it where it fired on the base.
+	start := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	schedule, err := FromStored(start, "UTC", "FREQ=DAILY;BYDAY=MO,WE", time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Mon 2026-11-02", "Wed 2026-11-04", "Mon 2026-11-09"}, upcomingDays(schedule))
+}

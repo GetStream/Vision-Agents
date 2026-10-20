@@ -1,6 +1,7 @@
 package scheduling
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,52 @@ func (s *Schedule) Describe() string {
 		text += ", " + strconv.Itoa(s.rule.count) + " times in all"
 	}
 	return text
+}
+
+// supportedRepeats ends every refusal sayable makes, so the caller learns what
+// to send instead.
+const supportedRepeats = "supported: FREQ=DAILY; FREQ=WEEKLY, alone or with BYDAY=MO,WE,FR; " +
+	"FREQ=MONTHLY, alone, with BYMONTHDAY=1,15 or with one BYDAY such as 1MO or -1FR; " +
+	"FREQ=YEARLY alone, on the start's date; INTERVAL with any but YEARLY; COUNT with any"
+
+// sayable refuses a repeat that phrase would misstate, so what a task says it
+// does is what fires. Parse holds new rules to it; FromStored does not, so a
+// task stored before a shape was refused keeps running.
+func (r *repeatRule) sayable() error {
+	if r == nil {
+		return nil
+	}
+	switch {
+	case len(r.byMonthDay) > 0 && r.freq != "MONTHLY":
+		return fail(CodeInvalidRepeat, "BYMONTHDAY with FREQ=%s is not supported; %s", r.freq, supportedRepeats)
+	case len(r.byDay) > 0 && (r.freq == "DAILY" || r.freq == "YEARLY"):
+		return fail(CodeInvalidRepeat, "BYDAY with FREQ=%s is not supported; %s", r.freq, supportedRepeats)
+	case r.freq == "YEARLY" && r.interval > 1:
+		return fail(CodeInvalidRepeat, "INTERVAL with FREQ=YEARLY is not supported; %s", supportedRepeats)
+	case len(r.byDay) > 0 && len(r.byMonthDay) > 0:
+		return fail(CodeInvalidRepeat, "BYDAY with BYMONTHDAY is not supported; %s", supportedRepeats)
+	case r.freq == "MONTHLY" && len(r.byDay) > 1:
+		return fail(CodeInvalidRepeat, "FREQ=MONTHLY with more than one BYDAY is not supported; %s", supportedRepeats)
+	}
+	for i, spec := range r.byDay {
+		switch {
+		case r.freq == "MONTHLY" && spec.nth == 0:
+			return fail(CodeInvalidRepeat, "BYDAY=%s with FREQ=MONTHLY would mean every %s in the month; give an ordinal such as 1%s for the first one", spec.day, weekdayNames[spec.day], spec.day)
+		case r.freq == "WEEKLY" && spec.nth != 0:
+			return fail(CodeInvalidRepeat, "BYDAY=%d%s is only meaningful with FREQ=MONTHLY", spec.nth, spec.day)
+		// ordinalName names only these.
+		case spec.nth < -2 || spec.nth > 5:
+			return fail(CodeInvalidRepeat, "BYDAY=%d%s is not supported; the ordinal is 1 to 5, -1 or -2; %s", spec.nth, spec.day, supportedRepeats)
+		case slices.ContainsFunc(r.byDay[:i], func(earlier weekdaySpec) bool { return earlier.day == spec.day }):
+			return fail(CodeInvalidRepeat, "BYDAY names %s twice", spec.day)
+		}
+	}
+	for i, day := range r.byMonthDay {
+		if slices.Contains(r.byMonthDay[:i], day) {
+			return fail(CodeInvalidRepeat, "BYMONTHDAY names %d twice", day)
+		}
+	}
+	return nil
 }
 
 func (r *repeatRule) phrase(start time.Time) string {
