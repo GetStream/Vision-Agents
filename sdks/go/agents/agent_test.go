@@ -804,6 +804,39 @@ func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
 	}
 }
 
+func TestAgentYAMLNamesTheRoleTheConfigIsStoredWith(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "nora")
+	write(t, root, "agent.yaml", "name: nora\nrole: agent_moderator\n")
+
+	router := newBackend(t)
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if role := router.syncs[0].Role; role == nil || *role != acceleration.AgentModerator {
+		t.Errorf("the role was stored as %v", role)
+	}
+}
+
+// A declaration that says nothing about the role sends none, which leaves the stored one.
+func TestAgentYAMLWithoutARoleSendsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+
+	router := newBackend(t)
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if role := router.syncs[0].Role; role != nil {
+		t.Errorf("a declaration without a role sent %v", *role)
+	}
+}
+
 func TestTheDefaultHarnessLeavesTheBuiltInSkillsAlone(t *testing.T) {
 	router := newBackend(t)
 	stored, err := agentOn(t, router, Options{Name: "jean", Harness: DefaultHarness()}).Sync(t.Context())

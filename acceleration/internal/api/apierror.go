@@ -103,6 +103,7 @@ const (
 	codeTelephonySuspended      = "telephony_suspended"
 	codeTelephonyNotSuspended   = "telephony_not_suspended"
 	codeNameTaken               = "name_taken"
+	codeRoleTaken               = "role_taken"
 	codeChannelConnectionTaken  = "channel_connection_taken"
 	codeNoOAuthClient           = "no_oauth_client"
 	codeInvalidConfig           = "invalid_config"
