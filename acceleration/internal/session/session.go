@@ -811,6 +811,37 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 // driving a conversation knows a turn is over rather than merely answered once.
 func (s *Session) Busy() bool { return s.current().Busy() }
 
+// settleGap is how long the agent stays quiet, with nothing left to do, before a headless
+// conversation is taken as finished.
+const settleGap = 2 * time.Second
+
+// Settle waits for the agent to finish what it was given: nothing left to do, and quiet for a
+// moment, since one message can earn several turns. events is a watcher of this session, and
+// seen, when set, is handed each event as it passes.
+func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Event)) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	last := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, open := <-events:
+			if !open {
+				return
+			}
+			if seen != nil {
+				seen(event)
+			}
+			last = time.Now()
+		case <-ticker.C:
+			if time.Since(last) >= settleGap && !s.Busy() {
+				return
+			}
+		}
+	}
+}
+
 // Tools names what the agent may do rather than say.
 func (s *Session) Tools() []string { return s.current().Tools() }
 

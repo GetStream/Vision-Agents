@@ -736,6 +736,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
 	})
 
+	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
+	})
+
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.
 	reasoning.Register("slow", func(routing.Spec) (llmrouter.Provider, error) {
