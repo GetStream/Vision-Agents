@@ -41,7 +41,7 @@ func (s *AgentSuite) TestOnePersonsTurnsReachTheModelAsTheySaidThem() {
 func (s *AgentSuite) TestOnceASecondPersonSpeaksEachNewTurnNamesWhoSaidIt() {
 	s.join(true)
 	alice := stt.Participant{ID: "alice", Name: "Alice"}
-	// A participant with no display name is named by their user.
+	// A participant with no display name goes under a number, never their user.
 	bob := stt.Participant{ID: "bob-session", UserID: "bob"}
 	s.speak(alice)
 	s.speak(bob)
@@ -61,10 +61,10 @@ func (s *AgentSuite) TestOnceASecondPersonSpeaksEachNewTurnNamesWhoSaidIt() {
 	third := requests[2].Input
 	s.Require().Len(third, 5)
 	s.Equal("hello", third[0].Content, "a turn from before the second person spoke stays as it was")
-	s.Equal("bob: hi there", third[2].Content)
+	s.Equal("Speaker 1: hi there", third[2].Content)
 	s.Equal("Alice: and me", third[4].Content)
 	history := s.agent.History()
-	s.Equal(llm.Message{Role: llm.User, Content: "hi there", Speaker: "bob"}, history[2],
+	s.Equal(llm.Message{Role: llm.User, Content: "hi there", Speaker: "Speaker 1"}, history[2],
 		"the conversation keeps the words as said")
 	var prompts []string
 	for _, event := range s.reported() {
@@ -223,7 +223,7 @@ func (s *AgentSuite) TestADisplayNameCannotPassForAnotherSpeakersLine() {
 
 	input := s.model.requests()[2].Input
 	s.Equal("Mal Alice lory: hi", input[2].Content)
-	s.Equal("blank: yo", input[4].Content, "a name with nothing left falls back to the user")
+	s.Equal("Speaker 1: yo", input[4].Content, "a name with nothing left is no name")
 }
 
 func (s *AgentSuite) TestTheReplyMayAddressAPersonByName() {
@@ -369,9 +369,9 @@ func (s *AgentSuite) TestAPersonFirstHeardWithoutANameTakesItOnceItIsKnown() {
 
 	input := s.model.requests()[6].Input
 	s.Require().Len(input, 13)
-	s.Equal("u-1: hi", input[2].Content)
-	s.Equal("u-1: hi again", input[4].Content)
-	s.Equal("u-2: hey", input[6].Content)
+	s.Equal("Speaker 1: hi", input[2].Content)
+	s.Equal("Speaker 1: hi again", input[4].Content)
+	s.Equal("Speaker 2: hey", input[6].Content)
 	s.Equal("Carol: it is Carol", input[8].Content)
 	s.Equal("Bob (2): it is Bob", input[10].Content)
 	s.Equal("Carol: Carol again", input[12].Content)
@@ -402,4 +402,110 @@ func (s *AgentSuite) TestAGivenDisplayNameStaysEvenWhenThePersonChangesIt() {
 	s.Equal("Carol: hey", input[4].Content)
 	s.Equal("Alice: call me Alicia", input[6].Content)
 	s.Equal("Bob: ok", input[8].Content)
+}
+
+func (s *AgentSuite) TestPeopleWithoutANameAreNumberedInTheOrderTheySpoke() {
+	s.join(true)
+	first := stt.Participant{ID: "u-1", UserID: "u-1"}
+	// No user either: the participant is all there is to tell them by.
+	second := stt.Participant{ID: "session-2"}
+	third := stt.Participant{ID: "u-3", UserID: "u-3"}
+	// The first gives a name, and the next one without keeps counting past them.
+	named := stt.Participant{ID: "u-1b", UserID: "u-1", Name: "Carol"}
+	for _, participant := range []stt.Participant{first, second, third, named} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{first, "hello"}, {second, "hi"}, {first, "again"}, {named, "it is Carol"}, {third, "hey"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	input := s.model.requests()[4].Input
+	s.Require().Len(input, 9)
+	s.Equal("hello", input[0].Content)
+	s.Equal("Speaker 2: hi", input[2].Content)
+	s.Equal("Speaker 1: again", input[4].Content)
+	s.Equal("Carol: it is Carol", input[6].Content)
+	s.Equal("Speaker 3: hey", input[8].Content)
+}
+
+func (s *AgentSuite) TestTheFlowControllerHearsAPersonWithoutANameAsASpeaker() {
+	s.join(true)
+	nameless := stt.Participant{ID: "session-1", UserID: "u-1"}
+	s.speak(nameless)
+	s.says(nameless, "hello")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
+
+	asked := s.flow.requests()[0].Input[0].Content
+	s.Contains(asked, `Speaker 1 has just said: "hello"`)
+	s.NotContains(asked, "u-1")
+	s.NotContains(asked, "session-1")
+}
+
+func (s *AgentSuite) TestTheFlowControllerHearsANamedPersonByTheirName() {
+	// The expected value is what 41cb93cba, before people without a name were numbered,
+	// asks.
+	s.join(true)
+	alice := stt.Participant{ID: "session-1", UserID: "u-1", Name: "Alice"}
+	s.speak(alice)
+	s.says(alice, "hello")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
+
+	s.Contains(s.flow.requests()[0].Input[0].Content, `Alice has just said: "hello"`)
+}
+
+func (s *AgentSuite) TestTheFlowControllerHearsNamedPeopleByTheirRawName() {
+	// The expected values are what 41cb93cba asks: the name as given, not the numbered
+	// label the reply model sees, and a colon kept.
+	s.join(true)
+	first := stt.Participant{ID: "s-1", UserID: "u-1", Name: "Alex"}
+	second := stt.Participant{ID: "s-2", UserID: "u-2", Name: "Alex"}
+	colon := stt.Participant{ID: "s-3", UserID: "u-3", Name: "Al:ex"}
+	for _, participant := range []stt.Participant{first, second, colon} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{first, "hello"}, {second, "hi"}, {colon, "yo"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	asked := s.flow.requests()
+	s.Require().Len(asked, 3)
+	s.Contains(asked[1].Input[0].Content, `Alex has just said: "hi"`)
+	s.NotContains(asked[1].Input[0].Content, "Alex (2)")
+	s.Contains(asked[2].Input[0].Content, `Al:ex has just said: "yo"`)
+}
+
+func (s *AgentSuite) TestAPersonNamedLikeAFallbackLabelIsNotMistakenForOne() {
+	s.join(true)
+	real := stt.Participant{ID: "s-1", UserID: "u-1", Name: "Speaker 1"}
+	nameless := stt.Participant{ID: "s-2", UserID: "u-2"}
+	named := stt.Participant{ID: "s-2", UserID: "u-2", Name: "Dana"}
+	for _, participant := range []stt.Participant{real, nameless, named} {
+		s.speak(participant)
+	}
+
+	for i, turn := range []struct {
+		participant stt.Participant
+		text        string
+	}{{real, "hello"}, {nameless, "hi"}, {named, "it is Dana"}} {
+		s.says(turn.participant, turn.text)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == i+1 }, "a turn was never answered")
+		s.quiet()
+	}
+
+	input := s.model.requests()[2].Input
+	s.Require().Len(input, 5)
+	s.Equal("Speaker 1 (2): hi", input[2].Content)
+	s.Equal("Dana: it is Dana", input[4].Content)
 }
