@@ -471,3 +471,35 @@ func (s *RealtimeSuite) TestCloseSettlesAReplyInFlightAsInterrupted() {
 	s.Require().True(ok)
 	s.True(complete.Interrupted, "a reply cut off by hanging up is still billed once")
 }
+
+// A Prompt's reply can open while the caller is still talking. Their stop belongs to that
+// reply, which the server keeps open, so the next reply is not timed from it.
+func (s *RealtimeSuite) TestAStopHeardDuringAReplyIsNotKeptForTheNext() {
+	provider := s.newProvider(OpenAI)
+
+	provider.handleMessage(serverEvent{Type: eventSpeechStarted})
+	provider.handleMessage(created("prompted"))
+	provider.handleMessage(audioDelta("prompted", 2400))
+	provider.handleMessage(serverEvent{Type: eventSpeechStopped})
+	provider.handleMessage(serverEvent{Type: eventCommitted})
+	provider.handleMessage(done("prompted", "completed", nil))
+	time.Sleep(20 * time.Millisecond)
+	provider.handleMessage(created("next"))
+	provider.handleMessage(audioDelta("next", 2400))
+	provider.handleMessage(done("next", "completed", nil))
+	provider.handleMessage(serverEvent{Type: eventCommitted})
+
+	var stopped int
+	var next sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		switch typed := event.(type) {
+		case sts.SpeechStopped:
+			stopped++
+		case sts.ResponseComplete:
+			next = typed
+		}
+	}
+	s.Equal(2, stopped, "the commit right after the stop is the same stop; a later one is a new one")
+	s.Equal("next", next.ResponseID)
+	s.Zero(next.TimeToFirstByteMs, "nobody was waiting on the next reply")
+}

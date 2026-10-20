@@ -684,3 +684,92 @@ func (s *AgentSuite) TestGeminiResumesInsideItsAdapterWithoutLeavingTheCall() {
 	s.Zero(countOf[Left](s.events.seen()))
 	s.Zero(countOf[Error](s.events.seen()))
 }
+
+// replayNative plays a speech-to-speech provider's events through the agent and returns
+// what it reported once every reply has been spoken.
+func (s *AgentSuite) replayNative(events ...sts.Event) []Event {
+	agent, err := New(Options{CustomerID: "acme", Edge: newLoopbackEdge(), STS: &stsrouter.Router{}, STSTarget: "openai/gpt-realtime-2"})
+	s.Require().NoError(err)
+	agent.ctx, agent.cancel = context.WithCancel(s.ctx)
+	s.T().Cleanup(func() { agent.Close() })
+	seen := collect(agent)
+	ordered := make(chan sts.Event, len(events))
+	agent.pipe = newPipeline(agent.ctx, true)
+	agent.pipe.running.Add(1)
+	go agent.consumeSTS(agent.pipe, nil, ordered)
+	s.T().Cleanup(func() { close(ordered) })
+
+	replies := 0
+	for _, event := range events {
+		if _, ok := event.(sts.ResponseComplete); ok {
+			replies++
+		}
+		ordered <- event
+	}
+	s.eventually(func() bool { return countOf[Spoke](seen.seen()) == replies }, "the replies were never spoken")
+	return seen.seen()
+}
+
+// turnFor is the measured turn of a reply, if it was measured.
+func turnFor(events []Event, reply string) (Turn, bool) {
+	for _, event := range events {
+		if turn, ok := event.(Turn); ok && turn.TurnID == reply {
+			return turn, true
+		}
+	}
+	return Turn{}, false
+}
+
+var nativePCM = audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
+
+// The order openairealtime reports a caller's turn in (TestTheReplyIsTimedFromWhenTheCallerStopped).
+func (s *AgentSuite) TestAnOpenAIRealtimeReplyIsTimedFromTheStopBeforeIt() {
+	stopped := time.Now().Add(-50 * time.Millisecond)
+	events := s.replayNative(
+		sts.SpeechStarted{At: stopped.Add(-time.Second)},
+		sts.SpeechStopped{At: stopped},
+		sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()},
+		sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: nativePCM},
+		sts.ResponseComplete{ResponseID: "r1", Generation: 1},
+	)
+	turn, ok := turnFor(events, "r1")
+	s.Require().True(ok, "the caller was waiting on this reply")
+	s.GreaterOrEqual(turn.RoundtripMs, 50.0)
+}
+
+// The order gemini and openailive report a caller's turn in: the transcript settles before
+// the stop, and the stop before the reply (TestAReplyWhoseWordsComeFirstStillFollowsTheCallerStopping
+// in both packages).
+func (s *AgentSuite) TestAGeminiOrOpenAILiveReplyIsTimedFromTheStopBeforeIt() {
+	stopped := time.Now().Add(-50 * time.Millisecond)
+	events := s.replayNative(
+		sts.SpeechStarted{At: stopped.Add(-time.Second)},
+		sts.InputTranscript{Mode: stt.ModeDelta, Text: "hello"},
+		sts.InputTranscript{Mode: stt.ModeFinal, Text: "hello"},
+		sts.SpeechStopped{At: stopped},
+		sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()},
+		sts.OutputTranscript{ResponseID: "r1", Mode: stt.ModeDelta, Text: "Hi."},
+		sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: nativePCM},
+		sts.ResponseComplete{ResponseID: "r1", Generation: 1},
+	)
+	turn, ok := turnFor(events, "r1")
+	s.Require().True(ok, "the caller was waiting on this reply")
+	s.GreaterOrEqual(turn.RoundtripMs, 50.0)
+}
+
+// A Prompt's reply can be playing when the caller stops. That stop is not what the next
+// reply answers, so the next reply is not timed from it.
+func (s *AgentSuite) TestAStopHeardDuringANativeReplyIsNotTheNextReplysWait() {
+	events := s.replayNative(
+		sts.ResponseStarted{ResponseID: "prompted", Generation: 1, At: time.Now()},
+		sts.AudioChunk{ResponseID: "prompted", Generation: 1, Audio: nativePCM},
+		sts.SpeechStarted{At: time.Now()},
+		sts.SpeechStopped{At: time.Now()},
+		sts.ResponseComplete{ResponseID: "prompted", Generation: 1},
+		sts.ResponseStarted{ResponseID: "next", Generation: 2, At: time.Now()},
+		sts.AudioChunk{ResponseID: "next", Generation: 2, Audio: nativePCM},
+		sts.ResponseComplete{ResponseID: "next", Generation: 2},
+	)
+	_, measured := turnFor(events, "next")
+	s.False(measured, "nobody was waiting on the next reply")
+}

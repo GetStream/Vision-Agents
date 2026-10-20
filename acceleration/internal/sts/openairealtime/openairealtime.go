@@ -390,8 +390,11 @@ type STS struct {
 	// heard and who it heard start and stop.
 	participant sts.Participant
 	// heardAt is when the model decided the caller had finished, which is what the reply
-	// that follows is timed from. Zero once a reply has claimed it.
-	heardAt time.Time
+	// that follows is timed from. Zero once a reply has claimed it. A stop heard while a
+	// reply is open goes to that reply instead, and stoppedFor remembers which, so the
+	// commit after that stop is not taken for another.
+	heardAt    time.Time
+	stoppedFor *sts.Turn
 	// turn is the reply in flight, and generation counts them.
 	turn       *sts.Turn
 	generation int
@@ -1053,7 +1056,7 @@ func (s *STS) handleMessage(event serverEvent) {
 		// commit is the moment the caller started waiting. Under a silence timer the stop
 		// came first and this adds nothing.
 		s.mu.Lock()
-		waiting := !s.heardAt.IsZero()
+		waiting := !s.heardAt.IsZero() || (s.turn != nil && s.turn == s.stoppedFor)
 		s.mu.Unlock()
 		if !waiting {
 			s.stoppedHearing()
@@ -1112,14 +1115,18 @@ func (s *STS) handleMessage(event serverEvent) {
 }
 
 // stoppedHearing marks the moment the caller finished, which the next reply is timed from.
-// A reply the model opened while the caller was still talking is timed from here too.
+// A reply opened while the caller was still talking, as a Prompt can, takes the stop
+// instead: the server refuses another reply while it is open, so none that follows answers
+// this stop, and one that did would be timed from a wait long over.
 func (s *STS) stoppedHearing() {
 	now := time.Now()
 	s.mu.Lock()
-	s.heardAt = now
 	s.speaking = false
 	if s.turn != nil {
 		s.turn.HeardAt(now)
+		s.stoppedFor = s.turn
+	} else {
+		s.heardAt = now
 	}
 	participant := s.participant
 	s.mu.Unlock()

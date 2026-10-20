@@ -416,3 +416,21 @@ func (s *GeminiSuite) TestCloseSettlesAReplyInFlight() {
 	s.Require().True(ok)
 	s.True(complete.Interrupted)
 }
+
+func (s *GeminiSuite) TestAnUnreadableEndOfSpeechLeavesTheLastWordHeard() {
+	provider := s.newProvider()
+	provider.sentMs, provider.sentAt = 1000, time.Now().Add(-time.Second)
+	provider.handleMessage(heard("hello"))
+	heardBy := time.Now()
+	provider.handleMessage(serverMessage{VoiceActivity: &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "soon"}})
+	provider.handleMessage(spoke(2400))
+
+	var stopped sts.SpeechStopped
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			stopped = typed
+		}
+	}
+	s.False(stopped.At.After(heardBy))
+	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "not the start of the audio stream")
+}
