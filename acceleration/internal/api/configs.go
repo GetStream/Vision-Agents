@@ -449,7 +449,7 @@ var (
 )
 
 // errAgentRoleTaken is a save that would give a second live agent config of the customer a
-// role another one holds. The one there is, ai_moderator, is what the chat worker finds the
+// role another one holds. The one there is, agent_moderator, is what the chat worker finds the
 // app's moderator by, so two would leave it guessing.
 var errAgentRoleTaken = APIError{
 	Type: ErrorTypeConflict, Code: codeRoleTaken,
@@ -1840,7 +1840,7 @@ func (s *Server) registerConfigs(api huma.API) {
 
 type listAgentConfigsRequest struct {
 	Name optionalParam[string]    `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
-	Role optionalParam[AgentRole] `query:"role" doc:"Narrow the list to the live config holding this role, which is how the app's AI moderator is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set."`
+	Role optionalParam[AgentRole] `query:"role" doc:"Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set."`
 }
 
 type listAgentConfigsResponse struct {

@@ -176,13 +176,13 @@ func (e AgentResponseItemKind) Valid() bool {
 
 // Defines values for AgentRole.
 const (
-	AiModerator AgentRole = "ai_moderator"
+	AgentModerator AgentRole = "agent_moderator"
 )
 
 // Valid indicates whether the value is a known member of the AgentRole enum.
 func (e AgentRole) Valid() bool {
 	switch e {
-	case AiModerator:
+	case AgentModerator:
 		return true
 	default:
 		return false
@@ -2537,7 +2537,7 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Role What the agent is for in the app, beyond answering people. ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 	Role *AgentRole `json:"role,omitempty"`
 
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -2608,7 +2608,7 @@ type AgentConfigPatch struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Role What the agent is for in the app, beyond answering people. ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 	Role *AgentRole `json:"role,omitempty"`
 
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -2687,7 +2687,7 @@ type AgentConfigRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Role What the agent is for in the app, beyond answering people. ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 	Role *AgentRole `json:"role,omitempty"`
 
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -2868,7 +2868,7 @@ type AgentResponsePage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
-// AgentRole What the agent is for in the app, beyond answering people. ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+// AgentRole What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 type AgentRole string
 
 // AgentStats defines model for AgentStats.
@@ -7082,7 +7082,7 @@ type SyncAgentRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Role What the agent is for in the app, beyond answering people. ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 	Role *AgentRole `json:"role,omitempty"`
 
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -7936,7 +7936,7 @@ type ListAgentConfigsParams struct {
 	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 
-	// Role Narrow the list to the live config holding this role, which is how the app's AI moderator is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set.
+	// Role Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set.
 	Role *AgentRole `form:"role,omitempty" json:"role,omitempty"`
 }
 

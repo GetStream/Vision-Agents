@@ -72,8 +72,8 @@ func (s *AgentRoleMigrationSuite) TestTheNewestLiveTaggedConfigOfEachAppTakesThe
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", agentRoleVersion))
 
 	s.Equal(map[string]string{
-		"older": "", "newer": RoleAIModerator, "draft": "", "deleted": "", "plain": "",
-		"other-app": RoleAIModerator,
+		"older": "", "newer": RoleAgentModerator, "draft": "", "deleted": "", "plain": "",
+		"other-app": RoleAgentModerator,
 	}, s.roles())
 }
 

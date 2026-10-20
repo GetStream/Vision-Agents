@@ -107,10 +107,10 @@ def sync_detailed(
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
         role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
-            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
-            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
-            share the role of the agent it copies. Left out on an update or a sync, the stored role
-            stays. Omit it for an ordinary agent.
+            agent_moderator is the app's moderator agent, which reviews flagged messages. One live
+            agent per app holds a role: giving it to a second is refused, and a test copy (tagged
+            draft_of) may share the role of the agent it copies. Left out on an update or a sync, the
+            stored role stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,10 +151,10 @@ def sync(
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
         role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
-            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
-            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
-            share the role of the agent it copies. Left out on an update or a sync, the stored role
-            stays. Omit it for an ordinary agent.
+            agent_moderator is the app's moderator agent, which reviews flagged messages. One live
+            agent per app holds a role: giving it to a second is refused, and a test copy (tagged
+            draft_of) may share the role of the agent it copies. Left out on an update or a sync, the
+            stored role stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -190,10 +190,10 @@ async def asyncio_detailed(
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
         role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
-            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
-            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
-            share the role of the agent it copies. Left out on an update or a sync, the stored role
-            stays. Omit it for an ordinary agent.
+            agent_moderator is the app's moderator agent, which reviews flagged messages. One live
+            agent per app holds a role: giving it to a second is refused, and a test copy (tagged
+            draft_of) may share the role of the agent it copies. Left out on an update or a sync, the
+            stored role stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -232,10 +232,10 @@ async def asyncio(
         name (str | Unset): Narrow the list to the config with this name, which is how a name is
             resolved to a config. Names are unique per customer, so this answers with at most one.
         role (AgentRole | Unset): What the agent is for in the app, beyond answering people.
-            ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per
-            app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may
-            share the role of the agent it copies. Left out on an update or a sync, the stored role
-            stays. Omit it for an ordinary agent.
+            agent_moderator is the app's moderator agent, which reviews flagged messages. One live
+            agent per app holds a role: giving it to a second is refused, and a test copy (tagged
+            draft_of) may share the role of the agent it copies. Left out on an update or a sync, the
+            stored role stays. Omit it for an ordinary agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

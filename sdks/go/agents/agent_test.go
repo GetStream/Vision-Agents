@@ -806,7 +806,7 @@ func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
 
 func TestAgentYAMLNamesTheRoleTheConfigIsStoredWith(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "nora")
-	write(t, root, "agent.yaml", "name: nora\nrole: ai_moderator\n")
+	write(t, root, "agent.yaml", "name: nora\nrole: agent_moderator\n")
 
 	router := newBackend(t)
 	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
@@ -815,7 +815,7 @@ func TestAgentYAMLNamesTheRoleTheConfigIsStoredWith(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	if role := router.syncs[0].Role; role == nil || *role != acceleration.AiModerator {
+	if role := router.syncs[0].Role; role == nil || *role != acceleration.AgentModerator {
 		t.Errorf("the role was stored as %v", role)
 	}
 }

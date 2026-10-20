@@ -87,10 +87,10 @@ class SyncAgentRequest:
                 the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
                 unless its entry sets user: then each end user connects it with their own account, from the conversation, the
                 first time the agent needs it.
-            role (AgentRole | Unset): What the agent is for in the app, beyond answering people. ai_moderator is the app's
-                AI moderator, which reviews flagged messages. One live agent per app holds a role: giving it to a second is
-                refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a
-                sync, the stored role stays. Omit it for an ordinary agent.
+            role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
+                app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a
+                second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an
+                update or a sync, the stored role stays. Omit it for an ordinary agent.
             sandbox (Sandbox | Unset): Where the agent may run code it writes. A text agent runs it itself; a voice agent
                 hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works
                 everything out in its head.

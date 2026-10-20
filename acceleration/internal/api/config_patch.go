@@ -74,10 +74,10 @@ func (Harness) Schema(registry huma.Registry) *huma.Schema {
 
 func (AgentRole) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "AgentRole", "What the agent is for in the app, beyond answering people. "+
-		"ai_moderator is the app's AI moderator, which reviews flagged messages. One live agent per app "+
+		"agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app "+
 		"holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share "+
 		"the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit "+
-		"it for an ordinary agent.", string(AgentRoleAiModerator))
+		"it for an ordinary agent.", string(AgentRoleAgentModerator))
 }
 
 func (DispatchSetting) Schema(registry huma.Registry) *huma.Schema {

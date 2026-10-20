@@ -158,7 +158,7 @@ type Settings struct {
 	Voice   string  `yaml:"voice"`
 	LLM     string  `yaml:"llm"`
 	Harness string  `yaml:"harness"`
-	// Role is what the agent is for in the app, beyond answering people: ai_moderator, or
+	// Role is what the agent is for in the app, beyond answering people: agent_moderator, or
 	// empty to leave the stored one. One live agent per app holds a role.
 	Role string `yaml:"role"`
 	// Subagent is the model a voice agent hands its skills to. A text agent runs on its

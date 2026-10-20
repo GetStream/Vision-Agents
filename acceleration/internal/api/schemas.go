@@ -396,13 +396,13 @@ type AgentRole string
 
 // Defines values for AgentRole.
 const (
-	AgentRoleAiModerator AgentRole = "ai_moderator"
+	AgentRoleAgentModerator AgentRole = "agent_moderator"
 )
 
 // Valid indicates whether the value is a known member of the AgentRole enum.
 func (e AgentRole) Valid() bool {
 	switch e {
-	case AgentRoleAiModerator:
+	case AgentRoleAgentModerator:
 		return true
 	default:
 		return false
