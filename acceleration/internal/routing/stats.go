@@ -187,7 +187,7 @@ func (r *Recorder) Close() {
 		r.mu.Unlock()
 		<-r.done
 		if dropped := r.dropped.Load(); dropped > 0 {
-			r.logger.Warn("dropped stats because the writer fell behind",
+			r.logger.Warn("dropped stats because the writer fell behind or they were recorded after Close",
 				"modality", r.modality, "count", dropped)
 		}
 	})
