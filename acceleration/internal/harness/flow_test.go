@@ -320,3 +320,57 @@ func (s *FlowSuite) TestSlowOverlapStreamAlsoYieldsTheFloor() {
 	s.Equal(Wait, s.decisions()[0].Disposition)
 	s.NoError(s.decisions()[0].Error())
 }
+
+func (s *FlowSuite) TestADecisionThatOutlivesTheDeadlineStillRulesOnTheTurn() {
+	// Staging, 2026-10-19 22:01Z: the decision stream opened, no token came within 3 s, the
+	// deadline closed it, and the caller's question was never ruled on, so never answered.
+	s.flow.deadline = 50 * time.Millisecond
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "slow", Participant: "Alex", Text: "what time do you open"}))
+
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor,
+		5*time.Millisecond, "a decision the deadline closed left the caller's turn unruled")
+	decided := s.decisions()[0]
+	s.Equal("slow", decided.CandidateID)
+	s.ErrorIs(decided.Error(), context.DeadlineExceeded,
+		"the agent answers a finished turn whose ruling failed, so the timeout has to reach it")
+	s.model.mu.Lock()
+	script := s.model.scripts["slow"]
+	s.model.mu.Unlock()
+	s.Require().NotNil(script, "the stream had started, so the deadline is what closed it")
+	s.True(script.Abandoned())
+}
+
+func (s *FlowSuite) TestAFastDecisionIsRuledAsAnswered() {
+	s.model.answers["fast"] = `{"disposition":"respond","floor":"continue"}`
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "fast", Participant: "Alex", Text: "what time do you open"}))
+
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor,
+		5*time.Millisecond, "the decision was never ruled")
+	decided := s.decisions()[0]
+	s.Equal("fast", decided.CandidateID)
+	s.Equal(Respond, decided.Disposition)
+	s.Equal(Continue, decided.Floor)
+	s.NoError(decided.Error())
+}
+
+func (s *FlowSuite) TestAStreamClosedBeforeTheDeadlineIsNotRuledOn() {
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "closed", Participant: "Alex", Text: "what time do you open"}))
+	var stream *llm.Stream
+	s.Require().Eventually(func() bool {
+		s.flow.mu.Lock()
+		defer s.flow.mu.Unlock()
+		if asked := s.flow.pending["closed"]; asked != nil {
+			stream = asked.stream
+		}
+		return stream != nil
+	}, settleFor, 5*time.Millisecond, "the stream never started")
+
+	s.Require().NoError(stream.Close())
+	s.flow.running.Wait()
+	s.emitter.Close()
+	<-s.drained
+
+	s.Empty(s.decisions(), "only the deadline turns a closed stream into a ruling")
+}

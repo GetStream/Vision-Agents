@@ -380,7 +380,7 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
-		return nil, stack.Wrap(fmt.Errorf("routing: unknown target %q", target))
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: unknown target %q", target)))
 	}
 
 	var candidates []Candidate

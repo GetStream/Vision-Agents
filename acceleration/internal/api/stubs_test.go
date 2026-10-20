@@ -336,6 +336,10 @@ type batchOnlySTT struct{}
 // batchModel is new each run, for the reason refusingModel is.
 var batchModel = fmt.Sprintf("batch-%d", time.Now().UnixNano())
 
+// downModel is new each run, for the reason refusingModel is: a start that fails marks it
+// unavailable.
+var downModel = fmt.Sprintf("down-%d", time.Now().UnixNano())
+
 func (batchOnlySTT) Start(context.Context) error                     { return errors.New("batch: connect failed") }
 func (batchOnlySTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
 func (batchOnlySTT) Events() <-chan stt.Event                        { return nil }
