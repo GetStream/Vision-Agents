@@ -15,6 +15,7 @@ from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
 from vision_agents.core.llm.remote import (
     RemoteCall,
+    RemotePhone,
     RemoteEvent,
     RemoteFile,
     RemotePipelineError,
@@ -208,6 +209,76 @@ class TestAccelerated:
         assert router.created["start_voice"] is True
         for field in ("call", "call_id", "call_type", "text"):
             assert field not in router.created
+
+    async def _created_for(
+        self,
+        router: Router,
+        llm: stream.Accelerated,
+        call_type: str,
+        phone: Optional[RemotePhone],
+    ) -> dict[str, Any]:
+        await llm.join_remote(
+            RemoteCall(
+                call_type=call_type,
+                call_id="call-7",
+                agent_user_id="agent",
+                instructions="",
+                phone=phone,
+            )
+        )
+        await llm.leave_remote()
+        assert router.created is not None
+        return router.created
+
+    async def test_answering_a_call_sends_the_number_it_rang(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        created = await self._created_for(
+            router, llm, "agent", RemotePhone(number="+15125550100")
+        )
+
+        assert created["phone"] == {"number": "+15125550100"}
+
+    async def test_placing_a_call_sends_the_number_and_the_vendor_call_id(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        created = await self._created_for(
+            router,
+            llm,
+            "agent",
+            RemotePhone(number="+15125550100", vendor_call_id="CA123", ring_timeout=60),
+        )
+
+        assert created["phone"] == {"number": "+15125550100", "vendor_call_id": "CA123"}
+
+    async def test_a_call_held_by_its_call_name_sends_no_phone(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        created = await self._created_for(
+            router, llm, "default", RemotePhone(number="+15125550100")
+        )
+
+        assert created["call"] == {"type": "default", "id": "call-7"}
+        assert "phone" not in created
+
+    async def test_a_call_ringing_longer_than_a_minute_sends_no_phone(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        created = await self._created_for(
+            router,
+            llm,
+            "agent",
+            RemotePhone(number="+15125550100", vendor_call_id="CA123", ring_timeout=61),
+        )
+
+        assert "phone" not in created
+
+    async def test_a_session_without_a_phone_call_sends_no_phone(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        created = await self._created_for(router, llm, "agent", None)
+
+        assert "phone" not in created
 
     async def test_an_agent_without_a_config_plays_the_instructions_it_was_given(
         self, router: Router, joined: stream.Accelerated

@@ -25,7 +25,12 @@ from vision_agents.core.llm.llm import (
     LLMResponseFinal,
     OmniLLM,
 )
-from vision_agents.core.llm.remote import KnowledgePage, RemoteCall, RemoteEvent
+from vision_agents.core.llm.remote import (
+    KnowledgePage,
+    RemoteCall,
+    RemoteEvent,
+    RemotePhone,
+)
 from vision_agents.core.processors.base_processor import (
     AudioPublisher,
     VideoProcessorPublisher,
@@ -957,6 +962,66 @@ class TestAgent:
         assert phone.placed.call_id == "support-line"
         assert phone.placed.ring_timeout == 20.0
         assert phone.placed.initial_digits == "ww1234#"
+
+    async def test_placing_a_call_tells_the_pipeline_it_is_a_phone_call(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(
+            llm=llm,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            phone=DummyPhone(),
+        )
+
+        async with agent.outbound_call(
+            from_="+17195551234",
+            to="+13035559876",
+            ring_timeout=20.0,
+            wait_for_end=False,
+        ):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.phone == RemotePhone(
+            number="+17195551234", vendor_call_id="CA123", ring_timeout=20.0
+        )
+
+    async def test_answering_tells_the_pipeline_which_number_rang(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.answer(
+            InboundCall(call_id="phone-1", called_number="+15125551234"),
+            wait_for_end=False,
+        ):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.phone == RemotePhone(number="+15125551234")
+
+    async def test_joining_an_inbound_call_tells_the_pipeline_which_number_rang(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.join(
+            InboundCall(call_id="phone-1", called_number="+15125551234"),
+            wait_for_end=False,
+        ):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.phone == RemotePhone(number="+15125551234")
+
+    async def test_joining_a_call_that_is_not_a_phone_call_sends_no_phone(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.join(call, wait_for_end=False):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.phone is None
 
     async def test_an_outbound_call_without_a_phone_says_what_to_pass(self):
         agent = Agent(

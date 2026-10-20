@@ -40,6 +40,7 @@ from ..llm.realtime import Realtime
 from ..llm.remote import (
     KnowledgeBase,
     RemoteCall,
+    RemotePhone,
     RemoteEvent,
     RemoteKnowledge,
     RemotePipeline,
@@ -302,6 +303,7 @@ class Agent:
         self._id = str(uuid4())
         self.call: Optional[Call] = None
         self._call_type = "agent"
+        self._phone: Optional[RemotePhone] = None
 
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -703,6 +705,7 @@ class Agent:
                     "an inbound call has to name the call the caller is in"
                 )
             inbound = call
+            self._phone = RemotePhone(number=inbound.called_number)
             call = await self.create_call(inbound.call_type or "agent", inbound.call_id)
             inbound._joined = self
             if participant_wait_timeout == 10.0:
@@ -869,6 +872,11 @@ class Agent:
             )
         )
         self.logger.info("ringing %s from %s, call %s", to, from_, call.id)
+        self._phone = RemotePhone(
+            number=from_,
+            vendor_call_id=placed.vendor_call_id,
+            ring_timeout=ring_timeout,
+        )
 
         # Nobody is on the call until the phone is answered, so waiting for a participant
         # before starting would be waiting for the ringing to finish.
@@ -921,6 +929,7 @@ class Agent:
             call.called_number or "an unknown number",
             call.call_id,
         )
+        self._phone = RemotePhone(number=call.called_number)
         async with self.join(
             joined,
             participant_wait_timeout=participant_wait_timeout,
@@ -1157,6 +1166,7 @@ class Agent:
             harness=self.harness,
             cost_tracking=self.cost_tracking,
             memory_filter=self.memory_filter,
+            phone=self._phone,
         )
 
     async def _join_video_worker(self, call: Call) -> None:

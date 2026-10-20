@@ -2232,6 +2232,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A phone session ends on its own: 10 seconds after the last person leaves the call, and when a phone call is never answered (90 seconds for an outbound call, 30 seconds for an inbound one). The agent stops talking and leaves rather than finishing its sentence to an empty call. The Python SDK now tells the router a session is a phone call, as the Go SDK does. Sessions that are not phone calls are unchanged.
+
 ### A Kotlin voice call asks only for the microphone
 
 `VoiceSession` joined an agent's call with Stream Video's default foreground service, which
