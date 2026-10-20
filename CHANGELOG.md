@@ -644,6 +644,10 @@ naming both syntheses and turns, and counts it in `router_agent_speech_overlaps_
 `router_agent_speech_overlap_seconds_total` (label `provider`). The agent's log lines now
 carry `session` and `call`. What is spoken is unchanged (AI-1550).
 
+### A connector manifest can cap a connection's calls in flight
+
+`rate_limit.max_concurrent_calls` in a connector's manifest caps how many of one connection's tool calls a router sends at once. A call over the cap waits for one to end, within its binding's `timeout_ms`; if it is still waiting then, it is not sent and the model reads a `connector_busy` result, and the call's row in the invocation log is `denied` with the message `held by the router: in-flight limit <n> reached on the connection`. The cap is per connection and per router process. A manifest without the field has no cap, as before.
+
 ### Agents can schedule tasks for later
 
 An agent with `scheduling.enabled` on its config is offered four tools —

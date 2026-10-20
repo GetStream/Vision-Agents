@@ -184,6 +184,9 @@ func Parse(input Input, now time.Time) (*Schedule, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := rule.sayable(); err != nil {
+		return nil, err
+	}
 
 	var startLocal, start time.Time
 	if in != "" {
@@ -492,18 +495,6 @@ func parseRepeat(repeat string) (*repeatRule, error) {
 	}
 	if rule.freq == "" {
 		return nil, fail(CodeInvalidRepeat, "repeat has no FREQ; use FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR or FREQ=MONTHLY;BYMONTHDAY=1")
-	}
-	for _, spec := range rule.byDay {
-		switch rule.freq {
-		case "MONTHLY", "YEARLY":
-			if spec.nth == 0 {
-				return nil, fail(CodeInvalidRepeat, "BYDAY=%s with FREQ=%s would mean every %s in the month; give an ordinal such as 1%s for the first one", spec.day, rule.freq, weekdayNames[spec.day], spec.day)
-			}
-		default:
-			if spec.nth != 0 {
-				return nil, fail(CodeInvalidRepeat, "BYDAY=%d%s is only meaningful with FREQ=MONTHLY or FREQ=YEARLY", spec.nth, spec.day)
-			}
-		}
 	}
 	return rule, nil
 }
