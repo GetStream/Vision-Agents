@@ -138,6 +138,28 @@ func (m *schedulingModel) heard(needle string) bool {
 	return false
 }
 
+// turnsOn counts the turns somebody started by saying text holding needle:
+// how many times a follow-up was run, not how often history repeats it.
+func (m *schedulingModel) turnsOn(needle string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	turns := 0
+	for _, asked := range m.asked {
+		if len(asked.Input) == 0 {
+			continue
+		}
+		last := asked.Input[len(asked.Input)-1]
+		said := last.Content
+		for _, part := range last.Parts {
+			said += part.Text
+		}
+		if last.Role == llm.User && strings.Contains(said, needle) {
+			turns++
+		}
+	}
+	return turns
+}
+
 // instructions is what the model was last told to be.
 func (m *schedulingModel) instructions() string {
 	m.mu.Lock()
@@ -1028,6 +1050,18 @@ func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {
 type channelSink struct {
 	mu   sync.Mutex
 	sent map[string][]string
+	// failing is how many more sends to a person the provider refuses.
+	failing map[string]int
+}
+
+// fail has the provider refuse the next times sends to number.
+func (c *channelSink) fail(number string, times int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failing == nil {
+		c.failing = map[string]int{}
+	}
+	c.failing[number] = times
 }
 
 func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
@@ -1046,6 +1080,12 @@ func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body.Text, &text)
 	}
 	c.mu.Lock()
+	if c.failing[body.To] > 0 {
+		c.failing[body.To]--
+		c.mu.Unlock()
+		http.Error(w, `{"error":{"message":"the provider is down"}}`, http.StatusBadGateway)
+		return
+	}
 	c.sent[body.To] = append(c.sent[body.To], text)
 	c.mu.Unlock()
 
@@ -1237,6 +1277,121 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	s.Require().NotNil(runs[0].Error)
 	s.Contains(*runs[0].Error, "phone", "the run says the call is what could not be made")
 	s.Equal(1, s.taskReloaded(task).ConsecutiveFailures)
+}
+
+// retryAtOnce has a failed occurrence tried again straight away, twice.
+func (s *ScheduledTasksSuite) retryAtOnce() {
+	retries := scheduling.DeliveryRetries
+	scheduling.DeliveryRetries = []time.Duration{time.Millisecond, time.Millisecond}
+	s.T().Cleanup(func() { scheduling.DeliveryRetries = retries })
+}
+
+// failedRun waits for the task's latest run to fail, and returns it.
+func (s *ScheduledTasksSuite) failedRun(task store.ScheduledTask) store.ScheduledTaskRun {
+	var latest store.ScheduledTaskRun
+	s.Eventually(func() bool {
+		runs := s.runsOf(task)
+		if len(runs) == 0 {
+			return false
+		}
+		latest = runs[0]
+		return latest.State == store.ScheduledTaskRunFailed
+	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
+	s.Require().NotNil(latest.Error)
+	return latest
+}
+
+func (s *ScheduledTasksSuite) TestATaskOutsideWhatsAppsWindowRunsNoTurnForIt() {
+	s.retryAtOnce()
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	// The identity is there, but the person never wrote: no window.
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: config, Kind: "whatsapp",
+		Address: writer, UserID: user.userID,
+	}))
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"whatsapp"})
+	s.runWorker()
+	task := s.tasksOf(user)[0]
+	s.makeDue(task)
+
+	run := s.failedRun(task)
+	s.Contains(*run.Error, "window")
+	s.Zero(s.model().turnsOn("<scheduled_task"), "no turn was paid for words WhatsApp would refuse")
+}
+
+func (s *ScheduledTasksSuite) TestATaskForSomebodyWhoOptedOutRunsNoTurnForThem() {
+	s.retryAtOnce()
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	s.Require().NoError(s.store.OptOut(context.Background(), &store.OptOut{
+		CustomerID: s.customerID(), Recipient: writer, Channel: "whatsapp", Source: "keyword",
+	}))
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"whatsapp"})
+	s.runWorker()
+	task := s.tasksOf(user)[0]
+	s.makeDue(task)
+
+	run := s.failedRun(task)
+	s.Contains(*run.Error, "opted out")
+	s.Zero(s.model().turnsOn("<scheduled_task"), "no turn was paid for words the gate would refuse")
+	s.Empty(s.sink.to(writer))
+}
+
+func (s *ScheduledTasksSuite) TestAReplyOneTextChannelCouldNotSendIsTextedOnTheNext() {
+	whatsAppLine, smsLine := s.lineNumber(), s.lineNumber()
+	onWhatsApp, bySMS := s.writerNumber(), s.writerNumber()
+	s.connectWhatsApp(whatsAppLine)
+	s.seedSMSLine(smsLine)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Channels = &AgentChannels{
+			Whatsapp: &ChannelLineRequest{Number: whatsAppLine},
+			Sms:      &ChannelLineRequest{Number: smsLine},
+		}
+	})
+	user := s.data.createUser()
+	s.seedWriter(user, config, whatsAppLine, onWhatsApp)
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: config, Kind: "sms",
+		Address: bySMS, UserID: user.userID,
+	}))
+	s.sink.fail(onWhatsApp, 1)
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"whatsapp", "sms"})
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(bySMS), "the words WhatsApp could not take are the ones texted")
+	s.Empty(s.sink.to(onWhatsApp))
+	s.Equal(1, s.model().turnsOn("<scheduled_task"), "one turn wrote the words for both channels")
+}
+
+func (s *ScheduledTasksSuite) TestARetriedOccurrenceTextsTheReplyItAlreadyHas() {
+	s.retryAtOnce()
+	number, writer := s.lineNumber(), s.writerNumber()
+	s.connectWhatsApp(number)
+	config := s.agentOnWhatsApp(number)
+	user := s.data.createUser()
+	s.seedWriter(user, config, number, writer)
+	s.sink.fail(writer, 1)
+	opened := s.openScheduling(user, config, nil)
+	s.taskOn(user, config, opened.Id, []string{"whatsapp"})
+	s.runWorker()
+	s.makeDue(s.tasksOf(user)[0])
+
+	run := s.delivered(s.tasksOf(user)[0])
+	s.Equal("whatsapp", run.DeliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(writer), "the retry carried the reply the first attempt could not")
+	s.Equal(1, s.model().turnsOn("<scheduled_task"), "the retry ran no second turn")
 }
 
 func (s *ScheduledTasksSuite) TestAQuietTaskIsHeldUntilItsQuietHoursEnd() {

@@ -820,6 +820,86 @@ func TestAFollowUpIsDuplicateSafeAcrossRestart(t *testing.T) {
 	db.mu.Unlock()
 }
 
+func TestAFollowUpsReplyIsReadBackLiveAndAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("st_run", "the task is due")
+	require.NoError(t, err)
+	state, text, known := c.FollowUpReply("st_run")
+	require.True(t, known)
+	require.Equal(t, "thinking", state)
+	require.Empty(t, text, "a reply still running has said nothing yet")
+	c.Observe(agent.ResponseDelta{Text: "time for standup"})
+	c.Observe(agent.Responded{})
+	state, text, _ = c.FollowUpReply("st_run")
+	require.Equal(t, "completed", state)
+	require.Equal(t, "time for standup", text)
+	saved(t, c)
+	c.Release()
+	service.Close()
+
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	state, text, known = c.FollowUpReply("st_run")
+	require.True(t, known)
+	require.Equal(t, "completed", state)
+	require.Equal(t, "time for standup", text)
+	_, _, known = c.FollowUpReply("st_other")
+	require.False(t, known)
+}
+
+func TestAPersonsCommandKeepsNoSecondCopyOfItsReply(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("question", "what is due?", "")
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "nothing"})
+	c.Observe(agent.Responded{})
+
+	state, text, _ := c.FollowUpReply("question")
+	require.Equal(t, "completed", state)
+	require.Empty(t, text, "only a follow-up is read back; a person's reply is in Stream")
+}
+
+func TestAnAbandonedFollowUpStartsWhenDeliveredAgain(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	first, err := c.BeginFollowUp("thread_message", "a message")
+	require.NoError(t, err)
+	c.AbandonFollowUp("thread_message")
+	require.Equal(t, "cancelled", current(c).State)
+
+	again, err := c.BeginFollowUp("thread_message", "a message")
+	require.NoError(t, err)
+	require.False(t, again.Duplicate, "the turn never started, so the retry starts it")
+	require.NotEqual(t, first.AssistantMessageID, again.AssistantMessageID)
+}
+
+func TestAFinishedFollowUpIsStillADuplicate(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginFollowUp("thread_message", "a message")
+	require.NoError(t, err)
+	c.Observe(agent.Responded{})
+
+	again, err := c.BeginFollowUp("thread_message", "a message")
+	require.NoError(t, err)
+	require.True(t, again.Duplicate)
+}
+
 func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 	_, client := newChat(t)
 	service := NewForChat(client)
