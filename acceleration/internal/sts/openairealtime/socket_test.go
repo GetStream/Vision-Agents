@@ -571,6 +571,7 @@ func (s *RealtimeSocketSuite) TestOnlyTheLastRefusedRequestOfOursIsAskedFor() {
 	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
 	s.Require().NoError(provider.Prompt("Say: first."))
 	s.refusedOurs(conn)
+	s.settled(provider, conn)
 	s.Require().NoError(provider.Prompt("Say: second."))
 	s.refusedOurs(conn)
 	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
