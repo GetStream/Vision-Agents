@@ -668,6 +668,14 @@ app, so no secret is passed in. They are offered only to a session the customer'
 opens (a server-side caller), never one an end user's device opens, and only in an app of the
 customer's own: a session in the deployment's shared app is offered none. Reading the review queue never locks an item, and a
 tool the caller declares under the same name stays the caller's (AI-1504).
+### The moderator template proposes configuration changes from Ask Nora
+
+`acceleration/templates/agent_moderator/skills/suggest_policy.md` moves the Nora proof of
+concept's configuration suggestions into the template. From the live policy, the last 7 days of
+reviews (or the days the moderator names) and where Nora disagreed with the first layer, it
+proposes up to 8 changes to label actions, LLM labels and severities, the app context, blocklists,
+rules and the flooding filter, each with the counts behind it, as the JSON the dashboard saves.
+It only proposes: nothing changes until the moderator confirms in the dashboard (AI-1505).
 
 ### A recording moves to the next model when the vendor fails it
 
