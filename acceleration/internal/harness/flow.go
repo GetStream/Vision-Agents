@@ -73,6 +73,8 @@ type flow struct {
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
+	// deadline is flowDeadline, shortened by tests that wait it out.
+	deadline time.Duration
 
 	mu sync.Mutex
 	// pending holds each candidate still with the controller: when it was asked about, so
@@ -163,10 +165,11 @@ a noise, an echo of the agent's own words, or too short to tell.`
 
 func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *flow {
 	return &flow{
-		model:   model,
-		emitter: emitter,
-		logger:  logger,
-		pending: map[string]*candidate{},
+		model:    model,
+		emitter:  emitter,
+		logger:   logger,
+		pending:  map[string]*candidate{},
+		deadline: flowDeadline,
 	}
 }
 
@@ -178,7 +181,7 @@ func (f *flow) Decide(turn FlowTurn) error {
 		return stack.Wrap(errors.New("harness: flow candidate text is required"))
 	}
 
-	deadline := flowDeadline
+	deadline := f.deadline
 	if turn.Unfinished && turn.Speaking {
 		deadline = overlapDeadline
 	}
@@ -436,7 +439,13 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream) {
 	}
 	if err != nil {
 		if response.Status == llm.StatusCancelled {
-			return
+			if !errors.Is(asked.ctx.Err(), context.DeadlineExceeded) {
+				return
+			}
+			// The deadline closed a stream that had started but sent no decision. Returning
+			// here left the caller's finished question with no ruling, so it was never
+			// answered: the ruling carries the timeout, as one for a Create that timed out does.
+			err = fmt.Errorf("harness: decide flow: %w", asked.ctx.Err())
 		}
 		f.logger.Error("flow controller failed", "error", err)
 		f.emitter.Send(Decided{CandidateID: candidateID, TookMs: took, Err: err})
