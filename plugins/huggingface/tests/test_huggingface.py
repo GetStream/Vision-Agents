@@ -8,12 +8,22 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from av import VideoFrame
 from vision_agents.testing import collect_simple_response
-from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
+from vision_agents.core.agents.inference.llm_turn import LLMTurn
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
+from vision_agents.core.llm import LLM as BaseLLM
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.plugins.huggingface import LLM, VLM
 
 from conftest import skip_blockbuster
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
 
 @pytest.fixture()
@@ -44,6 +54,77 @@ async def vlm(huggingface_client_mock, conversation):
     vlm_.set_conversation(conversation)
     yield vlm_
     await vlm_.close()
+
+
+@pytest.fixture
+async def huggingface_api() -> AsyncIterator[tuple[str, list[dict]]]:
+    """A real server standing in for an OpenAI-compatible endpoint: its base URL, and
+    every request body sent.
+
+    Every answer is an empty stream: the tests are about requests.
+    """
+    bodies: list[dict] = []
+
+    async def stream(request: web.Request) -> web.StreamResponse:
+        bodies.append(await request.json())
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", stream)
+    server = TestServer(app)
+    await server.start_server()
+    yield str(server.make_url("")).rstrip("/"), bodies
+    await server.close()
+
+
+async def answer(
+    llm: BaseLLM, conversation: Conversation, participant: Participant, text: str
+) -> None:
+    """What the agent does with a participant's words: keep them, then ask the LLM."""
+    await conversation.upsert_message(
+        role="user", user_id=participant.user_id, content=text, participant=participant
+    )
+    events = EventManager()
+    events.register(LLMResponseFinalEvent)
+    turn = LLMTurn(
+        transcript=text,
+        participant=participant,
+        events=events,
+        speaker=conversation.speaker_label(participant),
+    )
+    turn.start(llm)
+    await turn.stream.collect()
+    await conversation.send_message(role="assistant", user_id="agent", content="Ok")
+
+
+async def assert_who_spoke_is_named(
+    llm: BaseLLM, conversation: Conversation, bodies: list[dict]
+) -> None:
+    """Two turns of one person go as they did, then the turns of two are named."""
+    llm.set_conversation(conversation)
+
+    await answer(llm, conversation, ALICE, "Hi")
+    await answer(llm, conversation, ALICE, "Are you there?")
+    # One person: what the base sha (486427184) sent for the same two turns.
+    assert bodies[-1]["messages"] == [
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Ok"},
+        {"role": "user", "content": "Are you there?"},
+    ]
+
+    await answer(llm, conversation, BOB, "Me too")
+    await answer(llm, conversation, ALICE, "Who is that?")
+    assert bodies[-1]["messages"][2:] == [
+        {"role": "user", "content": "Are you there?"},
+        {"role": "assistant", "content": "Ok"},
+        {"role": "user", "content": "Bob: Me too"},
+        {"role": "assistant", "content": "Ok"},
+        {"role": "user", "content": "Alice: Who is that?"},
+    ]
 
 
 def _tc_delta(index: int, tc_id: str, name: str, arguments: str) -> SimpleNamespace:
@@ -118,6 +199,14 @@ class VideoStreamTrackStub:
 
 
 class TestHuggingFaceVLM:
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, huggingface_api: tuple[str, list[dict]]
+    ):
+        base_url, bodies = huggingface_api
+        vlm = VLM(model="test", base_url=base_url, api_key="test")
+        await assert_who_spoke_is_named(vlm, InMemoryConversation("", []), bodies)
+        await vlm.close()
+
     async def test_simple_response_success(
         self, vlm, conversation, huggingface_client_mock
     ):
@@ -169,6 +258,14 @@ class TestHuggingFaceVLM:
 
 
 class TestHuggingFaceLLM:
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, huggingface_api: tuple[str, list[dict]]
+    ):
+        base_url, bodies = huggingface_api
+        llm = LLM(model="test", base_url=base_url, api_key="test")
+        await assert_who_spoke_is_named(llm, InMemoryConversation("", []), bodies)
+        await llm.close()
+
     async def test_simple_response_success(
         self, llm, conversation, huggingface_client_mock
     ):
