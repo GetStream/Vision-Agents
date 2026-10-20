@@ -524,6 +524,75 @@ func (s *ConsentSuite) TestLinearAppRefreshPolicyRotatesWithAThirtyMinuteGraceAn
 	s.Equal(core.Duration(24*time.Hour), refresh.AccessTTL)
 }
 
+// nessy is Stream's internal tool with the client a staff member registered for the app
+// (nessy.yaml): its issuer and endpoints are pinned, so the MCP endpoint's metadata is not
+// read and nothing is registered; the secret goes as HTTP Basic, how Nessy registers the
+// client; mcp asks for every permission key the client holds, and openid for an id_token.
+func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
+	srv := fakeprovider.New(s.T())
+	manifest := s.resolve("nessy", nil)
+	s.Equal(map[string]string{
+		"mcp":       "https://nessy.getstream.io/mcp",
+		"issuer":    "https://nessy.getstream.io",
+		"authorize": "https://nessy.getstream.io/api/oauth/authorize",
+		"token":     "https://nessy.getstream.io/api/oauth/token",
+		"revoke":    "https://nessy.getstream.io/api/oauth/revoke",
+		"resource":  "https://nessy.getstream.io/mcp",
+	}, manifest.Endpoints)
+	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources)
+	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
+	resolved := s.atFake(srv, manifest)
+	wire := &tokenWire{next: srv.Client().Transport}
+	scheme := s.schemeOver(&http.Client{Transport: wire}, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(0, srv.Hits(fakeprovider.PathProtectedResource), "the issuer is pinned")
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+	query := s.query(out.AuthorizeURL)
+	s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+fakeprovider.PathAuthorize+"?"))
+	s.Equal(srv.ClientID, query.Get("client_id"))
+	s.Equal("mcp openid", query.Get("scope"))
+	s.Equal("S256", query.Get("code_challenge_method"))
+	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"), "the pinned resource")
+
+	stored, account, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+	s.Empty(account.AccountID, "no identity")
+	s.Require().Len(wire.sent, 1, "one code exchange")
+	basic := http.Request{Header: http.Header{"Authorization": {wire.sent[0].authorization}}}
+	id, secret, ok := basic.BasicAuth()
+	s.Require().True(ok, "HTTP Basic credentials")
+	s.Equal(url.QueryEscape(srv.ClientID), id)
+	s.Equal(url.QueryEscape(srv.ClientSecret), secret)
+	s.Empty(wire.sent[0].form.Get("client_secret"), "no secret in the body")
+
+	s.Require().NoError(scheme.Revoke(s.ctx, stored, resolved))
+	s.Equal(1, srv.Hits(fakeprovider.PathRevoke), "the stored grant is revoked at the pinned revoke endpoint")
+}
+
+// Only the app's own client: the operator's is never taken, and none is registered.
+func (s *ConsentSuite) TestNessyWithoutTheAppsClientIsRefusedRatherThanRegistered() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("nessy", nil))
+
+	_, err := s.scheme(srv, s.preregistered(srv, core.ClientOperator)).Begin(s.ctx,
+		core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.ErrorIs(err, oauth2code.ErrNoClient)
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+}
+
+// Every refresh rotates the refresh token and a reused one ends the family, so no grace; the
+// family's 7 days are absolute, so no refresh_ttl, which counts from each issue (nessy.yaml).
+func (s *ConsentSuite) TestNessyRefreshPolicyRotatesWithNoGraceAndNoRefreshLifetime() {
+	refresh := s.resolve("nessy", nil).Refresh
+	s.Require().NotNil(refresh.Rotating)
+	s.True(*refresh.Rotating)
+	s.Zero(refresh.Grace)
+	s.Zero(refresh.RefreshTTL)
+	s.Zero(refresh.AccessTTL)
+}
+
 // The storefront answers without a credential (shopify.dev Policy and FAQs, opened
 // 2026-10-13), so connecting stores nothing and sends the browser nowhere.
 func (s *ConsentSuite) TestShopifyNeedsNoLogin() {

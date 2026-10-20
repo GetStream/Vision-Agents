@@ -367,6 +367,8 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 	shipped, err := builtinManifests(providers.FS)
 	s.Require().NoError(err)
+	// acme has no app row, so it sees no internal built-in (visibleTo).
+	shipped = slices.DeleteFunc(shipped, func(m core.Manifest) bool { return m.Internal })
 
 	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
