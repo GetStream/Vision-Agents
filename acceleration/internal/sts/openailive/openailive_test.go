@@ -322,14 +322,17 @@ func (s *OpenAILiveSuite) TestSilenceInsideAReplyGoesOutWithIt() {
 // model still streams silence. That silence is not the reply's first byte: the wait is
 // timed to the first audible piece.
 func (s *OpenAILiveSuite) TestSilenceBeforeTheFirstSoundIsNotTheFirstByte() {
-	provider := s.newProvider()
+	// A gap far above a scheduler stall: the reply must not settle during the 20 ms wait.
+	const gap = 300 * time.Millisecond
+	provider := s.newProviderWithGap(gap)
 	provider.handleMessage(s.frame(heard("hello")))
 	provider.handleMessage(s.frame(said("hi")))
 	provider.handleMessage(s.frame(quiet(240)))
 	time.Sleep(20 * time.Millisecond)
 	provider.handleMessage(s.frame(spoke(240)))
 
-	events := s.settled(provider)
+	time.Sleep(2 * gap)
+	events := s.drain(provider)
 	var chunks int
 	for _, event := range events {
 		if _, ok := event.(sts.AudioChunk); ok {
@@ -405,7 +408,8 @@ func (s *OpenAILiveSuite) TestAMuteEndsWhileTheModelStreamsSilence() {
 // A caller who barges in is still being heard when the rest of the cut-off reply's words
 // arrive. They may not settle their turn or open a reply.
 func (s *OpenAILiveSuite) TestWhatRemainsOfACutOffReplyDoesNotEndTheBargeIn() {
-	provider := s.newProvider()
+	// A gap far above a scheduler stall: no turn may settle between the events below.
+	provider := s.newProviderWithGap(300 * time.Millisecond)
 	provider.participant = sts.Participant{ID: "alice"}
 
 	provider.handleMessage(s.frame(spoke(240)))
