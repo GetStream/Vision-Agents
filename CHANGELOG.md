@@ -2147,6 +2147,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+### A Kotlin voice call asks only for the microphone
+
+`VoiceSession` joined an agent's call with Stream Video's default foreground service, which
+refuses to start without the camera permission because the call allows video. The call went
+on, with no service holding it. It now runs Stream's audio-call service, and the client it
+builds asks for the camera only while the camera is on. A call type the app configured on its
+own `StreamVideo` is left as it is.
+
 - A chat that opened before its person connected an account uses the account once they have. A session binding with no connection chosen waits for a login; asked for the account after the person connected it outside the chat, from their app with a consent its backend began, it began a second consent and showed another `connector_authorization` card. It now opens on the caller's one connected connection, as a session opening then would have, with no second consent. With two connected, it still asks.
 - `stream.STT` credits each transcript to the participant whose audio it is of. It sent every participant's audio over one router socket and credited each transcript to whoever sent the last frame, so a line still arriving when the next person started talking went to them. Each participant now has a socket of their own: the one `start` opens goes to whoever speaks first, and the others open on a participant's first frame. A socket the router refuses for a later participant is reported once as an `STTErrorEvent` and that participant's audio is dropped; one participant still uses exactly one socket (AI-1403).
 - A Python `Agent` built by hand, without `AgentLauncher`, loads its components' models when it joins: the multi-speaker filter's Silero VAD, a local STT such as `fast_whisper`, a local turn detector or processor. It loaded none, so once two people spoke on the call the first frame failed with `warmup() must be called before process_audio()` and the agent took no more audio for the rest of the call, though the join had succeeded. A model that fails to load now fails the join before the agent enters the call. An agent from `AgentLauncher` keeps the models the launcher loaded, and `Agent.warmup(cache)` loads them ahead of the join (AI-1402).

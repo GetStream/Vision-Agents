@@ -1,11 +1,15 @@
 package io.getstream.visionagents.android.core
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import io.getstream.result.Result
 import io.getstream.video.android.core.Call
 import io.getstream.video.android.core.CameraDirection
 import io.getstream.video.android.core.StreamVideo
 import io.getstream.video.android.core.StreamVideoBuilder
+import io.getstream.video.android.core.notifications.internal.service.DefaultCallConfigurations
+import io.getstream.video.android.core.permission.android.StreamPermissionCheck
 import io.getstream.video.android.core.socket.common.token.TokenProvider
 import io.getstream.video.android.model.User
 import kotlinx.coroutines.CancellationException
@@ -80,7 +84,17 @@ public class VoiceSession private constructor(
     public suspend fun join(camera: Boolean = false) {
         if (joined.value != null) return
         try {
-            val call = client().call(session.session.callType, session.session.callId)
+            val video = client()
+            val type = session.session.callType
+            // An agent's call is a voice call that may add the back camera, so its foreground
+            // service is Stream's audio-call one, which asks only for the microphone. The default
+            // refuses to start without the camera permission, leaving the call with no service
+            // holding it. A type the app configured itself is left as it is.
+            val services = video.state.callConfigRegistry
+            if (services.get(type) == DefaultCallConfigurations.default) {
+                services.register(type, DefaultCallConfigurations.audioCall)
+            }
+            val call = video.call(type, session.session.callId)
             call.camera.setDirection(CameraDirection.Back)
             call.camera.setEnabled(camera)
             call.microphone.setEnabled(true)
@@ -189,6 +203,7 @@ public class VoiceSession private constructor(
             user = User(id = credentials.user.id, name = credentials.user.name),
             token = credentials.token,
             tokenProvider = refresh,
+            permissionCheck = VoicePermissions,
         ).build().also { builtHere = it }
     }
 
@@ -216,4 +231,26 @@ public class VoiceSession private constructor(
             tools: List<AgentTool> = emptyList(),
         ): VoiceSession = VoiceSession(context, agents.attach(sessionId, tools), createdLocally = false)
     }
+}
+
+/**
+ * What a call with an agent needs from Android: the microphone, and the camera only while it is
+ * on. Stream's own check goes by what the call allows, and an agent's call allows video, so it
+ * would refuse a voice call without the camera permission.
+ */
+private object VoicePermissions : StreamPermissionCheck {
+    override fun checkAndroidPermissionsGroup(context: Context, call: Call): Pair<Boolean, Set<String>> {
+        val needed = buildSet {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (call.camera.isEnabled.value) add(Manifest.permission.CAMERA)
+        }
+        val missing = needed.filterTo(mutableSetOf()) {
+            context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        return missing.isEmpty() to missing
+    }
+
+    @Deprecated("Use checkAndroidPermissionsGroup instead")
+    override fun checkAndroidPermissions(context: Context, call: Call): Boolean =
+        checkAndroidPermissionsGroup(context, call).first
 }
