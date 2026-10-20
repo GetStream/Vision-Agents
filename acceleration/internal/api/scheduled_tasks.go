@@ -573,7 +573,7 @@ func (s *Server) deliverManualRun(task store.ScheduledTask, run store.ScheduledT
 	state := store.ScheduledTaskRunDelivered
 	failure := ""
 	if err != nil {
-		state, failure = store.ScheduledTaskRunFailed, err.Error()
+		state, failure = store.ScheduledTaskRunFailed, scheduling.ReasonOf(err)
 		s.logger.Error("a scheduled task run by hand did not land",
 			"task", task.ID, "run", run.ID, "error", err)
 	}
@@ -912,7 +912,7 @@ type ScheduledTaskRun struct {
 	Attempts     int        `json:"attempts"`
 	StartedAt    *time.Time `json:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
-	Error        *string    `json:"error" doc:"Why it failed, when it did. Null otherwise."`
+	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number or not_answered. The full error is in the router's logs. Null otherwise."`
 }
 
 // ScheduledTaskPage is a page of scheduled tasks.
