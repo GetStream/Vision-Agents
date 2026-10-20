@@ -226,6 +226,7 @@ func (s *RateLimitSuite) TestACallWaitingForASlotIsHeldByThe429OfTheCallItWaited
 	s.Contains(waited, "connector_rate_limited")
 	s.Contains(waited, heldFor30)
 	s.Equal(1, s.provider.calls("primary"), "the waiting call reached a provider that had just answered 429")
+	s.Zero(d.slots.users(primary), "the held call gave its slot back")
 	s.ElementsMatch([]string{store.InvocationExternalServer, store.InvocationDenied}, s.logged(primary, 2))
 }
 
