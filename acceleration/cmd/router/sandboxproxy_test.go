@@ -206,6 +206,8 @@ func TestTheProxyReadsTheGrantsItsBrokerWrites(t *testing.T) {
 	conn, err := net.Dial("tcp", server.Listener.Addr().String())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
+	// A proxy reading the cut shard waits on it: fail here rather than at the test's timeout.
+	require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
 	_, err = fmt.Fprintf(conn, "CONNECT other.example:443 HTTP/1.1\r\nHost: other.example:443\r\nProxy-Authorization: Basic %s\r\n\r\n",
 		base64.StdEncoding.EncodeToString([]byte("sbx:"+credential)))
 	require.NoError(t, err)
