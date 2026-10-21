@@ -45,4 +45,21 @@ var (
 		// 50 ms to 51.2 s, past the 30 s a caller's own tool is given (session.defaultToolTimeout).
 		Buckets: prometheus.ExponentialBuckets(0.05, 2, 11),
 	}, []string{"outcome"})
+	// Unlabelled: the edge knows whose audio it is, which is unbounded, and not which
+	// transcriber hears it.
+	inboundFrames = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_inbound_audio_frames_total",
+		Help:      "Chunks of participants' audio the agent received from the call",
+	})
+	sttPartials = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_stt_partials_total",
+		Help:      "Transcripts with words in them that the speaker may still revise",
+	}, []string{"provider"})
+	sttFinals = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_stt_finals_total",
+		Help:      "Transcripts with words in them that the transcriber settled",
+	}, []string{"provider"})
 )
