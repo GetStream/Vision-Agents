@@ -843,7 +843,8 @@ func (s *Store) NextDueScheduledTask(ctx context.Context) (time.Time, bool, erro
 
 // SetUserTimezone records the zone a user was explicitly known to be in. The
 // row is created when there is none; on an existing row only the zone moves,
-// never the kind the claim path reads.
+// never the kind the claim path reads, and a zone it already holds is not
+// written again: every session opened with a zone comes through here.
 func (s *Store) SetUserTimezone(ctx context.Context, customerID, userID, kind, zone string) error {
 	if customerID == "" || userID == "" || zone == "" {
 		return nil
@@ -855,6 +856,7 @@ func (s *Store) SetUserTimezone(ctx context.Context, customerID, userID, kind, z
 	_, err := s.db.NewInsert().Model(user).
 		On("CONFLICT (customer_id, id) DO UPDATE").
 		Set("timezone = EXCLUDED.timezone").
+		Where("u.timezone IS DISTINCT FROM EXCLUDED.timezone").
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: set user timezone: %w", err))
@@ -881,4 +883,25 @@ func (s *Store) UserTimezone(ctx context.Context, customerID, userID string) (st
 		return "", stack.Wrap(fmt.Errorf("store: user timezone: %w", err))
 	}
 	return user.Timezone, nil
+}
+
+// PauseScheduledTasksForConfig pauses a config's active tasks, as deleting that
+// config must: an occurrence of one would only fail. It clears their claims, so
+// a worker finishing an occurrence in flight cannot make one active again.
+func (s *Store) PauseScheduledTasksForConfig(ctx context.Context, customerID, configID string) error {
+	if configID == "" {
+		return nil
+	}
+	_, err := s.db.NewUpdate().Model((*ScheduledTask)(nil)).
+		Set("state = ?", ScheduledTaskPaused).
+		Set("claim_id = ''").
+		Set("updated_at = now()").
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Where("state = ?", ScheduledTaskActive).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: pause scheduled tasks for config: %w", err))
+	}
+	return nil
 }
