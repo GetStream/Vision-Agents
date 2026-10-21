@@ -4031,6 +4031,8 @@ export type components = {
              * @default false
              */
             readonly required?: boolean;
+            /** @description Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false. */
+            readonly sandbox?: boolean;
             /**
              * Format: int64
              * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
