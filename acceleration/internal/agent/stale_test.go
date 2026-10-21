@@ -440,6 +440,7 @@ func (s *AgentSuite) TestATurnAnsweredWithNothingDroppedIsAskedAsBefore() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the next turn was never answered")
 	s.Equal(s.model.requests()[0].Instructions, s.model.requests()[1].Instructions)
+	s.NotContains(s.model.requests()[1].Instructions, "not yet answered")
 }
 
 func (s *AgentSuite) TestWhatADroppedReplyWasForIsOwedToTheSameCallerAlone() {
