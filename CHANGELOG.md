@@ -743,6 +743,18 @@ prior bans, and an instruction injected into the message. A simulation talks to 
 rather than through a run, so each one hands over the policy with its cases, and its assertion
 judges the verdicts rather than the answer format. Run them after editing the agent with
 `getstream agents simulate nora` (AI-1506).
+
+### The moderator template reviews more than chat messages
+
+A case may carry an `entity_type`, and the moderator template's instructions say what context
+each kind brings: a chat message (or a case without one) its `conversation`, a Feeds activity
+or comment its `activity` with the comments and reactions in place, a user profile
+(`stream:user`) its fields as the case's text, and a custom check type its text alone, read
+with the entity type as a hint and not judged uncertain only for lacking a conversation.
+Evidence still quotes only the case's own text, and the answer format is unchanged. Four more
+simulations cover a product review, a Feeds comment, a Feeds activity and a user profile
+(AI-1624).
+
 ### The app's moderator reads the app's moderation data
 
 A session or run of an `agent_moderator` config is offered six read-only tools on the app's
