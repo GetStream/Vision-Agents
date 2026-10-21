@@ -197,6 +197,29 @@ func TestProxy(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "user-1", principal.UserID)
 	})
+
+	t.Run("takes an address only from a backend", func(t *testing.T) {
+		// The gateway passes a client's X-Stream-User-Email through unchanged, so the kind it
+		// names is the only thing between an end user and somebody else's address.
+		for _, authType := range []string{AuthTypeJWT, AuthTypeAnonymous} {
+			r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+			r.Header.Set(AppHeader, "app-1")
+			r.Header.Set(UserHeader, "user-1")
+			r.Header.Set(AuthTypeHeader, authType)
+			r.Header.Set(EmailHeader, "alice@example.com")
+			principal, err := authenticator.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			require.Empty(t, principal.Email, authType)
+		}
+
+		backend := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		backend.Header.Set(AppHeader, "app-1")
+		backend.Header.Set(UserHeader, "user-1")
+		backend.Header.Set(EmailHeader, "alice@example.com")
+		principal, err := authenticator.Authenticate(context.Background(), backend)
+		require.NoError(t, err)
+		require.Equal(t, "alice@example.com", principal.Email)
+	})
 }
 
 func TestProxyThatDeclaresKinds(t *testing.T) {
