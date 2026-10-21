@@ -162,7 +162,8 @@ type scriptedLLM struct {
 	// usage is what each reply reports the model read and wrote.
 	usage llm.Usage
 	// summarises answers a request for JSON as a reviewer would, with a summary that is the
-	// whole of what it was given to read. Any other request is answered with reply.
+	// whole of what it was given to read and notes that are the instructions it was given.
+	// Any other request is answered with reply.
 	summarises bool
 	// analyses answers a request for JSON as a review analyst would: one cause behind every
 	// call it was handed and one it made up, and a second cause behind made-up calls only.
@@ -190,7 +191,7 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		reply = strings.Join(handed, "\n")
 	}
 	if s.summarises && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
-		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content})
+		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content, "notes": params.Instructions})
 		reply = string(summary)
 	}
 	if s.analyses && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {

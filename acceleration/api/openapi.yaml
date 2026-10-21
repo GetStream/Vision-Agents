@@ -182,6 +182,9 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        review:
+          $ref: '#/components/schemas/AgentReview'
+          description: Absent when calls are reviewed by Stream's default guide.
         role:
           $ref: '#/components/schemas/AgentRole'
         sandbox:
@@ -291,6 +294,8 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        review:
+          $ref: '#/components/schemas/AgentReview'
         role:
           $ref: '#/components/schemas/AgentRole'
         sandbox:
@@ -392,6 +397,9 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        review:
+          $ref: '#/components/schemas/AgentReview'
+          description: How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
         role:
           $ref: '#/components/schemas/AgentRole'
         sandbox:
@@ -703,6 +711,13 @@ components:
       required:
         - has_more
         - items
+      type: object
+    AgentReview:
+      description: How a finished call under an agent is reviewed.
+      properties:
+        instructions:
+          description: 'What the model reviewing a finished call judges it by, in place of Stream''s default guide: what to summarise and how to score the call from 1 to 5. A score outside 1 to 5 is not kept. The reviewer is always told to answer with JSON holding a summary, a score and notes, so leave the answer''s format out. Empty is the default guide. On an update or a patch, left out keeps the stored instructions and an empty string removes them.'
+          type: string
       type: object
     AgentRole:
       description: 'What the agent is for in the app, beyond answering people. agent_moderator is the app''s moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.'

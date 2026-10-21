@@ -173,6 +173,9 @@ type Spec struct {
 	// Guardrail is a guardrail.md, whole: frontmatter saying how a turn is screened, then
 	// the policy in prose. Empty means every turn is answered.
 	Guardrail string
+	// ReviewInstructions is what the call is judged by once it ends, from the agent's config.
+	// Empty is the default scoring guide.
+	ReviewInstructions string
 	// Navigating tells an agent that placed this call how to get past whatever answers.
 	Navigating bool
 
@@ -347,6 +350,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Greeting:           config.Greeting,
 		VaryGreeting:       config.GreetingMode == store.GreetingVariation,
 		Guardrail:          config.Guardrail,
+		ReviewInstructions: config.ReviewInstructions,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
 		MCPServers:         config.MCPServers,
