@@ -461,6 +461,9 @@ components:
           default: false
           description: Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
           type: boolean
+        sandbox:
+          description: Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false.
+          type: boolean
         timeout_ms:
           description: How long one tool call may take, in milliseconds. Omitted, the session's default applies.
           format: int64

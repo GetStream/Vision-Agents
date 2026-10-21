@@ -442,6 +442,11 @@ type ConnectorBinding struct {
 	// Policy is how the binding's calls behave around speech and interruptions. Nil is a
 	// binding written before it existed, or without one, and behaves as one always has.
 	Policy *BindingPolicy `json:"policy,omitempty"`
+	// Sandbox is whether code in the session's sandbox reaches the connector's API with the
+	// binding's connection, through the env var the connector's manifest names. The field is
+	// JSON inside agent_configs.connectors, so an older router drops it and reads the binding
+	// as one without sandbox access.
+	Sandbox bool `json:"sandbox,omitempty"`
 }
 
 // The values of BindingPolicy.OnInterrupt. Empty lets the call outlive an interruption, and

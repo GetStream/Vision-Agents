@@ -780,3 +780,46 @@ func (s *SyncSuite) TestASessionFromAnAgentWhoseSkillRunsScriptsWithoutASandboxD
 	s.NotEqual(http.StatusCreated, status)
 	s.Contains(string(payload), "needs a sandbox")
 }
+
+func (s *SyncSuite) TestASyncedGitHubSandboxBindingIsStored() {
+	result := s.sync(map[string]any{"name": "builder", "hash": "v1", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true)}})
+
+	s.Require().Len(value(result.Config.Connectors), 1)
+	s.True(value(result.Config.Connectors)[0].Sandbox)
+	s.True(value(s.configsNamed("builder")[0].Connectors)[0].Sandbox)
+}
+
+func (s *SyncSuite) TestASyncedSandboxBindingToAConnectorWithoutASandboxBlockIsRefusedAndStoresNothing() {
+	slack := sessionSlack("inbox")
+	slack["sandbox"] = true
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "builder", "hash": "v1", "sandbox": "daytona", "connectors": []map[string]any{slack},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector "slack" offers no access from a sandbox`)
+	s.Empty(s.configsNamed("builder"))
+}
+
+func (s *SyncSuite) TestASyncedSandboxBindingWithoutASandboxIsRefusedAndStoresNothing() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "builder", "hash": "v1", "connectors": []map[string]any{sessionGitHub("code", true)},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" sets sandbox, and the config has no sandbox`)
+	s.Empty(s.configsNamed("builder"))
+}
+
+func (s *SyncSuite) TestTwoSyncedSandboxBindingsGivingTheSandboxOneEnvVarAreRefusedAndStoreNothing() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "builder", "hash": "v1", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true), sessionGitHub("docs", true)},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector bindings "code" and "docs" both set sandbox`)
+	s.Empty(s.configsNamed("builder"))
+}
