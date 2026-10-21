@@ -774,6 +774,7 @@ func TestAgentSuite(t *testing.T) {
 
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.callID = ""
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil

@@ -2084,9 +2084,9 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 	kind := composedKind(purpose)
 	if participant.ID == "" {
 		// Nobody has been heard in words yet, so the line is for everyone who was heard.
-		a.logHeardFromEveryone("checkin", "purpose", kind)
+		a.logHeardFromEveryone("checkin", "kind", kind)
 	} else {
-		a.logHeard("checkin", participant.ID, "purpose", kind)
+		a.logHeard("checkin", participant.ID, "kind", kind)
 	}
 	a.mu.Lock()
 	if a.composing || a.tts == nil {
@@ -2106,7 +2106,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 		}()
 		line, err := a.compose(ctx, purpose)
 		if err != nil {
-			a.logger.Warn("could not write a line to say", "purpose", kind, "error", err)
+			a.logger.Warn("could not write a line to say", "kind", kind, "error", err)
 			return
 		}
 		a.sayComposed(participant, line, purpose, asked)

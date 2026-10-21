@@ -89,7 +89,7 @@ func (s *AgentSuite) TestACheckInSaysTheCallerWasHeardButNotTranscribed() {
 	s.agent.checkIn(alice, idlePurpose)
 
 	line := s.heardAt("checkin", "alice")
-	s.Equal(kindCheckIn, line["purpose"])
+	s.Equal(kindCheckIn, line["kind"])
 	s.Equal(float64(2), line["frames"])
 	s.Equal(float64(40), line["audio_ms"])
 	s.Equal(float64(0), line["partials"])
@@ -128,11 +128,11 @@ func (s *AgentSuite) TestACheckInLogsTheKindOfLineAndNotItsPrompt() {
 	var heard, failed []string
 	for _, record := range s.logs.records(heardLine) {
 		if record["moment"] == "checkin" {
-			heard = append(heard, record["purpose"].(string))
+			heard = append(heard, record["kind"].(string))
 		}
 	}
 	for _, record := range s.logs.records(unwritten) {
-		failed = append(failed, record["purpose"].(string))
+		failed = append(failed, record["kind"].(string))
 	}
 	s.Equal(want, heard)
 	s.Equal(want, failed)
@@ -273,7 +273,7 @@ func (s *AgentSuite) TestACheckInBeforeAnyWordsSaysWhatWasHeardFromEveryone() {
 	s.agent.checkIn(stt.Participant{}, idlePurpose)
 
 	line := s.heardAt("checkin", "alice")
-	s.Equal(kindCheckIn, line["purpose"])
+	s.Equal(kindCheckIn, line["kind"])
 	s.Equal(float64(3), line["frames"])
 	s.Equal(float64(1), s.heardAt("checkin", "bob")["frames"])
 	for _, record := range s.logs.records(heardLine) {
