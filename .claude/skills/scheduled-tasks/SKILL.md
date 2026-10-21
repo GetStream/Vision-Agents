@@ -49,7 +49,7 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).
 
 A follow-up needs a kept conversation. A router without Stream Chat credentials keeps none
-and logs `not keeping the conversation in Stream Chat` (`internal/session/manager.go:333`);
+and logs `not keeping the conversation in Stream Chat` (`internal/session/manager.go:340`);
 its tasks cannot be delivered into a conversation.
 
 ## Schedule one locally
@@ -215,7 +215,7 @@ last; it also finds the job queue's `Failed to forward scheduled tasks`, which i
 | `could not record a scheduled task run by hand` | error | `scheduled_tasks.go:578` |
 | `could not read when a scheduled task last ran` | error | `scheduled_tasks.go:637` |
 | `could not pause a deleted config's scheduled tasks` | error | `internal/api/configs.go:309` |
-| `not keeping the conversation in Stream Chat` | warn | `internal/session/manager.go:333` |
+| `not keeping the conversation in Stream Chat` | warn | `internal/session/manager.go:340` |
 
 Each line carries `task`, `run` and `customer` where it has them; the `error` field holds the
 whole story the run's code leaves out.

@@ -120,7 +120,7 @@ again.
 Delivery goes where the task says, in order (`deliver_to`, default the conversation alone).
 The agent's reply is written once in its conversation, under the run's command id. A text
 channel carries those same words out (`channels.Service.Notify`,
-`internal/channels/service.go:202`):
+`internal/channels/service.go:213`):
 
 - The user's identity on the channel names where they go.
 - The agent's line carries them.
