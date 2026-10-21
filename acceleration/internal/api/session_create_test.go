@@ -118,6 +118,68 @@ func (s *SessionCreateSuite) TestAnIncognitoSessionsTimezoneIsNotRemembered() {
 	s.Empty(zone)
 }
 
+func (s *SessionCreateSuite) TestAnAnonymousCallerCannotMoveAUsersTimezone() {
+	user := s.data.createUser()
+	request := textSession(nil)
+	request.Timezone = pointerTo("Europe/Amsterdam")
+	user.createSession(request)
+
+	claimed := textSession(nil)
+	claimed.Timezone = pointerTo("Asia/Tokyo")
+	created := s.data.claiming(user.userID).createSession(claimed)
+
+	s.NotEmpty(created.Id, "the anonymous caller's session still opens")
+	zone, err := s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	s.Equal("Europe/Amsterdam", zone, "a name nobody checked speaks for nobody's zone")
+}
+
+// The control: a guest and a backend naming its user still record the user's zone.
+func (s *SessionCreateSuite) TestAGuestsAndABackendsTimezoneIsRemembered() {
+	for _, named := range []struct {
+		user, caller *testClient
+	}{
+		{s.guestClient, s.guestClient},
+		{s.client, s.serverClient.actingFor(s.client)},
+	} {
+		request := textSession(nil)
+		request.Timezone = pointerTo("Asia/Tokyo")
+		named.caller.createSession(request)
+
+		zone, err := s.store.UserTimezone(context.Background(), s.customerID(), named.user.userID)
+		s.Require().NoError(err)
+		s.Equal("Asia/Tokyo", zone, string(named.caller.kind))
+	}
+}
+
+func (s *SessionCreateSuite) TestAnUnchangedTimezoneIsNotWrittenAgain() {
+	user := s.data.createUser()
+	request := textSession(nil)
+	request.Timezone = pointerTo("Europe/Amsterdam")
+	user.createSession(request)
+	written := s.userRowVersion(user)
+
+	user.createSession(request)
+	s.Equal(written, s.userRowVersion(user), "the same zone again leaves the row alone")
+
+	moved := textSession(nil)
+	moved.Timezone = pointerTo("America/New_York")
+	user.createSession(moved)
+	s.NotEqual(written, s.userRowVersion(user))
+	zone, err := s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	s.Equal("America/New_York", zone)
+}
+
+// userRowVersion is the transaction that last wrote the user's row, which moves on every
+// write to it, even one that sets a column to what it held.
+func (s *SessionCreateSuite) userRowVersion(user *testClient) string {
+	var version string
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT xmin::text FROM users WHERE customer_id = ? AND id = ?", s.customerID(), user.userID).Scan(&version))
+	return version
+}
+
 func (s *SessionCreateSuite) TestAnUnknownTimezoneIsRefused() {
 	request := textSession(nil)
 	request.Timezone = pointerTo("Nowhere/Special")
