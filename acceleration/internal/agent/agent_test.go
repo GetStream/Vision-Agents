@@ -1097,6 +1097,12 @@ func (s *AgentSuite) synthesises(turnID string) {
 	})
 }
 
+// heardSomeOf has some of a reply go out, so the caller's words after are talking over it.
+func (s *AgentSuite) heardSomeOf(turnID string) {
+	s.synthesises(turnID)
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "none of the reply went out")
+}
+
 func (s *AgentSuite) says(participant stt.Participant, text string) {
 	s.saysAfter(participant, text, 0)
 }
@@ -2915,7 +2921,9 @@ func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
 	s.speak(participant)
 	s.says(participant, "explain the menu")
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
 	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
+	shortened := testutil.ToFloat64(settledOverAgent.WithLabelValues("4+", "true", "shorten"))
 
 	s.says(participant, "only the vegetarian options")
 
@@ -2926,6 +2934,7 @@ func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
 	s.eventually(func() bool { return s.model.interrupted() == 1 }, "the long answer kept generating")
 	s.Zero(s.voice.interrupted(), "speech already sent should finish rather than stop abruptly")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the addition was never answered")
+	s.Equal(1.0, testutil.ToFloat64(settledOverAgent.WithLabelValues("4+", "true", "shorten"))-shortened)
 }
 
 func (s *AgentSuite) TestAcknowledgementOverlapLetsTheCurrentReplyContinue() {
@@ -3234,6 +3243,7 @@ func (s *AgentSuite) TestTheControllerIsToldWhatTheAgentIsSaying() {
 	turnA := s.model.requests()[0].ID
 	s.model.writes(turnA, "The menu has three courses")
 	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+	s.heardSomeOf(turnA)
 	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
 
 	s.mutters(participant, "actually wait")

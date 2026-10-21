@@ -1609,7 +1609,7 @@ func buildSessions(
 		reading = base
 	}
 
-	return session.NewManager(session.ManagerOptions{
+	options := session.ManagerOptions{
 		LLM:        streams.LLM,
 		STT:        streams.STT,
 		TTS:        streams.TTS,
@@ -1636,10 +1636,11 @@ func buildSessions(
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
-		// Read only by a session with a sandbox binding.
-		SandboxBroker:       settings.CodeSandbox.Broker,
-		SandboxSecretPrefix: settings.CodeSandbox.SecretPrefix,
-	})
+	}
+	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
+		return nil, err
+	}
+	return session.NewManager(options)
 }
 
 // buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled

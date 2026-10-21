@@ -540,7 +540,7 @@ func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
 		"revoke":    "https://nessy.getstream.io/api/oauth/revoke",
 		"resource":  "https://nessy.getstream.io/mcp",
 	}, manifest.Endpoints)
-	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources)
+	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp", Outbound: new(false)}}, manifest.Sources)
 	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
 	resolved := s.atFake(srv, manifest)
 	wire := &tokenWire{next: srv.Client().Transport}
@@ -615,6 +615,24 @@ func (s *ConsentSuite) TestNessyRefreshPolicyRotatesWithNoGraceAndEndsAfterTheMa
 	s.Zero(refresh.Grace)
 	s.Equal(24*time.Hour, time.Duration(refresh.RefreshTTL))
 	s.Zero(refresh.AccessTTL)
+}
+
+// A Nessy delete revokes the grant at Nessy (AI-1544), and no other built-in's: revoking on
+// delete for every connector is its own gated step (AI-1546).
+func (s *ConsentSuite) TestOnlyNessyRevokesItsGrantWhenAConnectionIsDeleted() {
+	files, err := fs.Glob(providers.FS, "*.yaml")
+	s.Require().NoError(err)
+	var revoking []string
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file)
+		s.Require().NoError(err)
+		manifest, err := core.ParseManifest(raw)
+		s.Require().NoError(err)
+		if manifest.RevokeOnDelete {
+			revoking = append(revoking, manifest.ID)
+		}
+	}
+	s.Equal([]string{"nessy"}, revoking)
 }
 
 // The storefront answers without a credential (shopify.dev Policy and FAQs, opened
