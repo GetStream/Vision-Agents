@@ -2081,11 +2081,12 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 // A line that cannot be written is not worth failing the turn over: the caller hears
 // nothing, which is what they would have heard anyway.
 func (a *Agent) checkIn(participant stt.Participant, purpose string) {
+	kind := composedKind(purpose)
 	if participant.ID == "" {
 		// Nobody has been heard in words yet, so the line is for everyone who was heard.
-		a.logHeardFromEveryone("checkin", "purpose", purpose)
+		a.logHeardFromEveryone("checkin", "purpose", kind)
 	} else {
-		a.logHeard("checkin", participant.ID, "purpose", purpose)
+		a.logHeard("checkin", participant.ID, "purpose", kind)
 	}
 	a.mu.Lock()
 	if a.composing || a.tts == nil {
@@ -2105,7 +2106,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 		}()
 		line, err := a.compose(ctx, purpose)
 		if err != nil {
-			a.logger.Warn("could not write a line to say", "purpose", purpose, "error", err)
+			a.logger.Warn("could not write a line to say", "purpose", kind, "error", err)
 			return
 		}
 		a.sayComposed(participant, line, purpose, asked)
