@@ -215,6 +215,30 @@ func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnle
 	s.ErrorContains(err, "code_sandbox.broker")
 }
 
+// TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA: no address serves no proxy, and
+// an address without the CA's certificate and key does not start.
+func (s *ConfigSuite) TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.CodeSandbox.ProxyAddr)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert")
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key"}, config.CodeSandbox)
+}
+
 // TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.
 func (s *ConfigSuite) TestTheSecretPrefixHoldsNoUnderscore() {
 	for _, prefix := range []string{"stg_dev", "Stg", "stg-dev", "stg.dev"} {
