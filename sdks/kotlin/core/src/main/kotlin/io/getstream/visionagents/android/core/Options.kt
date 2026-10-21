@@ -48,7 +48,10 @@ public data class SessionOptions(
     val llm: String? = null,
     val stt: String? = null,
     val tts: String? = null,
-    /** A provider-specific voice id. */
+    /**
+     * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+     * the name you gave it. Prefix it with `custom:` to mean only yours.
+     */
     val voice: String? = null,
     /** Functions of yours the agent may call, answered on this device. */
     val tools: List<AgentTool> = emptyList(),
