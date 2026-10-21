@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/redis/rueidis"
@@ -47,10 +48,13 @@ func (s *ProxySuite) SetupTest() {
 	s.T().Cleanup(s.platform.server.Close)
 }
 
+// caCert is the proxy CA's certificate as the broker is given it.
+const caCert = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
+
 // proxied is a sandbox of config whose github grant the egress proxy broker at proxy holds.
 func (s *ProxySuite) proxied(config sandbox.Config, proxy string) *Sandbox {
 	broker, err := egress.NewBroker(egress.BrokerOptions{Store: egress.NewStore(s.redis), URL: proxy,
-		CACert: []byte("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n"), Session: "session-1",
+		CACert: []byte(caCert), Session: "session-1",
 		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) {
 			return sandbox.Token{Value: "gho_first", Revision: 1}, nil
 		},
@@ -65,7 +69,8 @@ func (s *ProxySuite) proxied(config sandbox.Config, proxy string) *Sandbox {
 
 // TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts: the proxy joins the config's allow list,
 // HTTP(S)_PROXY names it, the config's own hosts go around it (NO_PROXY) and a grant's host
-// never does, and the sandbox trusts the proxy's CA before any code runs.
+// never does, not even when the config names it, and the sandbox trusts the proxy's CA, with
+// its own roots, before any code runs.
 func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 	const proxy = "http://proxy.stg.example:8091"
 	cases := []struct {
@@ -76,7 +81,7 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 		{sandbox.Config{}, proxy, "proxy.stg.example", "", ""},
 		{sandbox.Config{}, "http://203.0.113.7:8091", "203.0.113.7", "", ""},
 		{sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org", "api.github.com", "github.com", "*.pythonhosted.org"}}, proxy,
-			"proxy.stg.example,pypi.org,api.github.com,github.com,*.pythonhosted.org", "", "pypi.org,.pythonhosted.org"},
+			"proxy.stg.example,pypi.org,*.pythonhosted.org", "", "pypi.org,.pythonhosted.org"},
 		{sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}, "http://203.0.113.7:8091", "", "10.0.0.0/8,203.0.113.7/32",
 			"10.0.0.0/8"},
 		{sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}, "http://[2001:db8::7]:8091", "", "10.0.0.0/8,2001:db8::7/128",
@@ -106,7 +111,32 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 	s.Len(s.platform.requests(), len(cases))
 	s.Equal([]string{"/tmp/va-egress-ca.pem after 0 runs", "/tmp/va-egress-ca.pem after 2 runs", "/tmp/va-egress-ca.pem after 4 runs",
 		"/tmp/va-egress-ca.pem after 6 runs", "/tmp/va-egress-ca.pem after 8 runs"}, s.platform.uploads, "once per sandbox, before its first run")
-	s.Equal("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n", string(s.platform.files["/tmp/va-egress-ca.pem"]))
+	s.Equal(caCert, string(s.platform.files["/tmp/va-egress-ca.pem"]))
+	s.Require().Len(s.platform.commands, len(cases))
+	for i, command := range s.platform.commands {
+		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, command, "once per sandbox, after the CA file")
+	}
+}
+
+// TestASetupThatFailsRunsNoCode: a sandbox whose image has no roots to bundle the CA with runs
+// nothing, and the setup runs again before the next run.
+func (s *ProxySuite) TestASetupThatFailsRunsNoCode() {
+	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091")
+	s.platform.mu.Lock()
+	s.platform.commandExit = 1
+	s.platform.mu.Unlock()
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().ErrorContains(err, "setting the sandbox up")
+	s.Empty(s.platform.executed())
+	s.platform.mu.Lock()
+	s.platform.commandExit = 0
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Len(s.platform.commands, 2)
+	s.Len(s.platform.executed(), 1)
 }
 
 // valueOr is key's value in m, or "" without it.

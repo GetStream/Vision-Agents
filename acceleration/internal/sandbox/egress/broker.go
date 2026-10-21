@@ -3,6 +3,7 @@ package egress
 import (
 	"context"
 	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,9 +18,20 @@ import (
 // BrokerName is the code_sandbox.broker setting that picks Broker.
 const BrokerName = "proxy"
 
-// caPath is where the sandbox finds the proxy CA's certificate: /tmp, since every user code
-// may run as can write there.
-const caPath = "/tmp/va-egress-ca.pem"
+// caPath is where the sandbox finds the proxy CA's certificate, and bundlePath the sandbox's
+// own roots with it: /tmp, since every user code may run as can write there.
+const (
+	caPath     = "/tmp/va-egress-ca.pem"
+	bundlePath = "/tmp/va-egress-ca-bundle.pem"
+)
+
+// bundle writes bundlePath from the first system roots file the sandbox's image has, the ones
+// Go reads on Linux (https://go.dev/src/crypto/x509/root_linux.go), and fails without one: a
+// host the sandbox reaches directly, around the proxy, is verified with the image's roots.
+const bundle = `for roots in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem ` +
+	`/etc/pki/tls/cacert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/cert.pem; do ` +
+	`if [ -s "$roots" ]; then { cat "$roots"; echo; cat ` + caPath + `; } > ` + bundlePath + ` && exit 0; exit 1; fi; done; ` +
+	`echo "no system CA bundle" >&2; exit 1`
 
 // recordTTL is how long a sandbox's grants last after its last run started. BeforeRun renews
 // them, so it need only outlast the longest run, and a sandbox left idle loses nothing it
@@ -30,8 +42,10 @@ const recordTTL = sandbox.MaxTimeout + time.Minute
 // http_proxy (https://curl.se/docs/manpage.html#ENVIRONMENT), Python's urllib and Go either.
 var proxyEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
 
-// caEnv are the env vars that point OpenSSL, Python requests, Node and git at the CA file.
-var caEnv = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO"}
+// bundleEnv are the env vars that point OpenSSL, Python requests and git at the roots they
+// trust instead of the system's, so they name the bundle. Node's NODE_EXTRA_CA_CERTS adds to its
+// own roots, so it names the CA alone.
+var bundleEnv = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO"}
 
 // BrokerOptions are what Broker needs: the proxy and its store, and the session's tokens.
 type BrokerOptions struct {
@@ -57,9 +71,10 @@ type Broker struct {
 
 	mu sync.Mutex
 	// credential is the sandbox's proxy credential while its record is in the store, and held
-	// the grants in it.
+	// the grants in it. closed is a Close since the last Prepare, whose Delete a run retries.
 	credential string
 	held       []held
+	closed     bool
 }
 
 // held is a grant in the record, and the sandbox's grant it comes from.
@@ -69,6 +84,8 @@ type held struct {
 }
 
 func NewBroker(o BrokerOptions) (*Broker, error) {
+	// The sandbox gets the CA's certificates alone, whatever else the setting holds.
+	o.CACert = certificates(o.CACert)
 	if o.Store == nil || len(o.CACert) == 0 || o.Session == "" || o.Tokens == nil {
 		return nil, stack.Wrap(errors.New("egress: the proxy broker needs redis, the proxy's CA certificate, a session and tokens"))
 	}
@@ -88,17 +105,23 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	if err := b.release(ctx); err != nil {
 		return sandbox.Mount{}, err
 	}
+	b.closed = false
 	env := map[string]string{}
 	var prepared []held
 	for _, grant := range grants {
-		if _, err := b.options.Tokens(ctx, grant); err != nil {
+		// A provider's refresh error may quote its answer, so only its class is logged.
+		_, err := b.options.Tokens(ctx, grant)
+		if errors.Is(err, sandbox.ErrNoCredential) {
 			if grant.Required {
 				return sandbox.Mount{}, fmt.Errorf("egress: required connector %q gives the sandbox no credential: %w", grant.Binding, err)
 			}
-			// A provider's refresh error may quote its answer, so only its class is logged.
 			b.options.Logger.Warn("the sandbox is created without a connector's credential", "connector", grant.Binding,
 				"connection", grant.Connection.ConnectionID, "class", errorClass(err))
 			continue
+		}
+		if err != nil {
+			b.options.Logger.Warn("a connector's credential cannot be had just now; the proxy asks again on each request",
+				"connector", grant.Binding, "connection", grant.Connection.ConnectionID, "class", errorClass(err))
 		}
 		placeholder := "va_ph_" + rand.Text()
 		prepared = append(prepared, held{grant: grant, entry: Grant{Connection: grant.Connection, Binding: grant.Binding,
@@ -118,10 +141,11 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	for _, name := range proxyEnv {
 		env[name] = proxy.String()
 	}
-	for _, name := range caEnv {
-		env[name] = caPath
+	for _, name := range bundleEnv {
+		env[name] = bundlePath
 	}
-	return sandbox.Mount{Env: env, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}}, nil
+	env["NODE_EXTRA_CA_CERTS"] = caPath
+	return sandbox.Mount{Env: env, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}, Setup: []string{bundle}}, nil
 }
 
 // BeforeRun withdraws a grant whose connection gives sandbox.ErrNoCredential and stores the
@@ -130,6 +154,9 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 func (b *Broker) BeforeRun(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return b.release(ctx)
+	}
 	if b.credential == "" {
 		return nil
 	}
@@ -147,6 +174,9 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 		}
 		kept = append(kept, h)
 	}
+	if len(kept) == 0 {
+		return b.release(ctx)
+	}
 	if err := b.options.Store.Put(ctx, b.credential, b.record(kept), recordTTL); err != nil {
 		return err
 	}
@@ -157,6 +187,7 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 func (b *Broker) Close(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.closed = true
 	return b.release(ctx)
 }
 
@@ -179,4 +210,15 @@ func (b *Broker) record(grants []held) Record {
 		record.Grants = append(record.Grants, h.entry)
 	}
 	return record
+}
+
+// certificates are the CERTIFICATE blocks of raw, in PEM.
+func certificates(raw []byte) []byte {
+	var certs []byte
+	for block, rest := pem.Decode(raw); block != nil; block, rest = pem.Decode(rest) {
+		if block.Type == "CERTIFICATE" {
+			certs = append(certs, pem.EncodeToMemory(block)...)
+		}
+	}
+	return certs
 }

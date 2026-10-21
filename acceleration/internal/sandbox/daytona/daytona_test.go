@@ -36,6 +36,10 @@ type platform struct {
 	uploads []string
 	// refuseUpload answers every file written into the sandbox with a 400.
 	refuseUpload bool
+	// commands are every shell command run in the sandbox, with how many runs came before,
+	// and commandExit the exit code each gives.
+	commands    []string
+	commandExit int
 	// auth is the last Authorization header seen.
 	auth string
 
@@ -123,6 +127,13 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		p.uploads = append(p.uploads, fmt.Sprintf("%s after %d runs", r.URL.Query().Get("path"), len(p.ran)))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"name":"file","path":"` + r.URL.Query().Get("path") + `","type":"file"}`))
+
+	case strings.HasSuffix(r.URL.Path, "/process/execute"):
+		var body struct{ Command string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"result":"","exitCode":%d}`, p.commandExit)
 
 	case strings.HasSuffix(r.URL.Path, "/files/download"):
 		data, ok := p.files[r.URL.Query().Get("path")]
@@ -541,4 +552,11 @@ func (s *DaytonaSuite) TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHo
 	s.Equal("v2.api.crm.example,pypi.org,.pythonhosted.org,.npmjs.org,notfiles.example,10.0.0.0/8", noProxy(config, []sandbox.Grant{crm}))
 	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"pypi.org"}}, nil))
 	s.Empty(noProxy(sandbox.Config{}, []sandbox.Grant{crm}))
+	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"crm.example", "pypi.org"}}, []sandbox.Grant{github, crm}),
+		"every grant counts, not the first alone")
+	s.Equal("ithub.com", noProxy(sandbox.Config{AllowedDomains: []string{"ithub.com", ".crm.example"}}, []sandbox.Grant{github, crm}),
+		"a domain matches at a dot, and a leading dot names the domain")
+	s.Equal("pypi.org,.pythonhosted.org,pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"GitHub.com.", "api.github.com:443",
+		"**.github.com", "pypi.org.", "**.pythonhosted.org", "pypi.org:443"}}, []sandbox.Grant{github}),
+		"curl and Go take a trailing dot, a port and **. as the name")
 }

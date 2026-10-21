@@ -3,10 +3,14 @@
 package egress_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -14,6 +18,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -66,9 +72,10 @@ func (p prepared) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 // http.Client built from the env and files it returned, through a real proxy.
 type BrokerSuite struct {
 	suite.Suite
-	ctx context.Context
-	rig *rig
-	mu  sync.Mutex
+	ctx  context.Context
+	rig  *rig
+	logs *bytes.Buffer
+	mu   sync.Mutex
 	// token is what the connection gives now, failure the error it gives instead.
 	token   string
 	failure error
@@ -86,7 +93,8 @@ var github = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", Con
 func (s *BrokerSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.token, s.failure = "gho_live-token-of-the-connection", nil
-	logger := slog.New(slog.DiscardHandler)
+	s.logs = &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(s.logs, nil))
 	s.rig = newRig(s.T(), s.tokens, logger)
 	s.broker = s.rig.broker(s.T(), "session-1", s.tokens, logger)
 	var err error
@@ -139,7 +147,8 @@ func (s *BrokerSuite) TestTheSandboxReachesAGrantedHostWithTheTokenInPlaceOfItsP
 }
 
 // TestTheEnvNamesTheProxyAndTheCA: every common client finds the proxy, with the sandbox's
-// credential, and trusts the proxy's CA from a file that holds its certificate alone.
+// credential, and trusts the proxy's CA: Node in addition to its own roots, from a file that
+// holds the CA's certificate alone, and the rest from a bundle of the sandbox's roots and it.
 func (s *BrokerSuite) TestTheEnvNamesTheProxyAndTheCA() {
 	proxy := s.mount.Proxy.String()
 	credential, _ := s.mount.Proxy.User.Password()
@@ -148,11 +157,179 @@ func (s *BrokerSuite) TestTheEnvNamesTheProxyAndTheCA() {
 	for _, name := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
 		s.Equal(proxy, s.mount.Env[name], name)
 	}
-	for _, name := range []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO"} {
-		s.Equal("/tmp/va-egress-ca.pem", s.mount.Env[name], name)
+	for _, name := range []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO"} {
+		s.Equal("/tmp/va-egress-ca-bundle.pem", s.mount.Env[name], name)
 	}
+	s.Equal("/tmp/va-egress-ca.pem", s.mount.Env["NODE_EXTRA_CA_CERTS"])
 	s.Equal(map[string][]byte{"/tmp/va-egress-ca.pem": s.rig.caCert}, s.mount.Files)
+	s.Len(s.mount.Setup, 1)
 	s.Len(s.mount.Env, 9)
+}
+
+// TestTheBundleHoldsTheSandboxsRootsAndTheCA: a host the sandbox reaches around the proxy is
+// verified with the image's own roots, from the first file of them it has, and an image with
+// none runs no code. The setup runs in a shell here, under a directory standing for the
+// sandbox's root.
+func (s *BrokerSuite) TestTheBundleHoldsTheSandboxsRootsAndTheCA() {
+	_, debian, _ := newCA(s.T(), "debian roots")
+	_, alpine, _ := newCA(s.T(), "alpine roots")
+	setup := func(roots map[string][]byte) ([]string, error) {
+		root := s.T().TempDir()
+		for name, data := range roots {
+			s.Require().NoError(os.MkdirAll(filepath.Dir(root+name), 0o755))
+			s.Require().NoError(os.WriteFile(root+name, data, 0o600))
+		}
+		for name, data := range s.mount.Files {
+			s.Require().NoError(os.MkdirAll(filepath.Dir(root+name), 0o755))
+			s.Require().NoError(os.WriteFile(root+name, data, 0o600))
+		}
+		command := strings.NewReplacer("/etc/", root+"/etc/", "/tmp/", root+"/tmp/").Replace(s.mount.Setup[0])
+		if err := exec.Command("sh", "-c", command).Run(); err != nil {
+			return nil, err
+		}
+		bundle, err := os.ReadFile(root + s.mount.Env["SSL_CERT_FILE"])
+		s.Require().NoError(err)
+		return subjects(s.T(), bundle), nil
+	}
+
+	held, err := setup(map[string][]byte{"/etc/ssl/certs/ca-certificates.crt": debian, "/etc/ssl/cert.pem": alpine})
+	s.Require().NoError(err)
+	s.Equal([]string{"debian roots", "router sandbox CA"}, held)
+	held, err = setup(map[string][]byte{"/etc/ssl/cert.pem": bytes.TrimSuffix(alpine, []byte("\n"))})
+	s.Require().NoError(err)
+	s.Equal([]string{"alpine roots", "router sandbox CA"}, held, "a roots file without a last newline")
+	_, err = setup(nil)
+	s.Error(err)
+}
+
+// subjects are the common names of the certificates in bundle, in order.
+func subjects(t *testing.T, bundle []byte) []string {
+	var names []string
+	for block, rest := pem.Decode(bundle); block != nil; block, rest = pem.Decode(rest) {
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, cert.Subject.CommonName)
+	}
+	return names
+}
+
+// TestTheSandboxGetsTheCAsCertificateAlone: a setting holding the CA's key too gives the
+// sandbox the certificate, never the key.
+func (s *BrokerSuite) TestTheSandboxGetsTheCAsCertificateAlone() {
+	_, cert, caKey := newCA(s.T(), "router sandbox CA")
+	broker, err := egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: s.rig.proxy.URL,
+		CACert: append(keyPEM(s.T(), caKey), cert...), Session: "session-1", Tokens: s.tokens})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = broker.Close(s.ctx) })
+
+	mount, err := broker.Prepare(s.ctx, []sandbox.Grant{github})
+
+	s.Require().NoError(err)
+	s.Equal(map[string][]byte{"/tmp/va-egress-ca.pem": cert}, mount.Files)
+	_, err = egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: s.rig.proxy.URL, CACert: keyPEM(s.T(), caKey),
+		Session: "session-1", Tokens: s.tokens})
+	s.Error(err, "a key and no certificate")
+}
+
+// TestNoErrorTextReachesTheLogs: a provider's refresh error may quote its answer, so a
+// broker logs its class alone, whether the grant is left out or kept.
+func (s *BrokerSuite) TestNoErrorTextReachesTheLogs() {
+	const quoted = "gho_quoted-by-the-provider"
+	s.fail(fmt.Errorf("refresh answered %s", quoted))
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
+	_, err := s.broker.Prepare(s.ctx, []sandbox.Grant{github})
+	s.Require().NoError(err)
+	s.fail(fmt.Errorf("%w: refresh answered %s", sandbox.ErrNoCredential, quoted))
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
+	_, err = s.broker.Prepare(s.ctx, []sandbox.Grant{github})
+	s.Require().NoError(err)
+
+	s.Equal(4, strings.Count(s.logs.String(), `"level":"WARN"`))
+	s.NotContains(s.logs.String(), quoted)
+}
+
+// TestACredentialUnavailableAtTheFirstRunIsKept: the proxy asks for the token on every
+// request, so a provider that cannot answer just now leaves no grant out of the sandbox for
+// its life, required or not.
+func (s *BrokerSuite) TestACredentialUnavailableAtTheFirstRunIsKept() {
+	s.fail(errors.New("the provider could not renew the credential just now"))
+	required := github
+	required.Required = true
+
+	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{required})
+	s.Require().NoError(err)
+	s.mount = mount
+	_, _, err = s.get()
+	s.Require().NoError(err)
+	s.Empty(s.rig.host.authorizations(), "no token reaches the host meanwhile")
+	s.fail(nil)
+	response, _, err := s.get()
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal([]string{"Bearer gho_live-token-of-the-connection"}, s.rig.host.authorizations())
+}
+
+// TestARecordLastsNoLongerThanARunMayTakeAndAMinute: Prepare and each run store it for that
+// long, so a crashed router's sandboxes lose their grants soon after.
+func (s *BrokerSuite) TestARecordLastsNoLongerThanARunMayTakeAndAMinute() {
+	credential, _ := s.mount.Proxy.User.Password()
+	ttl := func() time.Duration {
+		ms, err := s.rig.redis.Do(s.ctx, s.rig.redis.B().Pttl().Key(key(credential)).Build()).AsInt64()
+		s.Require().NoError(err)
+		return time.Duration(ms) * time.Millisecond
+	}
+	s.LessOrEqual(ttl(), sandbox.MaxTimeout+time.Minute, "after Prepare")
+	s.Require().NoError(s.rig.redis.Do(s.ctx, s.rig.redis.B().Pexpire().Key(key(credential)).Milliseconds(60_000).Build()).Error())
+
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
+
+	s.Greater(ttl(), sandbox.MaxTimeout)
+	s.LessOrEqual(ttl(), sandbox.MaxTimeout+time.Minute, "after a run")
+}
+
+// TestAPrepareThatCannotEndTheLastCredentialFails: a sandbox created again after its first
+// creation failed, while the store refuses, is not told it has no grants while the record
+// of the first stays.
+func (s *BrokerSuite) TestAPrepareThatCannotEndTheLastCredentialFails() {
+	s.rig.gate.shut(true)
+	s.Require().Error(s.broker.Close(s.ctx))
+	s.fail(sandbox.ErrNoCredential)
+
+	_, err := s.broker.Prepare(s.ctx, []sandbox.Grant{github})
+
+	s.Require().Error(err)
+	s.rig.recover()
+	s.Require().NoError(s.broker.Close(s.ctx))
+	_, _, err = s.get()
+	s.ErrorContains(err, "Proxy Authentication Required")
+}
+
+// TestARunAfterACloseTheStoreRefusedEndsTheCredential: the run deletes the record Close could
+// not, rather than store it again.
+func (s *BrokerSuite) TestARunAfterACloseTheStoreRefusedEndsTheCredential() {
+	s.rig.gate.shut(true)
+	s.Require().Error(s.broker.Close(s.ctx))
+	s.rig.recover()
+
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
+
+	_, _, err := s.get()
+	s.ErrorContains(err, "Proxy Authentication Required")
+}
+
+// TestARunWithEveryGrantWithdrawnEndsTheCredential: nothing is left for it to reach.
+func (s *BrokerSuite) TestARunWithEveryGrantWithdrawnEndsTheCredential() {
+	credential, _ := s.mount.Proxy.User.Password()
+	s.fail(sandbox.ErrNoCredential)
+
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
+
+	exists, err := s.rig.redis.Do(s.ctx, s.rig.redis.B().Exists().Key(key(credential)).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.Zero(exists)
 }
 
 // TestClosingEndsTheProxyCredential: the next CONNECT is a 407, and a run after Close does
@@ -399,7 +576,7 @@ func sandboxClient(t *testing.T, mount sandbox.Mount) *http.Client {
 		t.Fatal(err)
 	}
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(mount.Files[mount.Env["SSL_CERT_FILE"]]) {
+	if !roots.AppendCertsFromPEM(mount.Files[mount.Env["NODE_EXTRA_CA_CERTS"]]) {
 		t.Fatal("the sandbox's CA file holds no certificate")
 	}
 	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{RootCAs: roots}}}
