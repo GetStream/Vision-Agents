@@ -1254,9 +1254,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	var scheduler *scheduling.Scheduler
 	if pgStore != nil && sessions != nil {
 		scheduler = scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
+		// Before Start: a session the first delivery opens takes the kick then.
+		server.SetSchedulerKick(scheduler.Kick)
 		scheduler.Start(ctx)
 		defer scheduler.Close()
-		server.SetSchedulerKick(scheduler.Kick)
 	}
 	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
 	// pinned to, read once, within the one attempt's time the deployment's own check gets.

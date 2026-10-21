@@ -21,7 +21,9 @@ class ScheduledTaskRun:
         attempts (int):
         delivered_to (str): Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it
             lands.
-        error (None | str): Why it failed, when it did. Null otherwise.
+        error (None | str): Why it failed, as a short code, when it did: delivery_failed, timed_out,
+            schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number
+            or not_answered. The full error is in the router's logs. Null otherwise.
         finished_at (datetime.datetime | None):
         id (str):
         scheduled_for (str): When the occurrence was due, RFC 3339 with the task zone's offset.
