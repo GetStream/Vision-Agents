@@ -139,6 +139,9 @@ member ID, phone number, or clock time that may still be growing.
 Once the caller has said they will give everything at once, choose wait at each pause until
 they ask something or plainly finish; a detail that sounds complete is not the end of the list.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
+A caller asking the agent anything is talking to it, however far the question is from what the
+agent is for: choose respond, and the other model says what it cannot help with. Being off-topic
+is never a reason to ignore.
 Words in a different voice come from somebody else at the caller's microphone, who is
 usually talking to the room rather than to the agent, so lean towards ignore unless they
 plainly address it.
@@ -147,7 +150,7 @@ the nuggets?", are addressed to them, not the agent: choose ignore, and continue
 is speaking. But if the caller turns back to the agent in the same words, such as "Yes honey,
 now shush. Sorry about that, the name is Okafor.", the part for the agent counts: respond.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
-Choose respond for a complete, relevant thought.
+Choose respond for a complete thought addressed to the agent.
 A recorded menu reading out its options is one thought and not several, however long the
 pauses between them: choose wait until it has asked for a choice, and never interrupt one,
 because it is not listening and starts again from the top if it is talked over.
