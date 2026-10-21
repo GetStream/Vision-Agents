@@ -1224,6 +1224,32 @@ func (s *AgentSuite) TestJoiningEntersTheCall() {
 	s.True(s.edge.joined)
 }
 
+// sfuEdge is a loopback edge that says which SFU it is on.
+type sfuEdge struct {
+	*loopbackEdge
+	sfu SFU
+}
+
+func (e sfuEdge) SFU() SFU { return e.sfu }
+
+func (s *AgentSuite) TestJoinedSaysWhichSFUTheAgentIsOn() {
+	sfu := SFU{Edge: "sfu-a1", Host: "sfu-a1.example.com"}
+	s.edgeFactory = func(edge *loopbackEdge) Edge { return sfuEdge{loopbackEdge: edge, sfu: sfu} }
+	s.join(true)
+
+	s.eventually(func() bool { return countOf[Joined](s.reported()) == 1 }, "the agent never joined")
+	joined, _ := firstOf[Joined](s.reported())
+	s.Equal(sfu, joined.SFU)
+}
+
+func (s *AgentSuite) TestJoinedNamesNoSFUOnAnEdgeThatCannotSay() {
+	s.join(true)
+
+	s.eventually(func() bool { return countOf[Joined](s.reported()) == 1 }, "the agent never joined")
+	joined, _ := firstOf[Joined](s.reported())
+	s.Equal(SFU{}, joined.SFU)
+}
+
 func (s *AgentSuite) TestTheVoiceIsNotAskedForASpeed() {
 	s.join(true)
 

@@ -767,7 +767,11 @@ func (a *Agent) Join(ctx context.Context) error {
 
 	changed := a.modelsChanged()
 	a.logger.Info("joined", "llm", changed.LLM, "tts", changed.TTS, "sts", changed.STS)
-	a.emitter.Send(Joined{At: time.Now()})
+	var sfu SFU
+	if reporter, ok := a.options.Edge.(SFUReporter); ok {
+		sfu = reporter.SFU()
+	}
+	a.emitter.Send(Joined{At: time.Now(), SFU: sfu})
 	return nil
 }
 
