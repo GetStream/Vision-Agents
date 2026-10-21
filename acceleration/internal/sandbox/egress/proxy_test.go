@@ -5,6 +5,7 @@ package egress_test
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
@@ -797,20 +798,82 @@ func (s *ProxySuite) TestASilentOrIdleTunnelIsClosed() {
 }
 
 // TestAnEncodedResponseToATokenIsRefused is A5: a host that encodes its echo in a way the
-// transport does not undo would hand the sandbox the token to decode.
+// transport does not undo would hand the sandbox the token to decode. Each encoding gets
+// its own proxy, so no connection to an earlier host is reused.
 func (s *ProxySuite) TestAnEncodedResponseToATokenIsRefused() {
 	for _, encoding := range []string{"deflate", "x-gzip", "br", "identity, deflate"} {
+		s.proxy = httptest.NewServer(s.newProxy(s.store))
+		s.T().Cleanup(s.proxy.Close)
+		served := 0
 		s.answering(func(w http.ResponseWriter, r *http.Request) {
+			served++
 			w.Header().Set("Content-Encoding", encoding)
 			_, _ = io.WriteString(w, r.Header.Get("Authorization"))
 		})
 
 		response, body := s.get("Bearer " + s.placeholder)
 
+		s.Equal(1, served, encoding)
 		s.Equal(http.StatusBadGateway, response.StatusCode, encoding)
 		s.Empty(body, encoding)
 	}
 	s.Contains(s.logs.String(), "refused an encoded response")
+}
+
+// TestEveryContentEncodingLineIsRead is A5: net/http's transport, had it asked for gzip,
+// decodes the first of two Content-Encoding lines and removes both, so the sandbox would
+// get a body still encoded once with no header saying so. Over HTTP/1.1 and HTTP/2.
+func (s *ProxySuite) TestEveryContentEncodingLineIsRead() {
+	gzipped := func(raw []byte) []byte {
+		var out bytes.Buffer
+		zipped := gzip.NewWriter(&out)
+		_, _ = zipped.Write(raw)
+		_ = zipped.Close()
+		return out.Bytes()
+	}
+	deflated := func(raw []byte) []byte {
+		var out bytes.Buffer
+		writer, _ := flate.NewWriter(&out, flate.BestCompression)
+		_, _ = writer.Write(raw)
+		_ = writer.Close()
+		return out.Bytes()
+	}
+	for _, http2 := range []bool{false, true} {
+		for _, lines := range [][]string{{"gzip", "gzip"}, {"gzip", "deflate"}, {"identity", "deflate"}} {
+			name := fmt.Sprint(lines, " http2=", http2)
+			s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) {
+				options.Transport.(*http.Transport).ForceAttemptHTTP2 = http2
+			}))
+			s.T().Cleanup(s.proxy.Close)
+			served := 0
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				served++
+				body := []byte(r.Header.Get("Authorization"))
+				for i := len(lines) - 1; i >= 0; i-- {
+					switch lines[i] {
+					case "gzip":
+						body = gzipped(body)
+					case "deflate":
+						body = deflated(body)
+					}
+				}
+				w.Header()["Content-Encoding"] = lines
+				w.Header().Set("X-Proto", r.Proto)
+				_, _ = w.Write(body)
+			}))
+			server.EnableHTTP2 = http2
+			server.TLS = &tls.Config{Certificates: []tls.Certificate{sign(s.T(), s.upstreamCA, s.upstreamKey, "*.github.test")}}
+			server.StartTLS()
+			s.T().Cleanup(server.Close)
+			s.answerAt(server.Listener.Addr().String())
+
+			response, body := s.get("Bearer " + s.placeholder)
+
+			s.Equal(1, served, name)
+			s.Equal(http.StatusBadGateway, response.StatusCode, name)
+			s.Empty(body, name)
+		}
+	}
 }
 
 // TestAnIdentityEncodedResponseIsRead: identity is no encoding.

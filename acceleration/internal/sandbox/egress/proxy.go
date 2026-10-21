@@ -260,9 +260,10 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		forward.Rewrite = func(pr *httputil.ProxyRequest) {
 			p.toHost(pr, t)
 			pr.Out.Header.Set("Authorization", form.scheme+" "+form.credential(token))
-			// Without it the transport asks for gzip and decompresses, so the rewrite reads
-			// the body as sent (net/http Transport.DisableCompression).
-			pr.Out.Header.Del("Accept-Encoding")
+			// An Accept-Encoding the request sets keeps the transport from asking for gzip and
+			// decompressing it: the transport decodes the first of two Content-Encoding lines
+			// and drops both, leaving encoded nothing to see (net/http Transport.DisableCompression).
+			pr.Out.Header.Set("Accept-Encoding", "identity")
 			// A range of an echo is a piece of the token no rewrite recognises.
 			pr.Out.Header.Del("Range")
 			pr.Out.Header.Del("If-Range")
