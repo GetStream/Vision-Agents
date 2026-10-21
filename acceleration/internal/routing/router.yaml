@@ -3141,21 +3141,20 @@ llm:
 
   aliases:
     # Small talk, as cheaply and quickly as it can be had: the smallest models here, for
-    # an agent whose turns are short and whose instructions are simple. GPT-5.6 Luna is
-    # preferred while the GPUs that serve Gemma 4 26B are down (AI-1569): every turn waited
-    # on them before failing over. Gemma 4 26B and Gemma 4 31B on Cerebras catch Luna being
-    # down, and Gemma 4 26B goes back first once it is served again (AI-1664). Like the STT
-    # groups this names its members, since being small is not something a model declares.
+    # an agent whose turns are short and whose instructions are simple. Gemma 4 26B, with
+    # 4B active per token, is preferred; Gemma 4 31B on Cerebras and GPT-5.6 Luna catch it
+    # being down. Like the STT groups this names its members, since being small is not
+    # something a model declares.
     llm-conversational:
       title: Conversational
-      description: "Super lightweight models for simple, short turns. Prefers GPT-5.6 Luna, then Gemma 4 26B-A4B and Gemma 4 31B on Cerebras."
+      description: "Super lightweight models for simple, short turns. Prefers Gemma 4 26B-A4B, then Gemma 4 31B on Cerebras and GPT-5.6 Luna."
       require_realtime: true
       tier: low-latency
-      prefer: openai/gpt-5.6-luna
+      prefer: gemma/gemma-4-26B-A4B-it
       only:
-        - openai/gpt-5.6-luna
         - gemma/gemma-4-26B-A4B-it
         - cerebras/gemma-4-31b
+        - openai/gpt-5.6-luna
 
     # A fast answer, in whatever language. The shorthand a caller reaches for when the only
     # thing that matters is that the answer starts arriving.
@@ -3207,20 +3206,15 @@ llm:
     # while the caller is still talking. So it is pinned to a model that starts writing at
     # once rather than one that thinks first -- thinking spends the whole tiny token budget
     # before the JSON is closed, and adds a round trip of latency to every decision the
-    # caller waits through. Gemma on our own GPUs is the model for it: it has no RPM limit
-    # to swallow barge-in follow-ups, as Cerebras' did, and with thinking off it rules in
+    # caller waits through. Pinned to Gemma on our own GPUs: it has no RPM limit to
+    # swallow barge-in follow-ups, as Cerebras' did, and with thinking off it rules in
     # about 130 ms. Gemini 3.8 Flash thinks at least "low" and took 1.4-3 s, so every ruling
     # on speech over the agent ran past its 750 ms deadline and stopped the agent, and a
     # finished pause past the 3 s one was answered mid-monologue.
-    #
-    # Pinned to GPT-5.6 Luna while those GPUs are down (AI-1569): every ruling waited on
-    # them before failing over. Luna does not think first either, since the openai provider
-    # asks the 5.6 family for no reasoning when a request names none, and the flow
-    # controller names none. Gemma goes back first once it is served again (AI-1664).
     llm-flow:
       require_realtime: true
       tier: low-latency
-      prefer: openai/gpt-5.6-luna
+      prefer: gemma/gemma-4-26B-A4B-it
 
     # What a skill runs on: the model asked the part of a turn the talking model could not
     # answer itself. The conversation carries on while it thinks, so this is the shorthand
