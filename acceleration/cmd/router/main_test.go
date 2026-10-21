@@ -35,6 +35,36 @@ func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
 	require.Nil(t, missing)
 }
 
+// TestBuildSessionsGivesTheProxyBrokerItsProxy: code_sandbox.broker proxy reaches the session
+// manager with the store the proxy reads, and without Redis the router does not start.
+func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	model, err := llmrouter.New(llmrouter.Options{Config: routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{{Provider: "deepseek", Model: "DeepSeek-V4-Flash-0731", Languages: []string{"en"}}},
+	}, Registry: llmrouter.DefaultRegistry(), Logger: logger})
+	require.NoError(t, err)
+	t.Cleanup(model.Close)
+	settings := config.Defaults()
+	settings.CodeSandbox.Broker, settings.CodeSandbox.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://proxy.stg.example:8091"
+	settings.CodeSandbox.ProxyCACert = "cert"
+
+	_, err = buildSessions(settings, &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, logger)
+	require.ErrorContains(t, err, "redis.addr")
+
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		t.Skip("ROUTER_REDIS_ADDR not set")
+	}
+	liveClient, err := live.New(live.Options{Address: address})
+	require.NoError(t, err)
+	t.Cleanup(liveClient.Close)
+	manager, err := buildSessions(settings, &api.Streams{LLM: model}, nil, nil, liveClient, nil, nil, nil, nil, nil, nil, nil,
+		session.Connectors{}, logger)
+	require.NoError(t, err)
+	require.NotNil(t, manager)
+	t.Cleanup(func() { require.NoError(t, manager.Shutdown()) })
+}
+
 func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.T) {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {

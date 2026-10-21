@@ -820,6 +820,44 @@ func (s *Store) RecordUser(ctx context.Context, user *User) error {
 	return nil
 }
 
+// SetUserEmail records the address a server-side caller said a user signs in with. The row
+// is created when there is none; on an existing row only the email moves, never the kind
+// the claim path reads, and an email it already holds is not written again: a backend may
+// say it on every request.
+func (s *Store) SetUserEmail(ctx context.Context, customerID, userID, email string) error {
+	if customerID == "" || userID == "" || email == "" {
+		return nil
+	}
+	user := &User{CustomerID: customerID, ID: userID, Kind: UserKindAuthenticated, Email: email, CreatedAt: time.Now().UTC()}
+	_, err := s.db.NewInsert().Model(user).
+		On("CONFLICT (customer_id, id) DO UPDATE").
+		Set("email = EXCLUDED.email").
+		Where("u.email IS DISTINCT FROM EXCLUDED.email").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set user email: %w", err))
+	}
+	return nil
+}
+
+// UserEmail returns the address last recorded for a user, or empty.
+func (s *Store) UserEmail(ctx context.Context, customerID, userID string) (string, error) {
+	var user User
+	err := s.db.NewSelect().Model(&user).
+		Column("email").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", userID).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: user email: %w", err))
+	}
+	return user.Email, nil
+}
+
 // RecordGuest stores a guest this app handed out, so it can later be claimed.
 func (s *Store) RecordGuest(ctx context.Context, guest *User) error {
 	guest.Kind = UserKindGuest

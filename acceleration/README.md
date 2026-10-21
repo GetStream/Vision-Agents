@@ -113,8 +113,11 @@ the other commands that read them there.
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
-| `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default and only one |
+| `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches its grants' hosts through the proxy and its config's own allow list directly; a config with `network: true` and no allow list is refused when a session with a sandbox binding starts |
 | `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it |
+| `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
+| `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
+| `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://host:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
@@ -262,6 +265,12 @@ is unsigned because a caller holding the secret could mint a token for that user
 What it buys is that the session the backend opens belongs to that user, so the user's own
 device can reach it afterwards. It costs nothing: the caller is still server-side, still
 reaches everything, and is still charged no daily limit.
+
+Beside it, a backend may say the email that user signs in with, in `X-Stream-User-Email`. The
+router keeps the latest one per user and reads it from a server-side caller only, since a
+device that could set it could claim another person's address. A connector whose manifest sets
+`owner_email` (nessy) refuses a user-owned connection's first consent, storing nothing, unless
+the provider's `id_token` names that email (AI-1543).
 
 ### Who a session belongs to
 

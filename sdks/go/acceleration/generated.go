@@ -833,19 +833,19 @@ func (e CustomModelRequestTrainsOnData) Valid() bool {
 
 // Defines values for DataChangeOp.
 const (
-	Delete DataChangeOp = "delete"
-	Insert DataChangeOp = "insert"
-	Update DataChangeOp = "update"
+	DataChangeOpDelete DataChangeOp = "delete"
+	DataChangeOpInsert DataChangeOp = "insert"
+	DataChangeOpUpdate DataChangeOp = "update"
 )
 
 // Valid indicates whether the value is a known member of the DataChangeOp enum.
 func (e DataChangeOp) Valid() bool {
 	switch e {
-	case Delete:
+	case DataChangeOpDelete:
 		return true
-	case Insert:
+	case DataChangeOpInsert:
 		return true
-	case Update:
+	case DataChangeOpUpdate:
 		return true
 	default:
 		return false
@@ -2337,6 +2337,27 @@ func (e TranscriptFormat) Valid() bool {
 	}
 }
 
+// Defines values for TranscriptMessagePurpose.
+const (
+	TranscriptMessagePurposeCheckin  TranscriptMessagePurpose = "checkin"
+	TranscriptMessagePurposeGreeting TranscriptMessagePurpose = "greeting"
+	TranscriptMessagePurposeUpdate   TranscriptMessagePurpose = "update"
+)
+
+// Valid indicates whether the value is a known member of the TranscriptMessagePurpose enum.
+func (e TranscriptMessagePurpose) Valid() bool {
+	switch e {
+	case TranscriptMessagePurposeCheckin:
+		return true
+	case TranscriptMessagePurposeGreeting:
+		return true
+	case TranscriptMessagePurposeUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TranscriptionMode.
 const (
 	Smart    TranscriptionMode = "smart"
@@ -3100,7 +3121,7 @@ type AuditEntry struct {
 	// ActorId Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup.
 	ActorId *string `json:"actor_id,omitempty"`
 
-	// ActorName Their name, as their client named them. Never an email address: the router keeps none.
+	// ActorName Their name, as their client named them. Never an email address: the only one the router keeps is the one a backend says its user signs in with, X-Stream-User-Email, which no audit entry names.
 	ActorName *string `json:"actor_name,omitempty"`
 
 	// AgentId The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
@@ -6373,7 +6394,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -6383,7 +6404,7 @@ type ScheduledTaskRun struct {
 	SessionId    string     `json:"session_id"`
 	StartedAt    *time.Time `json:"started_at"`
 
-	// State running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+	// State running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
 	State  ScheduledTaskRunState `json:"state"`
 	TaskId string                `json:"task_id"`
 
@@ -6391,7 +6412,7 @@ type ScheduledTaskRun struct {
 	Trigger ScheduledTaskRunTrigger `json:"trigger"`
 }
 
-// ScheduledTaskRunState running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+// ScheduledTaskRunState running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
 type ScheduledTaskRunState string
 
 // ScheduledTaskRunTrigger schedule when it came due, manual when it was run by hand.
@@ -7710,13 +7731,31 @@ type TranscriptMessage struct {
 	Agent     *bool     `json:"agent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 
+	// Generating The line is still being written: a reply still streaming, or words still being said, stored as they first were. The session's live frames carry the rest.
+	Generating *bool `json:"generating,omitempty"`
+
+	// Id The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard frames named it by; any other line has an id Chat gave it.
+	Id string `json:"id"`
+
+	// Interrupted The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to say, of which some or none was heard.
+	Interrupted *bool `json:"interrupted,omitempty"`
+
 	// Name That speaker's display name, when they have one.
 	Name *string `json:"name,omitempty"`
+
+	// Purpose Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+	Purpose *TranscriptMessagePurpose `json:"purpose,omitempty"`
 
 	// Speaker Who said it, the agent under its own user id.
 	Speaker string `json:"speaker"`
 	Text    string `json:"text"`
+
+	// TurnId The turn a reply was written for, as the session's response frames name it.
+	TurnId *string `json:"turn_id,omitempty"`
 }
+
+// TranscriptMessagePurpose Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+type TranscriptMessagePurpose string
 
 // TranscriptWord defines model for TranscriptWord.
 type TranscriptWord struct {
@@ -9795,7 +9834,7 @@ type ClientInterface interface {
 
 	// CreateAuthorizationWithBody Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9806,7 +9845,7 @@ type ClientInterface interface {
 
 	// CreateAuthorization Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -10551,7 +10590,7 @@ type ClientInterface interface {
 
 	// ResumeScheduledTask Resume a scheduled task
 	//
-	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 	//
 	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
 	ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -13121,7 +13160,7 @@ func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...Req
 
 // CreateAuthorizationWithBody Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -13142,7 +13181,7 @@ func (c *Client) CreateAuthorizationWithBody(ctx context.Context, id string, con
 
 // CreateAuthorization Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -14683,7 +14722,7 @@ func (c *Client) PauseScheduledTask(ctx context.Context, id string, reqEditors .
 
 // ResumeScheduledTask Resume a scheduled task
 //
-// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 //
 // Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
 func (c *Client) ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -29163,7 +29202,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAuthorizationWithBodyWithResponse Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -29174,7 +29213,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAuthorizationWithResponse Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -30007,7 +30046,7 @@ type ClientWithResponsesInterface interface {
 
 	// ResumeScheduledTaskWithResponse Resume a scheduled task
 	//
-	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -49424,7 +49463,7 @@ func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id 
 
 // CreateAuthorizationWithBodyWithResponse Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -49441,7 +49480,7 @@ func (c *ClientWithResponses) CreateAuthorizationWithBodyWithResponse(ctx contex
 
 // CreateAuthorizationWithResponse Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -50754,7 +50793,7 @@ func (c *ClientWithResponses) PauseScheduledTaskWithResponse(ctx context.Context
 
 // ResumeScheduledTaskWithResponse Resume a scheduled task
 //
-// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 //
 // Returns a wrapper object for the known response body format(s).
 //

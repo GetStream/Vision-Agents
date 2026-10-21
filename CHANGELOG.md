@@ -634,6 +634,8 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+- Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601, #1100).
+
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 
 `metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
@@ -679,7 +681,9 @@ them included; what the user types next is counted on their day as before.
 
 The same tasks are a REST resource, `/v1/agents/scheduled-tasks`: a backend schedules for
 the user it names with `X-Stream-User-Id`, and the owner reads, changes, pauses, resumes
-and deletes their tasks from a device, runs included. `agent.yaml` takes a `scheduling:`
+and deletes their tasks from a device, runs included. A one-shot resumed after its time
+came is completed, its occurrence listed as a `missed` run with error `task_paused`.
+`agent.yaml` takes a `scheduling:`
 block (`enabled`, `max_tasks_per_user`, `default_timezone`) in the Go, Python and
 JavaScript SDKs.
 
@@ -739,6 +743,18 @@ prior bans, and an instruction injected into the message. A simulation talks to 
 rather than through a run, so each one hands over the policy with its cases, and its assertion
 judges the verdicts rather than the answer format. Run them after editing the agent with
 `getstream agents simulate nora` (AI-1506).
+
+### The moderator template reviews more than chat messages
+
+A case may carry an `entity_type`, and the moderator template's instructions say what context
+each kind brings: a chat message (or a case without one) its `conversation`, a Feeds activity
+or comment its `activity` with the comments and reactions in place, a user profile
+(`stream:user`) its fields as the case's text, and a custom check type its text alone, read
+with the entity type as a hint and not judged uncertain only for lacking a conversation.
+Evidence still quotes only the case's own text, and the answer format is unchanged. Four more
+simulations cover a product review, a Feeds comment, a Feeds activity and a user profile
+(AI-1624).
+
 ### The app's moderator reads the app's moderation data
 
 A session or run of an `agent_moderator` config is offered six read-only tools on the app's
@@ -864,8 +880,8 @@ writes them on the person's message as `image` attachments, so every reader of t
 them. The model sees them with the reply to that question alone, as it already did in a session
 not kept in Chat; when the conversation is reopened, history says the photos were sent without
 sending them again. A retry with the same id, text and images is the same question; different
-images under the same id are a 409. Videos still take no request id. The Swift SDK now sends a
-request id with every question, images or not.
+images under the same id are a 409. Videos still take no request id. The Swift and Kotlin SDKs now
+send a request id with every question, images or not.
 
 ### The reply model is told who is speaking once a second person talks
 
@@ -2386,6 +2402,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent no longer starts its reply over a caller who has started talking again: when the caller says more before any of the reply to their last turn has been heard, that reply is dropped unheard and the newer words are answered together with the earlier ones, which the model is told it has not answered yet. A cough, "mm" or a run of assent such as "okay", "uh-huh" or "got it" leaves the reply to play, and once some of it has played, talking over it goes to the flow controller as before (AI-1601, #1100).
 - A live transcription the vendor refuses part way through, such as ElevenLabs's `unaccepted_terms`, goes on with the next model the session could use (the next in its `stt.providers`, or its target's next candidate), and with none that refused it. The session ended with one `error` and the agent's next audio could reopen it on the model that had just refused it. What the caller had said of the turn still open when the vendor refused is lost; what they say from then on is heard by the next model. `/v1/stt/stream` sends no `error` frame for a refusal another model takes over and goes on with its transcripts. With no other model left, the session ends with the one `error` it ended with before. A socket that drops, and an error the vendor goes on after, end the session or are passed on as before (AI-1587).
 - `/v1/stt/stream` says which model transcribes after a refusal hands the socket to the next one: another `started` frame naming its `provider` and `model`, the same shape as the first. Until now the caller learnt of the switch only from the `provider` on the next transcript. A socket no model refuses still sends one `started` (AI-1588).
 - A write to a vendor that has just refused the session no longer reaches the caller as an `error` frame on `/v1/stt/stream`, or as an `stt` failure in the agent's log, when the next model takes the session over: the caller hears only of the takeover. A write that fails with nothing from the vendor behind it still reaches the caller; one that fails behind a socket that dropped is told once, by the drop's own `error` frame. The router now logs each such takeover on `/v1/stt/stream` at INFO, with the model that refused, the model taking over and the vendor's reason (AI-1603, AI-1606).

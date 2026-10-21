@@ -197,6 +197,29 @@ func TestProxy(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "user-1", principal.UserID)
 	})
+
+	t.Run("takes an address only from a backend", func(t *testing.T) {
+		// The gateway passes a client's X-Stream-User-Email through unchanged, so the kind it
+		// names is the only thing between an end user and somebody else's address.
+		for _, authType := range []string{AuthTypeJWT, AuthTypeAnonymous} {
+			r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+			r.Header.Set(AppHeader, "app-1")
+			r.Header.Set(UserHeader, "user-1")
+			r.Header.Set(AuthTypeHeader, authType)
+			r.Header.Set(EmailHeader, "alice@example.com")
+			principal, err := authenticator.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			require.Empty(t, principal.Email, authType)
+		}
+
+		backend := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		backend.Header.Set(AppHeader, "app-1")
+		backend.Header.Set(UserHeader, "user-1")
+		backend.Header.Set(EmailHeader, "alice@example.com")
+		principal, err := authenticator.Authenticate(context.Background(), backend)
+		require.NoError(t, err)
+		require.Equal(t, "alice@example.com", principal.Email)
+	})
 }
 
 func TestProxyThatDeclaresKinds(t *testing.T) {
@@ -243,6 +266,26 @@ func TestProxyThatDeclaresKinds(t *testing.T) {
 		principal, err := authenticator.Authenticate(context.Background(), r)
 		require.NoError(t, err)
 		require.True(t, principal.ServerSide)
+	})
+
+	t.Run("takes an address from a declared backend only", func(t *testing.T) {
+		user := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		user.Header.Set(AppHeader, "app-1")
+		user.Header.Set(UserHeader, "user-1")
+		user.Header.Set(AuthTypeHeader, AuthTypeJWT)
+		user.Header.Set(EmailHeader, "alice@example.com")
+		principal, err := authenticator.Authenticate(context.Background(), user)
+		require.NoError(t, err)
+		require.Empty(t, principal.Email)
+
+		backend := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		backend.Header.Set(AppHeader, "app-1")
+		backend.Header.Set(UserHeader, "user-1")
+		backend.Header.Set(AuthTypeHeader, AuthTypeServer)
+		backend.Header.Set(EmailHeader, "alice@example.com")
+		principal, err = authenticator.Authenticate(context.Background(), backend)
+		require.NoError(t, err)
+		require.Equal(t, "alice@example.com", principal.Email)
 	})
 
 	t.Run("honours a query user only for a backend", func(t *testing.T) {
@@ -347,6 +390,34 @@ func TestAPIKey(t *testing.T) {
 		require.Equal(t, KindServer, principal.Kind)
 		require.True(t, principal.ServerSide)
 		require.Equal(t, "user-1", principal.UserID)
+	})
+
+	t.Run("lets a backend say the address its user signs in with", func(t *testing.T) {
+		r := serverSide(jwt.MapClaims{"server": true})
+		r.Header.Set(UserHeader, "user-1")
+		r.Header.Set(EmailHeader, " Alice@Example.com ")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, "Alice@Example.com", principal.Email)
+	})
+
+	t.Run("never takes an address from an end user's device", func(t *testing.T) {
+		// A device that could say an address could say another person's, and a consent
+		// checked against it would let that person's provider account onto its connection.
+		for name, r := range map[string]*http.Request{
+			"user token":                request(key, signedClaims(t, secret, jwt.MapClaims{"user_id": "user-1"})),
+			"user token, server header": serverSide(jwt.MapClaims{"user_id": "user-1"}),
+			"server token, no header":   request(key, signedClaims(t, secret, jwt.MapClaims{"server": true})),
+			"anonymous token":           request(key, signed(t, secret, time.Hour)),
+		} {
+			r.Header.Set(UserHeader, "user-1")
+			r.Header.Set(EmailHeader, "alice@example.com")
+			principal, err := authenticator.Authenticate(context.Background(), r)
+			require.NoError(t, err, name)
+			require.False(t, principal.ServerSide, name)
+			require.Empty(t, principal.Email, name)
+		}
 	})
 
 	t.Run("keeps a token naming a user client-side, whatever the header says", func(t *testing.T) {

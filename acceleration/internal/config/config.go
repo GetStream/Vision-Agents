@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -326,13 +327,23 @@ type Sandbox struct {
 // CodeSandbox is how code the model wrote reaches a connection's API from its sandbox
 // (internal/sandbox) without holding the connection's credential.
 type CodeSandbox struct {
-	// Broker holds the credential for code there: daytona, Daytona Secrets, is the one there
-	// is.
+	// Broker holds the credential for code there: daytona, Daytona Secrets, or proxy, the
+	// egress proxy at ProxyPublicURL.
 	Broker string `koanf:"broker"`
 	// SecretPrefix names this router's environment in every secret it leaves with the
 	// provider, since routers sharing one Daytona organization must never take or sweep each
 	// other's: stg on staging. A session with a sandbox binding is refused while it is empty.
 	SecretPrefix string `koanf:"secret_prefix"`
+	// ProxyAddr is where the router serves the sandbox egress proxy (internal/sandbox/egress),
+	// such as :8091; empty serves none.
+	ProxyAddr string `koanf:"proxy_addr"`
+	// ProxyCACert and ProxyCAKey are the PEM certificate and private key of the CA the proxy
+	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
+	ProxyCACert string `koanf:"proxy_ca_cert"`
+	ProxyCAKey  string `koanf:"proxy_ca_key"`
+	// ProxyPublicURL is the proxy as a sandbox reaches it, http://host:port, which the proxy
+	// broker needs, with ProxyCACert.
+	ProxyPublicURL string `koanf:"proxy_public_url"`
 }
 
 // secretPrefix is what code_sandbox.secret_prefix may hold. Secrets are named
@@ -343,6 +354,10 @@ var secretPrefix = regexp.MustCompile(`^[a-z0-9]+$`)
 // CodeSandboxBrokerDaytona is the code_sandbox.broker value for Daytona Secrets
 // (daytona.BrokerName).
 const CodeSandboxBrokerDaytona = "daytona"
+
+// CodeSandboxBrokerProxy is the code_sandbox.broker value for the egress proxy
+// (egress.BrokerName).
+const CodeSandboxBrokerProxy = "proxy"
 
 // Telnyx is the account Telnyx numbers are bought on and the TeXML application they answer
 // on. The Telnyx provider still reads its own variables, which export writes back.
@@ -421,8 +436,12 @@ var variables = map[string]string{
 	"sandbox.messages_per_day":      "ROUTER_SANDBOX_MESSAGES_PER_DAY",
 	"sandbox.audio_minutes_per_day": "ROUTER_SANDBOX_AUDIO_MINUTES_PER_DAY",
 
-	"code_sandbox.broker":        "ROUTER_CODE_SANDBOX_BROKER",
-	"code_sandbox.secret_prefix": "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
+	"code_sandbox.broker":           "ROUTER_CODE_SANDBOX_BROKER",
+	"code_sandbox.secret_prefix":    "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
+	"code_sandbox.proxy_addr":       "ROUTER_CODE_SANDBOX_PROXY_ADDR",
+	"code_sandbox.proxy_ca_cert":    "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
+	"code_sandbox.proxy_ca_key":     "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
+	"code_sandbox.proxy_public_url": "ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
@@ -601,17 +620,44 @@ func (c Config) validate() error {
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
 	}
-	if c.CodeSandbox.Broker != CodeSandboxBrokerDaytona {
-		return fmt.Errorf("config: code_sandbox.broker is %s, got %q", CodeSandboxBrokerDaytona, c.CodeSandbox.Broker)
+	if c.CodeSandbox.Broker != CodeSandboxBrokerDaytona && c.CodeSandbox.Broker != CodeSandboxBrokerProxy {
+		return fmt.Errorf("config: code_sandbox.broker is %s or %s, got %q", CodeSandboxBrokerDaytona, CodeSandboxBrokerProxy,
+			c.CodeSandbox.Broker)
+	}
+	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!proxyURL(c.CodeSandbox.ProxyPublicURL) || c.CodeSandbox.ProxyCACert == "") {
+		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://host:port) and " +
+			"proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox " +
+			"reaches the proxy")
+	}
+	// Every router of a proxy broker serves the proxy, so no sandbox is sent to a proxy no
+	// router runs.
+	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && c.CodeSandbox.ProxyAddr == "" {
+		return errors.New("config: code_sandbox.broker is proxy, so this router serves the proxy: set " +
+			"code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR)")
+	}
+	if strings.Contains(c.CodeSandbox.ProxyCACert, "PRIVATE KEY") {
+		return errors.New("config: code_sandbox.proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_CA_CERT) holds a private key, " +
+			"which every sandbox would be given: keep the certificate there and the key in proxy_ca_key")
 	}
 	if c.CodeSandbox.SecretPrefix != "" && !secretPrefix.MatchString(c.CodeSandbox.SecretPrefix) {
 		return fmt.Errorf("config: code_sandbox.secret_prefix is lowercase letters and digits only, got %q: "+
 			"a prefix holding _ would match another router's secrets (va_stg_ and va_stg_dev_)", c.CodeSandbox.SecretPrefix)
 	}
+	if c.CodeSandbox.ProxyAddr != "" && (c.CodeSandbox.ProxyCACert == "" || c.CodeSandbox.ProxyCAKey == "") {
+		return fmt.Errorf("config: code_sandbox.proxy_addr is set, so code_sandbox.proxy_ca_cert and proxy_ca_key " +
+			"(ROUTER_CODE_SANDBOX_PROXY_CA_CERT, ROUTER_CODE_SANDBOX_PROXY_CA_KEY) must hold the CA the proxy signs with")
+	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
 	return c.validateShard()
+}
+
+// proxyURL says whether raw is an http URL with a host and no user: the sandbox's proxy URL
+// carries its own credential as the user.
+func proxyURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme == "http" && parsed.Hostname() != "" && parsed.User == nil
 }
 
 // validateShard refuses shard settings that would write a shard's calls where no reader
@@ -725,8 +771,12 @@ func (c Config) export() error {
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 
-		"code_sandbox.broker":        c.CodeSandbox.Broker,
-		"code_sandbox.secret_prefix": c.CodeSandbox.SecretPrefix,
+		"code_sandbox.broker":           c.CodeSandbox.Broker,
+		"code_sandbox.secret_prefix":    c.CodeSandbox.SecretPrefix,
+		"code_sandbox.proxy_addr":       c.CodeSandbox.ProxyAddr,
+		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
+		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
+		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),

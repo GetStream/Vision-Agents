@@ -862,7 +862,7 @@ components:
           description: Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup.
           type: string
         actor_name:
-          description: 'Their name, as their client named them. Never an email address: the router keeps none.'
+          description: 'Their name, as their client named them. Never an email address: the only one the router keeps is the one a backend says its user signs in with, X-Stream-User-Email, which no audit entry names.'
           type: string
         agent_id:
           description: The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
@@ -5907,7 +5907,7 @@ components:
           description: 'Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.'
           type: string
         error:
-          description: 'Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again). The full error is in the router''s logs. Null otherwise.'
+          description: 'Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot''s time came while it was paused). The full error is in the router''s logs. Null otherwise.'
           nullable: true
           type: string
         finished_at:
@@ -5926,7 +5926,7 @@ components:
           nullable: true
           type: string
         state:
-          description: running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+          description: running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
           enum:
             - running
             - delivered
@@ -7912,16 +7912,36 @@ components:
         created_at:
           format: date-time
           type: string
+        generating:
+          description: 'The line is still being written: a reply still streaming, or words still being said, stored as they first were. The session''s live frames carry the rest.'
+          type: boolean
+        id:
+          description: The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard frames named it by; any other line has an id Chat gave it.
+          type: string
+        interrupted:
+          description: The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to say, of which some or none was heard.
+          type: boolean
         name:
           description: That speaker's display name, when they have one.
+          type: string
+        purpose:
+          description: 'Why the agent said the line unasked: the call''s greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.'
+          enum:
+            - greeting
+            - checkin
+            - update
           type: string
         speaker:
           description: Who said it, the agent under its own user id.
           type: string
         text:
           type: string
+        turn_id:
+          description: The turn a reply was written for, as the session's response frames name it.
+          type: string
       required:
         - created_at
+        - id
         - speaker
         - text
       type: object
@@ -8808,7 +8828,7 @@ components:
       type: apiKey
     AppToken:
       bearerFormat: JWT
-      description: 'A token signed HS256 with the secret belonging to the API key. A socket sends it as the token query parameter. A token minted for an end user to hold names them in a user_id claim; one a backend mints for itself carries server: true instead, and is what every operation not marked x-client-accessible requires. The user_id claim is also what owns the sessions that end user opens, so a token is what stops one person reading another''s conversation. A backend, which names no user in its token, says which of its users it is acting for in X-Stream-User-Id instead; that header is unsigned and needs to be, since a caller holding the secret could mint a token for anyone.'
+      description: 'A token signed HS256 with the secret belonging to the API key. A socket sends it as the token query parameter. A token minted for an end user to hold names them in a user_id claim; one a backend mints for itself carries server: true instead, and is what every operation not marked x-client-accessible requires. The user_id claim is also what owns the sessions that end user opens, so a token is what stops one person reading another''s conversation. A backend, which names no user in its token, says which of its users it is acting for in X-Stream-User-Id instead; that header is unsigned and needs to be, since a caller holding the secret could mint a token for anyone. Beside it, X-Stream-User-Email says the email that user signs in with, which the router keeps, the latest one per user, for a connector that checks who consents (nessy). It is read from a server-side caller only: an end user''s device cannot set it.'
       scheme: bearer
       type: http
     AuthType:
@@ -10466,7 +10486,7 @@ paths:
   /v1/agents/connections/{id}/authorizations:
     post:
       description: |-
-        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: createAuthorization
@@ -13023,7 +13043,7 @@ paths:
       x-client-accessible: true
   /v1/agents/scheduled-tasks/{id}/resume:
     post:
-      description: The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+      description: The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
       operationId: resumeScheduledTask
       parameters:
         - description: The task, as returned when it was created.
@@ -13364,7 +13384,7 @@ paths:
     get:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-        The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+        The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a line the agent says as written rather than asking the model, such as its greeting, with the purpose it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
         Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.

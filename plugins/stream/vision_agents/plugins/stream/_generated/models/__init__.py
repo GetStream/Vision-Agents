@@ -437,6 +437,7 @@ from .tool_stats import ToolStats
 from .transcript_entity import TranscriptEntity
 from .transcript_format import TranscriptFormat
 from .transcript_message import TranscriptMessage
+from .transcript_message_purpose import TranscriptMessagePurpose
 from .transcript_word import TranscriptWord
 from .transcription import Transcription
 from .transcription_mode import TranscriptionMode
@@ -907,6 +908,7 @@ __all__ = (
     "TranscriptEntity",
     "TranscriptFormat",
     "TranscriptMessage",
+    "TranscriptMessagePurpose",
     "TranscriptWord",
     "Transcription",
     "TranscriptionMode",

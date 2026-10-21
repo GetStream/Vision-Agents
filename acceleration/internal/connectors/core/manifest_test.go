@@ -83,6 +83,30 @@ func (s *ManifestSuite) TestAManifestWithoutSetupMarshalsWithoutIt() {
 	s.NotContains(string(raw), "setup")
 }
 
+// A source that says nothing may write, and a tool that writes sends data out; only
+// outbound: false says otherwise.
+func (s *ManifestSuite) TestASourceSendsDataOutUnlessItSaysOutboundFalse() {
+	endpoints := "endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n"
+	for written, sends := range map[string]bool{"": true, "    outbound: true\n": true, "    outbound: false\n": false} {
+		parsed, err := ParseManifest(minimal("sensitive: true\n" + endpoints + written))
+		s.Require().NoError(err)
+
+		s.True(parsed.Sensitive)
+		s.Equal(sends, MCPSource(parsed.Sources).SendsOut(), written)
+	}
+}
+
+// A manifest that says neither marshals as it did before the fields existed, so the seeder
+// finds a stored built-in unchanged (store.sameManifest).
+func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutThem() {
+	parsed, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed)
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "sensitive")
+	s.NotContains(string(raw), "outbound")
+}
+
 func (s *ManifestSuite) TestAManifestNamesItsEarlierBrokenRevisionsWithAReason() {
 	parsed, err := ParseManifest([]byte("id: example\nrevision: 6\nname: Example\nschemes: [oauth2_code]\n" +
 		"broken_revisions:\n  - revisions: [1, 2]\n    reason: reads the wrong path\n  - revisions: [4]\n    reason: no scopes\n"))
@@ -290,6 +314,25 @@ func (s *ManifestSuite) TestAKeepPathCaptureIsNeverPartOfATemplate() {
 func (s *ManifestSuite) TestKeepPathNeedsHostSuffixes() {
 	_, err := ParseManifest(minimal("capture:\n  - name: identity_url\n    from: token_response\n    path: $.id\n    keep_path: true\n"))
 	s.ErrorContains(err, "capture[0].keep_path: keep_path needs host_suffixes")
+}
+
+// owner_email compares an email only an id_token the scheme checked can carry: one from the
+// token response's own JSON or the callback would be the provider's or the browser's word.
+func (s *ManifestSuite) TestOwnerEmailNeedsARequiredEmailFromTheIDToken() {
+	parsed, err := ParseManifest(minimal("owner_email: true\ncapture:\n  - name: email\n    from: id_token\n    path: $.email\n"))
+	s.Require().NoError(err)
+	s.True(parsed.OwnerEmail)
+
+	for name, capture := range map[string]string{
+		"none":           "",
+		"token response": "capture:\n  - name: email\n    from: token_response\n    path: $.email\n",
+		"callback":       "capture:\n  - name: email\n    from: callback_query\n    key: email\n",
+		"optional":       "capture:\n  - name: email\n    from: id_token\n    path: $.email\n    optional: true\n",
+		"another name":   "capture:\n  - name: mail\n    from: id_token\n    path: $.email\n",
+	} {
+		_, err := ParseManifest(minimal("owner_email: true\n" + capture))
+		s.ErrorContains(err, "owner_email: needs a capture rule named email, from the id_token and not optional", name)
+	}
 }
 
 func (s *ManifestSuite) TestGoogleReadsTheAccountFromTheIDTokenSub() {

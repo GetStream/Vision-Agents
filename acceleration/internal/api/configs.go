@@ -139,6 +139,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -255,6 +260,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, invalidRequest(message)
@@ -761,6 +771,71 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 		envs[rule.Env] = binding.Name
 	}
 	return "", true, nil
+}
+
+// sensitiveBindingsComplaint refuses a config that binds a sensitive connector, one whose
+// manifest says its tools read private data, together with a tool that sends data out: a
+// model that reads untrusted text could be steered into sending out what it read («Nessy as
+// a connector» on AI-1538, change 13). These send data out:
+//   - a binding whose connector has a source that does not say outbound: false, as one of its
+//     tools may write, and a binding with sandbox set, whose code calls the connector's whole API;
+//   - an MCP server or a plugin, whose tools no manifest describes, unless the plugin reaches
+//     its read-only endpoint;
+//   - a sandbox that may reach the network.
+//
+// None of them can ask a person's approval of a call: only a tool a session declares carries
+// one (SessionToolApproval). It reads the config as it is about to be stored.
+func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+	var sensitive *store.ConnectorBinding
+	var outbound []string
+	for i, binding := range config.Connectors {
+		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
+		// A forced connector delete leaves its bindings behind (store.refuseUndefined), and
+		// a binding to a connector with no definition opens nothing.
+		if errors.Is(err, store.ErrNoConnectorDefinition) {
+			continue
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if definition.Manifest.Sensitive {
+			sensitive = &config.Connectors[i]
+		}
+		if bindingSendsOut(binding, definition.Manifest) {
+			outbound = append(outbound, fmt.Sprintf("connector binding %q", binding.Name))
+		}
+	}
+	if sensitive == nil {
+		return "", true, nil
+	}
+	for _, server := range config.MCPServers {
+		outbound = append(outbound, fmt.Sprintf("MCP server %q", server.Name))
+	}
+	for _, entry := range config.Plugins {
+		if !entry.Readonly {
+			outbound = append(outbound, fmt.Sprintf("plugin %q", entry.Name))
+		}
+	}
+	if config.Sandbox != "" && !config.SandboxOptions.Isolated() {
+		outbound = append(outbound, "the sandbox's network access")
+	}
+	if len(outbound) == 0 {
+		return "", true, nil
+	}
+	return fmt.Sprintf("connector binding %q binds %q, whose tools read private data, and %s can send data out "+
+		"with no person's approval: take them out of this config", sensitive.Name, sensitive.ConnectorID,
+		strings.Join(outbound, ", ")), false, nil
+}
+
+// bindingSendsOut reports whether a binding offers a tool that may send data out: one of a
+// source that does not say outbound: false, or the connector's API to sandbox code. A
+// connector with no source offers no tool, and neither does a binding that grants none.
+func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) bool {
+	if binding.Sandbox {
+		return true
+	}
+	granted := len(binding.Tools) > 0 || binding.ToolPatterns != nil
+	return granted && slices.ContainsFunc(manifest.Sources, core.SourceRule.SendsOut)
 }
 
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same

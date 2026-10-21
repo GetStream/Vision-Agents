@@ -210,9 +210,92 @@ func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnle
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg"}, config.CodeSandbox)
 
-	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "vault")
 	_, _, err = Load("")
-	s.ErrorContains(err, "code_sandbox.broker")
+	s.ErrorContains(err, "code_sandbox.broker is daytona or proxy")
+}
+
+// TestTheProxyBrokerNeedsTheProxysURLAndCA: a sandbox must reach the proxy and trust it, its
+// own credential is the URL's user, and the router serves the proxy, with the CA's key.
+func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	for _, address := range []string{"", "https://proxy.stg.example:8091", "http://sbx:secret@proxy.stg.example:8091", "http://:8091",
+		"proxy.stg.example:8091"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
+		_, _, err := Load("")
+		s.ErrorContains(err, "code_sandbox.proxy_public_url", address)
+	}
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "http://proxy.stg.example:8091")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
+		ProxyPublicURL: "http://proxy.stg.example:8091"}, config.CodeSandbox)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "")
+	_, _, err = Load("")
+	s.ErrorContains(err, "proxy_ca_key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", "")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_addr")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "")
+	_, _, err = Load("")
+	s.ErrorContains(err, "proxy_ca_cert")
+}
+
+// TestTheProxysCACertificateHoldsNoKey: every sandbox is given it.
+func (s *ConfigSuite) TestTheProxysCACertificateHoldsNoKey() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----\n")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n"+
+		"-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----\n")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_CA_CERT) holds a private key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n")
+	_, _, err = Load("")
+	s.NoError(err)
+}
+
+// TestTheProxysPublicURLIsReadableFromTheEnvironmentAfterwards, like every other setting.
+func (s *ConfigSuite) TestTheProxysPublicURLIsReadableFromTheEnvironmentAfterwards() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("code_sandbox:\n  proxy_public_url: http://proxy.stg.example:8091\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal("http://proxy.stg.example:8091", os.Getenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL"))
+}
+
+// TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA: no address serves no proxy, and
+// an address without the CA's certificate and key does not start.
+func (s *ConfigSuite) TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.CodeSandbox.ProxyAddr)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.proxy_ca_cert")
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key"}, config.CodeSandbox)
 }
 
 // TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.

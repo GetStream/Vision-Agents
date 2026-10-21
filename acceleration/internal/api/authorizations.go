@@ -194,7 +194,9 @@ func (s *Server) registerAuthorizations(api huma.API) {
 			"account_mismatch) added to its query. A native app whose return_url is its own " +
 			"scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet " +
 			"instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps " +
-			"the old grant. The consent runs on the connector's latest revision, and the " +
+			"the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned " +
+			"connection's first consent as account_mismatch, storing nothing, unless the provider account's " +
+			"email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the " +
 			"connection reads that revision once the consent connects it. Who may start it is who " +
 			"may read the connection. Needs " +
 			"ROUTER_PUBLIC_URL, where the provider sends the browser back to.\n\n" +
@@ -830,11 +832,27 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		return consentFailed
 	}
 
-	switched := false
+	// A user-owned connection's first account must be its owner's, where the manifest asks:
+	// the consent link works in any browser, so another person could finish it (AI-1543).
+	var refusal string
+	if manifest.OwnerEmail && connection.OwnerType == store.OwnerUser {
+		asserted, err := s.store.UserEmail(ctx, connection.CustomerID, connection.OwnerID)
+		if err != nil {
+			s.logger.Error("could not read the email a consent is checked against", "connection", row.ConnectionID, "error", err)
+			return consentFailed
+		}
+		refusal = ownerEmailRefusal(asserted, account)
+	}
+
+	switched, notOwner := false, false
 	var committed *core.CredentialState
 	// The tokens a reconnect replaces, and those the consent got.
 	change := core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, credentials)}
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		if state.AccountID == "" && refusal != "" {
+			notOwner = true
+			return false, nil
+		}
 		if state.AccountID != "" && state.AccountID != account.AccountID {
 			switched = true
 			state.LastError = accountSwitchError
@@ -863,6 +881,11 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		s.logger.Error("could not store a consent's credentials", "connection", row.ConnectionID, "error", err)
 		return consentFailed
 	}
+	if notOwner {
+		s.logger.Info("a consent was refused for another account than its connection's owner", "connection", row.ConnectionID,
+			"connector", sealed.ConnectorID, "reason", refusal)
+		return consentAccountMismatch
+	}
 	if switched {
 		return consentAccountMismatch
 	}
@@ -882,6 +905,26 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		}
 	}
 	return consentConnected
+}
+
+// ownerEmailRefusal is why a consent may not give a user-owned connection its first account
+// under a manifest that sets owner_email, or "" when it may. The account's email, captured
+// from the id_token, must be the one the app's backend last said the owner signs in with
+// (auth.EmailHeader), compared without case and surrounding space, and an email_verified
+// the id_token carries must be true (OpenID Connect Core 1.0 section 5.1). With no email
+// said, nothing tells whose account it is, so the consent is refused.
+func ownerEmailRefusal(asserted string, account core.AccountInfo) string {
+	asserted = strings.TrimSpace(asserted)
+	if asserted == "" {
+		return "the app has not said which email its user signs in with (" + auth.EmailHeader + ")"
+	}
+	if verified, said := account.Metadata[core.OwnerEmailVerified]; said && verified != "true" {
+		return "the provider has not verified the email of the account that consented"
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.Metadata[core.OwnerEmailCapture]), asserted) {
+		return "the account that consented is not the one the app's user signs in with"
+	}
+	return ""
 }
 
 // recordRefusal keeps why the provider refused a consent as the connection's last validation,

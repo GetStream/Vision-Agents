@@ -30,6 +30,9 @@ type ResolvedManifest struct {
 	Capture   []CaptureRule
 	Refresh   RefreshPolicy
 	RateLimit RateLimitRule
+	// OwnerEmail is the manifest's owner_email: a user-owned connection's first consent must
+	// sign in as the email its app said the owner has.
+	OwnerEmail bool
 	// Sources are the tool sources the connector offers. A ToolSource finds its own by Kind
 	// and reads its endpoint from Endpoints under the role the rule names.
 	Sources []SourceRule

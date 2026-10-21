@@ -97,6 +97,11 @@ const (
 	// is no credential behind them to make them worth anything.
 	UserHeader = "X-Stream-User-Id"
 	UserParam  = "user_id"
+	// EmailHeader is the address the user UserHeader names signs in with, as the app's
+	// backend knows it. It is read from a server-side caller only, for the reason UserHeader
+	// is believed from one; from an end user's device it would let one person claim
+	// another's address. The router keeps the latest one per user (store.SetUserEmail).
+	EmailHeader = "X-Stream-User-Email"
 )
 
 const (
@@ -170,6 +175,9 @@ type Principal struct {
 	// browser holding a token its own backend minted may hold a conversation, and may not
 	// rewrite the agent holding it or replace what the agent knows.
 	ServerSide bool
+	// Email is the address a server-side caller said UserID signs in with (EmailHeader).
+	// Empty for every other caller, whatever it sent.
+	Email string
 }
 
 // App is what an API key resolves to.
@@ -330,13 +338,17 @@ func (p proxied) Authenticate(_ context.Context, r *http.Request) (Principal, er
 	if named == "" && (!p.declares || kind == KindServer) {
 		named = strings.TrimSpace(r.URL.Query().Get(UserParam))
 	}
-	return Principal{
+	principal := Principal{
 		OrganizationID: strings.TrimSpace(r.Header.Get(OrganizationHeader)),
 		AppID:          app,
 		UserID:         named,
 		Kind:           kind,
 		ServerSide:     kind == KindServer,
-	}, nil
+	}
+	if principal.ServerSide {
+		principal.Email = strings.TrimSpace(r.Header.Get(EmailHeader))
+	}
+	return principal, nil
 }
 
 // keyed verifies an API key and the token signed with its secret.
@@ -394,6 +406,7 @@ func (k keyed) Authenticate(ctx context.Context, r *http.Request) (Principal, er
 		// for anyone. What it buys is that the sessions it opens belong to that user, so
 		// the user's own device can reach them afterwards.
 		principal.UserID = user(r)
+		principal.Email = strings.TrimSpace(r.Header.Get(EmailHeader))
 	case principal.UserID == "":
 		principal.Kind = KindAnonymous
 		principal.UserID = user(r)

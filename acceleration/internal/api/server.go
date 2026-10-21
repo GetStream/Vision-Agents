@@ -1047,6 +1047,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
 			s.recordUser(ctx, principal)
+			s.recordEmail(ctx, principal)
 			s.keepServerToken(ctx, r, principal.AppID)
 		}
 		next.ServeHTTP(w, r)
@@ -1094,6 +1095,20 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 	if err := s.users.Seen(ctx, principal.AppID, principal.UserID, kind); err != nil {
 		s.logger.Error("could not record an end user",
 			"customer", principal.AppID, "user", principal.UserID, "error", err)
+	}
+}
+
+// recordEmail keeps the address a backend said its user signs in with (auth.EmailHeader),
+// which a consent for a connector whose manifest sets owner_email is checked against. Only a
+// server-side caller has one (auth.Principal.Email), and SetUserEmail does nothing without
+// one or without a user. A failure is logged, as recordUser's is:
+// the consent it would have served then finds no address and is refused.
+func (s *Server) recordEmail(ctx context.Context, principal auth.Principal) {
+	if s.store == nil {
+		return
+	}
+	if err := s.store.SetUserEmail(ctx, principal.AppID, principal.UserID, principal.Email); err != nil {
+		s.logger.Error("could not record an end user's email", "customer", principal.AppID, "user", principal.UserID, "error", err)
 	}
 }
 

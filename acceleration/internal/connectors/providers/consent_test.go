@@ -527,9 +527,10 @@ func (s *ConsentSuite) TestLinearAppRefreshPolicyRotatesWithAThirtyMinuteGraceAn
 // nessy is Stream's internal tool with the client a staff member registered for the app
 // (nessy.yaml): its issuer and endpoints are pinned, so the MCP endpoint's metadata is not
 // read and nothing is registered; the secret goes as HTTP Basic, how Nessy registers the
-// client; mcp asks for every permission key the client holds, and openid for an id_token.
+// client; mcp asks for every permission key the client holds, and openid for an id_token,
+// whose sub is the account and whose email owner_email checks.
 func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
-	srv := fakeprovider.New(s.T())
+	srv := fakeprovider.New(s.T(), fakeprovider.OpenID)
 	manifest := s.resolve("nessy", nil)
 	s.Equal(map[string]string{
 		"mcp":       "https://nessy.getstream.io/mcp",
@@ -539,7 +540,7 @@ func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
 		"revoke":    "https://nessy.getstream.io/api/oauth/revoke",
 		"resource":  "https://nessy.getstream.io/mcp",
 	}, manifest.Endpoints)
-	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources)
+	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp", Outbound: new(false)}}, manifest.Sources)
 	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
 	resolved := s.atFake(srv, manifest)
 	wire := &tokenWire{next: srv.Client().Transport}
@@ -558,7 +559,11 @@ func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
 	stored, account, err := s.complete(srv, scheme, resolved, out)
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
-	s.Empty(account.AccountID, "no identity")
+	s.Equal(srv.UserID, account.AccountID, "the id_token's sub")
+	s.Equal(map[string]string{"sub": srv.UserID, "email": srv.Email()}, account.Metadata)
+	s.True(manifest.OwnerEmail)
+	s.Contains(manifest.Capture, core.CaptureRule{Name: "email_verified", From: core.FromIDToken, Path: "$.email_verified", Optional: true},
+		"read if Nessy ever sends it, so false refuses the consent")
 	s.Require().Len(wire.sent, 1, "one code exchange")
 	basic := http.Request{Header: http.Header{"Authorization": {wire.sent[0].authorization}}}
 	id, secret, ok := basic.BasicAuth()
@@ -610,6 +615,24 @@ func (s *ConsentSuite) TestNessyRefreshPolicyRotatesWithNoGraceAndEndsAfterTheMa
 	s.Zero(refresh.Grace)
 	s.Equal(24*time.Hour, time.Duration(refresh.RefreshTTL))
 	s.Zero(refresh.AccessTTL)
+}
+
+// A Nessy delete revokes the grant at Nessy (AI-1544), and no other built-in's: revoking on
+// delete for every connector is its own gated step (AI-1546).
+func (s *ConsentSuite) TestOnlyNessyRevokesItsGrantWhenAConnectionIsDeleted() {
+	files, err := fs.Glob(providers.FS, "*.yaml")
+	s.Require().NoError(err)
+	var revoking []string
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file)
+		s.Require().NoError(err)
+		manifest, err := core.ParseManifest(raw)
+		s.Require().NoError(err)
+		if manifest.RevokeOnDelete {
+			revoking = append(revoking, manifest.ID)
+		}
+	}
+	s.Equal([]string{"nessy"}, revoking)
 }
 
 // The storefront answers without a credential (shopify.dev Policy and FAQs, opened

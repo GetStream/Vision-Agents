@@ -824,6 +824,21 @@ func (s *SyncSuite) TestASyncedSandboxBindingToAConnectorWithoutASandboxBlockIsR
 	s.Empty(s.configsNamed("builder"))
 }
 
+// A sync stores a config as a save does, so it too refuses nessy beside an outbound tool.
+func (s *SyncSuite) TestASyncedNessyBesideAnMCPServerIsRefusedAndStoresNothing() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "athena", "hash": "v1", "connectors": []map[string]any{sessionNessy("customers")},
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and MCP server "tablejourney" can send data out`)
+	s.Empty(s.configsNamed("athena"))
+}
+
 func (s *SyncSuite) TestASyncedSandboxBindingWithoutASandboxIsRefusedAndStoresNothing() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
 		"name": "builder", "hash": "v1", "connectors": []map[string]any{sessionGitHub("code", true)},
