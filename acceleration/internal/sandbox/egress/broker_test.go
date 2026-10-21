@@ -339,7 +339,8 @@ func (s *BrokerSuite) TestARunWithEveryGrantWithdrawnEndsTheCredential() {
 // once every grant is withdrawn, so code still reaches them.
 func (s *BrokerSuite) TestTheRecordHoldsTheConfigsAllowedDomains() {
 	broker, err := egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: s.rig.proxy.URL, CACert: s.rig.caCert,
-		Session: "session-1", Tokens: s.tokens, Allowed: []string{"PyPI.org.", "*.PythonHosted.org", ".npmjs.org", "**.x.org", "y.org"}})
+		Session: "session-1", Tokens: s.tokens, Allowed: []string{"PyPI.org.", "*.PythonHosted.org", ".npmjs.org", "**.x.org", "y.org",
+			"*", "*.", "**", "..", "*.*", ""}})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = broker.Close(s.ctx) })
 	mount, err := broker.Prepare(s.ctx, []sandbox.Grant{github})
@@ -357,6 +358,33 @@ func (s *BrokerSuite) TestTheRecordHoldsTheConfigsAllowedDomains() {
 	s.Require().True(found)
 	s.Empty(record.Grants)
 	s.Equal(allowed, record.Allowed)
+}
+
+// TestClosingEndsTheCredentialOfARecordWithAllowedDomains: the allowed domains outlive no
+// Close, so the next CONNECT to one is a 407.
+func (s *BrokerSuite) TestClosingEndsTheCredentialOfARecordWithAllowedDomains() {
+	broker, mount := s.allowing("session-allowed", "pypi.test")
+	credential, _ := mount.Proxy.User.Password()
+	_, found := s.rig.record(s.T(), key(credential))
+	s.Require().True(found)
+
+	s.Require().NoError(broker.Close(s.ctx))
+
+	_, found = s.rig.record(s.T(), key(credential))
+	s.False(found)
+	_, err := sandboxClient(s.T(), mount).Get("https://pypi.test/")
+	s.ErrorContains(err, "Proxy Authentication Required")
+}
+
+// allowing is a broker of session with the allowed domains, and the mount it gave the grant.
+func (s *BrokerSuite) allowing(session string, allowed ...string) (*egress.Broker, sandbox.Mount) {
+	broker, err := egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: s.rig.proxy.URL, CACert: s.rig.caCert,
+		Session: session + "/" + s.rig.run, Tokens: s.tokens, Allowed: allowed})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = broker.Close(s.ctx) })
+	mount, err := broker.Prepare(s.ctx, []sandbox.Grant{github})
+	s.Require().NoError(err)
+	return broker, mount
 }
 
 // TestClosingEndsTheProxyCredential: the next CONNECT is a 407, and a run after Close does
@@ -441,6 +469,19 @@ func (s *BrokerSuite) TestNoGrantWithACredentialGivesNoProxy() {
 	exists, err = s.rig.redis.Do(s.ctx, s.rig.redis.B().Exists().Key(key("")).Build()).AsInt64()
 	s.Require().NoError(err)
 	s.Zero(exists, "a run without a credential stores nothing")
+}
+
+// TestNoGrantWithACredentialGivesNoProxyWhateverIsAllowed: allowed domains alone make no
+// record, and the sandbox is created without a proxy.
+func (s *BrokerSuite) TestNoGrantWithACredentialGivesNoProxyWhateverIsAllowed() {
+	s.fail(sandbox.ErrNoCredential)
+	_, mount := s.allowing("session-allowed", "pypi.test")
+
+	s.Equal(sandbox.Mount{}, mount)
+	for _, key := range s.rig.keys() {
+		record, _ := s.rig.record(s.T(), key)
+		s.NotEqual("session-allowed/"+s.rig.run, record.Session)
+	}
 }
 
 // rig is a real proxy over Redis, whose hosts are one httptest TLS server, and the store the
@@ -561,6 +602,15 @@ func (r *rig) held(t *testing.T, mount sandbox.Mount, ref string) (string, []str
 		return "", nil, false
 	}
 	return strings.TrimPrefix(sent[0], "Bearer "), hosts, true
+}
+
+// keys are every record's key.
+func (r *rig) keys() []string {
+	keys, err := r.redis.Do(context.Background(), r.redis.B().Keys().Pattern("sandbox:egress:*").Build()).AsStrSlice()
+	if err != nil {
+		panic(err)
+	}
+	return keys
 }
 
 // left are the placeholders in every record of this test's sessions.

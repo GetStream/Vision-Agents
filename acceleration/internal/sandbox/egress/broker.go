@@ -101,19 +101,25 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 	}
 	var allowed []string
 	for _, domain := range o.Allowed {
-		allowed = append(allowed, allowedHost(domain))
+		// A domain with no name in it (*, *., ..) takes no host, since *. would take any name
+		// that ends in a dot.
+		if host := allowedHost(domain); host != "" {
+			allowed = append(allowed, host)
+		}
 	}
 	return &Broker{options: o, proxy: proxy, allowed: allowed}, nil
 }
 
 // allowedHost is a config's allowed domain as a Record's host: lower case, without a trailing
-// dot, and a leading *. or . as *., which takes the domain and every name under it.
+// dot, and a leading *. or . as *., which takes the domain and every name under it. A domain
+// with no name left is "".
 func allowedHost(domain string) string {
 	domain = strings.TrimSuffix(strings.ToLower(domain), ".")
-	if name := strings.TrimLeft(domain, "*."); name != domain {
+	name := strings.TrimLeft(domain, "*.")
+	if name != domain && name != "" {
 		return "*." + name
 	}
-	return domain
+	return name
 }
 
 func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.Mount, error) {
