@@ -289,7 +289,10 @@ func (h *Harness) Remember(response llm.Response) {
 	} else {
 		h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.turn == response.ID })
 	}
-	if response.ProviderResponseID == "" {
+	// A truncated response can retain an unfinished tool call at the provider even
+	// though its invalid arguments were discarded locally. Continuing that response
+	// demands a result for a call we could never run. Replay our history instead.
+	if response.Status != llm.StatusCompleted || response.ProviderResponseID == "" {
 		h.stored = stored{}
 		return
 	}
