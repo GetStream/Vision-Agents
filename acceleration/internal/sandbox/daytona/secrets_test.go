@@ -166,6 +166,46 @@ func (s *SecretsSuite) TestAWithdrawDaytonaRefusedOnceDoesNotLoseTheSecretsAlrea
 	s.Empty(s.platform.secretNames())
 }
 
+// TestAnUpdateDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted: a withdrawn grant is gone
+// from the held ones even when a later grant's update is refused, so the next run and Close
+// delete only what is left.
+func (s *SecretsSuite) TestAnUpdateDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted() {
+	slack := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"},
+		Binding: "slack", Env: "SLACK_TOKEN", Hosts: []string{"slack.com"}}
+	revision, withdrawn := 1, false
+	key, url := "key-1", s.platform.server.URL+"/api"
+	broker, err := NewSecrets(SecretsOptions{APIKey: key, APIURL: url, Prefix: "stg", Session: "session-1",
+		Tokens: func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
+			if grant.Binding == "github" && withdrawn {
+				return sandbox.Token{}, sandbox.ErrNoCredential
+			}
+			return sandbox.Token{Value: "gho_value", Revision: revision}, nil
+		},
+		Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	box, err := New(Options{APIKey: key, APIURL: url, Grants: []sandbox.Grant{github, slack}, Broker: broker})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().Len(s.platform.secretNames(), 2)
+
+	withdrawn, revision = true, 2
+	s.platform.mu.Lock()
+	s.platform.refuseUpdate = "slack"
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().Error(err)
+
+	s.platform.mu.Lock()
+	s.platform.refuseUpdate = ""
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.broker.Close(s.ctx))
+	s.Empty(s.platform.secretNames())
+}
+
 // TestARequiredGrantWithoutACredentialCreatesNoSandbox: the run fails before Daytona is asked
 // for a sandbox.
 func (s *SecretsSuite) TestARequiredGrantWithoutACredentialCreatesNoSandbox() {

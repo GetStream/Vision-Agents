@@ -51,6 +51,8 @@ type platform struct {
 	refuseSecret string
 	// refuseDelete answers the deletion of a secret whose name holds it with a 500.
 	refuseDelete string
+	// refuseUpdate answers the update of a secret whose name holds it with a 500.
+	refuseUpdate string
 	createStatus int
 	// test is the test the platform serves, when tests share it.
 	test string
@@ -163,6 +165,9 @@ func (p *platform) secret(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"no such secret"}`))
+		return
+	case r.Method == http.MethodPatch && p.refuseUpdate != "" && strings.Contains(held.Name, p.refuseUpdate):
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	case r.Method == http.MethodPatch:
 		held.Value = *body.Value
