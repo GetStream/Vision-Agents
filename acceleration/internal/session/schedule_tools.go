@@ -111,9 +111,12 @@ func (m *Manager) schedulingRunner(spec Spec, sessionID string, offered []harnes
 	for _, tool := range offered {
 		taken[tool.Name] = true
 	}
+	m.mu.Lock()
+	kick := m.kickScheduler
+	m.mu.Unlock()
 	runner := &scheduleRunner{
 		db: m.options.Store, spec: spec, sessionID: sessionID,
-		now: time.Now, logger: m.logger, owned: map[string]bool{},
+		now: time.Now, logger: m.logger, owned: map[string]bool{}, kick: kick,
 	}
 	var added []harness.Tool
 	for _, tool := range scheduleTools() {
@@ -140,6 +143,9 @@ type scheduleRunner struct {
 	logger    *slog.Logger
 	owned     map[string]bool
 	next      agent.ToolRunner
+	// kick wakes the scheduled-task worker after a task is made or changed;
+	// nil where no worker runs.
+	kick func()
 }
 
 func (r *scheduleRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
@@ -224,6 +230,7 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 		}
 		return nil, err
 	}
+	r.kickScheduled()
 	// A zone the user named for this task is theirs from now on.
 	if args.Timezone != "" {
 		kind := store.UserKindAuthenticated
@@ -407,11 +414,19 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 	if err := r.db.SaveScheduledTask(ctx, &task); err != nil {
 		return nil, err
 	}
+	r.kickScheduled()
 	// Read the schedule back off the task, so what is reported is what now stands.
 	if fresh, err := storedSchedule(&task); err == nil {
 		schedule = fresh
 	}
 	return result(r.taskResult(&task, schedule, now)), nil
+}
+
+// kickScheduled wakes the scheduled-task worker, when this process runs one.
+func (r *scheduleRunner) kickScheduled() {
+	if r.kick != nil {
+		r.kick()
+	}
 }
 
 func (r *scheduleRunner) cancel(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
@@ -530,12 +545,12 @@ func (r *scheduleRunner) snoozeTarget(task store.ScheduledTask, args updateArgs,
 }
 
 // room refuses the change when putting the task back among the active ones
-// would take its user over the limit.
+// would take its user over this agent's limit.
 func (r *scheduleRunner) room(ctx context.Context, task *store.ScheduledTask) ([]llm.ContentPart, error) {
 	if task.State == store.ScheduledTaskActive {
 		return nil, nil
 	}
-	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.spec.Caller.UserID)
+	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.spec.Caller.UserID, task.ConfigID)
 	if err != nil {
 		return nil, err
 	}

@@ -117,3 +117,17 @@ WHERE (table_name, column_name) IN (('users', 'timezone'), ('agent_configs', 'sc
 	('channel_deliveries', 'from_address'), ('channel_identities', 'thread'))`).Scan(&count))
 	return count
 }
+
+// wakeVersion is 20261105130000_scheduled_tasks_wake.sql, the index NextDueScheduledTask reads.
+const wakeVersion int64 = 20261105130000
+
+func (s *ScheduledTasksMigrationSuite) TestTheWakeIndexAppliesComesOffAndAppliesAgain() {
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", wakeVersion))
+	s.Contains(s.indexes(), "scheduled_tasks_wake_idx")
+
+	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", scheduledTasksVersion))
+	s.Equal(scheduledTaskIndexes, s.indexes())
+
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", wakeVersion))
+	s.Contains(s.indexes(), "scheduled_tasks_wake_idx")
+}
