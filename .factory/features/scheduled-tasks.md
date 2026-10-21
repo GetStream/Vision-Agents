@@ -69,7 +69,9 @@ they are REST-only.
   the words are sent — and the peer hand-off answers with where it landed.
 - **Missed occurrences are recorded, not replayed.** A one-shot delivers up to 24h
   late, saying so; a recurrence skips occurrences over an hour old, each with a
-  `missed` run row.
+  `missed` run row. A one-shot resumed after its time came is completed, its
+  occurrence a `missed` run with error `task_paused`; a repeating task's pause
+  skips what it sleeps through, with no row.
 - **A call's outcomes are the ones the router can see.** Nobody answering within the
   ring is no answer, and the next channel is tried (or the occurrence retried); a
   vendor refusing the dial fails the channel at once. The router keeps no vendor

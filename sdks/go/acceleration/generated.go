@@ -6373,7 +6373,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -6383,7 +6383,7 @@ type ScheduledTaskRun struct {
 	SessionId    string     `json:"session_id"`
 	StartedAt    *time.Time `json:"started_at"`
 
-	// State running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+	// State running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
 	State  ScheduledTaskRunState `json:"state"`
 	TaskId string                `json:"task_id"`
 
@@ -6391,7 +6391,7 @@ type ScheduledTaskRun struct {
 	Trigger ScheduledTaskRunTrigger `json:"trigger"`
 }
 
-// ScheduledTaskRunState running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+// ScheduledTaskRunState running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
 type ScheduledTaskRunState string
 
 // ScheduledTaskRunTrigger schedule when it came due, manual when it was run by hand.
@@ -10551,7 +10551,7 @@ type ClientInterface interface {
 
 	// ResumeScheduledTask Resume a scheduled task
 	//
-	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 	//
 	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
 	ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14683,7 +14683,7 @@ func (c *Client) PauseScheduledTask(ctx context.Context, id string, reqEditors .
 
 // ResumeScheduledTask Resume a scheduled task
 //
-// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 //
 // Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
 func (c *Client) ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -30007,7 +30007,7 @@ type ClientWithResponsesInterface interface {
 
 	// ResumeScheduledTaskWithResponse Resume a scheduled task
 	//
-	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -50754,7 +50754,7 @@ func (c *ClientWithResponses) PauseScheduledTaskWithResponse(ctx context.Context
 
 // ResumeScheduledTaskWithResponse Resume a scheduled task
 //
-// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 //
 // Returns a wrapper object for the known response body format(s).
 //
