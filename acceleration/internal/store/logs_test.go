@@ -27,3 +27,14 @@ func TestSafeLogTextCredentials(t *testing.T) {
 		t.Fatal("long messages must be bounded and marked")
 	}
 }
+
+func TestSafeLogDetailsKeepsTheSFUKeys(t *testing.T) {
+	details := safeLogDetails(map[string]any{
+		"sfu_edge": "sfu-a1",
+		"sfu_host": "sfu-a1.example.com",
+		"token":    "secret-value",
+	})
+	if len(details) != 2 || details["sfu_edge"] != "sfu-a1" || details["sfu_host"] != "sfu-a1.example.com" {
+		t.Fatalf("details = %v, want only the two SFU keys", details)
+	}
+}
