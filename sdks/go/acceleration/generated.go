@@ -174,6 +174,21 @@ func (e AgentResponseItemKind) Valid() bool {
 	}
 }
 
+// Defines values for AgentRole.
+const (
+	AgentModerator AgentRole = "agent_moderator"
+)
+
+// Valid indicates whether the value is a known member of the AgentRole enum.
+func (e AgentRole) Valid() bool {
+	switch e {
+	case AgentModerator:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuditAction.
 const (
 	Created AuditAction = "created"
@@ -979,6 +994,7 @@ const (
 	ErrorTypePayloadTooLarge      ErrorType = "payload_too_large"
 	ErrorTypePermission           ErrorType = "permission"
 	ErrorTypeRateLimited          ErrorType = "rate_limited"
+	ErrorTypeTimeout              ErrorType = "timeout"
 	ErrorTypeUnavailable          ErrorType = "unavailable"
 	ErrorTypeUnsupportedMediaType ErrorType = "unsupported_media_type"
 )
@@ -1007,6 +1023,8 @@ func (e ErrorType) Valid() bool {
 	case ErrorTypePermission:
 		return true
 	case ErrorTypeRateLimited:
+		return true
+	case ErrorTypeTimeout:
 		return true
 	case ErrorTypeUnavailable:
 		return true
@@ -2522,6 +2540,9 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	Role *AgentRole `json:"role,omitempty"`
+
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -2589,6 +2610,9 @@ type AgentConfigPatch struct {
 	// Plugins Deprecated: use connectors, a binding to a connector.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	Role *AgentRole `json:"role,omitempty"`
 
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2666,6 +2690,9 @@ type AgentConfigRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	Role *AgentRole `json:"role,omitempty"`
+
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -2721,6 +2748,9 @@ type AgentConnectorBinding struct {
 
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
+
+	// Sandbox Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false.
+	Sandbox *bool `json:"sandbox,omitempty"`
 
 	// TimeoutMs How long one tool call may take, in milliseconds. Omitted, the session's default applies.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
@@ -2843,6 +2873,9 @@ type AgentResponsePage struct {
 	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
+
+// AgentRole What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+type AgentRole string
 
 // AgentStats defines model for AgentStats.
 type AgentStats struct {
@@ -3643,10 +3676,10 @@ type Connection struct {
 	// DefinitionBrokenReason Why the connector marked definition_revision broken. Present only when definition_status is broken.
 	DefinitionBrokenReason *string `json:"definition_broken_reason,omitempty"`
 
-	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
+	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again, or a none connection's empty credentials (PUT .../credentials), moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
 	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
 
-	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
+	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 	DefinitionStatus ConnectionDefinitionStatus `json:"definition_status"`
 
 	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
@@ -3696,7 +3729,7 @@ type ConnectionCredentials struct {
 	Values *map[string]string `json:"values,omitempty"`
 }
 
-// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
+// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 type ConnectionDefinitionStatus string
 
 // ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.
@@ -3927,6 +3960,9 @@ type Connector struct {
 
 	// Revision The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
 	Revision *int64 `json:"revision,omitempty"`
+
+	// Sandbox How code in an agent's sandbox reaches the provider's API with a connection's credential.
+	Sandbox *ConnectorSandbox `json:"sandbox,omitempty"`
 
 	// Schemes How a connection may authenticate, such as oauth2_code.
 	Schemes *[]string `json:"schemes"`
@@ -4204,6 +4240,15 @@ type ConnectorProviderAppRequest struct {
 	Name string `json:"name"`
 }
 
+// ConnectorSandbox How code in an agent's sandbox reaches the provider's API with a connection's credential.
+type ConnectorSandbox struct {
+	// Env The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox's egress puts the connection's credential in its place, only in a request header and only to one of hosts.
+	Env string `json:"env"`
+
+	// Hosts The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it.
+	Hosts []string `json:"hosts"`
+}
+
 // ConnectorSetup What a person does at the provider before the first consent.
 type ConnectorSetup struct {
 	// Steps In order.
@@ -4303,6 +4348,24 @@ type CreateResponseRequest struct {
 
 	// Videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
 	Videos *[]VideoSource `json:"videos,omitempty"`
+}
+
+// CreateRunRequest defines model for CreateRunRequest.
+type CreateRunRequest struct {
+	// ConfigId The agent config to run.
+	ConfigId string `json:"config_id"`
+
+	// Input What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions.
+	Input interface{} `json:"input"`
+
+	// Instructions What the agent is told for this run alone, added to its config's instructions.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Tags Cost labels, carried onto every request the run makes alongside the config's own.
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// TimeoutMs How long the run may take before it is given up as a 504. Two minutes when left out.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 }
 
 // CreateSessionRequest defines model for CreateSessionRequest.
@@ -4714,7 +4777,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -4723,7 +4786,7 @@ type ErrorDetail struct {
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
 
-	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 	Type ErrorType `json:"type"`
 }
 
@@ -4732,7 +4795,7 @@ type ErrorResponse struct {
 	Error ErrorDetail `json:"error"`
 }
 
-// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
@@ -5287,9 +5350,12 @@ type Modality string
 // ModelCallTiming defines model for ModelCallTiming.
 type ModelCallTiming struct {
 	// DurationMs Request to completed response or failed create.
-	DurationMs  *float64 `json:"duration_ms,omitempty"`
-	InputTokens *int64   `json:"input_tokens,omitempty"`
-	Model       string   `json:"model"`
+	DurationMs *float64 `json:"duration_ms,omitempty"`
+
+	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+	ErrorCode   *string `json:"error_code,omitempty"`
+	InputTokens *int64  `json:"input_tokens,omitempty"`
+	Model       string  `json:"model"`
 
 	// OperationId Response ID for this operation; retries can share an ID.
 	OperationId  *string `json:"operation_id,omitempty"`
@@ -6005,6 +6071,21 @@ type RouterConfigRequest struct {
 
 	// Tts How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
 	Tts *TtsOptions `json:"tts,omitempty"`
+}
+
+// Run defines model for Run.
+type Run struct {
+	// FinalText The last thing the agent said.
+	FinalText string `json:"final_text"`
+
+	// ModelRoute The provider/model routing picked to answer.
+	ModelRoute string `json:"model_route"`
+
+	// SessionId The session the run held. It ended with the run, and being incognito, it cannot be read back.
+	SessionId string `json:"session_id"`
+
+	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+	Usage CallUsage `json:"usage"`
 }
 
 // Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -7055,6 +7136,9 @@ type SyncAgentRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// Role What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
+	Role *AgentRole `json:"role,omitempty"`
+
 	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -7905,6 +7989,9 @@ type VerifyChannelHookParams struct {
 type ListAgentConfigsParams struct {
 	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
+
+	// Role Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set.
+	Role *AgentRole `form:"role,omitempty" json:"role,omitempty"`
 }
 
 // ListConnectionsParams defines parameters for ListConnections.
@@ -8387,6 +8474,9 @@ type CreateCustomModelJSONRequestBody = CustomModelRequest
 
 // UpdateCustomModelJSONRequestBody defines body for UpdateCustomModel for application/json ContentType.
 type UpdateCustomModelJSONRequestBody = CustomModelRequest
+
+// CreateRunJSONRequestBody defines body for CreateRun for application/json ContentType.
+type CreateRunJSONRequestBody = CreateRunRequest
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
@@ -9358,7 +9448,7 @@ type ClientInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
-	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9371,7 +9461,7 @@ type ClientInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
-	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9999,6 +10089,30 @@ type ClientInterface interface {
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRunWithBody Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRunWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRun Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRun(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
 	//
@@ -12595,7 +12709,7 @@ func (c *Client) CreateAuthorization(ctx context.Context, id string, body Create
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
-// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12618,7 +12732,7 @@ func (c *Client) PutConnectionCredentialsWithBody(ctx context.Context, id string
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
-// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -13913,6 +14027,50 @@ func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditor
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRunWithBody Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRunRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateRun Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *Client) CreateRun(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRunRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -18231,6 +18389,18 @@ func NewListAgentConfigsRequest(server string, params *ListAgentConfigsParams) (
 
 		}
 
+		if params.Role != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "role", *params.Role, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -21768,6 +21938,46 @@ func NewGetPluginLogoRequest(server string, pluginId string) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateRunRequest calls the generic CreateRun builder with application/json body
+func NewCreateRunRequest(server string, body CreateRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateRunRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateRunRequestWithBody constructs an http.Request for the CreateRun method, with any body, and a specified content type
+func NewCreateRunRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/runs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -27879,7 +28089,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
-	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -27892,7 +28102,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
-	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -28600,6 +28810,30 @@ type ClientWithResponsesInterface interface {
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
+
+	// CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRunWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRunResponse, error)
+
+	// CreateRunWithResponse Run an agent on one input and wait for its answer
+	//
+	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+	// The input is handed to the agent as JSON data, never as instructions.
+	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+	CreateRunWithResponse(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRunResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
@@ -37363,6 +37597,103 @@ func (r GetPluginLogoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPluginLogoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Run
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateRunResponse) GetJSON200() *Run {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateRunResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateRunResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateRunResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateRunResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CreateRunResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateRunResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateRunResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r CreateRunResponse) GetJSON504() *ErrorResponse {
+	return r.JSON504
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -47227,7 +47558,7 @@ func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Contex
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
-// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -47246,7 +47577,7 @@ func (c *ClientWithResponses) PutConnectionCredentialsWithBodyWithResponse(ctx c
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
-// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+// A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -48361,6 +48692,42 @@ func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, plu
 		return nil, err
 	}
 	return ParseGetPluginLogoResponse(rsp)
+}
+
+// CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *ClientWithResponses) CreateRunWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRunResponse, error) {
+	rsp, err := c.CreateRunWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRunResponse(rsp)
+}
+
+// CreateRunWithResponse Run an agent on one input and wait for its answer
+//
+// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
+// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
+// The input is handed to the agent as JSON data, never as instructions.
+// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
+func (c *ClientWithResponses) CreateRunWithResponse(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRunResponse, error) {
+	rsp, err := c.CreateRun(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRunResponse(rsp)
 }
 
 // CreateSessionWithBodyWithResponse Join a call as a voice agent
@@ -56812,6 +57179,88 @@ func ParseGetPluginLogoResponse(rsp *http.Response) (*GetPluginLogoResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateRunResponse parses an HTTP response from a CreateRunWithResponse call
+func ParseCreateRunResponse(rsp *http.Response) (*CreateRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Run
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
 
 	}
 

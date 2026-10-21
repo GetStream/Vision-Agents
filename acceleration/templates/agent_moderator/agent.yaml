@@ -1,0 +1,5 @@
+name: nora
+description: The app's second moderation layer. Judges flagged content against the enabled labels.
+mode: text
+llm: llm-thinking
+role: agent_moderator

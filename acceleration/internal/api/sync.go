@@ -28,6 +28,7 @@ type SyncAgentRequest struct {
 	Knowledge         *[]KnowledgeDocument       `json:"knowledge,omitempty"`
 	KnowledgeUrls     *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty" doc:"The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both."`
 	Simulations       *[]SimulationDeclaration   `json:"simulations,omitempty" doc:"The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone."`
+	Role              *AgentRole                 `json:"role,omitempty"`
 	Mode              *AgentMode                 `json:"mode,omitempty"`
 	Stt               *string                    `json:"stt,omitempty"`
 	Tts               *string                    `json:"tts,omitempty"`
@@ -260,6 +261,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -369,7 +375,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		Action: store.AuditSynced, Changes: synced,
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 
@@ -488,6 +494,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Video != nil {
 		config.VideoSource = override(config.VideoSource, body.Video.Source)
 		config.VideoMaxFrames = override(config.VideoMaxFrames, body.Video.MaxFrames)
+	}
+	if body.Role != nil {
+		config.Role = string(*body.Role)
 	}
 	if body.Mode != nil && *body.Mode != "" {
 		mode, _ := modeOf(body.Mode)

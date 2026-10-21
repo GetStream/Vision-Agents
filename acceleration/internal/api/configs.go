@@ -61,6 +61,18 @@ func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigs
 		return &listAgentConfigsResponse{Body: []AgentConfig{agentConfigOf(found)}}, nil
 	}
 
+	// A role is held by one live config at most, so it answers as a name does.
+	if role := request.Role.ptr(); role != nil {
+		found, exists, err := s.store.AgentConfigByRole(ctx, customerID, string(*role))
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return &listAgentConfigsResponse{Body: []AgentConfig{}}, nil
+		}
+		return &listAgentConfigsResponse{Body: []AgentConfig{agentConfigOf(found)}}, nil
+	}
+
 	stored, err := s.store.CustomerAgentConfigs(ctx, customerID)
 	if err != nil {
 		return nil, err
@@ -118,6 +130,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -130,7 +147,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -208,6 +225,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.EpisodeCards == nil {
 		config.EpisodeCards = existing.EpisodeCards
 	}
+	// Kept for the same reason: a client that does not know the role must not take it away
+	// from the agent the chat worker looks for by it.
+	if request.Body.Role == nil {
+		config.Role = existing.Role
+	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
@@ -222,6 +244,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -234,7 +261,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -431,6 +458,14 @@ var (
 	}
 )
 
+// errAgentRoleTaken is a save that would give a second live agent config of the customer a
+// role another one holds. The one there is, agent_moderator, is what the chat worker finds the
+// app's moderator by, so two would leave it guessing.
+var errAgentRoleTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeRoleTaken,
+	Message: "another agent already has this role",
+}
+
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
 // channel connection, such as a Slack bot's, as fixed: one agent answers each message that
 // comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
@@ -466,6 +501,8 @@ func storeFailure(err error, taken APIError) error {
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		return taken
+	case errors.Is(err, store.ErrRoleTaken):
+		return errAgentRoleTaken
 	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
 		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
 		errors.Is(err, store.ErrNoConnectorConnection), errors.Is(err, store.ErrNoConnectorDefinition):
@@ -677,6 +714,39 @@ func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string
 	return "", true
 }
 
+// sandboxBindingsComplaint refuses a binding with sandbox set that the config cannot honour:
+// the config runs no sandbox, the connector's latest manifest has no sandbox block, or another
+// sandbox binding's connector names the same env var, which one sandbox holds once. It reads
+// the config as it is about to be stored, so a binding kept from before is checked against a
+// sandbox the save takes away. A config with no sandbox binding asks the store nothing.
+func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+	envs := map[string]string{}
+	for _, binding := range config.Connectors {
+		if !binding.Sandbox {
+			continue
+		}
+		if config.Sandbox == "" {
+			return fmt.Sprintf("connector binding %q sets sandbox, and the config has no sandbox for code to "+
+				"run in: set sandbox, such as %s", binding.Name, Daytona), false, nil
+		}
+		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
+		if err != nil {
+			return "", false, err
+		}
+		rule := definition.Manifest.Sandbox
+		if rule == nil {
+			return fmt.Sprintf("connector binding %q sets sandbox, and connector %q offers no access from a "+
+				"sandbox", binding.Name, binding.ConnectorID), false, nil
+		}
+		if other, taken := envs[rule.Env]; taken {
+			return fmt.Sprintf("connector bindings %q and %q both set sandbox and would both give the sandbox "+
+				"%s: set it on one", other, binding.Name, rule.Env), false, nil
+		}
+		envs[rule.Env] = binding.Name
+	}
+	return "", true, nil
+}
+
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
 // config is. A plugin's tools are offered as <plugin>__<tool> (plugins.Prefix,
 // internal/plugins/mcp.go), a user plugin's as <plugin>__ and a suffix
@@ -738,6 +808,7 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 			TimeoutMs:    value(binding.TimeoutMs),
 			Events:       bindingEventsOf(binding.Events),
 			Policy:       bindingPolicyOf(binding.Policy),
+			Sandbox:      binding.Sandbox,
 		})
 	}
 	return stored
@@ -799,6 +870,7 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 			Tools:        tools,
 			ToolPatterns: copyPatterns(binding.ToolPatterns),
 			Required:     &required,
+			Sandbox:      binding.Sandbox,
 		}
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
@@ -1034,11 +1106,11 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 // many plugin entries no binding replaces: a migrated config keeps its entries beside the
 // bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
 // an unbound entry is real use.
-func (s *Server) warnPluginsSaved(config store.AgentConfig) {
+func (s *Server) warnPluginsSaved(ctx context.Context, config store.AgentConfig) {
 	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
 		return
 	}
-	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
+	plugins.ReportUse(ctx, s.logger, plugins.PathConfigSave,
 		"customer", config.CustomerID, "config", config.ID,
 		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
 		"plugin_events", len(config.PluginEvents))
@@ -1472,6 +1544,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
+		Role:               string(value(request.Role)),
 		Mode:               mode,
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
@@ -1563,6 +1636,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		Mode:      AgentMode(config.Mode),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
+	}
+	if config.Role != "" {
+		role := AgentRole(config.Role)
+		rendered.Role = &role
 	}
 	rendered.Stt = optional(config.STT)
 	rendered.Tts = optional(config.TTS)
@@ -1807,7 +1884,8 @@ func (s *Server) registerConfigs(api huma.API) {
 }
 
 type listAgentConfigsRequest struct {
-	Name optionalParam[string] `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+	Name optionalParam[string]    `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+	Role optionalParam[AgentRole] `query:"role" doc:"Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set."`
 }
 
 type listAgentConfigsResponse struct {
@@ -1856,6 +1934,7 @@ type AgentConfigRequest struct {
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
@@ -1891,6 +1970,7 @@ type AgentConfig struct {
 	Llm                *string                  `json:"llm,omitempty"`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
+	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
@@ -1955,6 +2035,7 @@ type AgentConnectorBinding struct {
 	TimeoutMs    *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
 	Events       *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
 	Policy       *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+	Sandbox      bool                     `json:"sandbox,omitempty" doc:"Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false."`
 }
 
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.

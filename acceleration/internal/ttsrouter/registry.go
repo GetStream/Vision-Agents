@@ -97,6 +97,11 @@ func DefaultRegistry() *Registry {
 	})
 
 	registry.Register(inworld.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		// Its models declare format for their recordings, and a live voice streams raw
+		// audio into the call, so a format here would be dropped in silence.
+		if spec.TTS.Format != "" {
+			return nil, routing.Refused(stack.Wrap(errors.New("a format is taken only when recording, not by a live voice")))
+		}
 		settings := inworldSettings{}
 		if err := spec.Settings(&settings); err != nil {
 			return nil, err

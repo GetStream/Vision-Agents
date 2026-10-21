@@ -40,9 +40,6 @@ const (
 	// loudest and 127 is silence.
 	audioLevelSilent   = 127
 	audioLevelSpeaking = 20
-	// audibleSample is the level a sample has to reach, in either direction, for the piece
-	// holding it to count as speech: about -48 dBFS, above what a voice leaves in its pauses.
-	audibleSample = 128
 	// dtxFrameBytes is the most an Opus DTX frame takes: the encoder's way of saying there is
 	// nothing to hear, which is not sent.
 	dtxFrameBytes = 2
@@ -83,6 +80,10 @@ type speaker struct {
 	// head counts the frames that have left the queue, taken by the track or dropped, so a
 	// frame keeps its number, head plus its place in the queue, as the ones ahead of it go.
 	head uint64
+	// dropped counts the frames that left the queue thrown away rather than taken, and peak is
+	// the deepest the queue has been since the stats were last read.
+	dropped uint64
+	peak    int
 	// armed are the replies waiting for the track to take the first frame of theirs that is
 	// not silence, oldest first.
 	armed []armedMark
@@ -198,7 +199,7 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 	if err != nil {
 		return time.Time{}, err
 	}
-	s.frames = append(s.frames, packets...)
+	s.enqueue(packets)
 	s.unflushed = true
 	if lead >= 0 {
 		s.armed = append(s.armed, armedMark{marks: marks, seq: seq})
@@ -207,6 +208,12 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 		return time.Time{}, nil
 	}
 	return s.now(), nil
+}
+
+// enqueue puts frames at the back of the queue. The caller must hold the lock.
+func (s *speaker) enqueue(packets [][]byte) {
+	s.frames = append(s.frames, packets...)
+	s.peak = max(s.peak, len(s.frames))
 }
 
 func (s *speaker) encode(samples []int16, sampleRate int) ([][]byte, error) {
@@ -258,10 +265,8 @@ func (s *speaker) waitForRoom() {
 func firstAudible(pcm audio.PcmData) int {
 	piece := max(pcm.SampleRate/int(time.Second/opusFrameDuration), 1)
 	for start := 0; start < len(pcm.Samples); start += piece {
-		for _, sample := range pcm.Samples[start:min(start+piece, len(pcm.Samples))] {
-			if sample >= audibleSample || sample <= -audibleSample {
-				return start
-			}
+		if audio.Audible(pcm.Samples[start:min(start+piece, len(pcm.Samples))]) {
+			return start
 		}
 	}
 	return -1
@@ -354,7 +359,7 @@ func (s *speaker) flush() {
 		s.logger.Debug("could not flush the end of an utterance", "error", err)
 		return
 	}
-	s.frames = append(s.frames, packets...)
+	s.enqueue(packets)
 }
 
 // drop throws away speech that has been published but not heard yet, so barge-in stops the
@@ -379,6 +384,7 @@ func (s *speaker) drop() {
 // forgetFramesLocked throws away the queue and the reports owed for what was in it. The
 // caller holds the lock.
 func (s *speaker) forgetFramesLocked() {
+	s.dropped += uint64(len(s.frames))
 	s.head += uint64(len(s.frames))
 	s.frames = nil
 	clear(s.armed)
@@ -401,6 +407,22 @@ func (s *speaker) pending() bool {
 		return false
 	}
 	return len(s.frames) > 0 || s.unflushed
+}
+
+// stats counts what the queue has done since the speaker was made. Reading it starts the next
+// peak from what is queued now.
+func (s *speaker) stats() agent.PlayoutStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stats := agent.PlayoutStats{
+		Queued:  s.head + uint64(len(s.frames)),
+		Sent:    s.head - s.dropped,
+		Dropped: s.dropped,
+		Waiting: time.Duration(len(s.frames)) * opusFrameDuration,
+		Peak:    time.Duration(s.peak) * opusFrameDuration,
+	}
+	s.peak = len(s.frames)
+	return stats
 }
 
 // CurrentAudioLevel is what the SDK puts in the audio-level RTP header extension, which is

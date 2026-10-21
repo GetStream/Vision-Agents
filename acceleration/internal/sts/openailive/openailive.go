@@ -8,8 +8,9 @@
 // the same time and decides for itself when to do which.
 //
 // A reply is therefore whatever the model says between two silences, assigned an ID here: one
-// opens with the first audio after a quiet spell and settles once the audio has stopped for
-// ReplyGap. The caller is taken to have stopped at the last piece of transcript before the
+// opens with the first words or audible audio after a quiet spell and settles once neither
+// has come for ReplyGap. The audio itself never stops: between replies it is digital
+// silence. The caller is taken to have stopped at the last piece of transcript before the
 // model began, since the API has no word for it. Only Interrupt settles a reply as cut off:
 // the caller's transcript arrives asynchronously and is no evidence of when they spoke.
 //
@@ -67,7 +68,7 @@ const DefaultURL = "wss://api.openai.com/v1/live/sessions"
 // the caller's audio is resampled up to it rather than the model's down.
 const SampleRate = 24_000
 
-// DefaultReplyGap is how long the model's audio has to stop before its reply is settled.
+// DefaultReplyGap is how long the model's audio has to fall silent before its reply is settled.
 const DefaultReplyGap = 800 * time.Millisecond
 
 // silenceFrame is how much silence goes up at a time while the caller is quiet, which is the
@@ -129,7 +130,7 @@ type Options struct {
 	Tools []llm.Tool
 	// Backend is the Responses model delegated work goes to. Empty is DefaultBackend.
 	Backend string
-	// ReplyGap is how long the model's audio has to stop before its reply is settled.
+	// ReplyGap is how long the model's audio has to fall silent before its reply is settled.
 	ReplyGap time.Duration
 	// HandshakeTimeout bounds the connect and the session.start exchange.
 	HandshakeTimeout time.Duration
@@ -747,8 +748,13 @@ func (s *STS) handleMessage(event serverEvent) {
 			s.heard(event.Delta)
 		}
 	case eventOutputTranscript:
-		if event.Delta != "" {
-			turn := s.currentTurn()
+		// The rest of a reply the caller cut off is dropped, as in spoke, before it can
+		// end the caller's turn or open a reply.
+		s.mu.Lock()
+		muted := s.muted
+		s.mu.Unlock()
+		if event.Delta != "" && !muted {
+			turn := s.replying()
 			s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: event.Delta})
 		}
 	case eventResponseEvent:
@@ -852,10 +858,27 @@ func (s *STS) finishHearing() {
 }
 
 // spoke forwards a piece of the model's speech, opening a reply if none is in flight.
+//
+// The model streams audio for the whole session, digital silence between replies included,
+// and no event marks where a reply starts or ends: "GPT-Live's primary WebSocket sends output
+// audio without timing fields or an output-audio-done event"
+// (https://developers.openai.com/api/docs/guides/voice-websockets). So only a piece with
+// something to hear opens a reply, keeps one going or stands in for the clock. A silent
+// piece inside a reply is a pause between its words and goes out with it.
 func (s *STS) spoke(raw []byte) {
+	pcm := audio.FromBytes(raw, SampleRate, 1)
+	if !audio.Audible(pcm.Samples) {
+		s.mu.Lock()
+		turn := s.turn
+		s.mu.Unlock()
+		if turn != nil && turn.SentMs() > 0 {
+			s.emitter.Send(turn.Chunk(pcm))
+		}
+		return
+	}
+
 	s.dropTheClock()
 	s.mu.Lock()
-	opening := s.turn == nil
 	muted := s.muted
 	s.mu.Unlock()
 
@@ -865,11 +888,21 @@ func (s *STS) spoke(raw []byte) {
 		s.keepAlive(nil)
 		return
 	}
+	turn := s.replying()
+	s.emitter.Send(turn.Chunk(pcm))
+}
+
+// replying is the reply in flight. Whichever of its words or its audio comes first opens
+// it, and opening it settles the caller's turn first: a reply opened while the caller is
+// still heard would begin before their wait did and be timed from the turn before.
+func (s *STS) replying() *sts.Turn {
+	s.mu.Lock()
+	opening := s.turn == nil
+	s.mu.Unlock()
 	if opening {
 		s.finishHearing()
 	}
-	turn := s.currentTurn()
-	s.emitter.Send(turn.Chunk(audio.FromBytes(raw, SampleRate, 1)))
+	return s.currentTurn()
 }
 
 // currentTurn is the reply in flight, opened now if the model has begun one, which is how

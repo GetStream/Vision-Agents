@@ -262,6 +262,11 @@ type Request struct {
 	// fail, so they are tried only after everything else. A voice lost part way through a
 	// call reopens with the one it lost named here, rather than with it again.
 	Failed []string
+	// Exclude names the candidates, as "provider/model", that must not serve at all. A
+	// transcription the vendor refused part way through reopens with every model that
+	// refused it named here: health would only sort them last, and is written after the
+	// reopen has already read it.
+	Exclude []string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
 	// Tools are what a modality that converses may call. They are here rather than in an
@@ -409,53 +414,87 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 // around them. A request error (ErrRequest) is not recorded, and when nothing serves it is
 // what the caller is told. The caller owns the returned provider and must Close it.
 func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderConfig, error) {
-	var zero P
+	var chosen P
+	config, err := r.Walk(ctx, request, func(provider P, _ ProviderConfig) error {
+		chosen = provider
+		return nil
+	})
+	if err != nil {
+		var zero P
+		return zero, ProviderConfig{}, err
+	}
+	return chosen, config, nil
+}
 
+// Walk is Select for a caller that learns whether a candidate served only once it has used
+// it, as a recording does when the vendor answers. Each candidate Select would start is
+// handed to use, started, in Select's order, from one resolution of the request: the
+// filters, the ranking and the overwrite rule are Select's, applied once. use owns the
+// provider and closes it. The walk stops at the first use that returns nil, and returns
+// that candidate's config.
+//
+// An error use returns is classed as a start error is: ErrRequest moves on without
+// touching the model's health, anything else is a failure use has already counted. Once
+// use has failed, a context that has ended asks no further candidate. When use's error is
+// the only one the walk met, it is returned as is, with that candidate's config, as a
+// caller of Select that used the provider itself would have reported it. Otherwise every
+// candidate's error is joined in the order met; a refusal among them keeps ErrRequest, as
+// in Select.
+func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, ProviderConfig) error) (ProviderConfig, error) {
 	if request.CustomerID == "" {
-		return zero, ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
+		return ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
 	}
 	if err := request.Tags.Validate(); err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 
 	admission, err := r.Admit(ctx, request.CustomerID)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 	// Every row is recorded under the merged tags, so they have to fit what a row carries.
 	if err := admission.Labelled(request.Tags).Validate(); err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
 
 	candidates, err := r.Candidates(ctx, request)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 	candidates, err = allowed(candidates, admission.Models)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 	candidates, err = serving(candidates, request.Terms, request.Target)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 	candidates, err = permitted(candidates, request.DataPolicy)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 	candidates, err = seeing(candidates, request.InputModalities)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
+	candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+		return slices.Contains(request.Exclude, candidate.Config.Name())
+	})
 	untried(candidates, request.Failed)
 	candidates = r.vouched(ctx, request, candidates)
 	candidates, err = r.voiced(request, candidates)
 	if err != nil {
-		return zero, ProviderConfig{}, err
+		return ProviderConfig{}, err
 	}
 
 	var failures, refusals []error
+	// met is the error of every candidate asked, in the order met, and used the last candidate whose
+	// use failed, with usedErr its error. They matter only once use has failed, which
+	// Select's never does.
+	var met []error
+	var used ProviderConfig
+	var usedErr error
 	// overwritten is the vendor whose candidate refused its overwrite block. An overwrite
 	// is one vendor's: the same vendor's other models may read it (OpenAI's realtime and
 	// Live models read different structs out of one block), but another vendor is handed
@@ -466,15 +505,24 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		if overwritten != "" && candidate.Config.Provider != overwritten {
 			continue
 		}
+		// A caller who has gone, or a deadline that has passed, is not served by the next.
+		if usedErr != nil && ctx.Err() != nil {
+			break
+		}
 		if !r.registry.Has(candidate.Config.Provider) {
 			failures = append(failures, fmt.Errorf("%s: no factory registered", candidate.Config.Name()))
 			continue
 		}
 
 		provider, err := r.startCandidate(ctx, request, candidate)
-		if err == nil {
-			return provider, candidate.Config, nil
+		started := err == nil
+		if started {
+			if err = use(provider, candidate.Config); err == nil {
+				return candidate.Config, nil
+			}
+			used, usedErr = candidate.Config, err
 		}
+		met = append(met, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 		if errors.Is(err, ErrRequest) {
 			// One vendor's models refuse the same voice in the same words, and saying it
 			// once per model would bury it.
@@ -489,17 +537,25 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 			continue
 		}
 
-		r.logger.Warn("provider failed to start, trying the next candidate",
-			"modality", r.modality, "target", request.Target, "provider", candidate.Config.Name(), "error", err)
+		if !started {
+			r.logger.Warn("provider failed to start, trying the next candidate",
+				"modality", r.modality, "target", request.Target, "provider", candidate.Config.Name(), "error", err)
+		}
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 	}
 
+	if usedErr != nil {
+		if len(met) == 1 {
+			return used, usedErr
+		}
+		return ProviderConfig{}, stack.Wrap(errors.Join(met...))
+	}
 	// What the caller asked for is what they can fix, so a refusal is the answer even when
 	// another candidate also failed on its own account.
 	if len(refusals) > 0 {
-		return zero, ProviderConfig{}, stack.Wrap(errors.Join(refusals...))
+		return ProviderConfig{}, stack.Wrap(errors.Join(refusals...))
 	}
-	return zero, ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
+	return ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
 		request.Target, errors.Join(failures...)))
 }
 

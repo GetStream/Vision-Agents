@@ -1059,6 +1059,10 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # A recording's file format, which /tts/v1/voice takes as audioConfig. The live voice
+      # refuses one: it streams raw audio into the call. Speed is not declared, so a
+      # request asking for one is refused rather than spoken without it.
+      supports: [format]
       # Zero Data Retention does cover the text in and the audio out, but it is arranged
       # per workspace with their engineering team rather than sent with a request. On
       # training their published terms only bind us - the acceptable use policy forbids
@@ -1127,6 +1131,10 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      # A recording's file format, which /tts/v1/voice takes as audioConfig. The live voice
+      # refuses one: it streams raw audio into the call. Speed is not declared, so a
+      # request asking for one is refused rather than spoken without it.
+      supports: [format]
       # Zero Data Retention does cover the text in and the audio out, but it is arranged
       # per workspace with their engineering team rather than sent with a request. On
       # training their published terms only bind us - the acceptable use policy forbids
@@ -1865,6 +1873,81 @@ tts:
       price:
         per_million_chars: 50.0
 
+    # TTS-2 on /tts/v1/voice, which returns the whole file: the recording path, as sonic-3.6
+    # is for Cartesia, because a priority list asked for a recording only passes models with
+    # realtime: false. The endpoint takes the live ids, inworld-tts-2 and inworld-tts-2-flash
+    # (https://docs.inworld.ai/docs/tts/tts-models, read 2026-10-19), and a model is declared
+    # once, so this entry is inworld-tts-2 with -batch, which the recorder drops before it
+    # sends the id. Everything else is copied from the inworld-tts-2 entry above: same
+    # languages, benchmark, terms and price.
+    - provider: inworld
+      model: inworld-tts-2-batch
+      description: "Inworld TTS-2 as a whole file, for recordings rather than live calls."
+      benchmark: { elo: 1246, characters_per_second: 85 }
+      languages:
+        [
+          ar,
+          bg,
+          bn,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fr,
+          gu,
+          he,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ka,
+          kn,
+          ko,
+          ml,
+          mr,
+          ms,
+          nl,
+          no,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          te,
+          th,
+          tl,
+          tr,
+          uk,
+          ur,
+          vi,
+          zh,
+        ]
+      realtime: false
+      tier: high-quality
+      # A recording's file format, which /tts/v1/voice takes as audioConfig. The live voice
+      # refuses one: it streams raw audio into the call. Speed is not declared, so a
+      # request asking for one is refused rather than spoken without it.
+      supports: [format]
+      # Zero Data Retention does cover the text in and the audio out, but it is arranged
+      # per workspace with their engineering team rather than sent with a request. On
+      # training their published terms only bind us - the acceptable use policy forbids
+      # training on their output - and say nothing about what they do with our text, so
+      # unknown is the honest half.
+      data_policy:
+        trains_on_data: unknown
+        retention: unspecified
+      price:
+        per_million_chars: 25.0
+
     # v3 on the plain synthesis endpoint, which returns the whole file rather than
     # streaming it. That is the recording path: an audiobook is not a conversation, so
     # nothing is gained by getting the first sound out early, and asking for the file is
@@ -1977,7 +2060,7 @@ tts:
       prefer: elevenlabs/eleven_v4_turbo
 
     # eleven_v3 is pinned so these shortcuts keep recording where they did before Cartesia
-    # had a batch entry; health orders Cartesia behind it.
+    # had a batch entry; health orders Cartesia and Inworld behind it.
     en-recorded:
       languages: [en]
       require_recorded: true

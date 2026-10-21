@@ -85,6 +85,10 @@ const turnField = "turn_id"
 // talked over rather than leaving out a reply the caller heard the start of.
 const interruptedTextField = "interrupted_text"
 
+// aiGeneratedField is how Stream's AI components tell the assistant's replies from the rest,
+// the same field a conversation in writing sets. It goes on the agent's lines only.
+const aiGeneratedField = "ai_generated"
+
 // interruptedField marks a reply the caller cut off. Clients must not present it as a
 // finished spoken utterance.
 const interruptedField = "interrupted"
@@ -578,7 +582,7 @@ func (w *writer) storeArtifacts(queued message) {
 	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(w.log.channel+"\x00"+queued.turnID+"\x00"+queued.receiptID)))
 	_, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel, &getstream.SendMessageRequest{
 		Message: getstream.MessageRequest{ID: &id, UserID: &queued.author.ID, Attachments: conversation.ChatAttachments(queued.artifacts),
-			Custom: map[string]any{generatingField: false, SourceField: SourceAgent}},
+			Custom: map[string]any{generatingField: false, SourceField: SourceAgent, aiGeneratedField: true}},
 	})
 	if err != nil {
 		w.log.logger.Error("could not store a saved artifact card", "turn", queued.turnID, "error", err)
@@ -910,6 +914,9 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 
 	custom := map[string]any{
 		generatingField: generating, interruptedField: interrupted, SourceField: source,
+	}
+	if source == SourceAgent {
+		custom[aiGeneratedField] = true
 	}
 	if named.turn != "" {
 		custom[turnField] = named.turn

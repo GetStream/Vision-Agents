@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -705,6 +706,9 @@ type AgentSuite struct {
 	model       *stubLLM
 	flow        *stubLLM
 	ears        *stubSTT
+	// backup, if set, is a second transcription model, after ears, that takes over a
+	// session ears refuses.
+	backup *stubSTT
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
@@ -765,6 +769,10 @@ type AgentSuite struct {
 	agentID string
 	// voiceAsked is what the voice was opened with.
 	voiceAsked routing.Spec
+	// logs is where the agent's log lines are written, when a test reads them.
+	logs *logLines
+	// callID is the call the agent serves, empty unless a test names one.
+	callID string
 
 	agent  *Agent
 	events *collector
@@ -776,6 +784,7 @@ func TestAgentSuite(t *testing.T) {
 
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.callID = ""
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil
@@ -797,6 +806,8 @@ func (s *AgentSuite) SetupTest() {
 	s.unified = false
 	s.performing = ""
 	s.voiceName = ""
+	s.logs = nil
+	s.backup = nil
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -914,6 +925,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	s.flow.reply = []string{`{"disposition":"respond","floor":"stop"}`}
 
 	logger := slog.New(slog.DiscardHandler)
+	if s.logs != nil {
+		logger = slog.New(slog.NewJSONHandler(s.logs, nil))
+	}
 
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
@@ -923,8 +937,15 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		}
 		return s.ears, nil
 	})
+	transcribing := stubConfig()
+	if s.backup != nil {
+		transcribing.Providers = append(transcribing.Providers, routing.ProviderConfig{
+			Provider: "backup", Model: "backup-model", Languages: []string{"en"}, Realtime: true,
+		})
+		transcription.Register("backup", func(routing.Spec) (stt.STT, error) { return s.backup, nil })
+	}
 	transcriber, err := sttrouter.New(sttrouter.Options{
-		Config: stubConfig(), Registry: transcription, Logger: logger,
+		Config: transcribing, Registry: transcription, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
@@ -993,6 +1014,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		AgentID:            s.agentID,
 		AppID:              "router",
 		SessionID:          "session-1",
+		CallID:             s.callID,
 		Incognito:          s.incognito,
 		Store:              s.records,
 		Live:               s.live,
@@ -1213,6 +1235,28 @@ func (s *AgentSuite) TestSomebodyArrivingIsReportedBeforeTheySpeak() {
 	arrived, _ := firstOf[ParticipantJoined](s.reported())
 	s.Equal("sip-+15550001111", arrived.Participant.UserID)
 	s.False(arrived.At.IsZero())
+}
+
+func (s *AgentSuite) TestThoseAlreadyInTheCallAreReportedBeforeJoined() {
+	// Joined is what a session takes to mean everyone already there has been reported, so
+	// a call that looks empty at that point is empty.
+	s.edgeFactory = func(edge *loopbackEdge) Edge {
+		edge.attending <- Attendance{Participant: stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}, Joined: true}
+		return edge
+	}
+	s.join(true)
+
+	s.eventually(func() bool { return countOf[Joined](s.reported()) == 1 }, "the agent never joined")
+	var order []string
+	for _, event := range s.reported() {
+		switch event.(type) {
+		case ParticipantJoined:
+			order = append(order, "participant")
+		case Joined:
+			order = append(order, "joined")
+		}
+	}
+	s.Equal([]string{"participant", "joined"}, order)
 }
 
 func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {
@@ -2565,6 +2609,39 @@ func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
 		s.speak(participant)
 		return s.opened.Load() == 2
 	}, "the dead transcriber was kept, so nothing this participant says is heard again")
+}
+
+func (s *AgentSuite) TestATranscriberTheVendorRefusesIsTakenOverByTheNextModel() {
+	s.backup = newStubSTT()
+	s.logs = &logLines{}
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "nobody started listening")
+	finals := testutil.ToFloat64(sttFinals.WithLabelValues("backup"))
+
+	// What ElevenLabs sends an account that has not accepted its terms (probed 2026-10-19).
+	s.ears.emitter.Send(stt.Error{
+		Provider: "stub", Model: "stub-model", Context: "unaccepted_terms", Fatal: true,
+		Err: errors.New("You have not accepted the terms required to use this feature."),
+	})
+	s.eventually(func() bool {
+		return len(s.logs.records("the transcriber refused the session, the next model took it over")) == 1
+	}, "the agent said nothing of the next model taking over")
+	s.backup.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Text: "book a table"})
+
+	s.eventually(func() bool {
+		return testutil.ToFloat64(sttFinals.WithLabelValues("backup")) == finals+1
+	}, "the next model's words were not heard")
+	line := s.logs.records("the transcriber refused the session, the next model took it over")[0]
+	s.Equal("stub/stub-model", line["from"])
+	s.Equal("backup", line["provider"])
+	s.EqualValues(1, s.opened.Load(), "the session was dropped and reopened rather than carried on")
+	for _, event := range s.events.seen() {
+		if failure, ok := event.(Error); ok {
+			s.NotEqual("stt", failure.Context, "a refusal the next model took over reached the caller")
+		}
+	}
 }
 
 func (s *AgentSuite) TestAnAgentPinnedToABatchTranscriberIsRefusedOnceWhenItJoins() {
@@ -4103,6 +4180,82 @@ func (s *AgentSuite) TestWhatIsSaidAsItIsIsReportedAsSaidNotAsAnAnswer() {
 		_, answered := event.(Responded)
 		s.False(answered, "a scripted line is not an answer")
 	}
+}
+
+func (s *AgentSuite) TestASaidLineIsReportedBeforeItsVoiceFinishes() {
+	// The transcript stores a turn's text when its voice finishes, so the text has to have
+	// arrived by then or a greeting never reaches the transcript or the responses.
+	s.join(true)
+
+	s.Require().NoError(s.agent.Say(s.ctx, "welcome"))
+
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the greeting was never spoken")
+	reported := s.reported()
+	said, _ := firstOf[Said](reported)
+	spoke, _ := firstOf[Spoke](reported)
+	s.Equal(spoke.TurnID, said.TurnID, "the line opens a turn of its own")
+	s.Equal("welcome", said.Text)
+	s.Less(slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Said); return ok }),
+		slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Spoke); return ok }),
+		"the text arrives before the voice finishes")
+}
+
+func (s *AgentSuite) TestTheModelIsToldTheLineTheCallOpenedWith() {
+	// The caller's first words answer the greeting's question, which the model has to know.
+	// It is told rather than handed a conversation opening on the assistant, which chat
+	// templates that need a user turn first refuse.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Where does it hurt?"))
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the question was never spoken")
+	s.speak(participant)
+	s.says(participant, "my lower back")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the answer was never asked about")
+	request := s.model.requests()[0]
+	s.Contains(request.Instructions, `You opened the call by saying: "Where does it hurt?"`)
+	s.Require().Len(request.Input, 1)
+	s.Equal(llm.User, request.Input[0].Role)
+	s.Equal("my lower back", request.Input[0].Content)
+}
+
+func (s *AgentSuite) TestALineSaidPartWayThroughIsInTheConversation() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Is there anything else?"))
+	s.says(participant, "no thanks")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn was never asked")
+	input := s.model.requests()[1].Input
+	s.Require().Len(input, 4)
+	s.Equal(llm.Message{Role: llm.Assistant, Content: "Is there anything else?"}, input[2])
+	s.Equal("no thanks", input[3].Content)
+	s.NotContains(s.model.requests()[1].Instructions, "You opened the call by saying")
+}
+
+func (s *AgentSuite) TestALineTheVoiceCouldNotSayIsNotToldToTheModel() {
+	s.join(true)
+	s.voice.mu.Lock()
+	s.voice.unavailable = true
+	s.voice.mu.Unlock()
+
+	s.Require().Error(s.agent.Say(s.ctx, "Where does it hurt?"))
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the transcript was never told the line went unheard")
+	said, _ := firstOf[Said](s.reported())
+	interrupted, _ := firstOf[Interrupted](s.reported())
+	s.Equal(said.TurnID, interrupted.TurnID)
+	s.agent.mu.Lock()
+	instructions := s.agent.instructions()
+	s.agent.mu.Unlock()
+	s.NotContains(instructions, "Where does it hurt?")
+	s.Empty(s.agent.History())
 }
 
 func (s *AgentSuite) TestAnExactGreetingIsSaidWordForWord() {

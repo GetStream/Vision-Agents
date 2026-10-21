@@ -1058,11 +1058,14 @@ const monologueSpan = 2 * time.Minute
 func (c *converse) monologue(ready candidate) bool {
 	c.mu.Lock()
 	id := ready.Participant.ID
-	if announcesMonologue.MatchString(ready.Text) {
+	// Only this turn's words: an announcement already answered would otherwise be made
+	// again on every turn of a run the transcriber kept open.
+	said := ready.Said()
+	if announcesMonologue.MatchString(said) {
 		c.announced[id] = time.Now()
 	}
 	since, held := c.announced[id]
-	if held && (time.Since(since) > monologueSpan || endsMonologue.MatchString(ready.Text)) {
+	if held && (time.Since(since) > monologueSpan || endsMonologue.MatchString(said)) {
 		delete(c.announced, id)
 		held = false
 	}

@@ -3,6 +3,7 @@ package gemini
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -122,6 +123,43 @@ func (s *GeminiSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() {
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
 }
 
+// The words of a reply can come before its audio. They still find the caller's turn
+// settled first, so each reply's wait starts at its own caller's last word.
+func (s *GeminiSuite) TestAReplyWhoseWordsComeFirstStillFollowsTheCallerStopping() {
+	provider := s.newProvider()
+	provider.participant = sts.Participant{ID: "alice"}
+
+	for _, words := range []string{"my favorite color is blue", "and green"} {
+		provider.handleMessage(heard(words))
+		time.Sleep(20 * time.Millisecond)
+		provider.handleMessage(serverMessage{ServerContent: &serverContent{OutputTranscription: &transcription{Text: "Nice."}}})
+		provider.handleMessage(spoke(2400))
+		provider.handleMessage(turnComplete())
+
+		events := s.drain(provider)
+		var kinds []string
+		for _, event := range events {
+			kinds = append(kinds, fmt.Sprintf("%T", event))
+		}
+		s.Require().Equal([]string{
+			"sts.SpeechStarted", "sts.InputTranscript", "sts.InputTranscript", "sts.SpeechStopped",
+			"sts.ResponseStarted", "sts.OutputTranscript", "sts.AudioChunk", "sts.ResponseComplete",
+		}, kinds, "the caller stops before the reply to them starts")
+
+		settled := events[2].(sts.InputTranscript)
+		s.Equal(stt.ModeFinal, settled.Mode)
+		s.Equal(words, settled.Text, "what the reply answers is known when it starts")
+		stopped := events[3].(sts.SpeechStopped)
+		begun := events[4].(sts.ResponseStarted)
+		s.False(begun.At.Before(stopped.At))
+
+		complete := events[7].(sts.ResponseComplete)
+		s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait is timed from this caller's last word")
+		s.Less(complete.TimeToFirstByteMs, 100.0, "not from the turn before")
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (s *GeminiSuite) TestTheServerInterruptingSettlesTheReplyAsCutOff() {
 	provider := s.newProvider()
 
@@ -143,6 +181,33 @@ func (s *GeminiSuite) TestTheServerInterruptingSettlesTheReplyAsCutOff() {
 	s.Require().Len(completes, 1)
 	s.True(completes[0].Interrupted)
 	s.Equal(2, starts, "audio after the interruption is the next reply")
+}
+
+// A caller who barges in is still being heard when the rest of the cut-off reply arrives.
+// None of it may settle their turn or open a reply.
+func (s *GeminiSuite) TestWhatRemainsOfACutOffReplyDoesNotEndTheBargeIn() {
+	remainders := map[string]serverMessage{
+		"words": {ServerContent: &serverContent{OutputTranscription: &transcription{Text: "and the rest"}}},
+		"audio": spoke(240),
+	}
+	for name, remainder := range remainders {
+		s.Run(name, func() {
+			provider := s.newProvider()
+			provider.participant = sts.Participant{ID: "alice"}
+
+			provider.handleMessage(spoke(240))
+			s.Require().NoError(provider.Interrupt(0))
+			s.drain(provider)
+			provider.handleMessage(heard("wait "))
+			provider.handleMessage(remainder)
+
+			var kinds []string
+			for _, event := range s.drain(provider) {
+				kinds = append(kinds, fmt.Sprintf("%T", event))
+			}
+			s.Equal([]string{"sts.SpeechStarted", "sts.InputTranscript"}, kinds, "the caller is still speaking")
+		})
+	}
 }
 
 func (s *GeminiSuite) TestALocalInterruptMutesTheRestOfTheTurn() {
@@ -350,4 +415,82 @@ func (s *GeminiSuite) TestCloseSettlesAReplyInFlight() {
 	complete, ok := events[len(events)-1].(sts.ResponseComplete)
 	s.Require().True(ok)
 	s.True(complete.Interrupted)
+}
+
+func (s *GeminiSuite) TestAnUnreadableEndOfSpeechLeavesTheLastWordHeard() {
+	provider := s.newProvider()
+	provider.sentMs, provider.sentAt = 1000, time.Now().Add(-time.Second)
+	provider.handleMessage(heard("hello"))
+	heardBy := time.Now()
+	provider.handleMessage(serverMessage{VoiceActivity: &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "soon"}})
+	provider.handleMessage(spoke(2400))
+
+	var stopped sts.SpeechStopped
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			stopped = typed
+		}
+	}
+	s.False(stopped.At.After(heardBy))
+	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "not the start of the audio stream")
+}
+
+func (s *GeminiSuite) TestAnEndOfSpeechIsNotKeptForTheTurnAfter() {
+	provider := s.newProvider()
+	provider.sentMs, provider.sentAt = 1000, time.Now().Add(-time.Second)
+	provider.handleMessage(heard("hello"))
+	provider.handleMessage(serverMessage{VoiceActivity: &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "0.500s"}})
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+	s.drain(provider)
+
+	provider.handleMessage(heard("again"))
+	heardBy := time.Now()
+	provider.handleMessage(spoke(2400))
+
+	var stopped sts.SpeechStopped
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			stopped = typed
+		}
+	}
+	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "the second turn is timed from its own last word, not the first turn's end")
+}
+
+func (s *GeminiSuite) TestAnActivityOfAnotherTypeLeavesTheLastWordHeard() {
+	provider := s.newProvider()
+	provider.sentMs, provider.sentAt = 1000, time.Now().Add(-time.Second)
+	provider.handleMessage(heard("hello"))
+	heardBy := time.Now()
+	provider.handleMessage(serverMessage{VoiceActivity: &voiceActivity{Type: "TYPE_UNSPECIFIED", AudioOffset: "0.500s"}})
+	provider.handleMessage(spoke(2400))
+
+	var stopped sts.SpeechStopped
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			stopped = typed
+		}
+	}
+	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "only an ACTIVITY_END places the stop")
+}
+
+func (s *GeminiSuite) TestAStopHeardDuringAReplyIsNotKeptForTheNext() {
+	provider := s.newProvider()
+	provider.handleMessage(heard("hello"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(heard("wait"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+	time.Sleep(50 * time.Millisecond)
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+
+	var completes []sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, typed)
+		}
+	}
+	s.Require().Len(completes, 2)
+	s.Zero(completes[1].TimeToFirstByteMs, "nobody was waiting on the next reply")
 }

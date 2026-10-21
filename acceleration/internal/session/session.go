@@ -177,6 +177,23 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// timeout is the timer that ends the session (SetTimeout), nil when it has none, and
+	// timeoutArmed changes whenever the timeout is set, cleared or stopped by closing, so one
+	// that was moved or cleared while it was firing does not end the session.
+	timeout      *time.Timer
+	timeoutArmed uint64
+	// closing is set once close has begun, after which the timeout stays as it is: the
+	// call's last leaves still arrive while the session closes.
+	closing bool
+	// end ends this session when its timeout is reached (Manager.end).
+	end func()
+	// runs are who is in the call, per agent run that can tell (presence). callerSeen is
+	// whether a phone caller has been in the session's call, and settledOnce whether any run
+	// has settled, which only the first may start a phone session's start timeout from.
+	presenceMu  sync.Mutex
+	runs        map[*agent.Agent]*presence
+	callerSeen  atomic.Bool
+	settledOnce atomic.Bool
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
@@ -811,6 +828,37 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 // driving a conversation knows a turn is over rather than merely answered once.
 func (s *Session) Busy() bool { return s.current().Busy() }
 
+// settleGap is how long the agent stays quiet, with nothing left to do, before a headless
+// conversation is taken as finished.
+const settleGap = 2 * time.Second
+
+// Settle waits for the agent to finish what it was given: nothing left to do, and quiet for a
+// moment, since one message can earn several turns. events is a watcher of this session, and
+// seen, when set, is handed each event as it passes.
+func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Event)) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	last := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, open := <-events:
+			if !open {
+				return
+			}
+			if seen != nil {
+				seen(event)
+			}
+			last = time.Now()
+		case <-ticker.C:
+			if time.Since(last) >= settleGap && !s.Busy() {
+				return
+			}
+		}
+	}
+}
+
 // Tools names what the agent may do rather than say.
 func (s *Session) Tools() []string { return s.current().Tools() }
 
@@ -978,7 +1026,7 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 		transcript = s.transcribe(ctx, next)
 	}
 	s.running.Add(1)
-	go s.consume(fresh, transcript)
+	go s.consume(fresh, transcript, s.track(fresh))
 	if err := fresh.Join(context.WithoutCancel(ctx)); err != nil {
 		_ = fresh.Close()
 		return stack.Wrap(err)
@@ -990,6 +1038,12 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 	}
 
 	s.held.Store(fresh)
+	// A run's joins and Joined arrive while it joins, before it is stored, so the old run is
+	// shut out rather than everything but the current one.
+	s.retire(old)
+	if !voice && s.phoneSession(s.Spec()) {
+		s.ClearTimeout()
+	}
 	s.labelMu.Lock()
 	s.spec.Text, s.spec.CallID, s.spec.CallType = next.Text, next.CallID, next.CallType
 	s.spec.STSTarget, s.spec.heldSTS = next.STSTarget, next.heldSTS
@@ -1189,6 +1243,11 @@ func (s *Session) Close() error {
 }
 
 func (s *Session) close() error {
+	s.mu.Lock()
+	s.closing = true
+	s.stopTimeout()
+	s.mu.Unlock()
+
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
 	s.tools.Close()
@@ -1238,8 +1297,9 @@ func (s *Session) close() error {
 //
 // In writing every event goes to the conversation. On a call the transcript writes what
 // was said, except a turn typed by a durable command, which the conversation writes.
-func (s *Session) consume(held *agent.Agent, transcript Transcript) {
+func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presence) {
 	defer s.running.Done()
+	defer s.untrack(held)
 	if transcript != nil {
 		defer transcript.Close()
 	}
@@ -1252,6 +1312,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript) {
 		if transcript != nil && !typed {
 			transcript.Record(event)
 		}
+		s.observe(run, event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
@@ -1311,6 +1372,12 @@ func (s *Session) record(event Event) {
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}
+	case agent.Said:
+		// A line said as written, such as the greeting, is a response of its own: the
+		// caller's answer to it reads as nothing without it.
+		s.openTurn(typed.TurnID, "")
+		s.item(typed.TurnID, store.ItemAnswer, typed.Text, "", nil)
+		s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 	case agent.Interrupted:
 		// What the agent had already said still counts, which is why an interrupted turn is
 		// cancelled rather than failed: the caller stopped it, nothing went wrong.
@@ -1487,6 +1554,8 @@ func (s *Session) remember(event Event) {
 		}
 		line = spoken{text: typed.Prompt}
 	case agent.Responded:
+		line = spoken{agent: true, text: typed.Text}
+	case agent.Said:
 		line = spoken{agent: true, text: typed.Text}
 	default:
 		return

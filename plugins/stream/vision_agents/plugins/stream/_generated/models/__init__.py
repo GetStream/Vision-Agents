@@ -29,6 +29,7 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .agent_role import AgentRole
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
 from .analyze_reviews_request import AnalyzeReviewsRequest
@@ -145,6 +146,7 @@ from .connector_event_destination_request import ConnectorEventDestinationReques
 from .connector_event_destination_secret import ConnectorEventDestinationSecret
 from .connector_event_forward import ConnectorEventForward
 from .connector_input import ConnectorInput
+from .connector_sandbox import ConnectorSandbox
 from .connector_o_auth_client import ConnectorOAuthClient
 from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
 from .connector_o_auth_client_request import ConnectorOAuthClientRequest
@@ -482,6 +484,7 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AgentRole",
     "AgentStats",
     "AgentTools",
     "AnalyzeReviewsRequest",
@@ -594,6 +597,7 @@ __all__ = (
     "ConnectorEventDestinationSecret",
     "ConnectorEventForward",
     "ConnectorInput",
+    "ConnectorSandbox",
     "ConnectorOAuthClient",
     "ConnectorOAuthClientAuthMethod",
     "ConnectorOAuthClientRequest",

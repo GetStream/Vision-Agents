@@ -43,20 +43,33 @@ const mcpSource = "mcp"
 // rate limits, sources, hooks and the operator's client variables. A custom connector's
 // endpoint is left out too: an MCP URL can carry a secret in its path (AI-837).
 type Connector struct {
-	ID          string           `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
-	Revision    int              `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
-	Name        string           `json:"name"`
-	Category    string           `json:"category,omitempty"`
-	Description string           `json:"description,omitempty"`
-	Custom      bool             `json:"custom" readOnly:"true" doc:"The app's own definition rather than a built-in."`
-	Schemes     []string         `json:"schemes" doc:"How a connection may authenticate, such as oauth2_code."`
-	Inputs      []ConnectorInput `json:"inputs" doc:"What a connection is created with, such as a region or a shop."`
-	Scopes      []string         `json:"scopes" doc:"The scopes a consent asks for."`
-	Client      ConnectorClient  `json:"client"`
-	Setup       *ConnectorSetup  `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
-	RedirectURI string           `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
-	Channel     bool             `json:"channel" readOnly:"true" doc:"The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies."`
-	CreatedAt   time.Time        `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
+	ID          string            `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
+	Revision    int               `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
+	Name        string            `json:"name"`
+	Category    string            `json:"category,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Custom      bool              `json:"custom" readOnly:"true" doc:"The app's own definition rather than a built-in."`
+	Schemes     []string          `json:"schemes" doc:"How a connection may authenticate, such as oauth2_code."`
+	Inputs      []ConnectorInput  `json:"inputs" doc:"What a connection is created with, such as a region or a shop."`
+	Scopes      []string          `json:"scopes" doc:"The scopes a consent asks for."`
+	Client      ConnectorClient   `json:"client"`
+	Setup       *ConnectorSetup   `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
+	RedirectURI string            `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
+	Channel     bool              `json:"channel" readOnly:"true" doc:"The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies."`
+	Sandbox     *ConnectorSandbox `json:"sandbox,omitempty" readOnly:"true" doc:"How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access."`
+	CreatedAt   time.Time         `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
+}
+
+// ConnectorSandbox is the manifest's sandbox block as the catalog shows it.
+type ConnectorSandbox struct {
+	Env   string   `json:"env" doc:"The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox's egress puts the connection's credential in its place, only in a request header and only to one of hosts."`
+	Hosts []string `json:"hosts" nullable:"false" doc:"The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it."`
+}
+
+func (*ConnectorSandbox) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How code in an agent's sandbox reaches the provider's API with a connection's credential."
+	schema.AdditionalProperties = false
+	return schema
 }
 
 // ConnectorSetup is a provider's setup page and the steps a person takes there, as a dashboard
@@ -482,7 +495,12 @@ func connectorOf(definition store.ConnectorDefinition, publicURL string) Connect
 	if slices.Contains(manifest.Schemes, oauth2code.Name) {
 		redirectURI = connectorCallbackURL(publicURL)
 	}
+	var sandbox *ConnectorSandbox
+	if manifest.Sandbox != nil {
+		sandbox = &ConnectorSandbox{Env: manifest.Sandbox.Env, Hosts: slices.Clone(manifest.Sandbox.Hosts)}
+	}
 	return Connector{
+		Sandbox:     sandbox,
 		Setup:       setup,
 		RedirectURI: redirectURI,
 		ID:          definition.ID,

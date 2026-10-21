@@ -8,10 +8,11 @@
 // worse than one that restarts; a conversation is the other way round, so this package owns
 // a resume loop that the other must not have.
 //
-// The Live API has no response ids and no event for the caller falling silent. A reply is
-// whatever the model says between one turnComplete and the next, assigned an ID here, except that
-// a turnComplete sent while the interaction is still in progress does not end it; the caller
-// is taken to have stopped at the last piece of transcript before the model began.
+// The Live API has no response ids. A reply is whatever the model says between one
+// turnComplete and the next, assigned an ID here, except that a turnComplete sent while the
+// interaction is still in progress does not end it. The caller is taken to have stopped where
+// the server's own detector said their speech ended, and at the last piece of transcript
+// before the model began when it said nothing.
 package gemini
 
 import (
@@ -72,6 +73,15 @@ const resumeAttempts = 3
 // nobody asked: its floor, since thinking spends the latency budget before the first word.
 // 3.8 Live Extended Thinking takes LOW, MEDIUM or HIGH and closes the socket otherwise.
 var requiredThinking = map[string]string{"gemini-3.8-live-extended-thinking": "LOW"}
+
+// activityStart and activityEnd are the detector's "Start of sentence" and "End of sentence"
+// signals (https://ai.google.dev/api/live#VoiceActivity). The end arrives with the reply
+// (probed 2026-10-20 on gemini-3.8-live and 3.1-flash-live-preview), so only its audioOffset
+// says when the caller stopped.
+const (
+	activityStart = "ACTIVITY_START"
+	activityEnd   = "ACTIVITY_END"
+)
 
 // interactionInProgress is what a model that reasons or runs tools in the background sends
 // with a turnComplete that is not the end of its answer: it spoke a filler, and more of the
@@ -241,6 +251,15 @@ type serverMessage struct {
 	UsageMetadata           *usageMetadata        `json:"usageMetadata"`
 	GoAway                  *goAway               `json:"goAway"`
 	SessionResumptionUpdate *resumptionUpdate     `json:"sessionResumptionUpdate"`
+	VoiceActivity           *voiceActivity        `json:"voiceActivity"`
+}
+
+// voiceActivity is the server's detector at work. audioOffset is "relative to the start of
+// the audio stream" (https://ai.google.dev/api/live#VoiceActivity), a Duration such as
+// "4.600s".
+type voiceActivity struct {
+	Type        string `json:"type"`
+	AudioOffset string `json:"audioOffset"`
 }
 
 type serverContent struct {
@@ -310,12 +329,17 @@ type STS struct {
 	// participant is the speaker of the most recent audio.
 	participant sts.Participant
 	// hearing is what the model has written down of the caller's current turn, and
-	// lastHeardAt when the last piece arrived, which stands in for the moment the caller
-	// stopped since this API never says.
+	// lastHeardAt when the last piece arrived. endedAt is when the server's detector says
+	// the caller stopped, which lastHeardAt stands in for when it said nothing.
 	hearing     strings.Builder
 	listening   bool
 	lastHeardAt time.Time
+	endedAt     time.Time
 	heardAt     time.Time
+	// sentMs is how much audio this connection has carried, and sentAt when its last chunk
+	// went, which together turn an audioOffset into the moment that audio was sent.
+	sentMs float64
+	sentAt time.Time
 	// turn is the reply in flight, generation counts them, and usage is what the server
 	// has reported for the turn so far. carried is what the earlier turns of a reply that
 	// spans several cost, since the server reports each turn on its own.
@@ -443,10 +467,17 @@ func (s *STS) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
 	s.participant = participant
 	s.mu.Unlock()
 
-	return s.send(clientMessage{RealtimeInput: &realtimeInput{Audio: &blob{
+	if err := s.send(clientMessage{RealtimeInput: &realtimeInput{Audio: &blob{
 		Data:     base64.StdEncoding.EncodeToString(pcm.Bytes()),
 		MimeType: audioMimeType,
-	}}})
+	}}}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.sentMs += pcm.DurationMs()
+	s.sentAt = time.Now()
+	s.mu.Unlock()
+	return nil
 }
 
 // SendText injects a typed turn, which the model answers as it would a spoken one.
@@ -744,6 +775,10 @@ func (s *STS) resume(handle string) bool {
 			return true
 		}
 		s.conn = conn
+		// Whether a resumed connection restarts the offsets is not documented. Counting
+		// afresh is right if it does, and if it does not, detected drops offsets past what
+		// this connection sent.
+		s.sentMs = 0
 		s.mu.Unlock()
 
 		s.emitter.Send(sts.Connected{Provider: ProviderName, Model: s.options.Model, At: time.Now()})
@@ -781,6 +816,11 @@ func (s *STS) handleMessage(message serverMessage) {
 		s.mu.Unlock()
 		s.emitter.Send(sts.ToolCancel{CallIDs: message.ToolCallCancellation.IDs})
 	}
+	// Before the content and tool calls, which settle the caller's turn: the end of speech
+	// can come in the same frame as the reply.
+	if message.VoiceActivity != nil {
+		s.detected(*message.VoiceActivity)
+	}
 	if message.ToolCall != nil {
 		s.asked(*message.ToolCall)
 	}
@@ -796,8 +836,18 @@ func (s *STS) handleContent(server serverContent) {
 		s.heard(server.InputTranscription.Text)
 	}
 	if server.OutputTranscription != nil && server.OutputTranscription.Text != "" {
-		turn := s.currentTurn()
-		s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: server.OutputTranscription.Text})
+		// The words can come before the audio, so they settle the caller's turn first,
+		// as spoke and asked do: a reply opened while the caller is still heard would
+		// begin before their wait did and be timed from the turn before. The rest of a
+		// reply the caller cut off is dropped first, as in spoke: it is not theirs to end.
+		s.mu.Lock()
+		muted := s.muted
+		s.mu.Unlock()
+		if !muted {
+			s.finishHearing()
+			turn := s.currentTurn()
+			s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: server.OutputTranscription.Text})
+		}
 	}
 	if server.ModelTurn != nil {
 		s.spoke(*server.ModelTurn)
@@ -854,8 +904,31 @@ func (s *STS) heard(text string) {
 	s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: stt.ModeDelta, Text: text})
 }
 
+// detected keeps the moment the server's detector says the caller stopped: the wall time the
+// audio at its offset was sent. A start clears an end the turn before left unused.
+func (s *STS) detected(activity voiceActivity) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if activity.Type == activityStart {
+		s.endedAt = time.Time{}
+		return
+	}
+	if activity.Type != activityEnd {
+		return
+	}
+	offset, err := time.ParseDuration(activity.AudioOffset)
+	behindMs := s.sentMs - float64(offset.Microseconds())/1000
+	// An offset past what this connection sent counts from an earlier one, so it says
+	// nothing about when this audio went.
+	if err != nil || behindMs < 0 {
+		s.logger.Debug("unplaceable end of speech", "offset", activity.AudioOffset, "sent_ms", s.sentMs)
+		return
+	}
+	s.endedAt = s.sentAt.Add(-time.Duration(behindMs * float64(time.Millisecond)))
+}
+
 // finishHearing settles the caller's turn: the transcript so far becomes the final one, and
-// the last piece of it is taken for the moment they stopped, since nothing else says.
+// the detector's end of speech, or else the last piece heard, is the moment they stopped.
 func (s *STS) finishHearing() {
 	s.mu.Lock()
 	if !s.listening {
@@ -866,7 +939,16 @@ func (s *STS) finishHearing() {
 	text := strings.TrimSpace(s.hearing.String())
 	s.hearing.Reset()
 	stoppedAt := s.lastHeardAt
-	s.heardAt = stoppedAt
+	if !s.endedAt.IsZero() {
+		stoppedAt = s.endedAt
+		s.endedAt = time.Time{}
+	}
+	// A reply already open takes the stop: none that follows answers it.
+	if s.turn != nil {
+		s.turn.HeardAt(stoppedAt)
+	} else {
+		s.heardAt = stoppedAt
+	}
 	participant := s.participant
 	s.mu.Unlock()
 
@@ -879,6 +961,14 @@ func (s *STS) finishHearing() {
 // spoke forwards the audio in a model turn. Text parts are the model's thoughts and are
 // not spoken, so they are not forwarded as anything.
 func (s *STS) spoke(turn content) {
+	// The rest of a reply the caller cut off from this side is not a new reply, so it is
+	// dropped before it can end the caller's turn or open one.
+	s.mu.Lock()
+	muted := s.muted
+	s.mu.Unlock()
+	if muted {
+		return
+	}
 	s.finishHearing()
 
 	for _, piece := range turn.Parts {
@@ -891,14 +981,6 @@ func (s *STS) spoke(turn content) {
 			continue
 		}
 
-		// The rest of a reply the caller cut off from this side is not a new reply, so
-		// it is dropped before it can open one.
-		s.mu.Lock()
-		muted := s.muted
-		s.mu.Unlock()
-		if muted {
-			continue
-		}
 		current := s.currentTurn()
 		s.emitter.Send(current.Chunk(audio.FromBytes(raw, OutputSampleRate, 1)))
 	}

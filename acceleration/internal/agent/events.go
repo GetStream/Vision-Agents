@@ -17,7 +17,8 @@ type Event interface {
 	isAgentEvent()
 }
 
-// Joined means the agent is in the call and listening.
+// Joined means the agent is in the call and listening. Everyone already in the call when it
+// joined has been reported before it (ParticipantJoined).
 type Joined struct {
 	At time.Time
 }

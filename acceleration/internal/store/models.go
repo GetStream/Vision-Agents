@@ -325,6 +325,10 @@ type AgentConfig struct {
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
 	Name       string `bun:"name,notnull"`
+	// Role is what the config is for in the app around it, beyond answering people:
+	// RoleAgentModerator, or empty for an ordinary agent. One live config per customer holds a
+	// role, test copies aside (20261103120000_agent_config_role.sql).
+	Role string `bun:"role,notnull"`
 	// Mode is whether the agent is spoken to or written to: AgentModeVoice or
 	// AgentModeText. A text agent uses neither speech target and joins no call.
 	Mode string `bun:"mode,notnull"`
@@ -438,6 +442,11 @@ type ConnectorBinding struct {
 	// Policy is how the binding's calls behave around speech and interruptions. Nil is a
 	// binding written before it existed, or without one, and behaves as one always has.
 	Policy *BindingPolicy `json:"policy,omitempty"`
+	// Sandbox is whether code in the session's sandbox reaches the connector's API with the
+	// binding's connection, through the env var the connector's manifest names. The field is
+	// JSON inside agent_configs.connectors, so an older router drops it and reads the binding
+	// as one without sandbox access.
+	Sandbox bool `json:"sandbox,omitempty"`
 }
 
 // The values of BindingPolicy.OnInterrupt. Empty lets the call outlive an interruption, and
@@ -583,6 +592,13 @@ const (
 	AgentModeVoice = "voice"
 	// AgentModeText holds the same conversation in writing, using neither speech target.
 	AgentModeText = "text"
+)
+
+// What an agent config is for, beyond answering people (AgentConfig.Role).
+const (
+	// RoleAgentModerator is the app's Nora: the agent the chat worker hands flagged messages
+	// to for review.
+	RoleAgentModerator = "agent_moderator"
 )
 
 // How a greeting is said.
