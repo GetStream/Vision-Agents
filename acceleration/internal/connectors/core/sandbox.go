@@ -32,8 +32,10 @@ var (
 	// sandboxNumericTLD is a host whose last label is all digits. RFC 3696 section 2 says a
 	// top-level domain is never all-numeric, so such a host is an IPv4 literal (1.2.3.4,
 	// 0x7f.0.0.1 and *.0.0.1 included) or a name the resolver may read as one, and the
-	// allowlist takes host names only.
-	sandboxNumericTLD = regexp.MustCompile(`\.[0-9]+$`)
+	// allowlist takes host names only. A label starting 0x is refused too: inet_aton reads
+	// 1.2.3.0x4 and 0x7f.0x0.0x0.0x1 as IPv4 literals, hex parts included, and no registered
+	// name starts a label with 0x.
+	sandboxNumericTLD = regexp.MustCompile(`\.[0-9]+$|(^|\.)0x`)
 )
 
 func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
