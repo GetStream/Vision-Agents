@@ -75,19 +75,18 @@ class AgentSessionTest {
     }
 
     @Test
-    fun `every text question carries a fresh request id, and one showing the agent something carries none`() = runBlocking {
+    fun `every question carries a fresh request id, one showing the agent something too`() = runBlocking {
         val chat = agents.chat()
 
         chat.responses.create("first")
         chat.responses.create("first")
-        chat.responses.create("what is this", listOf(ImageSource("https://x/y.png")))
+        chat.responses.create("what is this", listOf(ImageSource("data:image/png;base64,AAAA")))
 
-        val (first, again, shown) = router.requests.filter { it.path.endsWith("/responses") }
+        val bodies = router.requests.filter { it.path.endsWith("/responses") }
             .map { Json.parseToJsonElement(it.body).jsonObject }
-        val ids = listOf(first, again).map { it["request_id"]!!.jsonPrimitive.content }
+        val ids = bodies.map { it["request_id"]!!.jsonPrimitive.content }
         assertTrue(ids.all { Regex("[A-Za-z0-9_-]{1,128}").matches(it) })
-        assertEquals(2, ids.toSet().size)
-        assertNull(shown["request_id"])
+        assertEquals(3, ids.toSet().size)
         chat.close()
     }
 

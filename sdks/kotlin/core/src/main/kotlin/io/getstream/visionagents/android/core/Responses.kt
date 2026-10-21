@@ -32,8 +32,9 @@ public class Responses internal constructor(
      * It returns as soon as the agent has started answering rather than when it has finished,
      * so the result is a handle on an answer in progress: [items] with its id reads what has
      * been written down so far. From [AgentSession.responses] the question shows in
-     * [AgentSession.conversation] at once. A text question carries a fresh request id, so a
-     * retry of the same request starts no second turn.
+     * [AgentSession.conversation] at once. Every question carries a fresh request id, so a
+     * retry of the same request starts no second turn. In a conversation kept in Stream Chat,
+     * [images] are data URIs, which the router shows on the person's message.
      *
      * [maxOutputTokens] caps this answer, reasoning included, and [reasoningEffort] is how long
      * the model may think first, one of the efforts the session's model accepts. Both cover the
@@ -50,8 +51,7 @@ public class Responses internal constructor(
             images = images.ifEmpty { null }?.map { it.schema },
             maxOutputTokens = maxOutputTokens,
             reasoningEffort = reasoningEffort,
-            // The router refuses a request id on a question showing the agent something.
-            requestId = if (images.isEmpty()) UUID.randomUUID().toString() else null,
+            requestId = UUID.randomUUID().toString(),
         )
         asked(text)
         val created = backend.post(
