@@ -104,8 +104,13 @@ func (c *Call) onReinvite(ctx context.Context, from side, offer []byte) ([]byte,
 	if !c.established.Load() {
 		return nil, stack.Wrap(errNotEstablished)
 	}
-	c.log.Info("re-INVITE received, passing it on", "from", from)
-	return c.other(from).Reinvite(ctx, offer)
+	c.log.Info("re-INVITE received, passing it on", media(from, offer)...)
+	answer, err := c.other(from).Reinvite(ctx, offer)
+	if err != nil {
+		return nil, err
+	}
+	c.log.Info("re-INVITE answered", media(1-from, answer)...)
+	return answer, nil
 }
 
 func (c *Call) onInfo(ctx context.Context, from side, contentType string, body []byte) error {

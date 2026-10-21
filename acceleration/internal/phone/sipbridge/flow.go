@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -44,7 +45,7 @@ func flowA(ctx context.Context, cfg Config, customer, stream leg) error {
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("customer leg: %w", err))
 	}
-	log.Info("customer answered", "offer", summary(offer))
+	log.Info("customer answered", media(customerSide, offer)...)
 
 	streamCtx, cancelStream := context.WithTimeout(ctx, cfg.Call.RingTimeout)
 	defer cancelStream()
@@ -53,7 +54,7 @@ func flowA(ctx context.Context, cfg Config, customer, stream leg) error {
 		rejectCustomer(ctx, log, customer, offer)
 		return stack.Wrap(fmt.Errorf("stream leg: %w", err))
 	}
-	log.Info("stream answered", "answer", summary(answer))
+	log.Info("stream answered", media(streamSide, answer)...)
 
 	if err := stream.Ack(ctx, nil); err != nil {
 		rejectCustomer(ctx, log, customer, offer)
@@ -116,7 +117,7 @@ func flowB(ctx context.Context, cfg Config, customer, stream leg) error {
 		hangUp(ctx, log, nil, stream)
 		return stack.Wrap(fmt.Errorf("stream answer: %w", err))
 	}
-	log.Info("stream answered", "answer", summary(answer))
+	log.Info("stream answered", media(streamSide, answer)...)
 
 	if _, err := stream.Reinvite(ctx, streamSDP.build(holdOffer(placeholder))); err != nil {
 		hangUp(ctx, log, nil, stream)
@@ -140,7 +141,7 @@ func flowB(ctx context.Context, cfg Config, customer, stream leg) error {
 		hangUp(ctx, log, customer, stream)
 		return stack.Wrap(fmt.Errorf("customer leg ack: %w", err))
 	}
-	log.Info("customer answered", "answer", summary(customerAnswer))
+	log.Info("customer answered", media(customerSide, customerAnswer)...)
 
 	answered, err := ParseMedia(customerAnswer)
 	if err == nil {
@@ -157,13 +158,28 @@ func flowB(ctx context.Context, cfg Config, customer, stream leg) error {
 	return nil
 }
 
-// summary is a one-line view of an SDP body for the log.
-func summary(body []byte) string {
+// media is the log fields for one side's SDP body: where it sends RTP and what it speaks.
+func media(s side, body []byte) []any {
 	m, err := ParseMedia(body)
 	if err != nil {
-		return "unreadable sdp: " + err.Error()
+		return []any{"side", s.String(), "sdp_error", err.Error()}
 	}
-	return fmt.Sprintf("%s:%d %v %s", m.Addr, m.Port, codecNames(m.Codecs), m.Direction)
+	return []any{
+		"side", s.String(), "addr", m.Addr, "port", m.Port, "private", isPrivate(m.Addr),
+		"codecs", codecNames(m.Codecs), "direction", m.Direction,
+	}
+}
+
+var carrierGradeNAT = netip.MustParsePrefix("100.64.0.0/10")
+
+// isPrivate is true for an address the other side cannot reach over the internet, the
+// usual reason for one-way audio.
+func isPrivate(addr string) bool {
+	a, err := netip.ParseAddr(addr)
+	if err != nil {
+		return false
+	}
+	return a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast() || carrierGradeNAT.Contains(a)
 }
 
 func codecNames(codecs []Codec) []string {

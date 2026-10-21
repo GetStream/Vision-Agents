@@ -260,3 +260,28 @@ func TestFlowBCancelWhileRingingStillHangsUpStream(t *testing.T) {
 	require.Len(t, stream.byeCtxErrs, 1)
 	require.Nil(t, stream.byeCtxErrs[0])
 }
+
+func sdpAt(addr string) []byte {
+	return buildSDP(Media{Addr: addr, Port: 40000, Codecs: []Codec{pcmu}, Direction: DirSendRecv}, 1, 1)
+}
+
+func TestMediaNamesTheSideAndTheAddress(t *testing.T) {
+	got := media(customerSide, sdpAt("203.0.113.10"))
+
+	require.Subset(t, got, []any{"side", "customer", "addr", "203.0.113.10", "port", 40000, "private", false})
+}
+
+func TestMediaFlagsAPrivateAddress(t *testing.T) {
+	for _, addr := range []string{"10.0.0.5", "100.64.1.1"} {
+		got := media(streamSide, sdpAt(addr))
+
+		require.Subset(t, got, []any{"private", true}, addr)
+	}
+}
+
+func TestMediaOfAnUnreadableBodySaysSo(t *testing.T) {
+	got := media(streamSide, []byte("garbage"))
+
+	require.Contains(t, got, "sdp_error")
+	require.Contains(t, got, "stream")
+}
