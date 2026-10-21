@@ -4,6 +4,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -95,6 +97,49 @@ func (s *SandboxGrantsSuite) TestTheBrokerIsHandedTheConnectionsBearerToken() {
 	s.NotContains(s.logs.String(), tokenOf("primary"))
 }
 
+// TestAConnectionThatNeedsAReconnectGivesNoCredential: the broker withdraws its secret.
+func (s *SandboxGrantsSuite) TestAConnectionThatNeedsAReconnectGivesNoCredential() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, d := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	s.setState(id, func(state *core.CredentialState) { state.Status = store.ConnectionNeedsReauthorization })
+
+	_, err := s.manager.sandboxTokens(d.schemes)(s.ctx, box.(sandbox.Granted).Grants()[0])
+
+	s.ErrorIs(err, sandbox.ErrNoCredential)
+}
+
+// TestASchemeWithoutABearerTokenOrNoResolverGivesNoCredential: Daytona matches only a
+// placeholder a header carries verbatim, and without a resolver there is no credential.
+func (s *SandboxGrantsSuite) TestASchemeWithoutABearerTokenOrNoResolverGivesNoCredential() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, d := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	grant := box.(sandbox.Granted).Grants()[0]
+
+	_, unsent := s.manager.sandboxTokens(map[string]core.Scheme{"crm": none.New()})(s.ctx, grant)
+	s.manager.options.Connectors.Resolver = nil
+	_, unresolved := s.manager.sandboxTokens(d.schemes)(s.ctx, grant)
+
+	s.ErrorIs(unsent, sandbox.ErrNoCredential)
+	s.ErrorIs(unresolved, sandbox.ErrNoCredential)
+}
+
+// TestAResolverFailureThatMayPassIsNoReasonToWithdraw: any other failure, here a cancelled
+// call, leaves the broker's secret in place for the next run to refresh.
+func (s *SandboxGrantsSuite) TestAResolverFailureThatMayPassIsNoReasonToWithdraw() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, d := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, err := s.manager.sandboxTokens(d.schemes)(cancelled, box.(sandbox.Granted).Grants()[0])
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
+}
+
 func (s *SandboxGrantsSuite) TestABindingWithoutSandboxGivesTheSandboxNothing() {
 	s.sandboxRevision()
 	id := s.connection("", "primary")
@@ -129,16 +174,26 @@ func (s *SandboxGrantsSuite) TestARequiredBindingSavedBeforeTheSandboxBlockRefus
 	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableSandbox))
 }
 
-func (s *SandboxGrantsSuite) TestASandboxBindingNeedsTheSecretPrefix() {
+// boxed is the error of making a daytona session's sandbox for a sandbox binding.
+func (s *SandboxGrantsSuite) boxed() error {
 	s.sandboxRevision()
 	id := s.connection("", "primary")
-	s.manager.options.SandboxSecretPrefix = ""
 	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
 	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
-
 	_, err = s.manager.box(spec, d)
+	return err
+}
 
-	s.ErrorContains(err, "ROUTER_SANDBOX_SECRET_PREFIX")
+func (s *SandboxGrantsSuite) TestASandboxBindingNeedsTheSecretPrefix() {
+	s.manager.options.SandboxSecretPrefix = ""
+
+	s.ErrorContains(s.boxed(), "ROUTER_CODE_SANDBOX_SECRET_PREFIX")
+}
+
+func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
+	s.manager.options.SandboxBroker = "proxy"
+
+	s.ErrorContains(s.boxed(), `there is no sandbox broker called "proxy"`)
 }

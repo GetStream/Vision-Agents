@@ -19,7 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// BrokerName is the sandbox.broker setting that picks Secrets.
+// BrokerName is the code_sandbox.broker setting that picks Secrets.
 const BrokerName = "daytona"
 
 // unnamed is every character a Daytona secret name may not hold: names match
@@ -113,6 +113,12 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 	var kept []*secret
 	for _, held := range s.held {
 		token, err := s.options.Tokens(ctx, held.grant)
+		if err != nil && !errors.Is(err, sandbox.ErrNoCredential) {
+			kept = append(kept, held)
+			s.options.Logger.Warn("a connector's credential could not be refreshed for the sandbox; it keeps the one it has",
+				"connector", held.grant.Binding, "secret", held.name, "error", err)
+			continue
+		}
 		if err != nil {
 			// Deleted, the secret's placeholder reaches the provider as itself, which it refuses.
 			if err := s.client.Secret.Delete(ctx, held.id); err != nil {

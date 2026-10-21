@@ -128,10 +128,10 @@ type ManagerOptions struct {
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
-	// SandboxBroker is the sandbox.broker setting: what holds a connection's credential for
+	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
 	// code in a sandbox. daytona.BrokerName is the one there is.
 	SandboxBroker string
-	// SandboxSecretPrefix is the sandbox.secret_prefix setting, which names this router's
+	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
 	// environment in every credential a broker leaves with the sandbox provider. A session
 	// with a sandbox binding is refused without it.
 	SandboxSecretPrefix string

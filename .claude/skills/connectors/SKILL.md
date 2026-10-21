@@ -163,6 +163,27 @@ is left out with a warning, and the rest of the agent syncs; `required: true` ma
 The left-out entries go to the router as `left_out_connectors` and are served on the agent config.
 Other SDKs: unverified, check `git grep connectors sdks/js/src plugins/stream` before relying on it.
 
+### Sandbox access
+
+A binding with `sandbox: true`, on a config with `sandbox: daytona`, lets `run_code` call the
+connector's API. Code reads a placeholder (`dtn_secret_…`) from the env var the manifest's
+`sandbox.env` names, such as `GITHUB_TOKEN`, and sends it as `Authorization: Bearer $GITHUB_TOKEN`
+over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token there
+(https://www.daytona.io/docs/en/secrets.md); code never reads the token.
+
+- The router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging); without it a session
+  with such a binding is refused. Each session's secret is `va_<prefix>_<session>_<binding>_<8 hex>`.
+- The grant's hosts join the sandbox's domain allow list; a config with `network: true` or a
+  `network_allow_list` keeps its own.
+- A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
+  sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
+  the session.
+- Before each run a new credential revision updates the secret; a connection that needs a
+  reconnect deletes it. Daytona refuses a request that carries a placeholder it does not
+  substitute (another host, the query, another session's): 502 «could not reach upstream host».
+- `go test -tags daytona_live -run TestLiveSuite ./internal/sandbox/daytona` runs the attacks
+  against Daytona with `DAYTONA_API_KEY` and canary values.
+
 ## 4. A channel: the Slack bot
 
 `slack_bot` also receives messages. Someone mentions the bot in Slack, and the agent answers

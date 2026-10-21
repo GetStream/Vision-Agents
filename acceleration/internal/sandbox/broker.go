@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -38,9 +39,14 @@ func (t Token) String() string {
 
 func (t Token) GoString() string { return t.String() }
 
-// Tokens is a grant's credential as it is now. An error means the connection cannot be used:
-// disconnected, waiting for a reconnect, or a scheme whose credential is no bearer token.
+// Tokens is a grant's credential as it is now. An error wrapping ErrNoCredential means the
+// connection cannot be used until someone reconnects it; any other error may pass, such as a
+// provider that could not renew the credential just now.
 type Tokens func(ctx context.Context, grant Grant) (Token, error)
+
+// ErrNoCredential is a connection that gives no credential until it is reconnected: it is
+// disconnected, waiting for a reconnect, or its scheme sends no bearer token.
+var ErrNoCredential = errors.New("sandbox: the connection gives no credential until it is reconnected")
 
 // Mount is what a sandbox is created with so that its code reaches its grants.
 type Mount struct {
@@ -58,8 +64,9 @@ type CredentialBroker interface {
 	// with a warning, unless it is required, which fails Prepare.
 	Prepare(ctx context.Context, grants []Grant) (Mount, error)
 	// BeforeRun runs before each piece of code: it hands the egress a credential whose
-	// revision moved since it last did, and withdraws one whose connection can no longer be
-	// used, so code never runs with a credential the router would no longer send itself.
+	// revision moved since it last did, and withdraws one whose connection gives
+	// ErrNoCredential, so code never runs with a credential the router would no longer send
+	// itself. A credential that cannot be had just now is kept, and asked for again next run.
 	BeforeRun(ctx context.Context) error
 	// Close removes everything Prepare left with the provider. Safe to call twice, and
 	// Prepare may run again after it.

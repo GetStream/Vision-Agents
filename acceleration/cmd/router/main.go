@@ -1608,8 +1608,8 @@ func buildSessions(
 		// connection has one outbound client in the router.
 		Connectors: connectors,
 		// Read only by a session with a sandbox binding.
-		SandboxBroker:       settings.Sandbox.Broker,
-		SandboxSecretPrefix: settings.Sandbox.SecretPrefix,
+		SandboxBroker:       settings.CodeSandbox.Broker,
+		SandboxSecretPrefix: settings.CodeSandbox.SecretPrefix,
 	})
 }
 

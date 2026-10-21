@@ -198,6 +198,23 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 	s.ErrorContains(err, "runs.concurrent_per_app")
 }
 
+// TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor: the defaults, the
+// variables that set them, and a broker there is none of refused.
+func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "daytona"}, config.CodeSandbox)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", "stg")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg"}, config.CodeSandbox)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.broker")
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -192,8 +193,10 @@ func quoted(word string) string {
 // params are what the sandbox is created from: Daytona's own Python sandbox, or an image
 // built from the config's base and setup.
 func (s *Sandbox) params() any {
-	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated(), Secrets: s.secrets}
-	if domains := s.config.AllowedDomains; len(domains) > 0 {
+	domains := s.domains()
+	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated() && len(domains) == 0,
+		Secrets: s.secrets}
+	if len(domains) > 0 {
 		joined := strings.Join(domains, ",")
 		base.DomainAllowList = &joined
 	}
@@ -257,6 +260,26 @@ func (s *Sandbox) Close() error {
 // Grants are the connections code in the sandbox may call with.
 func (s *Sandbox) Grants() []sandbox.Grant {
 	return s.grants
+}
+
+// domains are the config's allowed domains and, unless the config opens the whole network or
+// lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
+// sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
+func (s *Sandbox) domains() []string {
+	domains := slices.Clone(s.config.AllowedDomains)
+	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
+		return domains
+	}
+	for _, grant := range s.grants {
+		if _, held := s.secrets[grant.Env]; held {
+			for _, host := range grant.Hosts {
+				if !slices.Contains(domains, host) {
+					domains = append(domains, host)
+				}
+			}
+		}
+	}
+	return domains
 }
 
 // brokered reports whether the sandbox has grants a broker holds the credentials of.

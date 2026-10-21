@@ -42,15 +42,15 @@ type BrokerContract struct {
 	New func(t *testing.T, session string, tokens sandbox.Tokens, logger *slog.Logger) Subject
 
 	ctx    context.Context
-	logs   *lockedBuffer
+	logs   *bytes.Buffer
 	logger *slog.Logger
 	spans  *tracetest.SpanRecorder
 
 	mu sync.Mutex
-	// tokens are what each binding's connection holds now, and refused the bindings whose
-	// connection cannot be used.
+	// tokens are what each binding's connection holds now, and refused the error each
+	// binding's connection gives instead, if any.
 	tokens  map[string]sandbox.Token
-	refused map[string]bool
+	refused map[string]error
 	// issued are every token handed out, and errs every error a broker returned: none may
 	// hold one.
 	issued []string
@@ -66,10 +66,10 @@ func (s *BrokerContract) SetupSuite() {
 
 func (s *BrokerContract) SetupTest() {
 	s.ctx = context.Background()
-	s.logs = &lockedBuffer{}
+	s.logs = &bytes.Buffer{}
 	s.logger = slog.New(slog.NewMultiHandler(slog.NewJSONHandler(s.logs, nil), slog.NewTextHandler(s.logs, nil)))
 	s.spans.Reset()
-	s.tokens, s.refused, s.issued, s.errs = map[string]sandbox.Token{}, map[string]bool{}, nil, nil
+	s.tokens, s.refused, s.issued, s.errs = map[string]sandbox.Token{}, map[string]error{}, nil, nil
 	s.connect("github", "gho_first", 1)
 }
 
@@ -92,22 +92,32 @@ func (s *BrokerContract) TearDownTest() {
 func (s *BrokerContract) connect(binding, token string, revision int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tokens[binding], s.refused[binding] = sandbox.Token{Value: token, Revision: revision}, false
+	s.tokens[binding], s.refused[binding] = sandbox.Token{Value: token, Revision: revision}, nil
 	s.issued = append(s.issued, token)
 }
 
-// disconnect makes binding's connection one that cannot be used.
+// disconnect makes binding's connection one that cannot be used until it is reconnected.
 func (s *BrokerContract) disconnect(binding string) {
+	s.refuse(binding, fmt.Errorf("%w: brokertest: the connection is not connected", sandbox.ErrNoCredential))
+}
+
+// unavailable makes binding's connection one whose credential cannot be had just now, as
+// when the provider fails to renew it.
+func (s *BrokerContract) unavailable(binding string) {
+	s.refuse(binding, errors.New("brokertest: the provider could not renew the credential just now"))
+}
+
+func (s *BrokerContract) refuse(binding string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.refused[binding] = true
+	s.refused[binding] = err
 }
 
 func (s *BrokerContract) resolve(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.refused[grant.Binding] {
-		return sandbox.Token{}, errors.New("brokertest: the connection is not connected")
+	if err := s.refused[grant.Binding]; err != nil {
+		return sandbox.Token{}, err
 	}
 	return s.tokens[grant.Binding], nil
 }
@@ -218,10 +228,32 @@ func (s *BrokerContract) TestAConnectionRevokedMidSessionIsWithdrawn() {
 	s.Contains(s.logs.String(), `"level":"WARN"`)
 }
 
+// TestACredentialUnavailableJustNowIsKeptAndAskedForAgain: a renewal that failed just now
+// withdraws nothing, and the next run asks again.
+func (s *BrokerContract) TestACredentialUnavailableJustNowIsKeptAndAskedForAgain() {
+	subject := s.subject("session-1")
+	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
+	s.Require().NoError(s.returned(err))
+
+	s.unavailable("github")
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+
+	value, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	s.Require().True(ok)
+	s.Equal("gho_first", value)
+	s.Contains(s.logs.String(), `"level":"WARN"`)
+
+	s.connect("github", "gho_second", 2)
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+	value, _, _ = subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	s.Equal("gho_second", value)
+}
+
 // TestTwoSessionsNeverShareACredential is A8 as far as the provider's API goes: each
 // session's grant is its own, and ending one leaves the other's.
 func (s *BrokerContract) TestTwoSessionsNeverShareACredential() {
-	first, second := s.subject("session-1"), s.subject("session-2")
+	// A reopened session keeps its id, so two sessions of one id are the harder case.
+	first, second := s.subject("session-1"), s.subject("session-1")
 	one, err := first.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
 	s.Require().NoError(s.returned(err))
 	other, err := second.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
@@ -241,22 +273,4 @@ func (s *BrokerContract) TestAProviderThatRefusesLeavesTheTokenInNoError() {
 	_, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
 
 	s.Error(s.returned(err))
-}
-
-// lockedBuffer is a bytes.Buffer two slog handlers can write to at once.
-type lockedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *lockedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
