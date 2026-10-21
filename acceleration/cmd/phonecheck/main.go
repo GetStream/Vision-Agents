@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
+	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person/twilio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
 )
 
@@ -60,7 +61,7 @@ func runCommand(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; %s", args[0], usage)
 	}
-	providers := map[string]provider{}
+	providers := map[string]provider{"twilio": twilio.New}
 	cfg, p, err := parseRun(dir, args[1:], providers)
 	if err != nil {
 		return err
