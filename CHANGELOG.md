@@ -679,7 +679,9 @@ them included; what the user types next is counted on their day as before.
 
 The same tasks are a REST resource, `/v1/agents/scheduled-tasks`: a backend schedules for
 the user it names with `X-Stream-User-Id`, and the owner reads, changes, pauses, resumes
-and deletes their tasks from a device, runs included. `agent.yaml` takes a `scheduling:`
+and deletes their tasks from a device, runs included. A one-shot resumed after its time
+came is completed, its occurrence listed as a `missed` run with error `task_paused`.
+`agent.yaml` takes a `scheduling:`
 block (`enabled`, `max_tasks_per_user`, `default_timezone`) in the Go, Python and
 JavaScript SDKs.
 
