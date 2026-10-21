@@ -12,7 +12,7 @@
 # https://linear.app/stream/document/nessy-as-a-connector-150504c74466, opened October 20, 2026.
 id: nessy
 # A new revision for any change to what this file says; see AGENTS.md.
-revision: 2
+revision: 3
 name: Nessy
 category: Internal tools
 description: Read Stream's customer data in Nessy as the staff member who connected.
