@@ -365,6 +365,14 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 			return refusal(conflictCode, "that task has finished; schedule a new one instead"), nil
 		}
 		next, ok := schedule.Next(now)
+		missed := scheduling.SleptThrough(task)
+		if !ok && missed != nil {
+			if err := r.db.InsertScheduledTaskRun(ctx, missed); err != nil {
+				return nil, err
+			}
+			task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
+			break
+		}
 		if !ok {
 			return refusal(scheduling.CodeScheduleInPast, "that task has no occurrence left; reschedule it to a new time instead"), nil
 		}

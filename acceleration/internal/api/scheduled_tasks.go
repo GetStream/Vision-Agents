@@ -514,6 +514,11 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		// Counted from now: what a pause slept through is never replayed.
 		next, ok := schedule.Next(time.Now())
 		if !ok {
+			if missed := scheduling.SleptThrough(task); missed != nil {
+				if err := s.store.InsertScheduledTaskRun(ctx, missed); err != nil {
+					return nil, err
+				}
+			}
 			task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
 		} else {
 			task.State, task.NextRunAt = store.ScheduledTaskActive, &next
@@ -790,7 +795,9 @@ func (s *Server) registerScheduledTasks(api huma.API) {
 		Path:        "/v1/agents/scheduled-tasks/{id}/resume",
 		Summary:     "Resume a scheduled task",
 		Description: "The next occurrence is counted from now, so missed occurrences are never replayed, " +
-			"and a run of failures is forgiven. A completed task cannot be resumed (409).",
+			"and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, " +
+			"its occurrence listed in its runs as missed (error task_paused). A completed task cannot be " +
+			"resumed (409).",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The task, running again"},
 			"409": errorResponse("The task is completed, or the user is at their active-task limit"),
@@ -922,13 +929,13 @@ type ScheduledTaskRun struct {
 	TaskId       string     `json:"task_id"`
 	ScheduledFor string     `json:"scheduled_for" doc:"When the occurrence was due, RFC 3339 with the task zone's offset."`
 	Trigger      string     `json:"trigger" doc:"schedule when it came due, manual when it was run by hand." enum:"schedule,manual"`
-	State        string     `json:"state" doc:"running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late)." enum:"running,delivered,failed,missed"`
+	State        string     `json:"state" doc:"running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused)." enum:"running,delivered,failed,missed"`
 	DeliveredTo  string     `json:"delivered_to" doc:"Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands."`
 	SessionId    string     `json:"session_id"`
 	Attempts     int        `json:"attempts"`
 	StartedAt    *time.Time `json:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
-	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again). The full error is in the router's logs. Null otherwise."`
+	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise."`
 }
 
 // ScheduledTaskPage is a page of scheduled tasks.

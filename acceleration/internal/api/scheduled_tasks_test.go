@@ -1488,6 +1488,211 @@ func (s *ScheduledTasksSuite) TestPauseAndResumeCountsFromNow() {
 	s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
 }
 
+func (s *ScheduledTasksSuite) TestAOneShotResumedAfterItsTimeRecordsTheOccurrenceAsMissed() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	due := s.pausedAt(created.Id, time.Now().Add(-time.Hour))
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/resume", nil, &resumed))
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	s.Nil(resumed.NextRunAt)
+
+	var page ScheduledTaskRunPage
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path+"/runs", nil, &page))
+	s.Require().Len(page.Items, 1, "the occurrence the pause slept through is recorded")
+	run := page.Items[0]
+	s.Equal(store.ScheduledTaskRunMissed, run.State)
+	s.Equal(store.ScheduledTaskTriggerSchedule, run.Trigger)
+	s.Equal(due.Format(time.RFC3339), run.ScheduledFor)
+	s.Equal(pointerTo(scheduling.ReasonPaused), run.Error)
+	s.Require().NotNil(run.FinishedAt)
+	s.Equal(pointerTo(run.FinishedAt.UTC().Format(time.RFC3339)), resumed.LastRunAt,
+		"the missed run is the task's last run")
+}
+
+func (s *ScheduledTasksSuite) TestAOneShotTheAgentResumesAfterItsTimeRecordsTheOccurrenceAsMissed() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	due := s.pausedAt(created.Id, time.Now().Add(-time.Hour))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.say(user, opened.Id, "turn it back on")
+	s.Contains(s.ranResult(watching), `"state":"completed"`)
+
+	task := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	s.Equal(store.ScheduledTaskCompleted, task.State)
+	s.Nil(task.NextRunAt)
+	runs := s.runsOf(task)
+	s.Require().Len(runs, 1, "the occurrence the pause slept through is recorded")
+	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
+	s.True(due.Equal(runs[0].ScheduledFor), "the run is the occurrence at %s, not %s", due, runs[0].ScheduledFor)
+	s.Equal(pointerTo(scheduling.ReasonPaused), runs[0].Error)
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id, nil, &read))
+	s.NotNil(read.LastRunAt, "the missed run is the task's last run")
+}
+
+func (s *ScheduledTasksSuite) TestResumingALateOneShotTwiceRecordsItsOccurrenceOnce() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	s.pausedAt(created.Id, time.Now().Add(-time.Hour))
+
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/resume", nil, nil))
+	status, _ := s.taskFailure(user, http.MethodPost, path+"/resume", nil)
+	s.Equal(http.StatusConflict, status, "a completed task cannot be resumed")
+	s.Len(s.runsOf(store.ScheduledTask{ID: created.Id}), 1)
+}
+
+func (s *ScheduledTasksSuite) TestAOneShotResumedBeforeItsTimeRecordsNoRun() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/pause", nil, nil))
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, path+"/resume", nil, &resumed))
+	s.Equal(store.ScheduledTaskActive, resumed.State)
+	s.Equal(created.NextRunAt, resumed.NextRunAt)
+	s.Nil(resumed.LastRunAt)
+	s.Empty(s.runsOf(store.ScheduledTask{ID: created.Id}))
+}
+
+func (s *ScheduledTasksSuite) TestARepeatingTaskResumedAfterItsTimesRecordsNoRunAndCountsFromNow() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := utcTaskRequest(config)
+	body.Schedule.Repeat = pointerTo("FREQ=DAILY")
+	created := s.createTask(user, body)
+	s.pausedAt(created.Id, time.Now().Add(-72*time.Hour))
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &resumed))
+	s.Equal(store.ScheduledTaskActive, resumed.State)
+	s.Require().NotNil(resumed.NextRunAt)
+	next, err := time.Parse(time.RFC3339, *resumed.NextRunAt)
+	s.Require().NoError(err)
+	s.True(next.After(time.Now()), "the resumed task counts from now")
+	s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
+	s.Empty(s.runsOf(store.ScheduledTask{ID: created.Id}), "a pause skips what it sleeps through")
+}
+
+func (s *ScheduledTasksSuite) TestARepeatingTaskResumedAfterItsLastTimeRecordsNoRun() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := utcTaskRequest(config)
+	body.Schedule.Repeat = pointerTo("FREQ=DAILY")
+	created := s.createTask(user, body)
+	due := s.pausedAt(created.Id, time.Now().Add(-72*time.Hour))
+	until := due.Add(24 * time.Hour)
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).Set("until_date = ?", until).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", created.Id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &resumed))
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	s.Empty(s.runsOf(store.ScheduledTask{ID: created.Id}), "a pause skips what it sleeps through")
+}
+
+func (s *ScheduledTasksSuite) TestResumingALateOneShotLeavesTheRunItsOccurrenceAlreadyHas() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	due := s.pausedAt(created.Id, time.Now().Add(-time.Hour))
+	// What a pause leaves of a run held by quiet hours: missed, with no reason.
+	finished := due.Add(time.Minute)
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &store.ScheduledTaskRun{
+		TaskID: created.Id, CustomerID: s.customerID(), ScheduledFor: due,
+		State: store.ScheduledTaskRunMissed, FinishedAt: &finished,
+	}))
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &resumed))
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	runs := s.runsOf(store.ScheduledTask{ID: created.Id})
+	s.Require().Len(runs, 1)
+	s.Nil(runs[0].Error, "the run already there is kept as it was")
+}
+
+func (s *ScheduledTasksSuite) TestResumingAOneShotWhoseOccurrenceFailedRecordsNoOtherRun() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	due := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	failure := scheduling.ReasonFailed
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &store.ScheduledTaskRun{
+		TaskID: created.Id, CustomerID: s.customerID(), ScheduledFor: due,
+		State: store.ScheduledTaskRunFailed, Error: &failure, FinishedAt: &due,
+	}))
+	// What the worker leaves of a one-shot whose one occurrence failed, paused
+	// after by the agent, which pauses a failed task too.
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("state = ?", store.ScheduledTaskPaused).Set("start_local = ?", due).Set("next_run_at = NULL").
+		Where("customer_id = ?", s.customerID()).Where("id = ?", created.Id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &resumed))
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	runs := s.runsOf(store.ScheduledTask{ID: created.Id})
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotResumeAnActiveOneShotPastItsTime() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, utcTaskRequest(config))
+	// Due an hour ago and still active: the occurrence is the worker's.
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("start_local = ?", past).Set("next_run_at = ?", past).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", created.Id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.say(user, opened.Id, "turn it back on")
+	s.Contains(s.ranResult(watching), `"error":"schedule_in_past"`)
+	s.Equal(store.ScheduledTaskActive, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+	s.Empty(s.runsOf(store.ScheduledTask{ID: created.Id}))
+}
+
+// pausedAt pauses a task with its one time, or its first, at due, written
+// straight to the store so the pause sleeps through it without waiting. It
+// answers due as stored.
+func (s *ScheduledTasksSuite) pausedAt(id string, due time.Time) time.Time {
+	due = due.UTC().Truncate(time.Second)
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("state = ?", store.ScheduledTaskPaused).Set("start_local = ?", due).Set("next_run_at = ?", due).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+	return due
+}
+
+// utcTaskRequest is taskRequest in UTC, so a task's local start is its instant.
+func utcTaskRequest(config string) CreateScheduledTaskRequest {
+	body := taskRequest(config)
+	body.Schedule.Timezone = pointerTo("UTC")
+	return body
+}
+
 func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSchedule() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
