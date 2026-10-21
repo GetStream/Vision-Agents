@@ -43,6 +43,12 @@ setup:
     # «Copy the secret now: it is not shown again» ([n]:frontend/src/pages/Admin.tsx:863).
     - title: Copy the credentials
       description: Copy the Client ID and Client secret into this page. Nessy shows the secret once.
+    # NES-503: a managed client's secret works for 90 days, then the token endpoint answers
+    # invalid_client and every refresh fails ([n]:docs/mcp.md:276-290); a second secret can be
+    # added before that, and Admin → Registered OAuth clients has Rotate secret
+    # ([n]:docs/mcp.md:284-292; [n]:frontend/src/pages/Admin.tsx:945).
+    - title: Rotate the secret within 90 days
+      description: The client secret expires after 90 days. After that Nessy answers invalid_client and no connection can refresh. Before then, open Admin, then Registered OAuth clients, choose Rotate secret, and save the new secret in this page.
 endpoints:
   # [n]:docs/mcp.md:56 («claude mcp add --transport http nessy https://nessy.getstream.io/mcp»);
   # [n]:backend/cliauth/client.go:41 (MCPPath /mcp, under the issuer).

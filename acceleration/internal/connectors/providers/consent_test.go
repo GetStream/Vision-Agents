@@ -582,6 +582,24 @@ func (s *ConsentSuite) TestNessyWithoutTheAppsClientIsRefusedRatherThanRegistere
 	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
 }
 
+// A managed client's secret expires after 90 days (NES-503) and then every refresh fails, so setup
+// says so and names the Admin action that replaces it.
+func (s *ConsentSuite) TestNessySetupTellsToRotateTheClientSecretWithin90Days() {
+	raw, err := fs.ReadFile(providers.FS, "nessy.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	var rotate *core.SetupStep
+	for i, step := range manifest.Setup.Steps {
+		if strings.Contains(step.Description, "Rotate secret") {
+			rotate = &manifest.Setup.Steps[i]
+		}
+	}
+	s.Require().NotNil(rotate, "a step names Rotate secret")
+	s.Contains(rotate.Description, "90 days")
+	s.Contains(rotate.Description, "invalid_client")
+}
+
 // Every refresh rotates the refresh token and a reused one ends the family, so no grace; the
 // managed client's family ends 24 hours after its last refresh, which refresh_ttl counts from each
 // issue (nessy.yaml).
