@@ -53,12 +53,12 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.Equal("Hey. Can you help me find after school care for the kids?", input[len(input)-1].Content)
 	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
 		"none of the dropped reply may go out")
-	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.oneDropSince(dropped)
 	s.Equal(1.0, testutil.ToFloat64(settledOverAgent.WithLabelValues("1", "true", "interrupt"))-overAgent,
 		"one word, final, settled over the greeting and interrupting it")
 	unplayed, _ := histogramOf("router_agent_played_before_interrupt_seconds", "kind", kindCaller)
 	s.Equal(played, unplayed, "a reply nobody heard did not play")
-	logged := s.logs.records("dropped a reply the caller said more over before hearing any of it")
+	logged := s.dropLogged()
 	s.Require().Len(logged, 1)
 	s.Equal(two, logged[0]["turn"])
 	s.Equal("nash", logged[0]["participant"])
@@ -81,7 +81,7 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the early reply kept going")
 	s.Len(s.model.requests(), 1, "the early reply was the one answering")
 	s.Len(s.flow.requests(), 1, "words that drop a reply are not also put to the controller")
-	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.oneDropSince(dropped)
 }
 
 func (s *AgentSuite) TestAMurmurOrAWordOfAssentLeavesTheReplyToPlay() {
@@ -245,7 +245,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBinding
 	case <-time.After(3 * time.Second):
 		s.FailNow("the binding asked for its call to be cancelled and it kept running")
 	}
-	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped, "the reply was dropped, not talked over")
+	s.oneDropSince(dropped)
 	s.False(slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) }),
 		"a cancelled call was answered as still running")
 }
@@ -273,7 +273,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardAnswersARunningToolStill
 	s.eventually(func() bool {
 		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
 	}, "the call the dropped reply made was not answered")
-	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped, "the reply was dropped, not talked over")
+	s.oneDropSince(dropped)
 	select {
 	case <-runner.stopped:
 		s.FailNow("saying more cancelled what the caller had asked for")
@@ -375,7 +375,7 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverAfterItReachedTheVoiceIsDrop
 	s.mutters(nash, "wait no")
 
 	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
-	logged := s.logs.records("dropped a reply the caller said more over before hearing any of it")
+	logged := s.dropLogged()
 	s.Require().Len(logged, 1)
 	s.Equal(true, logged[0]["sent_to_voice"])
 }
@@ -388,7 +388,7 @@ func (s *AgentSuite) TestFinalWordsOverAReplyNobodyHeardDropIt() {
 	s.says(nash, "only the vegetarian options")
 
 	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "final words left the reply to play")
-	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.oneDropSince(dropped)
 }
 
 func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() {
@@ -491,4 +491,20 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsNotUsedForWhatADroppedRep
 		requests := s.model.requests()
 		return strings.Contains(requests[len(requests)-1].Instructions, missedNote("two"))
 	}, "the turn was answered by a reply written without what it owes")
+}
+
+// oneDropSince waits for the stale-reply counter to move past before, then says it moved by
+// exactly one. dropUnheard abandons the reply before it counts the drop, so a test that saw
+// the reply abandoned can read the counter first.
+func (s *AgentSuite) oneDropSince(before float64) {
+	s.eventually(func() bool { return testutil.ToFloat64(staleReplies) > before }, "the drop was never counted")
+	s.Equal(1.0, testutil.ToFloat64(staleReplies)-before, "the reply was dropped once, not talked over")
+}
+
+// dropLogged waits for the line logged when a reply is dropped, which comes after the reply
+// is abandoned, and returns what was logged.
+func (s *AgentSuite) dropLogged() []map[string]any {
+	const line = "dropped a reply the caller said more over before hearing any of it"
+	s.eventually(func() bool { return len(s.logs.records(line)) > 0 }, "the drop was never logged")
+	return s.logs.records(line)
 }
