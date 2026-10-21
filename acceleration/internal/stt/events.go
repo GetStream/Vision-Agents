@@ -62,6 +62,19 @@ type Disconnected struct {
 
 func (Disconnected) isSTTEvent() {}
 
+// Failover means the provider refused the session part way through and the next candidate
+// took it over. Speech the refusing one had not transcribed yet is lost.
+type Failover struct {
+	// Provider and Model serve the session from now on.
+	Provider string
+	Model    string
+	// From is the "provider/model" that refused, and Err what it said.
+	From string
+	Err  error
+}
+
+func (Failover) isSTTEvent() {}
+
 // Error reports a provider failure. Fatal means the session cannot continue.
 type Error struct {
 	Provider string

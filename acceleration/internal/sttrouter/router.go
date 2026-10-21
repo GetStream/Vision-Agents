@@ -84,7 +84,7 @@ func New(options Options) (*Router, error) {
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when
-// one fails to start.
+// one fails to start, and again when one refuses the session part way through.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	request.Options = routeDefaults(request.Target, request.Options)
 	if err := r.Live(request); err != nil {
@@ -108,7 +108,14 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+	// The next candidate opens under the context the first one did, so it lasts as long
+	// as the first would have.
+	reopen := func(refused []string) (stt.STT, routing.ProviderConfig, error) {
+		next := core
+		next.Exclude = refused
+		return r.Select(ctx, next)
+	}
+	return newSession(provider, config, core.Owner(), r.Recorder(), reopen), nil
 }
 
 // Live refuses a session pinned only to batch models before any vendor is dialled: a

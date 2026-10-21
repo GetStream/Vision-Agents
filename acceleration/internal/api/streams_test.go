@@ -662,6 +662,40 @@ func (s *StreamsSuite) ending(connection *websocket.Conn) ([]frame, error) {
 	}
 }
 
+func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextModel() {
+	listening := s.start("/v1/stt/stream", frame{
+		"target": "refusing/" + handingOverModel,
+		"stt":    frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},
+	})
+	defer listening.Close()
+	started := s.nextFrame(listening)
+	s.Require().Equal("started", started["type"])
+	s.Require().Equal("refusing", started["provider"])
+
+	// The caller keeps talking across the switch, as one on a call would.
+	talking := make(chan struct{})
+	defer close(talking)
+	go func() {
+		silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-talking:
+				return
+			case <-ticker.C:
+				if listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()) != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	transcript := s.nextFrame(listening)
+	s.Equal("transcript", transcript["type"], "the refusal reached the caller rather than the next model's words: %v", transcript)
+	s.Equal("echoing", transcript["provider"])
+}
+
 // refused opens a socket on the model that refuses the account, speaks into it and returns
 // it once the refusal has come back.
 func (s *StreamsSuite) refused() *websocket.Conn {

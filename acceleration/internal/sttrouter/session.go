@@ -13,14 +13,22 @@ import (
 )
 
 // Session is a live transcription attached to one customer. It forwards the provider's
-// events untouched and records a stat row per completed turn on the way past.
+// events untouched and records a stat row per completed turn on the way past. A vendor
+// that refuses the session part way through hands it to the next candidate.
 type Session struct {
+	// mu guards provider, config and closed: a failover replaces the provider while the
+	// caller is still sending audio and may close the session.
+	mu       sync.Mutex
 	provider stt.STT
 	// config is the routing identity of the provider. Stats and health are keyed by it,
 	// so a provider registered under a different name still aggregates coherently.
 	config   routing.ProviderConfig
+	closed   bool
 	owner    routing.Owner
 	recorder *routing.Recorder
+	// reopen starts the next candidate, none of those named in refused. Nil leaves a
+	// refusal the end of the session.
+	reopen func(refused []string) (stt.STT, routing.ProviderConfig, error)
 
 	events chan stt.Event
 	// failed is set once the provider reports a fatal error. The caller has been told, and
@@ -36,12 +44,14 @@ func newSession(
 	config routing.ProviderConfig,
 	owner routing.Owner,
 	recorder *routing.Recorder,
+	reopen func(refused []string) (stt.STT, routing.ProviderConfig, error),
 ) *Session {
 	session := &Session{
 		provider: provider,
 		config:   config,
 		owner:    owner,
 		recorder: recorder,
+		reopen:   reopen,
 		events:   make(chan stt.Event, 64),
 	}
 	go session.forward()
@@ -54,39 +64,93 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 	if s.failed.Load() {
 		return nil
 	}
-	return s.provider.ProcessAudio(pcm, participant)
+	return s.STT().ProcessAudio(pcm, participant)
 }
 
 // Events returns the provider's events. The channel closes when the session closes.
 func (s *Session) Events() <-chan stt.Event { return s.events }
 
 // Provider is the provider serving this session.
-func (s *Session) Provider() string { return s.config.Provider }
+func (s *Session) Provider() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.config.Provider
+}
 
 // Model is the model serving this session.
-func (s *Session) Model() string { return s.config.Model }
+func (s *Session) Model() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.config.Model
+}
 
 // STT exposes the underlying provider so callers can reach provider-specific features.
-func (s *Session) STT() stt.STT { return s.provider }
+func (s *Session) STT() stt.STT {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.provider
+}
 
 // Close ends the session. The event channel closes once the provider's events are drained.
 func (s *Session) Close() error {
 	var err error
-	s.closeOnce.Do(func() { err = s.provider.Close() })
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		provider := s.provider
+		s.mu.Unlock()
+		err = provider.Close()
+	})
 	return err
 }
 
-// forward relays provider events and records statistics as they pass.
+// forward relays provider events and records statistics as they pass. A refusal the next
+// candidate takes over from is not passed on: the caller hears of the Failover instead.
+// When no candidate takes over, the caller hears the refusal, as if none had been asked.
 func (s *Session) forward() {
 	defer close(s.events)
 
-	for event := range s.provider.Events() {
-		s.observe(event)
+	provider, config := s.provider, s.config
+	var refused []string
+	for {
+		event, open := <-provider.Events()
+		if !open {
+			return
+		}
+		s.observe(config, event)
+		if failure, ok := event.(stt.Error); ok && failure.Fatal && !transportDrop(failure) && s.reopen != nil {
+			refused = append(refused, config.Name())
+			if next, nextConfig, err := s.reopen(refused); err == nil && s.swap(provider, next, nextConfig) {
+				s.events <- stt.Failover{Provider: nextConfig.Provider, Model: nextConfig.Model, From: config.Name(), Err: failure.Err}
+				provider, config = next, nextConfig
+				continue
+			}
+		}
 		s.events <- event
 	}
 }
 
-func (s *Session) observe(event stt.Event) {
+// swap puts next in place of the provider that refused, and closes that one. A session
+// closed while next was starting has closed the refusing provider already, so next is
+// closed instead and the swap does not happen.
+func (s *Session) swap(refusing, next stt.STT, config routing.ProviderConfig) bool {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = next.Close()
+		return false
+	}
+	s.provider, s.config = next, config
+	s.mu.Unlock()
+	s.failed.Store(false)
+
+	// Off this goroutine, since closing may wait on the vendor for the last words of the
+	// call: ElevenLabs's Close flushes for up to FlushTimeout (elevenlabs.go, flush).
+	go func() { _ = refusing.Close() }()
+	return true
+}
+
+func (s *Session) observe(config routing.ProviderConfig, event stt.Event) {
 	switch typed := event.(type) {
 	case stt.Transcript:
 		// Only settled transcripts are billable work; interim ones are revisions of a
@@ -94,7 +158,7 @@ func (s *Session) observe(event stt.Event) {
 		if !typed.Final() {
 			return
 		}
-		s.recorder.Record(s.config, routing.Stat{
+		s.recorder.Record(config, routing.Stat{
 			Owner:     s.owner,
 			StartedAt: time.Now().UTC(),
 			Usage:     routing.Usage{AudioMs: int64(typed.AudioDurationMs)},
@@ -121,7 +185,7 @@ func (s *Session) observe(event stt.Event) {
 			// next session can still reach the model.
 			stat.Fatal = !transportDrop(typed)
 		}
-		s.recorder.Record(s.config, stat)
+		s.recorder.Record(config, stat)
 	}
 }
 

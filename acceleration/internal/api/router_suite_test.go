@@ -687,6 +687,9 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	hearing.Register("refusing", func(routing.Spec) (stt.STT, error) {
 		return &refusingSTT{emitter: stt.NewEmitter(64)}, nil
 	})
+	hearing.Register("echoing", func(routing.Spec) (stt.STT, error) {
+		return &echoingSTT{emitter: stt.NewEmitter(64)}, nil
+	})
 	hearing.Register("batch", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
 	// A live model whose vendor is down: its socket fails to open the way batchOnlySTT's does.
 	hearing.Register("down", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
@@ -696,7 +699,9 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	heard.Aliases["en-low-latency"] = routing.Alias{Title: "Low latency", Languages: []string{"en"}, RequireRealtime: true}
 	heard.Providers = append(heard.Providers, routing.ProviderConfig{
 		Provider: "refusing", Model: refusingModel, Languages: []string{"la"}, Realtime: true,
-	}, routing.ProviderConfig{Provider: "batch", Model: batchModel, Languages: []string{"la"}},
+	}, routing.ProviderConfig{Provider: "refusing", Model: handingOverModel, Languages: []string{"la"}, Realtime: true},
+		routing.ProviderConfig{Provider: "echoing", Model: "echoing-model", Languages: []string{"la"}, Realtime: true},
+		routing.ProviderConfig{Provider: "batch", Model: batchModel, Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "down", Model: downModel, Languages: []string{"la"}, Realtime: true})
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
