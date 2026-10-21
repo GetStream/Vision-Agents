@@ -549,11 +549,21 @@ func (s *Server) heldCredentials(ctx context.Context, connection store.Connector
 	return held
 }
 
+// revokeTimeout bounds a revoke after a delete: one revoke POST, which the scheme's egress
+// client caps at connectorHTTPTimeout (10 s, cmd/router/main.go), with room for the
+// definition and client secret reads before it. The resolver's retrieveTimeout
+// (resolver.go), which covers two such requests. Unverified, not measured.
+const revokeTimeout = 30 * time.Second
+
 // revokeAtProvider asks the provider to revoke the grant a just deleted connection held
 // (RFC 7009 for oauth2_code), when the manifest revision it was connected on says
 // revoke_on_delete (AI-1544). It runs after the delete, so a delete the store refuses revokes
 // nothing. The connection is gone whatever the provider answers, so a failure is logged.
+// Detached: once the row is gone the router can never revoke later, so a caller that hangs
+// up must not cancel it.
 func (s *Server) revokeAtProvider(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
+	defer cancel()
 	if err := s.revokeHeld(ctx, connection, held); err != nil {
 		s.logger.Error("could not revoke a deleted connection's grant at the provider", "connection", connection.ID,
 			"connector", connection.ConnectorID, "error", err)

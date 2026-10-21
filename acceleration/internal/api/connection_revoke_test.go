@@ -4,8 +4,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
@@ -26,10 +31,14 @@ func (s *AuthorizationsSuite) TestDeletingAConnectionWhoseManifestOptsInEndsItsG
 	s.connect(id)
 	stored, manifest := s.held(id)
 	before := s.provider.Hits(fakeprovider.PathRevoke)
+	revoked := len(s.provider.Revoked())
 
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connections/"+id, nil, nil))
 
 	s.Equal(before+1, s.provider.Hits(fakeprovider.PathRevoke))
+	// The refresh token, which a provider must revoke (RFC 7009 section 2); an access token
+	// past its expiry may revoke nothing, as at Nessy.
+	s.Equal([]string{"refresh_token"}, s.provider.Revoked()[revoked:])
 	var refused *core.OutcomeError
 	s.Require().ErrorAs(s.renew(stored, manifest), &refused)
 	s.Equal(core.OutcomeInvalidGrant, refused.Outcome.Kind)
@@ -78,6 +87,65 @@ func (s *AuthorizationsSuite) TestARefusedDeleteRevokesNothing() {
 
 	s.Equal(before, s.provider.Hits(fakeprovider.PathRevoke))
 	s.NoError(s.refresh(id))
+}
+
+// A forced delete of a connection an agent config binds deletes it, and revokes its grant as
+// an unforced delete does.
+func (s *AuthorizationsSuite) TestAForcedDeleteOfABoundConnectionEndsItsGrantAtTheProvider() {
+	id := s.revokingConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	s.connect(id)
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "binder-" + s.utils.uuid(), "connectors": []map[string]any{{"name": "crm", "connector_id": s.get(id).ConnectorID,
+			"connection": map[string]any{"type": "fixed", "connection_id": id}, "tools": []map[string]any{}}},
+	}, nil))
+	stored, manifest := s.held(id)
+	before := s.provider.Hits(fakeprovider.PathRevoke)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connections/"+id+"?force=true", nil, nil))
+
+	s.Equal(before+1, s.provider.Hits(fakeprovider.PathRevoke))
+	var refused *core.OutcomeError
+	s.Require().ErrorAs(s.renew(stored, manifest), &refused)
+	s.Equal(core.OutcomeInvalidGrant, refused.Outcome.Kind)
+}
+
+// A caller that hangs up once the row is deleted does not cancel the revoke: the router can
+// never revoke the grant later, since the row that held its tokens is gone.
+func (s *AuthorizationsSuite) TestACallerThatHangsUpStillEndsTheGrantAtTheProvider() {
+	gone := make(chan struct{})
+	provider, err := url.Parse(s.provider.URL)
+	s.Require().NoError(err)
+	proxy := httputil.NewSingleHostReverseProxy(provider)
+	proxy.Transport = s.provider.Client().Transport
+	// The revoke endpoint answers only once the caller has hung up, then revokes at the fake.
+	slow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-gone:
+		case <-time.After(5 * time.Second):
+		}
+		r.URL.Path = fakeprovider.PathRevoke
+		proxy.ServeHTTP(w, r)
+	}))
+	defer slow.Close()
+	id := s.revokingConnection(slow.URL+"/revoke", optInRevoke)
+	s.connect(id)
+	stored, manifest := s.held(id)
+	before := s.provider.Hits(fakeprovider.PathRevoke)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.server.URL+"/v1/agents/connections/"+id, nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+	_, err = s.server.Client().Do(request) //nolint:bodyclose // no response: the caller hung up
+	s.Require().ErrorIs(err, context.DeadlineExceeded)
+	close(gone)
+
+	s.Require().Eventually(func() bool { return s.provider.Hits(fakeprovider.PathRevoke) == before+1 }, 5*time.Second, 20*time.Millisecond)
+	var refused *core.OutcomeError
+	s.Require().Eventually(func() bool { return errors.As(s.renew(stored, manifest), &refused) }, 5*time.Second, 20*time.Millisecond)
+	s.Equal(core.OutcomeInvalidGrant, refused.Outcome.Kind)
+	s.Empty(s.logged.lines(revokeFailed, id))
 }
 
 // A connection that never finished a consent holds no grant, so its delete asks nothing of the
