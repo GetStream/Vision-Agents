@@ -84,6 +84,10 @@ apart from the router's: it can be the same account, or your own. The router's
 | `TELNYX_PERSON_CONNECTION_ID` | `-provider telnyx`: the TeXML app the person number is on. Only read. Not the router's `TELNYX_CONNECTION_ID` |
 | `IPINFO_TOKEN` | Optional. Better place names for addresses |
 
+The `*_PERSON_*` credentials are the account that places and receives the person's calls. It
+may be the router's account. `.env` is loaded with `set -a; . .env`, so after the router's
+lines it can say `TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID` instead of copying secrets.
+
 The router's address is `-router` only. The tool checks the provider's variables before it
 places anything.
 

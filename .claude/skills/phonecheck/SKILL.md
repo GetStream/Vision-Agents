@@ -12,9 +12,10 @@ for how the person side is set up by hand. This skill is how to run it end to en
 Calls cost money. In local mode the run also changes the Stream app's call hooks. Say both
 before you start.
 
-## 1. Check first (read-only)
+## 1. Check first
 
-Place nothing yet.
+Place nothing and change nothing yet. For a local router the customer and the list need it running, so start it (section 3, step 1) before the two checks that follow; it changes nothing. (`phone list` and `phone hooks` below only read, though
+`phone list` applies migrations to the database `ROUTER_POSTGRES_DSN` points at.)
 
 - **Which router.** Local (you start it) or remote (a URL the human gives you).
 - **Which direction and provider.** `outbound` or `inbound`; `twilio` or `telnyx`.
@@ -26,16 +27,50 @@ Place nothing yet.
   variables, checked in the process env after loading, names only, never values:
 
 ```bash
-( set -a; . "$ENV_FILE"; set +a; for k in STREAM_API_KEY STREAM_API_SECRET STREAM_ACCELERATION_CUSTOMER_ID ROUTER_POSTGRES_DSN TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done )
+( set -a; . "$ENV_FILE"; set +a; for k in STREAM_API_KEY STREAM_API_SECRET STREAM_ACCELERATION_CUSTOMER_ID ROUTER_POSTGRES_DSN TWILIO_PERSON_ACCOUNT_SID TWILIO_PERSON_AUTH_TOKEN TELNYX_PERSON_API_KEY TELNYX_PERSON_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_CONNECTION_ID TELNYX_PUBLIC_KEY ROUTER_AUTH_KEK; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done )
 ```
 
   Only the provider's own names matter; ignore the other vendor's.
-  `STREAM_ACCELERATION_CUSTOMER_ID` is not needed when you pass `-customer`.
+  The `*_PERSON_*` names are the account that places and receives the person's calls, which the
+  tool reads. It may be the router's account: in `.env`, after the router's lines, write
+  `TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID` instead of copying secrets. The router's
+  `TWILIO_*` / `TELNYX_*` names only matter for a local router, which is the one that reads
+  them. `TELNYX_PUBLIC_KEY` and `ROUTER_AUTH_KEK` only matter for a local Telnyx router: the public
+  key checks the calls Telnyx sends it, and the keyring seals a Telnyx number's trunk password
+  when it is attached and opens it on each call. A local Telnyx router also needs a TeXML app of
+  its own in `TELNYX_CONNECTION_ID`: `acceleration/README.md`, "Telnyx for a local router".
+  `STREAM_ACCELERATION_CUSTOMER_ID` is not needed when you pass `-customer`, and for a local
+  router it is the wrong id unless it matches the startup line.
   `ROUTER_POSTGRES_DSN` only matters for a local router.
+- **The customer.** For a local router it is the Stream app id, not `STREAM_ACCELERATION_CUSTOMER_ID`:
+  the local router runs in deployment mode and prints the id at startup, in
+  `stream: the deployment acts in its own Stream app` (`stream_app=<id>`). The local dashboard
+  uses the same id. Take it from that line once the router is up (section 3, step 1), call it
+  `$CUSTOMER`, and pass `-customer "$CUSTOMER"` to both `phone list` and the tool. If `.env`'s
+  `STREAM_ACCELERATION_CUSTOMER_ID` names a different id, tell the human. For a remote router the
+  human gives the customer id.
+- **The numbers belong to the right side.** The agent number must be one the router under test
+  holds for that customer (inbound: and has attached), and the person number must be one it does
+  not hold. For a local router, from `acceleration/`, env loaded, with the router running, list
+  what it holds. Pass `-customer`: `phone list` defaults to `demo`.
+
+```bash
+( set -a; . "$ENV_FILE"; set +a; go run ./cmd/phone list -customer "$CUSTOMER" )
+```
+
+  The agent number must be listed; for inbound it must also have a trunk, and no other row may
+  have one. The person number must not be listed. If the agent number is missing, or for
+  inbound its trunk is `-` or another row has a trunk, or the person number is listed, show the
+  human the list and stop. Buying or attaching is the human's call, never yours. Never conclude
+  that the router holds no numbers from one customer id. For a remote router there is no list to
+  read; the tool checks both numbers against it and refuses a wrong one before placing anything.
 - **The person side is set up** as the README says (voice URL or TeXML app, region). You cannot
   check this; ask the human to confirm it, and what to pass as `-region`.
-- **Inbound only:** the customer has no other attached number and no other dispatch worker is
-  connected. The tool refuses the first; ask about the second.
+- **You change nothing at any provider, and attach nothing.** No voice URLs, no TeXML apps, no
+  `phone attach`, no `phone buy`. Those spend money or take calls from somewhere else, and the
+  README sets them up by hand. If one is needed, say exactly what and stop for the human.
+- **Inbound only:** no other dispatch worker is connected. The list above covers other attached
+  numbers; ask the human about this one.
 - **Local only: what already uses the app's hooks.** From `acceleration/`, env loaded, run the
   read-only `go run ./cmd/phone hooks` and show the human what it lists. Adding a tunnel URL
   changes where Stream sends the app's call events, so they should see what else is there first.
@@ -56,7 +91,9 @@ From `acceleration/`:
 
 1. Start the router in the background with the env loaded, without printing values:
    `( set -a; . "$ENV_FILE"; set +a; go run ./cmd/router )`. Postgres must be reachable (`ROUTER_POSTGRES_DSN`), because the
-   `call_sites` row needs it. Send its output to a file. Wait for the `listening` line.
+   `call_sites` row needs it. Send its output to a file. Wait for the `listening` line, and read `stream_app=<id>` from the
+   `the deployment acts in its own Stream app` line: that is `$CUSTOMER`. Then run the number check
+   from section 1.
 2. Start a public tunnel to the router's address (`http://localhost:8080` unless configured
    otherwise) with whatever tunnel tool the human has. Note its public URL.
 3. Point the hooks at it, env loaded: `( set -a; . "$ENV_FILE"; set +a; go run ./cmd/phone hooks -url <tunnel URL> )`. Add `-app <id>` only
@@ -64,7 +101,7 @@ From `acceleration/`:
 4. From `acceleration/cmd/phonecheck`, with the env loaded the same way, run:
 
 ```bash
-go run . outbound -provider twilio -router http://localhost:8080 -agent-number +15550100001 -person-number +15550100002 -log-format json
+go run . outbound -provider twilio -router http://localhost:8080 -customer "$CUSTOMER" -agent-number +15550100001 -person-number +15550100002 -log-format json
 ```
 
    Use `inbound` for the other direction, and add `-region`, `-runs`, `-talk` as agreed.
