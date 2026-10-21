@@ -74,12 +74,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	for range cfg.Runs {
-		if err := runCall(ctx, cfg, d); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runCalls(ctx, cfg, d)
 }
 
 func newDeps(ctx context.Context, cfg Config, p person.Person) (deps, error) {
@@ -143,8 +138,11 @@ func parseRun(dir person.Direction, args []string, providers map[string]provider
 // providerName finds -provider's value in args before they are parsed.
 func providerName(args []string) string {
 	for i, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
 		flagName, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
-		if !strings.HasPrefix(arg, "-") || flagName != "provider" {
+		if flagName != "provider" {
 			continue
 		}
 		if hasValue {
@@ -167,6 +165,8 @@ func (c Config) validate() error {
 		return errors.New("-runs must be at least 1")
 	case c.LogFormat != "text" && c.LogFormat != "json":
 		return errors.New("-log-format must be text or json")
+	case lookupSubnets[c.SIPLookupFrom] == "":
+		return fmt.Errorf("-sip-lookup-from must be one of: %s", knownPlaces())
 	}
 	return nil
 }

@@ -98,3 +98,15 @@ func TestTheDirectionComesFromTheSubcommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, person.Inbound, cfg.Direction)
 }
+
+func TestAnUnknownSIPLookupPlaceIsRefused(t *testing.T) {
+	providers, _ := fakeProviders()
+
+	_, _, err := parseRun(person.Outbound, required("-sip-lookup-from", "mars"), providers)
+
+	require.ErrorContains(t, err, "-sip-lookup-from must be one of: ap, eu, us")
+}
+
+func TestAProviderWordThatIsAFlagValueIsNotTheProvider(t *testing.T) {
+	assert.Equal(t, "fake", providerName([]string{"-region", "provider", "-provider", "fake"}))
+}

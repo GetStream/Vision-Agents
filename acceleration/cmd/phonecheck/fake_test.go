@@ -6,6 +6,7 @@ import (
 	"flag"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 
@@ -42,7 +43,7 @@ func (s *steps) calls() []string {
 	var out []string
 	for _, step := range s.all() {
 		switch step {
-		case "healthy", "numbers", "logs_available", "log_rows", "log_row":
+		case "ready", "healthy", "numbers", "logs_available", "log_rows", "log_row":
 			continue
 		}
 		out = append(out, step)
@@ -59,6 +60,7 @@ func (s *steps) placedACall() bool {
 type fakeRouter struct {
 	steps      *steps
 	healthErr  error
+	checkDelay time.Duration // how long the health check takes
 	numbers    []acceleration.PhoneNumber
 	numbersErr error
 	logsErr    error
@@ -73,6 +75,7 @@ type fakeRouter struct {
 
 func (r *fakeRouter) Healthy(context.Context) error {
 	r.steps.add("healthy")
+	time.Sleep(r.checkDelay)
 	return r.healthErr
 }
 
@@ -121,23 +124,35 @@ func (r *fakeRouter) Listen(context.Context, string) (listener, error) {
 	return r.listener, nil
 }
 
-// fakeListener answers with its session, or, when neverArrives, waits for ctx to end.
+// fakeListener answers with its session. When neverArrives, no call comes within the wait;
+// joinErr is what joining an arrived call fails with.
 type fakeListener struct {
 	steps        *steps
 	session      *fakeSession
 	neverArrives bool
+	joinErr      error
 }
 
-func (l *fakeListener) Answer(ctx context.Context) (agentSession, error) {
+func (l *fakeListener) Answer(ctx context.Context, wait time.Duration) (agentSession, error) {
 	if l.neverArrives {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		select {
+		case <-time.After(wait):
+			return nil, errNoCallArrived
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	l.steps.add("agent_answer")
+	if l.joinErr != nil {
+		return nil, l.joinErr
+	}
 	return l.session, nil
 }
 
-func (l *fakeListener) Stop() { l.steps.add("stop") }
+func (l *fakeListener) Stop(context.Context) error {
+	l.steps.add("stop")
+	return nil
+}
 
 // fakeSession ends once the person's call has, as the router ends a phone session.
 type fakeSession struct {
@@ -171,13 +186,20 @@ type fakePerson struct {
 	ended     chan struct{} // closed when Wait returns; nil is fine
 	waiting   chan struct{} // closed when Wait starts; nil is fine
 	stayOn    bool          // Wait lasts until ctx ends
+	waitErr   error         // what Wait returns once the call ended
 	hangupErr error
+	readyErr  error
 }
 
 func (p *fakePerson) Name() string { return "fake" }
 
 func (p *fakePerson) Flags(fs *flag.FlagSet) {
 	fs.StringVar(&p.region, "fake-region", "", "where the fake vendor places calls")
+}
+
+func (p *fakePerson) Ready(person.Direction) error {
+	p.steps.add("ready")
+	return p.readyErr
 }
 
 func (p *fakePerson) Dial(_ context.Context, call person.Call) error {
@@ -199,10 +221,10 @@ func (p *fakePerson) Wait(ctx context.Context, call person.Call) error {
 	if p.ended != nil {
 		close(p.ended)
 	}
-	return nil
+	return p.waitErr
 }
 
-func (p *fakePerson) Hangup(context.Context) error {
+func (p *fakePerson) Hangup(context.Context, person.Call) error {
 	p.steps.add("hangup")
 	return p.hangupErr
 }

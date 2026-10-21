@@ -9,10 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/suite"
-
-	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
+	"github.com/stretchr/testify/suite"
 )
 
 type fakeLocator struct{ err error }
@@ -78,48 +76,6 @@ func (s *SitesSuite) TestAHopWithNoAddressIsOneLine() {
 	lines := s.lines()
 	s.Require().Len(lines, 1)
 	s.Equal("", lines[0]["address"])
-	s.Equal("", lines[0]["host"])
-}
-
-func (s *SitesSuite) hops(in siteReads) []hop {
-	return collectHops(context.Background(), newLogger("json", &s.out), in)
-}
-
-func (s *SitesSuite) reads() siteReads {
-	return siteReads{
-		Direction:  person.Outbound,
-		Joined:     joinedSites{SFUHost: "sfu.example.com"},
-		Placed:     callPlacedRow{SIPHost: "sip.example.com"},
-		RouterHost: "router.example.com",
-		Lookup: func(_ context.Context, host string) ([]netip.Addr, error) {
-			return []netip.Addr{netip.MustParseAddr("192.0.2.9")}, nil
-		},
-		ResolveSIP: func(_ context.Context, host string) ([]netip.Addr, error) {
-			return []netip.Addr{netip.MustParseAddr("198.51.100.1")}, nil
-		},
-	}
-}
-
-func (s *SitesSuite) TestTheSIPServerHopIsMarkedInferred() {
-	hops := s.hops(s.reads())
-
-	s.Require().Len(hops, 3)
-	s.Equal([]string{"agent_sfu", "router_address", "stream_sip"}, []string{hops[0].Name, hops[1].Name, hops[2].Name})
-	s.Equal([]string{"reported", "observed", "inferred"}, []string{hops[0].How, hops[1].How, hops[2].How})
-	s.Equal("sip.example.com", hops[2].Host)
-	s.Equal("198.51.100.1", hops[2].Addrs[0].String())
-}
-
-func (s *SitesSuite) TestNoSIPHostAnywhereIsLoggedAsAnEmptyHost() {
-	in := s.reads()
-	in.Placed = callPlacedRow{}
-
-	hops := s.hops(in)
-	s.log(fakeLocator{}, hops[2:])
-
-	lines := s.lines()
-	s.Require().Len(lines, 1)
-	s.Equal("stream_sip", lines[0]["hop"])
 	s.Equal("", lines[0]["host"])
 }
 

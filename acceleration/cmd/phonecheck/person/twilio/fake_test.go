@@ -2,6 +2,7 @@ package twilio
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -44,6 +45,7 @@ type fakeTwilio struct {
 	// placedStatuses is the life of a call the adapter places.
 	placedStatuses []string
 	failWith       int
+	badTimes       bool // calls' times come in a format the adapter cannot read
 }
 
 func newFakeTwilio() *fakeTwilio {
@@ -99,7 +101,7 @@ func (f *fakeTwilio) handle(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeTwilio) place(w http.ResponseWriter, form url.Values) {
 	f.placed = append(f.placed, form)
-	sid := "CAplaced"
+	sid := fmt.Sprintf("CAplaced%d", len(f.placed))
 	f.calls[sid] = &fakeCall{SID: sid, Statuses: f.placedStatuses, Start: time.Now()}
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]string{"sid": sid})
@@ -127,6 +129,9 @@ func (f *fakeTwilio) writeCall(w http.ResponseWriter, c *fakeCall) {
 		return
 	}
 	body := record(c)
+	if f.badTimes {
+		body["start_time"] = "yesterday"
+	}
 	c.advance()
 	_ = json.NewEncoder(w).Encode(body)
 }

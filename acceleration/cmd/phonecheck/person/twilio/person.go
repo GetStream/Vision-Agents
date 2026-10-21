@@ -25,95 +25,116 @@ var finalStatuses = []string{"completed", "busy", "failed", "no-answer", "cancel
 
 func isFinal(status string) bool { return slices.Contains(finalStatuses, status) }
 
+// Person follows one call at a time. Wait runs beside the run's main flow and Hangup runs at
+// the end, so the call is kept under a lock.
 type Person struct {
-	mu       sync.Mutex
-	client   *api
-	call     person.Call
-	called   bool
-	statuses map[string]string // call sid -> last status seen; "" until seen
+	mu     sync.Mutex
+	sid    string // the call Dial placed or Wait found; empty when none
+	status string // the last status seen for it
 }
 
-func New() person.Person { return &Person{statuses: map[string]string{}} }
+func New() person.Person { return &Person{} }
 
 func (p *Person) Name() string { return "twilio" }
 
 func (p *Person) Flags(*flag.FlagSet) {}
 
+func (p *Person) Ready(person.Direction) error {
+	_, err := newAPI()
+	return err
+}
+
 // Dial calls the agent number from the person number, which says the script and hangs up.
 func (p *Person) Dial(ctx context.Context, call person.Call) error {
-	a, err := p.api()
+	a, err := newAPI()
 	if err != nil {
 		return err
 	}
-	p.remember(call)
 	sid, err := a.placeCall(ctx, call.PersonNumber, call.AgentNumber, dialScript(call.Talk))
 	if err != nil {
 		return err
 	}
-	p.track(sid, "")
+	p.setCall(sid, "")
 	return nil
 }
 
 // Wait follows the person's call to a final status. Inbound it is the call Dial placed;
 // outbound it is the newest call to the person's number since the run began.
 func (p *Person) Wait(ctx context.Context, call person.Call) error {
-	a, err := p.api()
+	a, err := newAPI()
 	if err != nil {
 		return err
 	}
-	p.remember(call)
-	sid, err := p.callToFollow(ctx, a, call)
-	if err != nil || sid == "" {
+	if call.Direction == person.Inbound {
+		sid, _ := p.current()
+		if sid == "" {
+			return errors.New("no call was placed, so there is none to follow")
+		}
+		return p.follow(ctx, a, call, sid)
+	}
+	sid, found, err := p.findOutbound(ctx, a, call)
+	if err != nil {
 		return err
+	}
+	if !found {
+		call.Logger.Warn("person call not observed")
+		return nil
 	}
 	return p.follow(ctx, a, call, sid)
 }
 
-// Hangup ends every call it placed or found that is not over.
-func (p *Person) Hangup(ctx context.Context) error {
-	a, err := p.api()
+// Hangup ends the call it placed or found, if it is still live. An outbound call it never
+// found, as when the run was stopped while looking, is looked for once more.
+func (p *Person) Hangup(ctx context.Context, call person.Call) error {
+	defer p.setCall("", "")
+	sid, status := p.current()
+	if sid != "" && isFinal(status) {
+		return nil
+	}
+	if sid == "" && call.Direction == person.Inbound {
+		return nil
+	}
+	a, err := newAPI()
 	if err != nil {
 		return err
 	}
-	live, err := p.liveCalls(ctx, a)
-	var errs []error
-	if err != nil {
-		errs = append(errs, err)
+	if sid != "" {
+		return a.complete(ctx, sid)
 	}
-	for _, sid := range live {
-		if err := a.complete(ctx, sid); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+	return endLiveCallsTo(ctx, a, call)
 }
 
-func (p *Person) callToFollow(ctx context.Context, a api, call person.Call) (string, error) {
-	if call.Direction == person.Inbound {
-		return p.placedSID(), nil
-	}
-	sid, err := p.findOutbound(ctx, a, call)
-	if sid == "" && err == nil {
-		call.Logger.Warn("person call not observed")
-	}
-	return sid, err
+func (p *Person) current() (sid, status string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sid, p.status
 }
 
-// findOutbound waits for the router's call to the person's number to show up.
-func (p *Person) findOutbound(ctx context.Context, a api, call person.Call) (string, error) {
+func (p *Person) setCall(sid, status string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sid, p.status = sid, status
+}
+
+// findOutbound waits for the router's call to the person's number to show up. Not found
+// with no error means the search ran out of time.
+func (p *Person) findOutbound(ctx context.Context, a api, call person.Call) (sid string, found bool, err error) {
 	searchCtx, cancel := context.WithTimeout(ctx, call.Talk+waitMargin)
 	defer cancel()
 	for {
-		recs, err := a.callsTo(searchCtx, call.PersonNumber, call.Started)
-		if err != nil && searchCtx.Err() == nil {
-			return "", err
+		recs, listErr := a.callsTo(searchCtx, call.PersonNumber, call.Started)
+		if listErr != nil {
+			if searchCtx.Err() != nil {
+				return "", false, ctx.Err() // nil when only the search's own time ran out
+			}
+			return "", false, listErr
 		}
 		if newest, ok := newestOf(recs); ok {
-			p.track(newest.SID, newest.Status)
-			return newest.SID, nil
+			p.setCall(newest.SID, newest.Status)
+			return newest.SID, true, nil
 		}
 		if !sleep(searchCtx, pollEvery) {
-			return "", ctx.Err()
+			return "", false, ctx.Err()
 		}
 	}
 }
@@ -124,31 +145,57 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 	last := ""
 	for {
 		rec, err := a.call(followCtx, sid)
-		if err != nil && followCtx.Err() == nil {
+		if err != nil {
+			if followCtx.Err() != nil {
+				return didNotEnd(ctx)
+			}
 			return err
 		}
-		if err == nil {
-			p.track(sid, rec.Status)
-			if rec.Status != last {
-				logStatus(call, rec)
-				last = rec.Status
-			}
-			if isFinal(rec.Status) {
-				return nil
-			}
+		p.setCall(sid, rec.Status)
+		if rec.Status != last {
+			logStatus(call, rec)
+			last = rec.Status
+		}
+		if isFinal(rec.Status) {
+			return nil
 		}
 		if !sleep(followCtx, pollEvery) {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("the person's call did not end within %s of the talk time", waitMargin)
+			return didNotEnd(ctx)
 		}
 	}
 }
 
+// didNotEnd is the run's own error when it was stopped, else says the call outlived its time.
+func didNotEnd(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("the person's call did not end within %s of the talk time", waitMargin)
+}
+
+// endLiveCallsTo ends every call to the person's number since the run began that is not over.
+func endLiveCallsTo(ctx context.Context, a api, call person.Call) error {
+	recs, err := a.callsTo(ctx, call.PersonNumber, call.Started)
+	errs := []error{err}
+	for _, rec := range recs {
+		if !isFinal(rec.Status) {
+			errs = append(errs, a.complete(ctx, rec.SID))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func logStatus(call person.Call, rec callRecord) {
+	warnUnread(call, "start", rec.StartTime)
+	warnUnread(call, "end", rec.EndTime)
 	call.Logger.Info("person call", "status", rec.Status, "start", formatTime(rec.StartTime.Time),
 		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel)
+}
+
+func warnUnread(call person.Call, field string, t twilioTime) {
+	if t.Unread != "" {
+		call.Logger.Warn("could not read a time of the person's call", "field", field, "value", t.Unread)
+	}
 }
 
 func formatTime(t time.Time) string {

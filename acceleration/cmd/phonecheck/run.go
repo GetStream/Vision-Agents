@@ -48,26 +48,47 @@ type callRun struct {
 }
 
 // runCall places one call, start to finish:
-//  1. check the router, the numbers and the logs;
+//  1. check the person side's credentials, the router, the numbers and the logs;
 //  2. start the agent (outbound: it rings the person; inbound: the person dials it);
 //  3. wait for the person's call and the agent's session to end;
 //  4. read the call's sites from the router and log each hop;
 //  5. on every exit after 1: hang up, stop the worker, close the session, log the summary.
+//
+// A call that did not end cleanly still has its sites read, unless the run was stopped.
 func runCall(ctx context.Context, cfg Config, d deps) (err error) {
 	c := newCallRun(cfg, d)
-	if err := c.checkPreconditions(ctx); err != nil {
-		return err
+	if checkErr := c.checkPreconditions(ctx); checkErr != nil {
+		return checkErr
 	}
+	c.call.Started = time.Now() // after the checks, so connect_ms is the call's own time
 	c.logRegion()
-	defer func() { c.finish(ctx, err) }()
+	defer func() { c.finish(ctx, err) }() // err is what runCall returns
 
-	if err := c.startAgent(ctx); err != nil {
-		return err
+	if startErr := c.startAgent(ctx); startErr != nil {
+		return startErr
 	}
-	if err := c.waitForTheEnd(ctx); err != nil {
-		return err
+	waitErr := c.waitForTheEnd(ctx)
+	if waitErr != nil && ctx.Err() != nil {
+		return waitErr
 	}
-	return c.logSites(ctx)
+	if waitErr != nil {
+		c.logger.Warn("the call did not end cleanly; reading its sites anyway", "error", waitErr)
+	}
+	return errors.Join(waitErr, c.logSites(ctx))
+}
+
+// runCalls places cfg.Runs calls, one after another, and stops at the first that fails or
+// once the tool is told to stop.
+func runCalls(ctx context.Context, cfg Config, d deps) error {
+	for range cfg.Runs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := runCall(ctx, cfg, d); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newCallRun(cfg Config, d deps) *callRun {
@@ -79,13 +100,16 @@ func newCallRun(cfg Config, d deps) *callRun {
 		logger: logger,
 		call: person.Call{
 			ID: id, Direction: cfg.Direction, PersonNumber: cfg.PersonNumber, AgentNumber: cfg.AgentNumber,
-			Talk: cfg.Talk, RegionLabel: cfg.Region, Started: time.Now(), Logger: logger,
+			Talk: cfg.Talk, RegionLabel: cfg.Region, Logger: logger,
 		},
 		sum: summary{Direction: cfg.Direction.String(), Provider: cfg.Provider, RegionLabel: cfg.Region},
 	}
 }
 
 func (c *callRun) checkPreconditions(ctx context.Context) error {
+	if err := c.d.person.Ready(c.cfg.Direction); err != nil {
+		return fmt.Errorf("the %s person side is not ready: %w", c.d.person.Name(), err)
+	}
 	if err := checkRouter(ctx, c.d.router, c.cfg.Router); err != nil {
 		return err
 	}
@@ -130,10 +154,8 @@ func (c *callRun) startInbound(ctx context.Context) error {
 		return fmt.Errorf("dial the agent number: %w", err)
 	}
 
-	arrival, cancel := context.WithTimeout(ctx, inboundArrivalWait)
-	defer cancel()
-	session, err := l.Answer(arrival)
-	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+	session, err := l.Answer(ctx, inboundArrivalWait)
+	if errors.Is(err, errNoCallArrived) {
 		return fmt.Errorf("no call reached the worker within %ds: Stream's call webhook may not reach %s "+
 			"(locally: a tunnel and `phone hooks -url`), or another worker of this customer took the call",
 			int(inboundArrivalWait.Seconds()), c.cfg.Router)
@@ -182,24 +204,19 @@ func (c *callRun) logSites(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sites, found, err := readCallSites(ctx, c.d.router, sessionID, callSitesWait, callSitesEvery)
+	sites, err := c.readSites(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("read the call's sites: %w", err)
+		return err
 	}
-	if !found {
-		c.logger.Warn("the router wrote no call_sites row", "waited", callSitesWait)
-	}
+	sipHost := sipHostOf(c.cfg.Direction, placed, sites)
 
-	hops := collectHops(ctx, c.logger, siteReads{
-		Direction: c.cfg.Direction, Joined: joined, Placed: placed, Sites: sites,
-		RouterHost: routerHost(c.cfg.Router), Lookup: c.d.lookup, ResolveSIP: c.resolveSIP,
-	})
+	hops := collectHops(ctx, c.logger, c.d.lookup, c.resolveSIP, joined.SFUHost, routerHost(c.cfg.Router), sipHost)
 	logHops(ctx, c.logger, c.d.locator, hops)
 	logStreamSFUs(c.logger, sites)
 
 	c.sum.AgentSFU = joined.SFUEdge
 	c.sum.RouterAddress = firstAddress(hops, "router_address")
-	c.sum.SIPHost = hostOf(hops, "stream_sip")
+	c.sum.SIPHost = sipHost
 	c.sum.SFUsUsed = sites.SFUsUsed
 	c.sum.VendorCallID = placed.VendorCallID
 	return nil
@@ -218,6 +235,18 @@ func (c *callRun) readPlaced(ctx context.Context, sessionID string) (callPlacedR
 		c.logger.Warn("the router wrote no call_placed row")
 	}
 	return placed, nil
+}
+
+// readSites waits for the call_sites row, which the router writes once Stream says the call ended.
+func (c *callRun) readSites(ctx context.Context, sessionID string) (callSitesRow, error) {
+	sites, found, err := readCallSites(ctx, c.d.router, sessionID, callSitesWait, callSitesEvery)
+	if err != nil {
+		return callSitesRow{}, fmt.Errorf("read the call's sites: %w", err)
+	}
+	if !found {
+		c.logger.Warn("the router wrote no call_sites row", "waited", callSitesWait)
+	}
+	return sites, nil
 }
 
 func (c *callRun) resolveSIP(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -241,11 +270,13 @@ func (c *callRun) finish(ctx context.Context, err error) {
 // teardown hangs up first, so the person is not left talking to nobody. A step that
 // fails is logged and the next one still runs.
 func (c *callRun) teardown(ctx context.Context) {
-	if err := c.d.person.Hangup(ctx); err != nil {
+	if err := c.d.person.Hangup(ctx, c.call); err != nil {
 		c.logger.Warn("could not hang up the person's call", "error", err)
 	}
 	if c.listener != nil {
-		c.listener.Stop()
+		if err := c.listener.Stop(ctx); err != nil {
+			c.logger.Warn("could not stop the worker", "error", err)
+		}
 	}
 	if c.session != nil {
 		if err := c.session.Close(ctx); err != nil {
@@ -260,22 +291,4 @@ func routerHost(address string) string {
 		return ""
 	}
 	return u.Hostname()
-}
-
-func hostOf(hops []hop, name string) string {
-	for _, h := range hops {
-		if h.Name == name {
-			return h.Host
-		}
-	}
-	return ""
-}
-
-func firstAddress(hops []hop, name string) string {
-	for _, h := range hops {
-		if h.Name == name && len(h.Addrs) > 0 {
-			return h.Addrs[0].String()
-		}
-	}
-	return ""
 }

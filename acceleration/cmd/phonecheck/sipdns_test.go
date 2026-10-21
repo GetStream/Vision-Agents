@@ -47,3 +47,18 @@ func (s *SIPDNSSuite) TestAnUnknownLookupPlaceIsRefused() {
 	s.ErrorContains(err, "eu")
 	s.ErrorContains(err, "us")
 }
+
+func (s *SIPDNSSuite) TestOnlyAAnswersAreKept() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Answer":[
+			{"type":28,"data":"2001:db8::1"},
+			{"type":1,"data":"192.0.2.1"}]}`))
+	}))
+	defer server.Close()
+	resolver := sipResolver{base: server.URL, client: server.Client()}
+
+	got, err := resolver.resolve(context.Background(), "sip.example.com", "us")
+
+	s.Require().NoError(err)
+	s.Equal([]netip.Addr{netip.MustParseAddr("192.0.2.1")}, got)
+}

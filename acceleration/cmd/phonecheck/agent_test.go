@@ -16,10 +16,11 @@ import (
 // AgentSuite checks the SDK router against a fake router over HTTP.
 type AgentSuite struct {
 	suite.Suite
-	server  *httptest.Server
-	mu      sync.Mutex
-	methods []string
-	logs    int // the status the logs endpoint answers with
+	server   *httptest.Server
+	mu       sync.Mutex
+	methods  []string
+	logs     int    // the status the logs endpoint answers with
+	logsBody string // what the logs endpoint answers with
 }
 
 func TestAgentSuite(t *testing.T) { suite.Run(t, new(AgentSuite)) }
@@ -27,6 +28,7 @@ func TestAgentSuite(t *testing.T) { suite.Run(t, new(AgentSuite)) }
 func (s *AgentSuite) SetupTest() {
 	s.methods = nil
 	s.logs = http.StatusOK
+	s.logsBody = `{"items":[],"has_more":false}`
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.methods = append(s.methods, r.Method)
@@ -39,7 +41,7 @@ func (s *AgentSuite) SetupTest() {
 			_, _ = w.Write([]byte(`[]`))
 		case "/v1/agents/logs":
 			w.WriteHeader(s.logs)
-			_, _ = w.Write([]byte(`{"items":[],"has_more":false}`))
+			_, _ = w.Write([]byte(s.logsBody))
 		default:
 			http.NotFound(w, r)
 		}
@@ -98,4 +100,22 @@ func (s *AgentSuite) TestAnUnreachableRouterSaysToStartItFirst() {
 	err := s.runCall(s.router(), s.server.URL)
 
 	s.ErrorContains(err, "no router answers at "+s.server.URL+"; start it first")
+}
+
+func (s *AgentSuite) TestReadingRowsStopsWhenThePageNamesNoNextCursor() {
+	s.logsBody = `{"items":[],"has_more":true,"next_cursor":""}`
+
+	_, err := s.router().LogRows(context.Background(), "sess")
+
+	s.Require().NoError(err)
+	s.Len(s.methods, 1)
+}
+
+func (s *AgentSuite) TestReadingRowsStopsWhenTheCursorRepeats() {
+	s.logsBody = `{"items":[],"has_more":true,"next_cursor":"c1"}`
+
+	_, err := s.router().LogRows(context.Background(), "sess")
+
+	s.Require().NoError(err)
+	s.Len(s.methods, 2)
 }

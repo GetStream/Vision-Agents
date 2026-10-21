@@ -41,6 +41,21 @@ func (p *Person) Name() string { return "telnyx" }
 
 func (p *Person) Flags(*flag.FlagSet) {}
 
+// Ready checks the credentials only for inbound: outbound, the adapter never calls Telnyx.
+func (p *Person) Ready(dir person.Direction) error {
+	if dir == person.Outbound {
+		return nil
+	}
+	a, err := newAPI()
+	if err != nil {
+		return err
+	}
+	if a.appID == "" {
+		return errors.New("TELNYX_PERSON_CONNECTION_ID is not set")
+	}
+	return nil
+}
+
 // Dial calls the agent number from the person number, which says the script and hangs up.
 func (p *Person) Dial(ctx context.Context, call person.Call) error {
 	a, err := newAPI()
@@ -58,9 +73,12 @@ func (p *Person) Dial(ctx context.Context, call person.Call) error {
 // Wait follows the call Dial placed to a final status. Telnyx gives no call id for a call
 // to the person's number, so outbound it only waits out the call.
 func (p *Person) Wait(ctx context.Context, call person.Call) error {
-	sid, _ := p.placed()
-	if call.Direction == person.Outbound || sid == "" {
+	if call.Direction == person.Outbound {
 		return waitUnobserved(ctx, call)
+	}
+	sid, _ := p.placed()
+	if sid == "" {
+		return errors.New("no call was placed, so there is none to follow")
 	}
 	a, err := newAPI()
 	if err != nil {
@@ -69,8 +87,10 @@ func (p *Person) Wait(ctx context.Context, call person.Call) error {
 	return p.follow(ctx, a, call, sid)
 }
 
-// Hangup ends the call it placed, if it is still live.
-func (p *Person) Hangup(ctx context.Context) error {
+// Hangup ends the call it placed, if it is still live. The call is not needed: Telnyx only
+// knows of calls the adapter placed.
+func (p *Person) Hangup(ctx context.Context, _ person.Call) error {
+	defer p.setCall("", "")
 	sid, status := p.placed()
 	if sid == "" || isFinal(status) {
 		return nil
@@ -109,12 +129,14 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 	last, seen := "", false
 	for {
 		rec, err := a.call(followCtx, sid)
-		// Telnyx reads are eventually consistent: a call just placed may 404 for a moment.
-		notYet := !seen && errors.Is(err, errNotFound)
-		if err != nil && !notYet && followCtx.Err() == nil {
+		switch {
+		case err != nil && followCtx.Err() != nil:
+			return didNotEnd(ctx)
+		case errors.Is(err, errNotFound) && !seen:
+			// Telnyx reads are eventually consistent: a call just placed may 404 for a moment.
+		case err != nil:
 			return err
-		}
-		if err == nil {
+		default:
 			seen = true
 			p.setCall(sid, rec.Status)
 			if rec.Status != last {
@@ -126,17 +148,30 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 			}
 		}
 		if !sleep(followCtx, pollEvery) {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("the person's call did not end within %s of the talk time", waitMargin)
+			return didNotEnd(ctx)
 		}
 	}
 }
 
+// didNotEnd is the run's own error when it was stopped, else says the call outlived its time.
+func didNotEnd(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("the person's call did not end within %s of the talk time", waitMargin)
+}
+
 func logStatus(call person.Call, rec callRecord) {
+	warnUnread(call, "start", rec.StartTime)
+	warnUnread(call, "end", rec.EndTime)
 	call.Logger.Info("person call", "status", rec.Status, "start", formatTime(rec.StartTime.Time),
 		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel)
+}
+
+func warnUnread(call person.Call, field string, t telnyxTime) {
+	if t.Unread != "" {
+		call.Logger.Warn("could not read a time of the person's call", "field", field, "value", t.Unread)
+	}
 }
 
 func formatTime(t time.Time) string {

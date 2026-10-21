@@ -44,8 +44,13 @@ type callRecord struct {
 	EndTime   telnyxTime `json:"end_time"`
 }
 
-// telnyxTime reads Telnyx's RFC 2822 timestamps; an absent or null one is the zero time.
-type telnyxTime struct{ time.Time }
+// telnyxTime reads Telnyx's RFC 2822 timestamps; an absent or null one is the zero time. One
+// that does not parse is the zero time too, with its text in Unread, so a call record is never
+// lost to a time format.
+type telnyxTime struct {
+	time.Time
+	Unread string
+}
 
 func (t *telnyxTime) UnmarshalJSON(b []byte) error {
 	var s *string
@@ -53,8 +58,12 @@ func (t *telnyxTime) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	parsed, err := time.Parse(time.RFC1123Z, *s)
+	if err != nil {
+		t.Unread = *s
+		return nil
+	}
 	t.Time = parsed
-	return err
+	return nil
 }
 
 // placeCall starts a call through the person's TeXML app and returns its call sid.
@@ -73,10 +82,13 @@ func (a api) placeCall(ctx context.Context, from, to, texml string) (string, err
 	if err := a.do(ctx, http.MethodPost, "", "application/json", bytes.NewReader(body), &placed); err != nil {
 		return "", err
 	}
-	if placed.CallSID != "" {
+	switch {
+	case placed.CallSID != "":
 		return placed.CallSID, nil
+	case placed.SID != "":
+		return placed.SID, nil
 	}
-	return placed.SID, nil
+	return "", errors.New("telnyx placed the call but named no call sid, so it cannot be followed or ended")
 }
 
 func (a api) call(ctx context.Context, sid string) (callRecord, error) {

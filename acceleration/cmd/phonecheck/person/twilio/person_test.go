@@ -119,13 +119,14 @@ func (s *TwilioSuite) TestACallThatNeverEndsStopsBeingWaitedOn() {
 	s.ErrorContains(err, "did not end")
 }
 
-func (s *TwilioSuite) TestHangupCompletesEveryCallStillLive() {
+func (s *TwilioSuite) TestHangupCompletesTheCallStillLive() {
 	s.fake.placedStatuses = []string{"in-progress"}
-	s.Require().NoError(s.person.Dial(context.Background(), s.call(person.Inbound)))
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
 
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
-	s.Equal([]string{"CAplaced"}, s.fake.completedSIDs())
+	s.Equal([]string{"CAplaced1"}, s.fake.completedSIDs())
 }
 
 func (s *TwilioSuite) TestHangupLeavesAnEndedCallAlone() {
@@ -133,23 +134,73 @@ func (s *TwilioSuite) TestHangupLeavesAnEndedCallAlone() {
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 	s.Require().NoError(s.person.Wait(context.Background(), call))
 
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	s.Empty(s.fake.completedSIDs())
 }
 
-func (s *TwilioSuite) TestHangupAlsoEndsALiveCallItFound() {
+func (s *TwilioSuite) TestHangupEndsTheLiveCallItFound() {
 	call := s.call(person.Outbound)
 	s.fake.add("CAfound", call.Started.Add(time.Second), "in-progress")
-	s.fake.add("CAdone", call.Started.Add(time.Second), "completed")
-	s.fake.list("CAfound", "CAdone")
+	s.fake.list("CAfound")
 	waitMargin = 50 * time.Millisecond
 	call.Talk = 0
 	_ = s.person.Wait(context.Background(), call) // follows the found call until the margin runs out
 
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	s.Equal([]string{"CAfound"}, s.fake.completedSIDs())
+}
+
+func (s *TwilioSuite) TestHangupLooksForAnOutboundCallItNeverFound() {
+	call := s.call(person.Outbound)
+	s.fake.add("CAlate", call.Started.Add(time.Second), "ringing")
+	s.fake.add("CAdone", call.Started.Add(time.Second), "completed")
+	s.fake.list("CAlate", "CAdone")
+
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
+
+	s.Equal([]string{"CAlate"}, s.fake.completedSIDs())
+}
+
+func (s *TwilioSuite) TestASecondInboundRunFollowsItsOwnCall() {
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+	s.Require().NoError(s.person.Wait(context.Background(), call))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
+	s.fake.placedStatuses = []string{"in-progress", "completed"}
+
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+	s.Require().NoError(s.person.Wait(context.Background(), call))
+
+	s.Contains(s.fake.paths(), "GET /2010-04-01/Accounts/"+fakeSID+"/Calls/CAplaced2.json")
+	s.Contains(s.logs.String(), "status=in-progress")
+}
+
+func (s *TwilioSuite) TestAnInboundWaitWithNoPlacedCallIsAnError() {
+	err := s.person.Wait(context.Background(), s.call(person.Inbound))
+
+	s.ErrorContains(err, "no call was placed")
+}
+
+func (s *TwilioSuite) TestATimeThatCannotBeReadIsLeftEmptyAndWarnedAbout() {
+	s.fake.badTimes = true
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+
+	s.Require().NoError(s.person.Wait(context.Background(), call))
+
+	s.Contains(s.logs.String(), "could not read a time of the person's call")
+	s.Contains(s.logs.String(), "value=yesterday")
+	s.Contains(s.logs.String(), "status=completed start=\"\"")
+}
+
+func (s *TwilioSuite) TestReadyNamesMissingCredentials() {
+	s.Require().NoError(s.person.Ready(person.Outbound))
+	s.T().Setenv("TWILIO_ACCOUNT_SID", "")
+
+	s.ErrorContains(s.person.Ready(person.Inbound), "TWILIO_ACCOUNT_SID")
+	s.Empty(s.fake.paths())
 }
 
 func (s *TwilioSuite) TestNothingButCallsIsSent() {
@@ -157,7 +208,7 @@ func (s *TwilioSuite) TestNothingButCallsIsSent() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 	s.Require().NoError(s.person.Wait(context.Background(), call))
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	for _, request := range s.fake.paths() {
 		s.Contains(request, "/Accounts/"+fakeSID+"/Calls", request)
@@ -166,15 +217,14 @@ func (s *TwilioSuite) TestNothingButCallsIsSent() {
 }
 
 func (s *TwilioSuite) TestNothingLoggedCarriesTheAuthToken() {
-	s.fake.placedStatuses = []string{"ringing", "completed"}
+	s.fake.placedStatuses = []string{"in-progress"}
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
-	s.Require().NoError(s.person.Wait(context.Background(), call))
 	s.fake.failWith = 500
 	errs := []error{
-		s.person.Dial(context.Background(), call),
 		s.person.Wait(context.Background(), call),
-		s.person.Hangup(context.Background()),
+		s.person.Hangup(context.Background(), call),
+		s.person.Dial(context.Background(), call),
 	}
 
 	s.NotContains(s.logs.String(), fakeToken)

@@ -57,7 +57,8 @@ func readCallPlaced(ctx context.Context, r router, sessionID string) (callPlaced
 	return callPlacedRow{SIPHost: d["stream_sip_host"], Vendor: d["vendor"], VendorCallID: d["vendor_call_id"]}, true, nil
 }
 
-// readCallSites polls because the router writes the row after the call ends.
+// readCallSites polls because the router writes the row after the call ends. The last poll is
+// at the deadline itself.
 func readCallSites(ctx context.Context, r router, sessionID string, wait, every time.Duration) (callSitesRow, bool, error) {
 	deadline := time.Now().Add(wait)
 	for {
@@ -71,13 +72,14 @@ func readCallSites(ctx context.Context, r router, sessionID string, wait, every 
 				SIPHost: d["stream_sip_host"], StreamSession: d["stream_session_id"],
 			}, true, nil
 		}
-		if !time.Now().Add(every).Before(deadline) {
+		left := time.Until(deadline)
+		if left <= 0 {
 			return callSitesRow{}, false, nil
 		}
 		select {
 		case <-ctx.Done():
 			return callSitesRow{}, false, ctx.Err()
-		case <-time.After(every):
+		case <-time.After(min(every, left)):
 		}
 	}
 }

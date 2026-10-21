@@ -40,8 +40,13 @@ type callRecord struct {
 	EndTime   twilioTime `json:"end_time"`
 }
 
-// twilioTime reads Twilio's RFC 2822 timestamps; an absent or null one is the zero time.
-type twilioTime struct{ time.Time }
+// twilioTime reads Twilio's RFC 2822 timestamps; an absent or null one is the zero time. One
+// that does not parse is the zero time too, with its text in Unread, so a call record is never
+// lost to a time format.
+type twilioTime struct {
+	time.Time
+	Unread string
+}
 
 func (t *twilioTime) UnmarshalJSON(b []byte) error {
 	var s *string
@@ -49,8 +54,12 @@ func (t *twilioTime) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	parsed, err := time.Parse(time.RFC1123Z, *s)
+	if err != nil {
+		t.Unread = *s
+		return nil
+	}
 	t.Time = parsed
-	return err
+	return nil
 }
 
 func (a api) placeCall(ctx context.Context, from, to, twiml string) (string, error) {

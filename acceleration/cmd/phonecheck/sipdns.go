@@ -56,7 +56,10 @@ func (r sipResolver) resolve(ctx context.Context, host, from string) ([]netip.Ad
 	}
 	var addrs []netip.Addr
 	for _, answer := range body.Answer {
-		if addr, err := netip.ParseAddr(answer.Data); err == nil && answer.Type == dnsTypeA {
+		if answer.Type != dnsTypeA {
+			continue
+		}
+		if addr, err := netip.ParseAddr(answer.Data); err == nil {
 			addrs = append(addrs, addr)
 		}
 	}

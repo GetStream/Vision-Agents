@@ -120,3 +120,15 @@ func (s *LogRowsSuite) TestAMissingCallSitesRowIsUnknownNotAnError() {
 	s.NoError(err)
 	s.False(found)
 }
+
+func (s *LogRowsSuite) TestTheLastPollIsAtTheDeadline() {
+	s.router.rowLists = [][]acceleration.AgentLog{nil}
+	start := time.Now()
+
+	_, found, err := readCallSites(context.Background(), s.router, "sess", 30*time.Millisecond, time.Hour)
+
+	s.NoError(err)
+	s.False(found)
+	s.Equal(2, s.router.listed, "one poll at the start, one at the deadline")
+	s.Less(time.Since(start), time.Second)
+}

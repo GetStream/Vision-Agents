@@ -125,7 +125,7 @@ func (s *TelnyxSuite) TestAnOutboundPersonCallIsNotObserved() {
 	s.Require().NoError(err)
 	s.GreaterOrEqual(time.Since(start), 40*time.Millisecond)
 	s.Equal(1, strings.Count(s.logs.String(), "person call not observed"), s.logs.String())
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 	s.Empty(s.fake.paths())
 }
 
@@ -141,9 +141,10 @@ func (s *TelnyxSuite) TestAnOutboundWaitStopsWhenTheRunIsCancelled() {
 
 func (s *TelnyxSuite) TestHangupEndsTheLiveCall() {
 	s.fake.setStatuses("in-progress")
-	s.Require().NoError(s.person.Dial(context.Background(), s.call(person.Inbound)))
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
 
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	s.Require().Len(s.fake.hangups(), 1)
 	s.Equal("completed", s.fake.hangups()[0].Get("Status"))
@@ -155,7 +156,7 @@ func (s *TelnyxSuite) TestHangupLeavesAnEndedCallAlone() {
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 	s.Require().NoError(s.person.Wait(context.Background(), call))
 
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	s.Empty(s.fake.hangups())
 }
@@ -165,7 +166,7 @@ func (s *TelnyxSuite) TestNothingButCallsIsSent() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 	s.Require().NoError(s.person.Wait(context.Background(), call))
-	s.Require().NoError(s.person.Hangup(context.Background()))
+	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	s.NotEmpty(s.fake.paths())
 	for _, request := range s.fake.paths() {
@@ -216,4 +217,49 @@ func (s *TelnyxSuite) TestACallThatNeverBecomesReadableStopsBeingWaitedOn() {
 	err := s.person.Wait(context.Background(), call)
 
 	s.ErrorContains(err, "did not end")
+}
+
+func (s *TelnyxSuite) TestAPlacedCallWithNoSIDIsAnError() {
+	s.fake.noSID = true
+
+	err := s.person.Dial(context.Background(), s.call(person.Inbound))
+
+	s.ErrorContains(err, "no call sid")
+}
+
+func (s *TelnyxSuite) TestAnInboundWaitWithNoPlacedCallIsAnError() {
+	err := s.person.Wait(context.Background(), s.call(person.Inbound))
+
+	s.ErrorContains(err, "no call was placed")
+	s.Empty(s.fake.paths())
+}
+
+func (s *TelnyxSuite) TestATimeThatCannotBeReadIsLeftEmptyAndWarnedAbout() {
+	s.fake.badTimes = true
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+
+	s.Require().NoError(s.person.Wait(context.Background(), call))
+
+	s.Contains(s.logs.String(), "could not read a time of the person's call")
+	s.Contains(s.logs.String(), "value=yesterday")
+	s.Contains(s.logs.String(), "status=completed start=\"\"")
+}
+
+func (s *TelnyxSuite) TestReadyNamesWhatInboundIsMissing() {
+	s.Require().NoError(s.person.Ready(person.Inbound))
+	for _, name := range []string{"TELNYX_API_KEY", "TELNYX_ACCOUNT_SID", "TELNYX_PERSON_CONNECTION_ID"} {
+		s.Run(name, func() {
+			s.T().Setenv(name, "")
+
+			s.ErrorContains(New().Ready(person.Inbound), name)
+		})
+	}
+	s.Empty(s.fake.paths())
+}
+
+func (s *TelnyxSuite) TestReadyNeedsNothingForOutbound() {
+	s.T().Setenv("TELNYX_API_KEY", "")
+
+	s.NoError(s.person.Ready(person.Outbound))
 }

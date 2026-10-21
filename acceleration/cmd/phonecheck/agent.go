@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
@@ -24,12 +23,6 @@ type router interface {
 	StartCall(ctx context.Context, from, to string) (agentSession, error)
 	// Listen returns once the worker is registered.
 	Listen(ctx context.Context, number string) (listener, error)
-}
-
-// listener is an inbound worker waiting for the call to the agent number.
-type listener interface {
-	Answer(ctx context.Context) (agentSession, error)
-	Stop()
 }
 
 // agentSession is the agent's side of one call.
@@ -104,7 +97,8 @@ func (r *sdkRouter) LogsAvailable(ctx context.Context) error {
 	return statusError(resp.HTTPResponse, resp.Body)
 }
 
-// LogRows reads every page of the session's rows; a long call has more than one.
+// LogRows reads every page of the session's rows; a long call has more than one. A page with
+// no new cursor ends the read, so a router that repeats itself cannot loop it forever.
 func (r *sdkRouter) LogRows(ctx context.Context, sessionID string) ([]acceleration.AgentLog, error) {
 	var rows []acceleration.AgentLog
 	limit := 250
@@ -122,6 +116,9 @@ func (r *sdkRouter) LogRows(ctx context.Context, sessionID string) ([]accelerati
 			return rows, nil
 		}
 		next := resp.JSON200.NextCursor
+		if next == "" || (params.Cursor != nil && next == *params.Cursor) {
+			return rows, nil
+		}
 		params.Cursor = &next
 	}
 }
@@ -156,108 +153,9 @@ func (r *sdkRouter) StartCall(ctx context.Context, from, to string) (agentSessio
 	}
 	session, err := r.agent.StartCall(ctx, from, to)
 	if err != nil {
-		return nil, err
+		return nil, err // not session: a nil *agents.Session in agentSession is not nil
 	}
 	return session, nil
-}
-
-// Listen registers a worker for one call to number. It is not agents.Agent.WaitForCall,
-// which attaches the number first and so could rewire it.
-func (r *sdkRouter) Listen(ctx context.Context, number string) (listener, error) {
-	if err := r.saveConfig(ctx); err != nil {
-		return nil, err
-	}
-	dispatch, err := stream.NewDispatch(stream.DispatchOptions{Backend: r.backend, Capacity: 1, Logger: r.logger})
-	if err != nil {
-		return nil, err
-	}
-	running, stop := context.WithCancel(ctx)
-	l := &sdkListener{
-		agent: r.agent, dispatch: dispatch, stop: stop,
-		arrived: make(chan stream.InboundCall, 1), ended: make(chan struct{}),
-	}
-	dispatch.OnCall(l.take(number))
-	go func() {
-		l.runErr = dispatch.Run(running)
-		close(l.ended)
-	}()
-	if err := l.registered(ctx); err != nil {
-		l.Stop()
-		return nil, err
-	}
-	return l, nil
-}
-
-// sdkListener is one dispatch worker, taking the first call to its number.
-type sdkListener struct {
-	agent    *agents.Agent
-	dispatch *stream.Dispatch
-	stop     context.CancelFunc
-	arrived  chan stream.InboundCall
-	ended    chan struct{} // closed when Run returns; runErr is set by then
-	runErr   error
-}
-
-// take only accepts a call to number, once, as WaitForCall does.
-func (l *sdkListener) take(number string) stream.CallHandler {
-	return func(_ context.Context, call stream.InboundCall) error {
-		if call.CalledNumber != number {
-			return fmt.Errorf("this worker is waiting on %s, not %s", number, call.CalledNumber)
-		}
-		select {
-		case l.arrived <- call:
-			return nil
-		default:
-			return errors.New("this worker is already answering a call")
-		}
-	}
-}
-
-// registered returns once the router has named the worker, so a call dialed after it has
-// somewhere to go.
-func (l *sdkListener) registered(ctx context.Context) error {
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
-	for l.dispatch.WorkerID() == "" {
-		select {
-		case <-l.ended:
-			return l.stoppedEarly()
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tick.C:
-		}
-	}
-	return nil
-}
-
-func (l *sdkListener) Answer(ctx context.Context) (agentSession, error) {
-	var call stream.InboundCall
-	select {
-	case call = <-l.arrived:
-	case <-l.ended:
-		return nil, l.stoppedEarly()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	l.Stop()
-	session, err := l.agent.Answer(ctx, call)
-	if err != nil {
-		return nil, err
-	}
-	return session, nil
-}
-
-func (l *sdkListener) stoppedEarly() error {
-	if l.runErr != nil {
-		return fmt.Errorf("the worker stopped: %w", l.runErr)
-	}
-	return errors.New("the worker stopped before a call arrived")
-}
-
-// Stop ends the worker and waits for it to leave the router. Safe to call again.
-func (l *sdkListener) Stop() {
-	l.stop()
-	<-l.ended
 }
 
 // statusError is nil for a 2xx answer and names the status otherwise.

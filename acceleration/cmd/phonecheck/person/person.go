@@ -31,7 +31,7 @@ type Call struct {
 	AgentNumber  string
 	Talk         time.Duration
 	RegionLabel  string       // the free -region label; logged, changes nothing
-	Started      time.Time    // when the run began; outbound Wait finds the person's call from it
+	Started      time.Time    // when the run's checks passed; outbound Wait finds the person's call from it
 	Logger       *slog.Logger // already carries call_id
 }
 
@@ -39,12 +39,15 @@ type Person interface {
 	Name() string
 	// Flags adds the adapter's own input.
 	Flags(*flag.FlagSet)
+	// Ready says what the adapter is missing for a call in this direction, before any call is
+	// placed.
+	Ready(Direction) error
 	// Dial calls the agent number from the person number with an inline script; returns once
 	// placed. Inbound only.
 	Dial(ctx context.Context, call Call) error
 	// Wait blocks until the person's call has ended, logging chosen fields of the vendor's
 	// call record.
 	Wait(ctx context.Context, call Call) error
-	// Hangup ends any call it placed or found that is still live.
-	Hangup(ctx context.Context) error
+	// Hangup ends the call it placed or found, if it is still live, and forgets it.
+	Hangup(ctx context.Context, call Call) error
 }

@@ -271,3 +271,71 @@ func (s *RunSuite) shortenArrival() {
 	inboundArrivalWait = 50 * time.Millisecond
 	s.T().Cleanup(func() { inboundArrivalWait = was })
 }
+
+func (s *RunSuite) TestHopsAreStillLoggedWhenThePersonsCallFailedToBeRead() {
+	s.person.waitErr = errors.New("the vendor is down")
+
+	err := s.run()
+
+	s.ErrorContains(err, "the vendor is down")
+	s.NotEmpty(s.linesSaying("hop"))
+	s.NotEmpty(s.linesSaying("the call did not end cleanly; reading its sites anyway"))
+	summaries := s.linesSaying("call summary")
+	s.Require().Len(summaries, 1)
+	s.Equal("sip.example.com", summaries[0]["sip_host"])
+}
+
+func (s *RunSuite) TestHopsAreNotReadOnceTheRunIsStopped() {
+	s.person.stayOn = true
+	s.person.waiting = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- runCall(ctx, s.cfg, s.deps()) }()
+	<-s.person.waiting
+	cancel()
+
+	s.ErrorIs(<-done, context.Canceled)
+	s.Empty(s.linesSaying("hop"))
+}
+
+func (s *RunSuite) TestTheConnectTimeLeavesOutTheChecks() {
+	s.router.checkDelay = 200 * time.Millisecond
+
+	s.Require().NoError(s.run())
+
+	summaries := s.linesSaying("call summary")
+	s.Require().Len(summaries, 1)
+	s.Less(summaries[0]["connect_ms"], float64(200))
+}
+
+func (s *RunSuite) TestASlowJoinIsNotBlamedOnTheWebhook() {
+	s.inbound()
+	s.router.listener.joinErr = context.DeadlineExceeded
+
+	err := s.run()
+
+	s.ErrorIs(err, context.DeadlineExceeded)
+	s.NotContains(err.Error(), "webhook")
+}
+
+func (s *RunSuite) TestAPersonSideThatIsNotReadyPlacesNothing() {
+	s.person.readyErr = errors.New("TWILIO_AUTH_TOKEN is not set")
+
+	err := s.run()
+
+	s.ErrorContains(err, "TWILIO_AUTH_TOKEN is not set")
+	s.False(s.steps.placedACall(), "steps: %v", s.steps.all())
+	s.Equal([]string{"ready"}, s.steps.all(), "checked before the router is asked anything")
+}
+
+func (s *RunSuite) TestNoRunStartsOnceTheToolIsStopped() {
+	s.cfg.Runs = 2
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := runCalls(ctx, s.cfg, s.deps())
+
+	s.ErrorIs(err, context.Canceled)
+	s.Empty(s.steps.all())
+}

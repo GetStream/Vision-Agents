@@ -28,7 +28,9 @@ type fakeTelnyx struct {
 	hungUp    []url.Values
 	statuses  []string // the life of the placed call; each read moves on, the last stays
 	failWith  int
-	notFound  int // reads of the placed call that answer 404 before it becomes readable
+	notFound  int  // reads of the placed call that answer 404 before it becomes readable
+	noSID     bool // the reply to a placed call names no call sid
+	badTimes  bool // the call's times come in a format the adapter cannot read
 	callsPath string
 }
 
@@ -71,6 +73,10 @@ func (f *fakeTelnyx) place(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	f.placed = append(f.placed, body)
 	w.WriteHeader(http.StatusOK)
+	if f.noSID {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]string{"call_sid": fakeSID, "status": "queued"})
 }
 
@@ -95,6 +101,9 @@ func (f *fakeTelnyx) read(w http.ResponseWriter) {
 	}
 	if f.statuses[0] == "completed" {
 		rec["end_time"] = start.Add(25 * time.Second).Format(time.RFC1123Z)
+	}
+	if f.badTimes {
+		rec["start_time"] = "yesterday"
 	}
 	if len(f.statuses) > 1 {
 		f.statuses = f.statuses[1:]
