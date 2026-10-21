@@ -435,6 +435,10 @@ type Agent struct {
 	// user typed into a session a backend opened for them is counted on their day. It is
 	// zero for what was heard, which is counted on whoever opened the session.
 	sender routing.Caller
+	// scheduled says that last thing was a turn a scheduled task fired, kept the same way,
+	// so neither it nor the replies that finish it are counted on an end user's day.
+	scheduled bool
+
 	joined bool
 	closed bool
 
@@ -795,6 +799,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	}
 	caller := stt.Participant{ID: typedCaller}
 	sender, _ := routing.CallerFrom(ctx)
+	scheduled := routing.ScheduledTurn(ctx)
 	// Typed into a call, the words are what the caller said as much as anything transcribed,
 	// and the transcript, the review and the logs all take a caller's line from Heard. A text
 	// session reads its caller's lines from Responding instead.
@@ -834,17 +839,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled)
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled)
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1792,7 +1797,7 @@ func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
 func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{})
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false)
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
@@ -1803,7 +1808,7 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note, nil, options.LLM{}, routing.Caller{})
+	}, note, nil, options.LLM{}, routing.Caller{}, false)
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned. A
@@ -1888,6 +1893,7 @@ func (a *Agent) respondTurn(
 	images []llm.ImagePart,
 	asked options.LLM,
 	sender routing.Caller,
+	scheduled bool,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
@@ -1910,6 +1916,7 @@ func (a *Agent) respondTurn(
 	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
+	a.scheduled = scheduled
 	a.lastParticipant = participant
 	if !listened.typed {
 		a.heardCaller = true
@@ -2234,6 +2241,9 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 	ctx := a.ctx
 	if !a.sender.IsZero() {
 		ctx = routing.WithCaller(ctx, a.sender)
+	}
+	if a.scheduled {
+		ctx = routing.WithScheduledTurn(ctx)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	a.generatingCancel[turn.ID] = cancel

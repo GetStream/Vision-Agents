@@ -121,6 +121,9 @@ type commandRecord struct {
 	Initiator string `json:",omitempty"`
 	// ClientID is the install the command came from; a client tool call is addressed to it.
 	ClientID string `json:",omitempty"`
+	// Reply is what a follow-up's reply said when it finished, for the follow-up delivered
+	// again to carry rather than run twice (FollowUpReply).
+	Reply string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -817,6 +820,10 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 // commandsIn rebuilds the command ledger from stored messages. A person's message is stored
 // under its command ID and the reply carries that ID, so Stream already holds every command
 // a page shows. A command whose reply never reached Stream was cut off before it was stored.
+// A reply no person's message carries the ID of is a follow-up that landed: nobody wrote for
+// it, so what says it already happened is the reply itself. Its record carries no digest and
+// no initiator: the prompt is never stored, so existence is the whole of the duplicate test,
+// and no person's command may take the ID afterwards.
 func commandsIn(messages []Message) map[string]commandRecord {
 	commands := map[string]commandRecord{}
 	for _, m := range messages {
@@ -834,12 +841,24 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		}
 	}
 	for _, m := range messages {
+		if m.Role != "assistant" || m.CommandID == "" {
+			continue
+		}
 		record, ok := commands[m.CommandID]
-		if m.Role != "assistant" || !ok {
+		if !ok {
+			commands[m.CommandID] = commandRecord{
+				CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State},
+				Reply:          m.Text,
+			}
 			continue
 		}
 		record.AssistantMessageID = m.ID
 		record.State = m.State
+		// Only a follow-up, which has no message of a person's, is read back; its
+		// latest message is the one a retry after an abandoned turn answered with.
+		if record.UserMessageID == "" {
+			record.Reply = m.Text
+		}
 		commands[m.CommandID] = record
 	}
 	return commands
@@ -1683,6 +1702,11 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
+	// Only a follow-up, which has no message of a person's, is read back this way.
+	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" {
+		record.Reply = m.Text
+		c.data.Commands[m.CommandID] = record
+	}
 	c.stopParts(m, now)
 	m.FinishedAt = &now
 	m.DurationMS = now.Sub(m.StartedAt).Milliseconds()

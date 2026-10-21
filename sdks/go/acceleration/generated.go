@@ -1692,6 +1692,90 @@ func (e Sandbox) Valid() bool {
 	}
 }
 
+// Defines values for ScheduledTaskCreatedBy.
+const (
+	ScheduledTaskCreatedByAgent ScheduledTaskCreatedBy = "agent"
+	ScheduledTaskCreatedByApi   ScheduledTaskCreatedBy = "api"
+)
+
+// Valid indicates whether the value is a known member of the ScheduledTaskCreatedBy enum.
+func (e ScheduledTaskCreatedBy) Valid() bool {
+	switch e {
+	case ScheduledTaskCreatedByAgent:
+		return true
+	case ScheduledTaskCreatedByApi:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduledTaskState.
+const (
+	ScheduledTaskStateActive    ScheduledTaskState = "active"
+	ScheduledTaskStateCompleted ScheduledTaskState = "completed"
+	ScheduledTaskStateFailed    ScheduledTaskState = "failed"
+	ScheduledTaskStatePaused    ScheduledTaskState = "paused"
+)
+
+// Valid indicates whether the value is a known member of the ScheduledTaskState enum.
+func (e ScheduledTaskState) Valid() bool {
+	switch e {
+	case ScheduledTaskStateActive:
+		return true
+	case ScheduledTaskStateCompleted:
+		return true
+	case ScheduledTaskStateFailed:
+		return true
+	case ScheduledTaskStatePaused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduledTaskRunState.
+const (
+	ScheduledTaskRunStateDelivered ScheduledTaskRunState = "delivered"
+	ScheduledTaskRunStateFailed    ScheduledTaskRunState = "failed"
+	ScheduledTaskRunStateMissed    ScheduledTaskRunState = "missed"
+	ScheduledTaskRunStateRunning   ScheduledTaskRunState = "running"
+)
+
+// Valid indicates whether the value is a known member of the ScheduledTaskRunState enum.
+func (e ScheduledTaskRunState) Valid() bool {
+	switch e {
+	case ScheduledTaskRunStateDelivered:
+		return true
+	case ScheduledTaskRunStateFailed:
+		return true
+	case ScheduledTaskRunStateMissed:
+		return true
+	case ScheduledTaskRunStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduledTaskRunTrigger.
+const (
+	Manual   ScheduledTaskRunTrigger = "manual"
+	Schedule ScheduledTaskRunTrigger = "schedule"
+)
+
+// Valid indicates whether the value is a known member of the ScheduledTaskRunTrigger enum.
+func (e ScheduledTaskRunTrigger) Valid() bool {
+	switch e {
+	case Manual:
+		return true
+	case Schedule:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchDepth.
 const (
 	Deep     SearchDepth = "deep"
@@ -2415,6 +2499,30 @@ func (e StreamAgentLogsParamsSeverity) Valid() bool {
 	}
 }
 
+// Defines values for ListScheduledTasksParamsState.
+const (
+	ListScheduledTasksParamsStateActive    ListScheduledTasksParamsState = "active"
+	ListScheduledTasksParamsStateCompleted ListScheduledTasksParamsState = "completed"
+	ListScheduledTasksParamsStateFailed    ListScheduledTasksParamsState = "failed"
+	ListScheduledTasksParamsStatePaused    ListScheduledTasksParamsState = "paused"
+)
+
+// Valid indicates whether the value is a known member of the ListScheduledTasksParamsState enum.
+func (e ListScheduledTasksParamsState) Valid() bool {
+	switch e {
+	case ListScheduledTasksParamsStateActive:
+		return true
+	case ListScheduledTasksParamsStateCompleted:
+		return true
+	case ListScheduledTasksParamsStateFailed:
+		return true
+	case ListScheduledTasksParamsStatePaused:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListSimulationRunsParamsState.
 const (
 	ListSimulationRunsParamsStateCancelled ListSimulationRunsParamsState = "cancelled"
@@ -2548,8 +2656,11 @@ type AgentConfig struct {
 
 	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
-	Search         *string         `json:"search,omitempty"`
-	Skills         *[]string       `json:"skills,omitempty"`
+
+	// Scheduling Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+	Scheduling *AgentScheduling `json:"scheduling,omitempty"`
+	Search     *string          `json:"search,omitempty"`
+	Skills     *[]string        `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -2619,10 +2730,13 @@ type AgentConfigPatch struct {
 
 	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
-	Search         *string         `json:"search,omitempty"`
-	Skills         *[]string       `json:"skills,omitempty"`
-	Sts            *string         `json:"sts,omitempty"`
-	Stt            *string         `json:"stt,omitempty"`
+
+	// Scheduling Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+	Scheduling *AgentScheduling `json:"scheduling,omitempty"`
+	Search     *string          `json:"search,omitempty"`
+	Skills     *[]string        `json:"skills,omitempty"`
+	Sts        *string          `json:"sts,omitempty"`
+	Stt        *string          `json:"stt,omitempty"`
 
 	// Subagent Only a voice agent names one. Switching an agent to text drops it.
 	Subagent *string            `json:"subagent,omitempty"`
@@ -2698,6 +2812,9 @@ type AgentConfigRequest struct {
 
 	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+
+	// Scheduling Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+	Scheduling *AgentScheduling `json:"scheduling,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
@@ -2876,6 +2993,18 @@ type AgentResponsePage struct {
 
 // AgentRole What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 type AgentRole string
+
+// AgentScheduling Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+type AgentScheduling struct {
+	// DefaultTimezone The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone.
+	DefaultTimezone *string `json:"default_timezone,omitempty"`
+
+	// Enabled Offer the agent the scheduling tools (schedule_task, list_scheduled_tasks, update_scheduled_task, cancel_scheduled_task), so a user can ask it to remind them or do something later, once or on a repeat. Off by default: it adds four tools to every turn. Left out on an update, the stored setting stays.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// MaxTasksPerUser How many active scheduled tasks one user may hold. Omitted is 25.
+	MaxTasksPerUser *int64 `json:"max_tasks_per_user,omitempty"`
+}
 
 // AgentStats defines model for AgentStats.
 type AgentStats struct {
@@ -4368,6 +4497,39 @@ type CreateRunRequest struct {
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 }
 
+// CreateScheduledTaskRequest defines model for CreateScheduledTaskRequest.
+type CreateScheduledTaskRequest struct {
+	// Agent The agent config by name, as session create names it. config_id or this, or session_id.
+	Agent *string `json:"agent,omitempty"`
+
+	// ConfigId The agent config by id. agent or this, or session_id.
+	ConfigId *string `json:"config_id,omitempty"`
+
+	// Custom The caller's own labels, handed back untouched.
+	Custom *map[string]interface{} `json:"custom,omitempty"`
+
+	// DeliverTo Where an occurrence is delivered, in order, the first that lands: conversation, sms, whatsapp, imessage or phone. The agent's reply is written in its conversation either way; a channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the conversation alone.
+	DeliverTo *[]string `json:"deliver_to,omitempty"`
+
+	// Id The task's id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409.
+	//
+	// Example: booking-4821-reminder
+	Id *string `json:"id,omitempty"`
+
+	// Instructions What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read.
+	Instructions string                   `json:"instructions"`
+	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty"`
+	Schedule     ScheduledTaskSchedule    `json:"schedule"`
+
+	// SessionId The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session.
+	SessionId *string `json:"session_id,omitempty"`
+
+	// Title A short name the user will recognise.
+	//
+	// Example: Dentist tomorrow
+	Title string `json:"title"`
+}
+
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
 	// Agent The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
@@ -4458,6 +4620,9 @@ type CreateSessionRequest struct {
 
 	// Tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
 	Tags *map[string]string `json:"tags,omitempty"`
+
+	// Timezone The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
+	Timezone *string `json:"timezone,omitempty"`
 
 	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
@@ -4777,7 +4942,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -6126,6 +6291,152 @@ type SayRequest struct {
 	Text string `json:"text"`
 }
 
+// ScheduledTask defines model for ScheduledTask.
+type ScheduledTask struct {
+	ConfigId            string    `json:"config_id"`
+	ConsecutiveFailures int64     `json:"consecutive_failures"`
+	CreatedAt           time.Time `json:"created_at"`
+
+	// CreatedBy agent when the model made it in a conversation, api when a backend did.
+	CreatedBy ScheduledTaskCreatedBy  `json:"created_by"`
+	Custom    *map[string]interface{} `json:"custom,omitempty"`
+
+	// DeliverTo Where an occurrence is delivered, in order, the first that lands.
+	DeliverTo    []string `json:"deliver_to"`
+	Id           string   `json:"id"`
+	Instructions string   `json:"instructions"`
+
+	// LastRunAt When a run last finished, in UTC. Null when none has.
+	LastRunAt *string `json:"last_run_at"`
+
+	// NextRunAt The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none.
+	NextRunAt  *string                  `json:"next_run_at"`
+	QuietHours *ScheduledTaskQuietHours `json:"quiet_hours,omitempty"`
+	Schedule   ScheduledTaskSchedule    `json:"schedule"`
+
+	// SessionId The conversation the task follows up in. Empty until its first occurrence opens one.
+	SessionId string `json:"session_id"`
+
+	// State active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+	State ScheduledTaskState `json:"state"`
+	Title string             `json:"title"`
+
+	// Upcoming Up to the next five occurrences, RFC 3339 with the task zone's offset.
+	Upcoming  []string  `json:"upcoming"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UserId    string    `json:"user_id"`
+}
+
+// ScheduledTaskCreatedBy agent when the model made it in a conversation, api when a backend did.
+type ScheduledTaskCreatedBy string
+
+// ScheduledTaskState active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+type ScheduledTaskState string
+
+// ScheduledTaskNext defines model for ScheduledTaskNext.
+type ScheduledTaskNext struct {
+	// At The next occurrence as the user's clock reads it, in the task's zone.
+	At *string `json:"at,omitempty"`
+
+	// In How long from now instead, an ISO 8601 duration: PT15M.
+	//
+	// Example: PT15M
+	In *string `json:"in,omitempty"`
+}
+
+// ScheduledTaskPage defines model for ScheduledTaskPage.
+type ScheduledTaskPage struct {
+	HasMore bool            `json:"has_more"`
+	Items   []ScheduledTask `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ScheduledTaskQuietHours defines model for ScheduledTaskQuietHours.
+type ScheduledTaskQuietHours struct {
+	// End When the hold ends. It may read before the start: 22:00 to 07:00 holds the night.
+	//
+	// Example: 07:00
+	End string `json:"end"`
+
+	// Start When the hold begins, as the user's clock reads it. Both boundaries empty is no hold, which is also how an update clears one.
+	//
+	// Example: 22:00
+	Start string `json:"start"`
+}
+
+// ScheduledTaskRun defines model for ScheduledTaskRun.
+type ScheduledTaskRun struct {
+	Attempts int64 `json:"attempts"`
+
+	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
+	DeliveredTo string `json:"delivered_to"`
+
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again). The full error is in the router's logs. Null otherwise.
+	Error      *string    `json:"error"`
+	FinishedAt *time.Time `json:"finished_at"`
+	Id         string     `json:"id"`
+
+	// ScheduledFor When the occurrence was due, RFC 3339 with the task zone's offset.
+	ScheduledFor string     `json:"scheduled_for"`
+	SessionId    string     `json:"session_id"`
+	StartedAt    *time.Time `json:"started_at"`
+
+	// State running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+	State  ScheduledTaskRunState `json:"state"`
+	TaskId string                `json:"task_id"`
+
+	// Trigger schedule when it came due, manual when it was run by hand.
+	Trigger ScheduledTaskRunTrigger `json:"trigger"`
+}
+
+// ScheduledTaskRunState running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+type ScheduledTaskRunState string
+
+// ScheduledTaskRunTrigger schedule when it came due, manual when it was run by hand.
+type ScheduledTaskRunTrigger string
+
+// ScheduledTaskRunPage defines model for ScheduledTaskRunPage.
+type ScheduledTaskRunPage struct {
+	HasMore bool               `json:"has_more"`
+	Items   []ScheduledTaskRun `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ScheduledTaskSchedule defines model for ScheduledTaskSchedule.
+type ScheduledTaskSchedule struct {
+	// At When it first runs, as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
+	At *string `json:"at,omitempty"`
+
+	// Description What the schedule says, in one sentence. Read-only: written by the router, and the same sentence the model reads back.
+	//
+	// Example: Every weekday at 09:00 (Europe/Amsterdam)
+	Description *string `json:"description,omitempty"`
+
+	// In How long from now instead, an ISO 8601 duration: PT20M, P1D. Days are calendar days: P1D is the same time tomorrow. Resolved on write; a response never carries it.
+	//
+	// Example: PT20M
+	In *string `json:"in,omitempty"`
+
+	// Repeat Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1.
+	//
+	// Example: FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
+	Repeat *string `json:"repeat,omitempty"`
+
+	// Timezone An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's stored zone, then the agent's default_timezone; on update, to the task's own zone.
+	//
+	// Example: Europe/Amsterdam
+	Timezone *string `json:"timezone,omitempty"`
+
+	// Until The last local date it repeats on, inclusive, 2026-12-31.
+	//
+	// Example: 2026-12-31
+	Until *string `json:"until,omitempty"`
+}
+
 // SearchAnswer defines model for SearchAnswer.
 type SearchAnswer struct {
 	// Answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
@@ -7144,7 +7455,10 @@ type SyncAgentRequest struct {
 
 	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
-	Search         *string         `json:"search,omitempty"`
+
+	// Scheduling Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+	Scheduling *AgentScheduling `json:"scheduling,omitempty"`
+	Search     *string          `json:"search,omitempty"`
 
 	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
@@ -7565,6 +7879,21 @@ type TurnStatsBucket struct {
 	TtsTtfbP50Ms    *float64 `json:"tts_ttfb_p50_ms,omitempty"`
 	TtsTtfbP95Ms    *float64 `json:"tts_ttfb_p95_ms,omitempty"`
 	TurnCount       int64    `json:"turn_count"`
+}
+
+// UpdateScheduledTaskRequest defines model for UpdateScheduledTaskRequest.
+type UpdateScheduledTaskRequest struct {
+	// DeliverTo Replaces where an occurrence is delivered, in order. An empty list is the conversation alone.
+	DeliverTo *[]string `json:"deliver_to,omitempty"`
+
+	// Instructions What the agent is told when the task comes due. Server-side only: a device sending it is refused.
+	Instructions *string                  `json:"instructions,omitempty"`
+	Next         *ScheduledTaskNext       `json:"next,omitempty"`
+	QuietHours   *ScheduledTaskQuietHours `json:"quiet_hours,omitempty"`
+	Schedule     *ScheduledTaskSchedule   `json:"schedule,omitempty"`
+
+	// Title A short name the user will recognise.
+	Title *string `json:"title,omitempty"`
 }
 
 // UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
@@ -8158,6 +8487,42 @@ type PluginOAuthCallbackParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// ListScheduledTasksParams defines parameters for ListScheduledTasks.
+type ListScheduledTasksParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// State Only tasks in this state.
+	State *ListScheduledTasksParamsState `form:"state,omitempty" json:"state,omitempty"`
+
+	// ConfigId Only tasks on this agent config.
+	ConfigId *string `form:"config_id,omitempty" json:"config_id,omitempty"`
+
+	// SessionId Only tasks following up in this session.
+	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
+}
+
+// ListScheduledTasksParamsState defines parameters for ListScheduledTasks.
+type ListScheduledTasksParamsState string
+
+// CreateScheduledTaskParams defines parameters for CreateScheduledTask.
+type CreateScheduledTaskParams struct {
+	// XStreamUserId The user the task is for, named by the backend acting for them. Required: without a named user the create is refused.
+	XStreamUserId *string `json:"X-Stream-User-Id,omitempty"`
+}
+
+// ListScheduledTaskRunsParams defines parameters for ListScheduledTaskRuns.
+type ListScheduledTaskRunsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListResponsesParams defines parameters for ListResponses.
 type ListResponsesParams struct {
 	// Limit Up to 200. Omitted is 25.
@@ -8477,6 +8842,12 @@ type UpdateCustomModelJSONRequestBody = CustomModelRequest
 
 // CreateRunJSONRequestBody defines body for CreateRun for application/json ContentType.
 type CreateRunJSONRequestBody = CreateRunRequest
+
+// CreateScheduledTaskJSONRequestBody defines body for CreateScheduledTask for application/json ContentType.
+type CreateScheduledTaskJSONRequestBody = CreateScheduledTaskRequest
+
+// UpdateScheduledTaskJSONRequestBody defines body for UpdateScheduledTask for application/json ContentType.
+type UpdateScheduledTaskJSONRequestBody = UpdateScheduledTaskRequest
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
@@ -10113,6 +10484,91 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
 	CreateRun(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListScheduledTasks The scheduled tasks of the user, or of the customer
+	//
+	// Newest first, cursor-paged. A device lists its own user's tasks, including the ones its backend made in its name. A backend naming a user with X-Stream-User-Id lists that user's; a backend naming nobody lists every task of the customer, instructions included: a customer's whole task list is support-visible, so put nothing in instructions a user must not have read back to them. Devices see instructions too, for the same reason.
+	//
+	// Corresponds with GET /v1/agents/scheduled-tasks (the `ListScheduledTasks` operationId).
+	ListScheduledTasks(ctx context.Context, params *ListScheduledTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateScheduledTaskWithBody Schedule a task for a user
+	//
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+	CreateScheduledTaskWithBody(ctx context.Context, params *CreateScheduledTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateScheduledTask Schedule a task for a user
+	//
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+	CreateScheduledTask(ctx context.Context, params *CreateScheduledTaskParams, body CreateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteScheduledTask Delete a scheduled task
+	//
+	// This is cancel: the task and its runs are gone, and there is no cancelled state to clutter lists.
+	//
+	// Corresponds with DELETE /v1/agents/scheduled-tasks/{id} (the `DeleteScheduledTask` operationId).
+	DeleteScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetScheduledTask One scheduled task
+	//
+	// A task that is not the caller's to reach is answered as not there.
+	//
+	// Corresponds with GET /v1/agents/scheduled-tasks/{id} (the `GetScheduledTask` operationId).
+	GetScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateScheduledTaskWithBody Change a scheduled task
+	//
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+	UpdateScheduledTaskWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateScheduledTask Change a scheduled task
+	//
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+	UpdateScheduledTask(ctx context.Context, id string, body UpdateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PauseScheduledTask Pause a scheduled task
+	//
+	// Nothing comes due while a task is paused; what it slept through is never replayed.
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/pause (the `PauseScheduledTask` operationId).
+	PauseScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeScheduledTask Resume a scheduled task
+	//
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
+	ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunScheduledTask Run a scheduled task now
+	//
+	// Server-side only. Sets one occurrence going by hand and answers with its run while it is still running; the schedule does not move. Test a task with it, or trigger one from your own system.
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/run (the `RunScheduledTask` operationId).
+	RunScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListScheduledTaskRuns A scheduled task's runs
+	//
+	// Newest first, cursor-paged. Only occurrences that came due, or were run by hand, are recorded; snoozes and pauses write no runs.
+	//
+	// Corresponds with GET /v1/agents/scheduled-tasks/{id}/runs (the `ListScheduledTaskRuns` operationId).
+	ListScheduledTaskRuns(ctx context.Context, id string, params *ListScheduledTaskRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
 	//
@@ -14071,6 +14527,201 @@ func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
 func (c *Client) CreateRun(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateRunRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListScheduledTasks The scheduled tasks of the user, or of the customer
+//
+// Newest first, cursor-paged. A device lists its own user's tasks, including the ones its backend made in its name. A backend naming a user with X-Stream-User-Id lists that user's; a backend naming nobody lists every task of the customer, instructions included: a customer's whole task list is support-visible, so put nothing in instructions a user must not have read back to them. Devices see instructions too, for the same reason.
+//
+// Corresponds with GET /v1/agents/scheduled-tasks (the `ListScheduledTasks` operationId).
+func (c *Client) ListScheduledTasks(ctx context.Context, params *ListScheduledTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScheduledTasksRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateScheduledTaskWithBody Schedule a task for a user
+//
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+func (c *Client) CreateScheduledTaskWithBody(ctx context.Context, params *CreateScheduledTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateScheduledTaskRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateScheduledTask Schedule a task for a user
+//
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+func (c *Client) CreateScheduledTask(ctx context.Context, params *CreateScheduledTaskParams, body CreateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateScheduledTaskRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteScheduledTask Delete a scheduled task
+//
+// This is cancel: the task and its runs are gone, and there is no cancelled state to clutter lists.
+//
+// Corresponds with DELETE /v1/agents/scheduled-tasks/{id} (the `DeleteScheduledTask` operationId).
+func (c *Client) DeleteScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteScheduledTaskRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetScheduledTask One scheduled task
+//
+// A task that is not the caller's to reach is answered as not there.
+//
+// Corresponds with GET /v1/agents/scheduled-tasks/{id} (the `GetScheduledTask` operationId).
+func (c *Client) GetScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetScheduledTaskRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateScheduledTaskWithBody Change a scheduled task
+//
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+func (c *Client) UpdateScheduledTaskWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateScheduledTaskRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateScheduledTask Change a scheduled task
+//
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+func (c *Client) UpdateScheduledTask(ctx context.Context, id string, body UpdateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateScheduledTaskRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PauseScheduledTask Pause a scheduled task
+//
+// Nothing comes due while a task is paused; what it slept through is never replayed.
+//
+// Corresponds with POST /v1/agents/scheduled-tasks/{id}/pause (the `PauseScheduledTask` operationId).
+func (c *Client) PauseScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPauseScheduledTaskRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeScheduledTask Resume a scheduled task
+//
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+//
+// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
+func (c *Client) ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeScheduledTaskRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RunScheduledTask Run a scheduled task now
+//
+// Server-side only. Sets one occurrence going by hand and answers with its run while it is still running; the schedule does not move. Test a task with it, or trigger one from your own system.
+//
+// Corresponds with POST /v1/agents/scheduled-tasks/{id}/run (the `RunScheduledTask` operationId).
+func (c *Client) RunScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunScheduledTaskRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListScheduledTaskRuns A scheduled task's runs
+//
+// Newest first, cursor-paged. Only occurrences that came due, or were run by hand, are recorded; snoozes and pauses write no runs.
+//
+// Corresponds with GET /v1/agents/scheduled-tasks/{id}/runs (the `ListScheduledTaskRuns` operationId).
+func (c *Client) ListScheduledTaskRuns(ctx context.Context, id string, params *ListScheduledTaskRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScheduledTaskRunsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -21982,6 +22633,453 @@ func NewCreateRunRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
+// NewListScheduledTasksRequest constructs an http.Request for the ListScheduledTasks method
+func NewListScheduledTasksRequest(server string, params *ListScheduledTasksParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ConfigId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SessionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "session_id", *params.SessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateScheduledTaskRequest calls the generic CreateScheduledTask builder with application/json body
+func NewCreateScheduledTaskRequest(server string, params *CreateScheduledTaskParams, body CreateScheduledTaskJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateScheduledTaskRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateScheduledTaskRequestWithBody constructs an http.Request for the CreateScheduledTask method, with any body, and a specified content type
+func NewCreateScheduledTaskRequestWithBody(server string, params *CreateScheduledTaskParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XStreamUserId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Stream-User-Id", *params.XStreamUserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Stream-User-Id", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteScheduledTaskRequest constructs an http.Request for the DeleteScheduledTask method
+func NewDeleteScheduledTaskRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetScheduledTaskRequest constructs an http.Request for the GetScheduledTask method
+func NewGetScheduledTaskRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateScheduledTaskRequest calls the generic UpdateScheduledTask builder with application/json body
+func NewUpdateScheduledTaskRequest(server string, id string, body UpdateScheduledTaskJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateScheduledTaskRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateScheduledTaskRequestWithBody constructs an http.Request for the UpdateScheduledTask method, with any body, and a specified content type
+func NewUpdateScheduledTaskRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPauseScheduledTaskRequest constructs an http.Request for the PauseScheduledTask method
+func NewPauseScheduledTaskRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s/pause", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeScheduledTaskRequest constructs an http.Request for the ResumeScheduledTask method
+func NewResumeScheduledTaskRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunScheduledTaskRequest constructs an http.Request for the RunScheduledTask method
+func NewRunScheduledTaskRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s/run", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListScheduledTaskRunsRequest constructs an http.Request for the ListScheduledTaskRuns method
+func NewListScheduledTaskRunsRequest(server string, id string, params *ListScheduledTaskRunsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/scheduled-tasks/%s/runs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateSessionRequest calls the generic CreateSession builder with application/json body
 func NewCreateSessionRequest(server string, body CreateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -28834,6 +29932,105 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/runs (the `CreateRun` operationId).
 	CreateRunWithResponse(ctx context.Context, body CreateRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRunResponse, error)
+
+	// ListScheduledTasksWithResponse The scheduled tasks of the user, or of the customer
+	//
+	// Newest first, cursor-paged. A device lists its own user's tasks, including the ones its backend made in its name. A backend naming a user with X-Stream-User-Id lists that user's; a backend naming nobody lists every task of the customer, instructions included: a customer's whole task list is support-visible, so put nothing in instructions a user must not have read back to them. Devices see instructions too, for the same reason.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/scheduled-tasks (the `ListScheduledTasks` operationId).
+	ListScheduledTasksWithResponse(ctx context.Context, params *ListScheduledTasksParams, reqEditors ...RequestEditorFn) (*ListScheduledTasksResponse, error)
+
+	// CreateScheduledTaskWithBodyWithResponse Schedule a task for a user
+	//
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+	CreateScheduledTaskWithBodyWithResponse(ctx context.Context, params *CreateScheduledTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScheduledTaskResponse, error)
+
+	// CreateScheduledTaskWithResponse Schedule a task for a user
+	//
+	// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+	CreateScheduledTaskWithResponse(ctx context.Context, params *CreateScheduledTaskParams, body CreateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScheduledTaskResponse, error)
+
+	// DeleteScheduledTaskWithResponse Delete a scheduled task
+	//
+	// This is cancel: the task and its runs are gone, and there is no cancelled state to clutter lists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/scheduled-tasks/{id} (the `DeleteScheduledTask` operationId).
+	DeleteScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteScheduledTaskResponse, error)
+
+	// GetScheduledTaskWithResponse One scheduled task
+	//
+	// A task that is not the caller's to reach is answered as not there.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/scheduled-tasks/{id} (the `GetScheduledTask` operationId).
+	GetScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetScheduledTaskResponse, error)
+
+	// UpdateScheduledTaskWithBodyWithResponse Change a scheduled task
+	//
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+	UpdateScheduledTaskWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateScheduledTaskResponse, error)
+
+	// UpdateScheduledTaskWithResponse Change a scheduled task
+	//
+	// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+	UpdateScheduledTaskWithResponse(ctx context.Context, id string, body UpdateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateScheduledTaskResponse, error)
+
+	// PauseScheduledTaskWithResponse Pause a scheduled task
+	//
+	// Nothing comes due while a task is paused; what it slept through is never replayed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/pause (the `PauseScheduledTask` operationId).
+	PauseScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*PauseScheduledTaskResponse, error)
+
+	// ResumeScheduledTaskWithResponse Resume a scheduled task
+	//
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
+	ResumeScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ResumeScheduledTaskResponse, error)
+
+	// RunScheduledTaskWithResponse Run a scheduled task now
+	//
+	// Server-side only. Sets one occurrence going by hand and answers with its run while it is still running; the schedule does not move. Test a task with it, or trigger one from your own system.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/run (the `RunScheduledTask` operationId).
+	RunScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RunScheduledTaskResponse, error)
+
+	// ListScheduledTaskRunsWithResponse A scheduled task's runs
+	//
+	// Newest first, cursor-paged. Only occurrences that came due, or were run by hand, are recorded; snoozes and pauses write no runs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/scheduled-tasks/{id}/runs (the `ListScheduledTaskRuns` operationId).
+	ListScheduledTaskRunsWithResponse(ctx context.Context, id string, params *ListScheduledTaskRunsParams, reqEditors ...RequestEditorFn) (*ListScheduledTaskRunsResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
@@ -37694,6 +38891,711 @@ func (r CreateRunResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListScheduledTasksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledTaskPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON200() *ScheduledTaskPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScheduledTasksResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScheduledTasksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScheduledTasksResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScheduledTasksResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ScheduledTask
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON201() *ScheduledTask {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledTask
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON200() *ScheduledTask {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledTask
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON200() *ScheduledTask {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PauseScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledTask
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON200() *ScheduledTask {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PauseScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PauseScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PauseScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PauseScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledTask
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON200() *ScheduledTask {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RunScheduledTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *ScheduledTaskRun
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON202() *ScheduledTaskRun {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r RunScheduledTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RunScheduledTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunScheduledTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RunScheduledTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListScheduledTaskRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledTaskRunPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON200() *ScheduledTaskRunPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScheduledTaskRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScheduledTaskRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScheduledTaskRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScheduledTaskRunsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -48730,6 +50632,171 @@ func (c *ClientWithResponses) CreateRunWithResponse(ctx context.Context, body Cr
 	return ParseCreateRunResponse(rsp)
 }
 
+// ListScheduledTasksWithResponse The scheduled tasks of the user, or of the customer
+//
+// Newest first, cursor-paged. A device lists its own user's tasks, including the ones its backend made in its name. A backend naming a user with X-Stream-User-Id lists that user's; a backend naming nobody lists every task of the customer, instructions included: a customer's whole task list is support-visible, so put nothing in instructions a user must not have read back to them. Devices see instructions too, for the same reason.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/scheduled-tasks (the `ListScheduledTasks` operationId).
+func (c *ClientWithResponses) ListScheduledTasksWithResponse(ctx context.Context, params *ListScheduledTasksParams, reqEditors ...RequestEditorFn) (*ListScheduledTasksResponse, error) {
+	rsp, err := c.ListScheduledTasks(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScheduledTasksResponse(rsp)
+}
+
+// CreateScheduledTaskWithBodyWithResponse Schedule a task for a user
+//
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+func (c *ClientWithResponses) CreateScheduledTaskWithBodyWithResponse(ctx context.Context, params *CreateScheduledTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScheduledTaskResponse, error) {
+	rsp, err := c.CreateScheduledTaskWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateScheduledTaskResponse(rsp)
+}
+
+// CreateScheduledTaskWithResponse Schedule a task for a user
+//
+// Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id's own config, and the follow-up lands in that session's conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/scheduled-tasks (the `CreateScheduledTask` operationId).
+func (c *ClientWithResponses) CreateScheduledTaskWithResponse(ctx context.Context, params *CreateScheduledTaskParams, body CreateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScheduledTaskResponse, error) {
+	rsp, err := c.CreateScheduledTask(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateScheduledTaskResponse(rsp)
+}
+
+// DeleteScheduledTaskWithResponse Delete a scheduled task
+//
+// This is cancel: the task and its runs are gone, and there is no cancelled state to clutter lists.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/scheduled-tasks/{id} (the `DeleteScheduledTask` operationId).
+func (c *ClientWithResponses) DeleteScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteScheduledTaskResponse, error) {
+	rsp, err := c.DeleteScheduledTask(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteScheduledTaskResponse(rsp)
+}
+
+// GetScheduledTaskWithResponse One scheduled task
+//
+// A task that is not the caller's to reach is answered as not there.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/scheduled-tasks/{id} (the `GetScheduledTask` operationId).
+func (c *ClientWithResponses) GetScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetScheduledTaskResponse, error) {
+	rsp, err := c.GetScheduledTask(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetScheduledTaskResponse(rsp)
+}
+
+// UpdateScheduledTaskWithBodyWithResponse Change a scheduled task
+//
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+func (c *ClientWithResponses) UpdateScheduledTaskWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateScheduledTaskResponse, error) {
+	rsp, err := c.UpdateScheduledTaskWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateScheduledTaskResponse(rsp)
+}
+
+// UpdateScheduledTaskWithResponse Change a scheduled task
+//
+// A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/scheduled-tasks/{id} (the `UpdateScheduledTask` operationId).
+func (c *ClientWithResponses) UpdateScheduledTaskWithResponse(ctx context.Context, id string, body UpdateScheduledTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateScheduledTaskResponse, error) {
+	rsp, err := c.UpdateScheduledTask(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateScheduledTaskResponse(rsp)
+}
+
+// PauseScheduledTaskWithResponse Pause a scheduled task
+//
+// Nothing comes due while a task is paused; what it slept through is never replayed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/scheduled-tasks/{id}/pause (the `PauseScheduledTask` operationId).
+func (c *ClientWithResponses) PauseScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*PauseScheduledTaskResponse, error) {
+	rsp, err := c.PauseScheduledTask(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePauseScheduledTaskResponse(rsp)
+}
+
+// ResumeScheduledTaskWithResponse Resume a scheduled task
+//
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
+func (c *ClientWithResponses) ResumeScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ResumeScheduledTaskResponse, error) {
+	rsp, err := c.ResumeScheduledTask(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeScheduledTaskResponse(rsp)
+}
+
+// RunScheduledTaskWithResponse Run a scheduled task now
+//
+// Server-side only. Sets one occurrence going by hand and answers with its run while it is still running; the schedule does not move. Test a task with it, or trigger one from your own system.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/scheduled-tasks/{id}/run (the `RunScheduledTask` operationId).
+func (c *ClientWithResponses) RunScheduledTaskWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RunScheduledTaskResponse, error) {
+	rsp, err := c.RunScheduledTask(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunScheduledTaskResponse(rsp)
+}
+
+// ListScheduledTaskRunsWithResponse A scheduled task's runs
+//
+// Newest first, cursor-paged. Only occurrences that came due, or were run by hand, are recorded; snoozes and pauses write no runs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/scheduled-tasks/{id}/runs (the `ListScheduledTaskRuns` operationId).
+func (c *ClientWithResponses) ListScheduledTaskRunsWithResponse(ctx context.Context, id string, params *ListScheduledTaskRunsParams, reqEditors ...RequestEditorFn) (*ListScheduledTaskRunsResponse, error) {
+	rsp, err := c.ListScheduledTaskRuns(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScheduledTaskRunsResponse(rsp)
+}
+
 // CreateSessionWithBodyWithResponse Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -57261,6 +59328,579 @@ func ParseCreateRunResponse(rsp *http.Response) (*CreateRunResponse, error) {
 			return nil, err
 		}
 		response.JSON504 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListScheduledTasksResponse parses an HTTP response from a ListScheduledTasksWithResponse call
+func ParseListScheduledTasksResponse(rsp *http.Response) (*ListScheduledTasksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScheduledTasksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledTaskPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateScheduledTaskResponse parses an HTTP response from a CreateScheduledTaskWithResponse call
+func ParseCreateScheduledTaskResponse(rsp *http.Response) (*CreateScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ScheduledTask
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteScheduledTaskResponse parses an HTTP response from a DeleteScheduledTaskWithResponse call
+func ParseDeleteScheduledTaskResponse(rsp *http.Response) (*DeleteScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetScheduledTaskResponse parses an HTTP response from a GetScheduledTaskWithResponse call
+func ParseGetScheduledTaskResponse(rsp *http.Response) (*GetScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledTask
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateScheduledTaskResponse parses an HTTP response from a UpdateScheduledTaskWithResponse call
+func ParseUpdateScheduledTaskResponse(rsp *http.Response) (*UpdateScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledTask
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePauseScheduledTaskResponse parses an HTTP response from a PauseScheduledTaskWithResponse call
+func ParsePauseScheduledTaskResponse(rsp *http.Response) (*PauseScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PauseScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledTask
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeScheduledTaskResponse parses an HTTP response from a ResumeScheduledTaskWithResponse call
+func ParseResumeScheduledTaskResponse(rsp *http.Response) (*ResumeScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledTask
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunScheduledTaskResponse parses an HTTP response from a RunScheduledTaskWithResponse call
+func ParseRunScheduledTaskResponse(rsp *http.Response) (*RunScheduledTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunScheduledTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest ScheduledTaskRun
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListScheduledTaskRunsResponse parses an HTTP response from a ListScheduledTaskRunsWithResponse call
+func ParseListScheduledTaskRunsResponse(rsp *http.Response) (*ListScheduledTaskRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScheduledTaskRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledTaskRunPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

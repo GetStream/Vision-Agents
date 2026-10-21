@@ -350,7 +350,11 @@ type Server struct {
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
 	eventForwarder    *eventforward.Forwarder
-	mcpEvents         *mcpevents.Service
+	// kickScheduler wakes the scheduled-task worker after a task changes, so
+	// a task due now is claimed now rather than at the worker's next look.
+	// Set by the process wiring (SetSchedulerKick); nil where no worker runs.
+	kickScheduler func()
+	mcpEvents     *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
 	// slackApps and operatorApps serve the provider app paths.
@@ -545,6 +549,24 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	return server, nil
 }
 
+// SetSchedulerKick hands the server the scheduled-task worker's wake-up, so
+// a task created, changed or run by hand is claimed without waiting for the
+// worker's next look at the store, and so is one the agent's scheduling tools
+// make or change.
+func (s *Server) SetSchedulerKick(kick func()) {
+	s.kickScheduler = kick
+	if s.sessions != nil {
+		s.sessions.SetSchedulerKick(kick)
+	}
+}
+
+// kickScheduled wakes the scheduled-task worker, when this process runs one.
+func (s *Server) kickScheduled() {
+	if s.kickScheduler != nil {
+		s.kickScheduler()
+	}
+}
+
 // Drain sends every dispatch worker connected here to reconnect, which lands it on whichever
 // process is taking work now. A worker told the socket is going away reconnects; one told it
 // closed normally stops waiting for work at all.
@@ -577,6 +599,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/data/export", s.exportData)
 	mux.HandleFunc("POST /v1/data/import", s.importData)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
+	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
@@ -1093,9 +1116,9 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 	", " + clientHeader + ", " + actorIDHeader + ", " + actorNameHeader +
 	", " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
 
-// corsMethods are the methods this API serves. PUT belongs here because a live session's
-// instructions are replaced with one; PATCH does not, because the spec serves none.
-const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
+// corsMethods are the methods this API serves: every method an operation in the spec
+// uses, PATCH included for patchAgentConfig and updateScheduledTask, and OPTIONS.
+const corsMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 
 // corsExposedHeaders are the response headers a page's script may read.
 const corsExposedHeaders = "Server-Timing, " + RequestIDHeader + ", " + quotaLimitHeader + ", " +

@@ -359,6 +359,28 @@ func (s *OAuthClientsSuite) TestAnUnknownConnectorIsNotFound() {
 		confidentialClient("secret"), nil))
 }
 
+// nessy is internal (nessy.yaml): an app Stream marks internal saves the client its staff
+// registered at Nessy, and any other app is told there is no such connector.
+func (s *OAuthClientsSuite) TestAnAppMarkedInternalSavesItsNessyClient() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+
+	var created ConnectorOAuthClient
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("nessy"),
+		confidentialClient("secret-"+s.utils.uuid()), &created))
+	s.Equal(ConnectorClientRegistrationMethod(core.ClientCustomer), created.Registration)
+	s.Equal("the-apps-client", created.ClientID)
+}
+
+func (s *OAuthClientsSuite) TestAnAppNotMarkedInternalCannotSaveANessyClient() {
+	for _, settings := range []store.AppSettings{{}, {InternalConnectors: new(false)}} {
+		s.useApp(s.data.createAppAdmitting(settings))
+		s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodPut, oauthClientPath("nessy"),
+			confidentialClient("secret-"+s.utils.uuid()), nil))
+		_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "nessy")
+		s.ErrorIs(err, store.ErrNoConnectorOAuthClient, "nothing stored")
+	}
+}
+
 func (s *OAuthClientsSuite) TestOnlyTheAppsBackendMayReadTheOAuthClient() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		s.put("github", confidentialClient("secret-"+s.utils.uuid()))

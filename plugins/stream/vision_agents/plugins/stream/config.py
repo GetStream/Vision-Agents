@@ -25,6 +25,7 @@ from ._generated.models import (
     AgentConnectorSelectionType,
     AgentDispatch,
     AgentMode,
+    AgentScheduling,
     AgentTools,
     ChannelIdentity,
     ChannelLineRequest,
@@ -405,6 +406,15 @@ async def _declare_settings(
         if settings.channels.identity:
             declared.identity = ChannelIdentity(settings.channels.identity)
         body.channels = declared
+    if settings.scheduling is not None:
+        scheduling = AgentScheduling()
+        if settings.scheduling.enabled is not None:
+            scheduling.enabled = settings.scheduling.enabled
+        if settings.scheduling.max_tasks_per_user is not None:
+            scheduling.max_tasks_per_user = settings.scheduling.max_tasks_per_user
+        if settings.scheduling.default_timezone:
+            scheduling.default_timezone = settings.scheduling.default_timezone
+        body.scheduling = scheduling
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

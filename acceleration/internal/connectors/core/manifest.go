@@ -38,6 +38,10 @@ type Manifest struct {
 	// cf62af0d). Nothing that connects reads them.
 	Category    string `yaml:"category,omitempty" json:"category,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Internal is a connector only Stream's own apps see: those whose settings say
+	// internal_connectors (store.AppSettings). Left out of the JSON when false, so the JSON of
+	// every manifest stored before it stays as it was.
+	Internal bool `yaml:"internal,omitempty" json:"internal,omitempty"`
 	// Setup is what a person does at the provider before the first consent, as the plugin
 	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
 	// dashboard's setup page can show it over a connector (architecture doc on
@@ -185,6 +189,10 @@ type RateLimitRule struct {
 	// leave per second.
 	Bucket        int `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	LeakPerSecond int `yaml:"leak_per_second,omitempty" json:"leak_per_second,omitempty"`
+	// MaxConcurrentCalls is how many of a connection's tool calls one router sends at once; a
+	// call over it waits for one to end. 0 is no cap, and is left out of the JSON, so a
+	// manifest without one marshals as it was stored.
+	MaxConcurrentCalls int `yaml:"max_concurrent_calls,omitempty" json:"max_concurrent_calls,omitempty"`
 }
 
 // SourceRule is one tool source the connector offers and the endpoint it runs against.
@@ -621,6 +629,9 @@ func (m Manifest) Validate() error {
 	}
 	if m.RateLimit.Bucket < 0 || m.RateLimit.LeakPerSecond < 0 {
 		fail("rate_limit", "bucket and leak_per_second cannot be negative")
+	}
+	if m.RateLimit.MaxConcurrentCalls < 0 {
+		fail("rate_limit.max_concurrent_calls", "cannot be negative")
 	}
 
 	for i, source := range m.Sources {

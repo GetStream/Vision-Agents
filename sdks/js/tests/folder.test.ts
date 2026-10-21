@@ -239,6 +239,45 @@ describe("loadFolder", () => {
     });
   });
 
+  it("reads scheduling, and sends it on a sync", async () => {
+    const folder = await loadFolder(
+      await agentDir({
+        "agent.yaml": [
+          "name: concierge",
+          "scheduling:",
+          "  enabled: true",
+          "  max_tasks_per_user: 10",
+          "  default_timezone: America/New_York",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    assert.deepEqual(folder.settings?.scheduling, {
+      enabled: true,
+      max_tasks_per_user: 10,
+      default_timezone: "America/New_York",
+    });
+
+    const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
+    assert.equal(without.settings?.scheduling, undefined);
+
+    await assert.rejects(
+      async () =>
+        loadFolder(
+          await agentDir({ "agent.yaml": "name: concierge\nscheduling:\n  urgent: true\n" }),
+        ),
+      /unknown scheduling setting "urgent"/,
+    );
+    await assert.rejects(
+      async () =>
+        loadFolder(
+          await agentDir({ "agent.yaml": "name: concierge\nscheduling:\n  enabled: yes please\n" }),
+        ),
+      /scheduling\.enabled must be true or false/,
+    );
+  });
+
   it("tells mcp_servers and channels that say nothing from ones that are empty", async () => {
     const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
     const nothing = await loadFolder(

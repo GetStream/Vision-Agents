@@ -493,6 +493,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tags`.
             internal var tags: Components.Schemas.CreateSessionRequest.TagsPayload?
+            /// The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/timezone`.
+            internal var timezone: Swift.String?
             /// What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/title`.
@@ -552,6 +556,7 @@ extension Components {
             ///   - sts: A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - tags: Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
+            ///   - timezone: The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
             ///   - title: What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///   - toolTimeoutMs: How long the model waits for a tool result. Zero is the default.
             ///   - tools:
@@ -591,6 +596,7 @@ extension Components {
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 tags: Components.Schemas.CreateSessionRequest.TagsPayload? = nil,
+                timezone: Swift.String? = nil,
                 title: Swift.String? = nil,
                 toolTimeoutMs: Swift.Int? = nil,
                 tools: [Components.Schemas.SessionTool]? = nil,
@@ -630,6 +636,7 @@ extension Components {
                 self.sts = sts
                 self.stt = stt
                 self.tags = tags
+                self.timezone = timezone
                 self.title = title
                 self.toolTimeoutMs = toolTimeoutMs
                 self.tools = tools
@@ -670,6 +677,7 @@ extension Components {
                 case sts
                 case stt
                 case tags
+                case timezone
                 case title
                 case toolTimeoutMs = "tool_timeout_ms"
                 case tools

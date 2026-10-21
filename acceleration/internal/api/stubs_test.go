@@ -109,6 +109,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "echo", Model: "echo-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},

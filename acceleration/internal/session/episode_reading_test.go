@@ -328,7 +328,7 @@ func (s *EpisodeReadingSuite) textSession(thread string, cards bool, text string
 	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), spec)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
-	s.Require().NoError(created.FollowUp(s.ctx, text))
+	s.Require().NoError(created.FollowUp(s.ctx, "follow-up-"+uuid.NewString(), text))
 	return s.replyTo(text)
 }
 
@@ -885,4 +885,24 @@ func (s *EpisodeReadingSuite) TestAtMostFiveCardsOfTwentyLinesEachAreRead() {
 		s.Equal(fmt.Sprintf("thread %d line 24", i+2), lines[19].(map[string]any)["text"])
 	}
 	s.Empty(namingAny(s.requests()[asked:], threads[0], threads[1]), "the two oldest are not even read")
+}
+
+// A follow-up whose turn could not start, as when it lands while the session is closing
+// (Session.close closes the agent before the conversation is released), is not held as
+// delivered: the same follow-up delivered again tries the turn again.
+func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartIsNotADuplicate() {
+	thread := s.thread("author")
+	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena",
+		Text: true, PersistConversation: true, ConversationID: thread, Thread: true,
+		LLMTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	s.Require().NoError(created.current().Close())
+
+	s.Require().Error(created.FollowUp(s.ctx, "st_run", "the task is due"))
+	_, _, known := created.FollowUpReply("st_run")
+	s.False(known, "a follow-up that started no turn is forgotten")
+	s.Error(created.FollowUp(s.ctx, "st_run", "the task is due"), "the retry tries the turn again rather than being answered Duplicate")
 }

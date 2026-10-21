@@ -205,6 +205,116 @@ func (s *ConfigsSuite) TestAConfigOffersToolsWholeUnlessItSaysProgressively() {
 	s.True(value(saved.Tools.Progressive), "a setting left out on an update stays")
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersItsScheduling() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "max_tasks_per_user": 5, "default_timezone": "Europe/Amsterdam",
+	}})
+	s.Require().NotNil(created.Scheduling)
+	s.True(value(created.Scheduling.Enabled))
+	s.Equal(5, value(created.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(created.Scheduling.DefaultTimezone))
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.True(value(read.Scheduling.Enabled))
+	s.Equal(5, value(read.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(read.Scheduling.DefaultTimezone))
+}
+
+func (s *ConfigsSuite) TestAConfigSchedulingStaysWhenAPatchLeavesItOut() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "default_timezone": "Europe/Amsterdam",
+	}})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+created.Id, map[string]any{"name": "help"}, &patched))
+	s.True(value(patched.Scheduling.Enabled))
+	s.Equal("Europe/Amsterdam", value(patched.Scheduling.DefaultTimezone))
+}
+
+// The dashboard saves an agent by sending back what it read, less the fields the router
+// writes. A config that never set scheduling, or never set its task limit, takes that back.
+func (s *ConfigsSuite) TestAConfigReadBackIsSavedAsItWas() {
+	for name, scheduling := range map[string]map[string]any{
+		"no scheduling":            nil,
+		"scheduling with no limit": {"enabled": true},
+	} {
+		s.Run(name, func() {
+			body := map[string]any{"name": "support-" + s.utils.uuid(), "instructions": "Be brief."}
+			if scheduling != nil {
+				body["scheduling"] = scheduling
+			}
+			created := s.createConfig(body)
+
+			var read map[string]any
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+			for _, written := range []string{"id", "created_at", "updated_at", "sync_hash"} {
+				delete(read, written)
+			}
+
+			var saved AgentConfig
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id, read, &saved))
+			s.Equal("Be brief.", value(saved.Instructions))
+			if scheduling == nil {
+				s.NotContains(read, "scheduling", "a config that never set scheduling renders none")
+				s.Nil(saved.Scheduling)
+				return
+			}
+			s.Require().NotNil(saved.Scheduling)
+			s.True(value(saved.Scheduling.Enabled))
+			s.Nil(saved.Scheduling.MaxTasksPerUser, "a limit never set is left out, not rendered as 0")
+		})
+	}
+}
+
+// A scheduling block on an update keeps what it leaves out, as its doc says.
+func (s *ConfigsSuite) TestAnUpdateNamingOnlyTheTaskLimitKeepsSchedulingOn() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "default_timezone": "Europe/Amsterdam",
+	}})
+
+	var updated AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "scheduling": map[string]any{"max_tasks_per_user": 7}}, &updated))
+
+	s.Require().NotNil(updated.Scheduling)
+	s.True(value(updated.Scheduling.Enabled))
+	s.Equal(7, value(updated.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(updated.Scheduling.DefaultTimezone))
+}
+
+func (s *ConfigsSuite) TestAPaddedDefaultTimezoneIsTrimmedAndTheRoutersOwnIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support", "scheduling": map[string]any{
+		"enabled": true, "default_timezone": " Europe/Amsterdam ",
+	}})
+	s.Equal("Europe/Amsterdam", value(created.Scheduling.DefaultTimezone))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"scheduling": map[string]any{"default_timezone": "Asia/Tokyo "}}, &patched))
+	s.Equal("Asia/Tokyo", value(patched.Scheduling.DefaultTimezone))
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "scheduling": map[string]any{"default_timezone": "Local"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+}
+
+func (s *ConfigsSuite) TestAConfigNamingAnUnknownDefaultTimezoneIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+
+	created := s.createConfig(map[string]any{"name": "support"})
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+}
+
 func (s *ConfigsSuite) TestADispatchSettingThatIsNeitherOnNorOffIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "dispatch": map[string]any{"text": "sometimes"}})

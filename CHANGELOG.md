@@ -660,6 +660,37 @@ unchanged (AI-1551).
 
 When a caller's turn settles, when the agent checks in on a silence, and when the call ends, the agent logs `what the agent heard from a participant` at INFO, one line per participant (`moment`: `turn`, `checkin`, `end`): the audio chunks received from the call (`frames`, `audio_ms`), counted from the start of the call and not per turn, the transcripts with words in them (`partials`, `finals`), and how long ago the last of each came (`since_frame_ms`, `since_words_ms`, `-1` for never). No transcript text. Two lines tell a caller who went quiet (no frames) from a transcriber that stopped answering (frames, no words). `router_agent_inbound_audio_frames_total` (no labels), `router_agent_stt_partials_total` and `router_agent_stt_finals_total` (label `provider`) count the same for Prometheus. What is heard and answered is unchanged (AI-1553).
 
+### A connector manifest can cap a connection's calls in flight
+
+`rate_limit.max_concurrent_calls` in a connector's manifest caps how many of one connection's tool calls a router sends at once. A call over the cap waits for one to end, within its binding's `timeout_ms`; if it is still waiting then, it is not sent and the model reads a `connector_busy` result, and the call's row in the invocation log is `denied` with the message `held by the router: in-flight limit <n> reached on the connection`. The cap is per connection and per router process. A manifest without the field has no cap, as before.
+
+### Agents can schedule tasks for later
+
+An agent with `scheduling.enabled` on its config is offered four tools —
+`schedule_task`, `list_scheduled_tasks`, `update_scheduled_task` and
+`cancel_scheduled_task` — so a user can ask it to remind them or do something later, once
+or on a repeat (`FREQ=DAILY`, `FREQ=WEEKLY;BYDAY=MO,WE,FR`, …), at the hour they mean in
+their own IANA timezone. `CreateSessionRequest` takes a `timezone`, remembered as the
+user's for what follows. When a task comes due, a worker on every router claims it once
+and the agent carries it out in the user's own conversation, with its usual tools; a task
+that fires mid-call waits for the call to end rather than interrupting it. Scheduled runs
+are customer spend and never consume the end user's daily caps, the replies that finish
+them included; what the user types next is counted on their day as before.
+
+The same tasks are a REST resource, `/v1/agents/scheduled-tasks`: a backend schedules for
+the user it names with `X-Stream-User-Id`, and the owner reads, changes, pauses, resumes
+and deletes their tasks from a device, runs included. `agent.yaml` takes a `scheduling:`
+block (`enabled`, `max_tasks_per_user`, `default_timezone`) in the Go, Python and
+JavaScript SDKs.
+
+Tasks also say where they are delivered: `deliver_to` is an ordered list of
+`conversation`, `sms`, `whatsapp`, `imessage` and `phone`, and the first that lands is
+where the run says it landed. A text channel carries the agent's own words out to the
+number the user already texts the agent from, under the 10DLC gate, and WhatsApp only
+inside the day after the person last wrote; `phone` rings them and speaks it instead.
+`quiet_hours` holds an occurrence that comes due in them until they end, on every
+channel, without counting it a failure.
+
 ### An agent config has a `role`, and the app's moderator agent is found by it
 
 `AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
@@ -2359,6 +2390,12 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - `a tool call came back` names the tool call under `tool_call`; it logged it as a second `call` key, beside the session's `call`. A check-in's `what the agent heard from a participant` line and its `could not write a line to say` warning log `purpose` as `hold`, `update` or `checkin` instead of the whole prompt the line was written from (AI-1585, AI-1586).
 - An OpenAI Realtime agent with `interrupt_response: false` answers a caller whose turn ends while it is still speaking. The server refused its own reply with `conversation_already_has_active_response`, which the agent logged as an error, and the caller's question was never answered. The agent now asks for that reply once the one in flight is done, and does the same for a refused prompt, text or tool result; a caller who speaks again or barges in gets the server's answer to their next turn instead (AI-1548).
 - A phone session ends on its own: 10 seconds after the last person leaves the call, and when a phone call is never answered (90 seconds for an outbound call, 30 seconds for an inbound one). The agent stops talking and leaves rather than finishing its sentence to an empty call. The Python SDK now tells the router a session is a phone call, as the Go SDK does, so a Python agent on a phone call can also transfer the caller to a person. Sessions that are not phone calls are unchanged.
+
+### A web page may send PATCH
+
+The router's CORS answer now allows PATCH, so a page calling the router directly can patch an
+agent config (`patchAgentConfig`) or change a scheduled task (`updateScheduledTask`). A browser
+refused both at the preflight before.
 
 ### A Kotlin voice call asks only for the microphone
 

@@ -148,6 +148,20 @@ class ChannelsSettings:
 
 
 @dataclass
+class SchedulingSettings:
+    """Whether the agent may schedule tasks for its users, and the bounds on that."""
+
+    enabled: bool | None = None
+    """Offer the agent the scheduling tools. Off unless turned on: it adds four tools
+    to every turn. None when the file says nothing about it."""
+    max_tasks_per_user: int | None = None
+    """How many active scheduled tasks one user may hold. Omitted is 25."""
+    default_timezone: str = ""
+    """The IANA zone a task takes when neither the user nor their session has ever
+    named one."""
+
+
+@dataclass
 class PluginSettings:
     """One catalog plugin the agent names, and how the router reaches it.
 
@@ -251,6 +265,9 @@ class Settings:
     channels: ChannelsSettings | None = None
     """Lines the agent answers on besides Stream Chat. The provider's credentials live on
     the router, connected once for the app; this only names the numbers."""
+    scheduling: SchedulingSettings | None = None
+    """Whether the agent may schedule tasks for its users. None when the file says
+    nothing about it."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -499,6 +516,8 @@ def _declare(path: Path) -> Settings:
             settings.tools = _tools(path, value)
         elif field_name == "channels":
             settings.channels = _channels(path, value)
+        elif field_name == "scheduling":
+            settings.scheduling = _scheduling(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -784,6 +803,27 @@ def _channels(path: Path, value: object) -> ChannelsSettings | None:
         sms=_channel(path, "sms", value.get("sms")),
         imessage=_channel(path, "imessage", value.get("imessage")),
         identity=identity,
+    )
+
+
+def _scheduling(path: Path, value: object) -> SchedulingSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give scheduling as a mapping")
+    extra = set(value) - {"enabled", "max_tasks_per_user", "default_timezone"}
+    if extra:
+        raise ValueError(f"{path} unknown scheduling setting: {sorted(extra)[0]}")
+    enabled = value.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
+        raise ValueError(f"{path} scheduling.enabled must be true or false")
+    maximum = value.get("max_tasks_per_user")
+    if maximum is not None and not isinstance(maximum, int):
+        raise ValueError(f"{path} scheduling.max_tasks_per_user must be a number")
+    return SchedulingSettings(
+        enabled=enabled,
+        max_tasks_per_user=maximum,
+        default_timezone=_word(value.get("default_timezone")),
     )
 
 

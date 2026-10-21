@@ -122,8 +122,12 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 		}()
 	}
 
+	// One id for the message, kept across the retries below: an attempt that
+	// started the reply before the wait gave up makes the next a duplicate
+	// rather than a second answer.
+	followUpID := "thread_" + store.NewID()
 	for {
-		err = found.FollowUp(turn, event.Message.Text)
+		err = found.FollowUp(turn, followUpID, event.Message.Text)
 		if err == nil || turn.Err() != nil {
 			break
 		}

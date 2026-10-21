@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -124,6 +125,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	config.MCPServers = servers
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -233,6 +237,12 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
+	// Field by field, as the doc says of an update: a block naming only the limit keeps
+	// enabled and the zone.
+	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -282,6 +292,12 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
+	}
+	// A deleted config's tasks have no agent left to run on: paused, they stop failing
+	// every occurrence and counting against their users' limit, and stay readable.
+	if err := s.store.PauseScheduledTasksForConfig(ctx, customerID, request.Id); err != nil {
+		s.logger.Error("could not pause a deleted config's scheduled tasks",
+			"config", request.Id, "error", err)
 	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditAgentConfig, ResourceID: existing.ID, ResourceName: existing.Name,
@@ -1590,6 +1606,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
 	}
+	config.Scheduling = schedulingOf(request.Scheduling)
 	return config
 }
 
@@ -1672,6 +1689,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
 	rendered.Tools = &AgentTools{Progressive: &progressive}
+	rendered.Scheduling = renderedScheduling(config.Scheduling)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1936,6 +1954,7 @@ type AgentConfigRequest struct {
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
@@ -1972,6 +1991,7 @@ type AgentConfig struct {
 	Name               string                   `json:"name"`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
@@ -2002,6 +2022,79 @@ type AgentTools struct {
 func (*AgentTools) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How an agent is offered its plugin, MCP server and connector tools."
 	return schema
+}
+
+// AgentScheduling is an agent's scheduled-task settings.
+type AgentScheduling struct {
+	Enabled         *bool   `json:"enabled,omitempty" doc:"Offer the agent the scheduling tools (schedule_task, list_scheduled_tasks, update_scheduled_task, cancel_scheduled_task), so a user can ask it to remind them or do something later, once or on a repeat. Off by default: it adds four tools to every turn. Left out on an update, the stored setting stays."`
+	MaxTasksPerUser *int    `json:"max_tasks_per_user,omitempty" minimum:"1" maximum:"100" doc:"How many active scheduled tasks one user may hold. Omitted is 25."`
+	DefaultTimezone *string `json:"default_timezone,omitempty" doc:"The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone."`
+}
+
+func (*AgentScheduling) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Whether the agent may schedule tasks for its users, and the defaults those tasks take."
+	return schema
+}
+
+// schedulingOf turns wire scheduling settings into the stored ones.
+func schedulingOf(scheduling *AgentScheduling) store.AgentScheduling {
+	if scheduling == nil {
+		return store.AgentScheduling{}
+	}
+	return store.AgentScheduling{
+		Enabled:         value(scheduling.Enabled),
+		MaxTasksPerUser: value(scheduling.MaxTasksPerUser),
+		DefaultTimezone: strings.TrimSpace(value(scheduling.DefaultTimezone)),
+	}
+}
+
+// schedulingOr writes the fields a caller sent over the stored settings, for a
+// patch or a sync: a field left out keeps what is stored.
+func schedulingOr(stored store.AgentScheduling, scheduling *AgentScheduling) store.AgentScheduling {
+	if scheduling == nil {
+		return stored
+	}
+	if scheduling.Enabled != nil {
+		stored.Enabled = *scheduling.Enabled
+	}
+	if scheduling.MaxTasksPerUser != nil {
+		stored.MaxTasksPerUser = *scheduling.MaxTasksPerUser
+	}
+	if scheduling.DefaultTimezone != nil {
+		stored.DefaultTimezone = strings.TrimSpace(*scheduling.DefaultTimezone)
+	}
+	return stored
+}
+
+// renderedScheduling renders stored settings for the wire, and nothing for a config that
+// never set any. A limit never set is left out rather than rendered as 0, which
+// max_tasks_per_user's minimum refuses: a client saving back what it read (the dashboard
+// does) would be refused.
+func renderedScheduling(stored store.AgentScheduling) *AgentScheduling {
+	if stored == (store.AgentScheduling{}) {
+		return nil
+	}
+	enabled := stored.Enabled
+	rendered := &AgentScheduling{Enabled: &enabled}
+	if stored.MaxTasksPerUser > 0 {
+		rendered.MaxTasksPerUser = &stored.MaxTasksPerUser
+	}
+	if stored.DefaultTimezone != "" {
+		rendered.DefaultTimezone = &stored.DefaultTimezone
+	}
+	return rendered
+}
+
+// schedulingComplaint refuses a scheduling block naming a zone nobody knows.
+func schedulingComplaint(config store.AgentConfig) (string, bool) {
+	zone := config.Scheduling.DefaultTimezone
+	if zone == "" {
+		return "", true
+	}
+	if _, err := scheduling.LoadZone(zone); err != nil {
+		return "scheduling.default_timezone: " + err.Error(), false
+	}
+	return "", true
 }
 
 // progressiveOf is whether tools are offered progressively once tools is written over

@@ -739,3 +739,30 @@ func (s *DataMoveSuite) trunkOf(store *Store, customerID string) *SIPTrunk {
 	s.Require().NoError(store.CreateSIPTrunk(s.ctx, trunk))
 	return trunk
 }
+
+func (s *DataMoveSuite) TestScheduledTasksMoveWithTheirRuns() {
+	next := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	task := &ScheduledTask{
+		ID: "stretch", CustomerID: "acme", ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
+		Title: "Stretch", Instructions: "Remind Sam to stretch.", StartLocal: next, Timezone: "Europe/Amsterdam",
+		NextRunAt: &next, State: ScheduledTaskActive, CreatedBy: "api",
+	}
+	s.Require().NoError(s.source.CreateScheduledTask(s.ctx, task, 25))
+	s.Require().NoError(s.source.InsertScheduledTaskRun(s.ctx, &ScheduledTaskRun{
+		TaskID: "stretch", CustomerID: "acme", ScheduledFor: next.Add(-24 * time.Hour),
+		State: ScheduledTaskRunDelivered, DeliveredTo: ScheduledTaskDeliveredConversation,
+	}))
+
+	s.move("acme", "moved")
+
+	moved, err := s.destination.ScheduledTask(s.ctx, "moved", "stretch")
+	s.Require().NoError(err)
+	s.Equal("Remind Sam to stretch.", moved.Instructions)
+	s.Equal("config-1", moved.ConfigID)
+	s.Require().NotNil(moved.NextRunAt)
+	s.Equal(next, moved.NextRunAt.UTC())
+	runs, err := s.destination.ScheduledTaskRuns(s.ctx, "moved", "stretch", 25, nil)
+	s.Require().NoError(err)
+	s.Require().Len(runs, 1, "the task's history moves with it")
+	s.Equal(ScheduledTaskRunDelivered, runs[0].State)
+}

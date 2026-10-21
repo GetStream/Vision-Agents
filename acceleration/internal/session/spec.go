@@ -216,6 +216,18 @@ type Spec struct {
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
+	// Scheduling is the agent config's scheduled-task settings: whether the
+	// scheduling tools are offered, and the defaults a task takes.
+	Scheduling store.AgentScheduling
+	// Timezone is the end user's IANA zone for this session, from the session
+	// request. Empty resolves at tool time (the user's stored zone, then the
+	// config's default). The manager fills it in from the store when it can, so
+	// the prompt's clock line and the tools agree.
+	Timezone string
+	// SchedulingTools says the scheduling tools were offered to this session,
+	// which the manager decides once it knows the caller and the store. It is
+	// what earns the prompt its clock line.
+	SchedulingTools bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -348,6 +360,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
 		ProgressiveTools:   config.ProgressiveTools,
+		Scheduling:         config.Scheduling,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
@@ -757,8 +770,25 @@ func (s Spec) LLMOverwrites() options.LLM {
 	}
 }
 
+// clockLine is the one line that tells the agent what day it is for the user,
+// accurate to the day so the provider's prompt cache survives: a session that
+// runs past midnight keeps yesterday's date until its next tool result, which
+// always carries the exact time. Empty when the zone is not known.
+func (s Spec) clockLine(now time.Time) string {
+	if s.Timezone == "" {
+		return ""
+	}
+	loc, err := time.LoadLocation(s.Timezone)
+	if err != nil {
+		return ""
+	}
+	return "Today is " + now.In(loc).Format("Monday, 2 January 2006") + " for the user (" + s.Timezone + ")."
+}
+
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
-// through whatever answers, ahead of whatever it was told to do once it has.
+// through whatever answers, ahead of whatever it was told to do once it has. The clock line
+// comes last: it differs by zone and day, and the provider caches a prompt by its prefix, so
+// the sessions of one config keep sharing what comes before it.
 func (s Spec) prompt() string {
 	var parts []string
 	if s.Navigating {
@@ -769,6 +799,11 @@ func (s Spec) prompt() string {
 	}
 	if s.ServerInstructions != "" {
 		parts = append(parts, s.ServerInstructions)
+	}
+	if s.SchedulingTools {
+		if line := s.clockLine(time.Now()); line != "" {
+			parts = append(parts, line)
+		}
 	}
 	return strings.Join(parts, "\n\n")
 }

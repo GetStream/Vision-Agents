@@ -30,6 +30,7 @@ from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
 from .agent_role import AgentRole
+from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
 from .analyze_reviews_request import AnalyzeReviewsRequest
@@ -165,6 +166,8 @@ from .cost_source import CostSource
 from .create_opt_out_request import CreateOptOutRequest
 from .create_opt_out_request_source import CreateOptOutRequestSource
 from .create_response_request import CreateResponseRequest
+from .create_scheduled_task_request import CreateScheduledTaskRequest
+from .create_scheduled_task_request_custom import CreateScheduledTaskRequestCustom
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
@@ -249,6 +252,7 @@ from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
+from .list_scheduled_tasks_state import ListScheduledTasksState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
 from .llm_options_format import LlmOptionsFormat
@@ -320,6 +324,18 @@ from .router_config_request import RouterConfigRequest
 from .sandbox import Sandbox
 from .sandbox_options import SandboxOptions
 from .say_request import SayRequest
+from .scheduled_task import ScheduledTask
+from .scheduled_task_created_by import ScheduledTaskCreatedBy
+from .scheduled_task_custom import ScheduledTaskCustom
+from .scheduled_task_next import ScheduledTaskNext
+from .scheduled_task_page import ScheduledTaskPage
+from .scheduled_task_quiet_hours import ScheduledTaskQuietHours
+from .scheduled_task_run import ScheduledTaskRun
+from .scheduled_task_run_page import ScheduledTaskRunPage
+from .scheduled_task_run_state import ScheduledTaskRunState
+from .scheduled_task_run_trigger import ScheduledTaskRunTrigger
+from .scheduled_task_schedule import ScheduledTaskSchedule
+from .scheduled_task_state import ScheduledTaskState
 from .search_answer import SearchAnswer
 from .search_depth import SearchDepth
 from .search_options import SearchOptions
@@ -428,6 +444,7 @@ from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
+from .update_scheduled_task_request import UpdateScheduledTaskRequest
 from .update_session_request import UpdateSessionRequest
 from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
@@ -485,6 +502,7 @@ __all__ = (
     "AgentResponsePage",
     "AgentResponseStatus",
     "AgentRole",
+    "AgentScheduling",
     "AgentStats",
     "AgentTools",
     "AnalyzeReviewsRequest",
@@ -616,6 +634,8 @@ __all__ = (
     "CreateOptOutRequest",
     "CreateOptOutRequestSource",
     "CreateResponseRequest",
+    "CreateScheduledTaskRequest",
+    "CreateScheduledTaskRequestCustom",
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
@@ -698,6 +718,7 @@ __all__ = (
     "LibraryVoices",
     "LinkChannelRequest",
     "ListAgentLogsSeverity",
+    "ListScheduledTasksState",
     "ListSimulationRunsState",
     "LlmOptions",
     "LlmOptionsFormat",
@@ -769,6 +790,18 @@ __all__ = (
     "Sandbox",
     "SandboxOptions",
     "SayRequest",
+    "ScheduledTask",
+    "ScheduledTaskCreatedBy",
+    "ScheduledTaskCustom",
+    "ScheduledTaskNext",
+    "ScheduledTaskPage",
+    "ScheduledTaskQuietHours",
+    "ScheduledTaskRun",
+    "ScheduledTaskRunPage",
+    "ScheduledTaskRunState",
+    "ScheduledTaskRunTrigger",
+    "ScheduledTaskSchedule",
+    "ScheduledTaskState",
     "SearchAnswer",
     "SearchDepth",
     "SearchOptions",
@@ -877,6 +910,7 @@ __all__ = (
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
+    "UpdateScheduledTaskRequest",
     "UpdateSessionRequest",
     "UpdateSessionRequestCustom",
     "UpdateSessionRequestThinking",

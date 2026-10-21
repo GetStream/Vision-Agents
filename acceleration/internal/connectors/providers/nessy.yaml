@@ -1,0 +1,125 @@
+# Nessy, Stream's internal customer-data tool, through its MCP server. Every fact is from Nessy's
+# source, never from a live call, on branch feat/AI-1538-nessy-hosted-oauth-clients of
+# GetStream/Nessy at 9a323738 («[n]:file:N» below, paths under its root):
+#   [n]:backend/cliauth/client.go     the MCP path, the scopes, managed clients, RFC 8414 metadata
+#   [n]:backend/cliauth/service.go    authorize, token and refresh checks
+#   [n]:backend/cliauth/token.go      the token lifetimes
+#   [n]:backend/agenttools/mount.go   the routes
+#   [n]:backend/controllers/oauth.go  the token and revoke handlers
+#   [n]:docs/mcp.md                   what the server documents
+# Nothing here was checked against a running Nessy, and the branch is not in Nessy production
+# yet (unverified). And the design, «[design]»: the Linear document «Nessy as a connector» on AI-1538,
+# https://linear.app/stream/document/nessy-as-a-connector-150504c74466, opened October 20, 2026.
+id: nessy
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Nessy
+category: Internal tools
+description: Read Stream's customer data in Nessy as the staff member who connected.
+# [design] «Who sees it»: only apps whose settings say internal_connectors, since Nessy holds
+# Stream's customer data and only Stream staff can sign in to it ([n]:docs/mcp.md:29).
+internal: true
+setup:
+  # The Admin page ([n]:frontend/src/App.tsx:308) shows «Registered OAuth clients» to a holder
+  # of oauth_clients:manage ([n]:frontend/src/pages/Admin.tsx:850,1057).
+  url: https://nessy.getstream.io/admin
+  steps:
+    # [n]:docs/mcp.md:209-210: owner and admin hold it by default; [n]:backend/app.go:330.
+    - title: Get the permission
+      description: Ask a Nessy admin for the oauth_clients:manage permission if your role does not have it.
+    # [n]:docs/mcp.md:209-211; [n]:frontend/src/pages/Admin.tsx:850,878.
+    - title: Register a client
+      description: In Nessy, open Admin, then Registered OAuth clients, and name the app, such as Athena (staging).
+    # The callback is ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback
+    # (internal/api/authorizations.go, ConnectorCallbackPath). Its origin must be on
+    # NESSY_MCP_REGISTERED_CALLBACK_ORIGINS ([n]:docs/mcp.md:212-215,315;
+    # [n]:frontend/src/pages/Admin.tsx:880-883).
+    - title: Add the redirect URL
+      description: Add the redirect URI shown on this page as the callback URL. Nessy takes it only on the router origins it allows.
+    # [n]:docs/mcp.md:246-257: a managed client's tokens reach only the permission keys it is
+    # registered with, and only those the registrant's role holds; [n]:frontend/src/pages/Admin.tsx:885.
+    - title: Pick the scopes
+      description: Tick the Nessy permissions the app needs, such as organizations:read. Its tokens reach only those tools.
+    # «Copy the secret now: it is not shown again» ([n]:frontend/src/pages/Admin.tsx:863).
+    - title: Copy the credentials
+      description: Copy the Client ID and Client secret into this page. Nessy shows the secret once.
+    # NES-503: a managed client's secret works for 90 days, then the token endpoint answers
+    # invalid_client and every refresh fails ([n]:docs/mcp.md:276-290); a second secret can be
+    # added before that, and Admin → Registered OAuth clients has Rotate secret
+    # ([n]:docs/mcp.md:284-292; [n]:frontend/src/pages/Admin.tsx:945).
+    - title: Rotate the secret within 90 days
+      description: The client secret expires after 90 days. After that Nessy answers invalid_client and no connection can refresh. Before then, open Admin, then Registered OAuth clients, choose Rotate secret, and save the new secret in this page.
+endpoints:
+  # [n]:docs/mcp.md:56 («claude mcp add --transport http nessy https://nessy.getstream.io/mcp»);
+  # [n]:backend/cliauth/client.go:41 (MCPPath /mcp, under the issuer).
+  mcp: https://nessy.getstream.io/mcp
+  # The issuer is NESSY_MCP_ISSUER_URL, else NESSY_FRONTEND_URL ([n]:backend/cliauth/service.go:113-122,
+  # [n]:docs/mcp.md:314,335-336), which production sets to https://nessy.getstream.io and no
+  # issuer of its own ([n]:deploy/helm/nessy/values.yaml:48). Pinned, so the client this app
+  # registered at Nessy is only ever sent to Nessy's issuer, as MCP's «Authorization Server
+  # Binding» asks of a preregistered client ([design], change 9): oauth2_code reads this
+  # issuer's RFC 8414 metadata ([n]:backend/agenttools/mount.go:129) and not the MCP endpoint's
+  # protected resource metadata (schemes/oauth2code/discovery.go, discover), and the endpoints
+  # pinned below win over what that metadata says.
+  issuer: https://nessy.getstream.io
+  # [n]:backend/cliauth/client.go:558-559; [n]:backend/agenttools/mount.go:155,157.
+  authorize: https://nessy.getstream.io/api/oauth/authorize
+  token: https://nessy.getstream.io/api/oauth/token
+  # RFC 7009 revocation (NES-498): POST /api/oauth/revoke ([n]:backend/agenttools/mount.go:160);
+  # the client authenticates as at the token endpoint, names a refresh or access token of its
+  # own, and that token's whole session family ends ([n]:backend/controllers/oauth.go:215-219);
+  # the metadata advertises it as revocation_endpoint ([n]:backend/cliauth/client.go:561).
+  revoke: https://nessy.getstream.io/api/oauth/revoke
+  # RFC 8707 resource indicator: «The issuer plus this path is the resource every MCP token is
+  # issued for» ([n]:backend/cliauth/client.go:39-40); authorize and token take it absent or
+  # equal to it ([n]:backend/cliauth/service.go:225-227,734-745). With the issuer pinned no protected
+  # resource metadata names it, so it is written here.
+  resource: https://nessy.getstream.io/mcp
+# Authorization code with PKCE S256, required ([n]:backend/cliauth/service.go:212-214); the grants
+# are authorization_code and refresh_token ([n]:backend/cliauth/client.go:564). A client
+# credentials grant for an app acting as itself is deferred ([design], «Deferred»).
+schemes: [oauth2_code]
+client:
+  # A client a holder of oauth_clients:manage registers for the app at Nessy ([design],
+  # «Decision»; [n]:docs/mcp.md:206-215). No dcr: open registration refuses a hosted callback
+  # ([n]:docs/mcp.md:177-189). No operator: one router client for every app would not let
+  # Nessy tell Athena from another tenant ([design], «We rejected two other designs»).
+  registration: [customer]
+  # A managed client is registered with client_secret_basic ([n]:backend/cliauth/client.go:450-454);
+  # the token endpoint also takes the secret in the body ([n]:backend/controllers/oauth.go:181-184).
+  auth_method: client_secret_basic
+scopes:
+  # «An authorize request with no scope, or only mcp, gets all of [the client's registered
+  # permission keys] ... openid works next to them» ([n]:docs/mcp.md:250-257;
+  # [n]:backend/cliauth/client.go:146-170). So one list serves every app, whatever it
+  # registered: mcp asks for the client's permission keys, and a key the client lacks would be
+  # refused with invalid_scope ([n]:backend/cliauth/service.go:216-223). openid adds an id_token
+  # naming who consented ([n]:docs/mcp.md:115-128). Nothing reads it yet: a later revision's
+  # account check (AI-1543) will.
+  list: [mcp, openid]
+  # No separator, so a space: Nessy splits the scope on whitespace
+  # ([n]:backend/cliauth/client.go:159).
+# No identity yet: the id_token's sub and email ([n]:docs/mcp.md:115-128) become the account in
+# a later revision, with the check that the person who consents is the one who started it
+# ([design], change 8).
+refresh:
+  # Every refresh rotates the refresh token, and presenting a rotated-out one revokes the whole
+  # family, so there is no grace ([n]:docs/mcp.md:129-134). The token response always carries
+  # expires_in ([n]:backend/cliauth/service.go:697), 8 hours ([n]:backend/cliauth/token.go:37),
+  # so no access_ttl. A family lives 7 days from the Google sign-in, «absolute, not sliding»
+  # ([n]:backend/cliauth/token.go:38-43), and a managed client's family also ends after 24 hours
+  # without a refresh, which then gets invalid_grant (NES-502: [n]:backend/cliauth/token.go:44-49,
+  # [n]:backend/cliauth/service.go:542, [n]:docs/mcp.md:132-133,232-239). Athena's client is
+  # managed ([n]:docs/mcp.md:206-215). Each refresh restarts the 24 hours from the new token's
+  # issue time, and refresh_ttl counts from each issue too (schemes/oauth2code/credential.go,
+  # refreshExpiresAt), so refresh_ttl is that idle window; the 7 days stay Nessy's to enforce.
+  refresh_ttl: 24h
+  rotating: true
+rate_limit:
+  # 120 calls a minute per user ([n]:docs/mcp.md:101). A managed client is also held to 600 calls
+  # a minute across all its users (NES-499: [n]:docs/mcp.md:102), which this per-user limit does
+  # not model.
+  per: user
+sources:
+  - kind: mcp
+    endpoint: mcp

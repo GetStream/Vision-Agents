@@ -318,6 +318,11 @@ func (s *Session) counted() bool { return s.config.Provider != mock.ProviderName
 // was opened for, with their own token. Any other session's turns are its opener's, as a
 // session only its opener and their backend can reach.
 func (s *Session) charged(ctx context.Context) routing.Caller {
+	// A turn a scheduled task fired is the customer's spend, never the end
+	// user's: they agreed to the task once, not to each time it runs.
+	if routing.ScheduledTurn(ctx) {
+		return routing.Caller{ServerSide: true}
+	}
 	if sender, ok := routing.CallerFrom(ctx); ok && s.owner.Caller.ServerSide {
 		return sender
 	}

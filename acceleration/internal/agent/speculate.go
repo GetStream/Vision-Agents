@@ -187,6 +187,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	a.toolReply = false
 	a.asked = options.LLM{}
 	a.sender = routing.Caller{}
+	a.scheduled = false
 	a.lastParticipant = ready.Participant
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()
