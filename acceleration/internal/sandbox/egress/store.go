@@ -16,11 +16,14 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// Record is what one sandbox's proxy credential lets it reach: the session it belongs to and
-// its grants.
+// Record is what one sandbox's proxy credential lets it reach: the session it belongs to, its
+// grants, and the config's allowed domains, which the proxy tunnels to as they are.
 type Record struct {
 	Session string  `json:"session"`
 	Grants  []Grant `json:"grants"`
+	// Allowed are the agent config's allowed_domains as hosts: exact hosts, or *. and a domain,
+	// in lower case without a trailing dot.
+	Allowed []string `json:"allowed,omitempty"`
 }
 
 // Grant is one connection whose token the proxy puts in place of Placeholder, only in a
@@ -40,12 +43,17 @@ type Grant struct {
 
 // covers says whether host is one of the grant's hosts.
 func (g Grant) covers(host string) bool {
-	for _, granted := range g.Hosts {
-		if domain, wildcard := strings.CutPrefix(granted, "*."); wildcard {
+	return covers(g.Hosts, host)
+}
+
+// covers says whether host is one of hosts: exact hosts, or *. and a domain.
+func covers(hosts []string, host string) bool {
+	for _, named := range hosts {
+		if domain, wildcard := strings.CutPrefix(named, "*."); wildcard {
 			if host == domain || strings.HasSuffix(host, "."+domain) {
 				return true
 			}
-		} else if host == granted {
+		} else if host == named {
 			return true
 		}
 	}
@@ -60,6 +68,11 @@ func (r Record) granted(host string) bool {
 		}
 	}
 	return false
+}
+
+// allowed says whether host is one of the config's allowed domains.
+func (r Record) allowed(host string) bool {
+	return covers(r.Allowed, host)
 }
 
 // Store keeps each sandbox's Record in Redis under its proxy credential, so any router
@@ -93,7 +106,8 @@ func (s *Store) Put(ctx context.Context, credential string, record Record, ttl t
 	return stack.Wrap(s.redis.Do(ctx, s.redis.B().Set().Key(key(credential)).Value(string(raw)).Px(ttl).Build()).Error())
 }
 
-// Delete ends credential at once, tunnels it opened included.
+// Delete ends credential at once, the tunnels to a grant's host it opened included. A tunnel to an
+// allowed domain, which carries no token, lasts until either end closes it.
 func (s *Store) Delete(ctx context.Context, credential string) error {
 	return stack.Wrap(s.redis.Do(ctx, s.redis.B().Del().Key(key(credential)).Build()).Error())
 }

@@ -1,7 +1,8 @@
 // Package egress is the router's egress proxy for code in a sandbox: the sandbox holds a
 // placeholder, and the proxy puts the connection's token in its place on the way out, only
 // in the Authorization header of a request to one of the grant's hosts. The token never
-// enters the sandbox.
+// enters the sandbox. A host of the config's allowed domains gets the sandbox's bytes as they
+// are.
 package egress
 
 import (
@@ -68,7 +69,10 @@ type Options struct {
 	// Transport sends a request on to its host. Nil is internal/egress's, which dials public
 	// addresses only and verifies the host with the system's roots.
 	Transport http.RoundTripper
-	Logger    *slog.Logger
+	// Dial opens a tunnel to an allowed domain. Nil is internal/egress's DialPublic, which dials
+	// public addresses only.
+	Dial   func(ctx context.Context, network, address string) (net.Conn, error)
+	Logger *slog.Logger
 	// HandshakeTimeout, IdleTimeout and HeaderTimeout replace handshakeTimeout, idleTimeout
 	// and headerTimeout when set, for tests.
 	HandshakeTimeout, IdleTimeout, HeaderTimeout time.Duration
@@ -82,6 +86,7 @@ type Proxy struct {
 	caKey     crypto.Signer
 	leafKey   *ecdsa.PrivateKey
 	transport http.RoundTripper
+	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	logger    *slog.Logger
 
 	handshakeTimeout, idleTimeout time.Duration
@@ -105,14 +110,18 @@ func New(options Options) (*Proxy, error) {
 	if transport == nil {
 		transport = publicegress.NewClient(0, nil).Transport
 	}
+	dial := options.Dial
+	if dial == nil {
+		dial = publicegress.DialPublic
+	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
-		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, logger: options.Logger,
+		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
 		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout)}, nil
 }
 
-// ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants cover, and nothing
-// else: a request that is not CONNECT, a sandbox without a valid proxy credential, an IP
-// literal, a host outside its grants or another port is refused.
+// ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
+// and nothing else: a request that is not CONNECT, a sandbox without a valid proxy credential,
+// an IP literal, a host outside both or another port is refused. A host both cover is a grant's.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
 		w.Header().Set("Allow", http.MethodConnect)
@@ -140,7 +149,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A grant names hosts, never addresses, so an address cannot be told apart from another
 	// host's (core.SandboxRule). A * is no host's name: a wildcard grant would match it, and
 	// its certificate would be one for every name under the domain.
-	if net.ParseIP(host) != nil || strings.Contains(host, "*") || !record.granted(host) {
+	granted := record.granted(host)
+	if net.ParseIP(host) != nil || strings.Contains(host, "*") || !granted && !record.allowed(host) {
 		p.logger.Warn("the sandbox egress proxy refused a host", "session", record.Session, "host", host)
 		http.Error(w, "egress: the sandbox has no grant for this host", http.StatusForbidden)
 		return
@@ -149,6 +159,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if port != httpsPort {
 		p.logger.Warn("the sandbox egress proxy refused a port", "session", record.Session, "host", host, "port", port)
 		http.Error(w, "egress: only port 443 is proxied", http.StatusForbidden)
+		return
+	}
+	if !granted {
+		p.passthrough(w, r, record.Session, host)
 		return
 	}
 	conn, buffered, err := http.NewResponseController(w).Hijack()
@@ -162,6 +176,39 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
 	p.tunnel(&readFirst{Conn: conn, first: bytes.NewReader(early)}, tunnel{credential: credential, host: host})
+}
+
+// passthrough tunnels the sandbox's bytes to port 443 of host, an allowed domain, as they are:
+// no certificate of the router's, no token, nothing read or logged. A host that resolves to a
+// non-public address is not dialed (502).
+func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, host string) {
+	upstream, err := p.dial(r.Context(), "tcp", net.JoinHostPort(host, httpsPort))
+	if err != nil {
+		// A dial's error holds no byte the host sent.
+		p.logger.Warn("the sandbox egress proxy could not reach an allowed host", "session", session, "host", host, "error", err)
+		http.Error(w, "egress: the host cannot be reached", http.StatusBadGateway)
+		return
+	}
+	conn, buffered, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		_ = upstream.Close()
+		http.Error(w, "egress: the connection cannot be taken over", http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+		_ = conn.Close()
+		_ = upstream.Close()
+		return
+	}
+	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
+	sandbox := &readFirst{Conn: conn, first: bytes.NewReader(early)}
+	// Either side ending ends the tunnel: closing both stops the other copy.
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(upstream, sandbox); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
+	<-done
+	_ = conn.Close()
+	_ = upstream.Close()
 }
 
 // tunnel is one CONNECT: the sandbox's credential and the host it asked for.

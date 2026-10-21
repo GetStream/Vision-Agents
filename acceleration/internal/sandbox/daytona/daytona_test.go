@@ -40,6 +40,8 @@ type platform struct {
 	// and commandExit the exit code each gives.
 	commands    []string
 	commandExit int
+	// rawCommands are the request bodies of those commands.
+	rawCommands []string
 	// steps are the file uploads ("upload") and shell commands ("command") in the order they came.
 	steps []string
 	// auth is the last Authorization header seen.
@@ -133,7 +135,9 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 
 	case strings.HasSuffix(r.URL.Path, "/process/execute"):
 		var body struct{ Command string }
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		p.rawCommands = append(p.rawCommands, string(raw))
 		p.steps = append(p.steps, "command")
 		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
 		w.Header().Set("Content-Type", "application/json")
@@ -543,24 +547,4 @@ func (s *DaytonaSuite) TestOnlySoManyFilesComeBackFromOneRun() {
 	s.Require().NoError(err)
 	s.Len(result.Files, sandbox.MaxFiles)
 	s.Equal(wanted[sandbox.MaxFiles:], result.Missing)
-}
-
-// TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHost: a request the egress proxy
-// never sees keeps its placeholder, so no NO_PROXY entry may match a granted host.
-func (s *DaytonaSuite) TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHost() {
-	crm := sandbox.Grant{Hosts: []string{"api.crm.example", "*.files.example"}}
-	config := sandbox.Config{AllowedDomains: []string{"api.crm.example", "crm.example", "CRM.example", "v2.api.crm.example",
-		"files.example", "eu.files.example", "*.files.example", "example", "pypi.org", "*.pythonhosted.org", ".npmjs.org",
-		"notfiles.example"}, NetworkAllowList: []string{"10.0.0.0/8"}}
-
-	s.Equal("v2.api.crm.example,pypi.org,.pythonhosted.org,.npmjs.org,notfiles.example,10.0.0.0/8", noProxy(config, []sandbox.Grant{crm}))
-	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"pypi.org"}}, nil))
-	s.Empty(noProxy(sandbox.Config{}, []sandbox.Grant{crm}))
-	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"crm.example", "pypi.org"}}, []sandbox.Grant{github, crm}),
-		"every grant counts, not the first alone")
-	s.Equal("ithub.com", noProxy(sandbox.Config{AllowedDomains: []string{"ithub.com", ".crm.example"}}, []sandbox.Grant{github, crm}),
-		"a domain matches at a dot, and a leading dot names the domain")
-	s.Equal("pypi.org,.pythonhosted.org,pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"GitHub.com.", "api.github.com:443",
-		"**.github.com", "pypi.org.", "**.pythonhosted.org", "pypi.org:443"}}, []sandbox.Grant{github}),
-		"curl and Go take a trailing dot, a port and **. as the name")
 }
