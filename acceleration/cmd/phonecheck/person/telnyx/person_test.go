@@ -30,8 +30,8 @@ func TestTelnyxSuite(t *testing.T) { suite.Run(t, new(TelnyxSuite)) }
 func (s *TelnyxSuite) SetupTest() {
 	s.fake = newFakeTelnyx()
 	s.T().Cleanup(s.fake.server.Close)
-	s.T().Setenv("TELNYX_API_KEY", fakeKey)
-	s.T().Setenv("TELNYX_ACCOUNT_SID", fakeAccount)
+	s.T().Setenv("TELNYX_PERSON_API_KEY", fakeKey)
+	s.T().Setenv("TELNYX_PERSON_ACCOUNT_SID", fakeAccount)
 	s.T().Setenv("TELNYX_PERSON_CONNECTION_ID", fakeAppID)
 
 	oldBase, oldEvery, oldWait, oldObserve := apiBase, pollEvery, waitMargin, observeMargin
@@ -75,8 +75,20 @@ func (s *TelnyxSuite) TestDialingNeedsThePersonConnectionID() {
 	s.Empty(s.fake.paths())
 }
 
+// The person is in an account of its own choosing, never the router's by inheritance.
+func (s *TelnyxSuite) TestTheRoutersCredentialsAreNotThePersons() {
+	s.T().Setenv("TELNYX_PERSON_API_KEY", "")
+	s.T().Setenv("TELNYX_PERSON_ACCOUNT_SID", "")
+	s.T().Setenv("TELNYX_API_KEY", fakeKey)
+	s.T().Setenv("TELNYX_ACCOUNT_SID", fakeAccount)
+
+	err := New().Dial(context.Background(), s.call(person.Inbound))
+
+	s.ErrorContains(err, "TELNYX_PERSON_API_KEY")
+}
+
 func (s *TelnyxSuite) TestMissingCredentialsAreNamed() {
-	for _, name := range []string{"TELNYX_API_KEY", "TELNYX_ACCOUNT_SID"} {
+	for _, name := range []string{"TELNYX_PERSON_API_KEY", "TELNYX_PERSON_ACCOUNT_SID"} {
 		s.Run(name, func() {
 			s.T().Setenv(name, "")
 
@@ -248,7 +260,7 @@ func (s *TelnyxSuite) TestATimeThatCannotBeReadIsLeftEmptyAndWarnedAbout() {
 
 func (s *TelnyxSuite) TestReadyNamesWhatInboundIsMissing() {
 	s.Require().NoError(s.person.Ready(person.Inbound))
-	for _, name := range []string{"TELNYX_API_KEY", "TELNYX_ACCOUNT_SID", "TELNYX_PERSON_CONNECTION_ID"} {
+	for _, name := range []string{"TELNYX_PERSON_API_KEY", "TELNYX_PERSON_ACCOUNT_SID", "TELNYX_PERSON_CONNECTION_ID"} {
 		s.Run(name, func() {
 			s.T().Setenv(name, "")
 
@@ -259,7 +271,7 @@ func (s *TelnyxSuite) TestReadyNamesWhatInboundIsMissing() {
 }
 
 func (s *TelnyxSuite) TestReadyNeedsNothingForOutbound() {
-	s.T().Setenv("TELNYX_API_KEY", "")
+	s.T().Setenv("TELNYX_PERSON_API_KEY", "")
 
 	s.NoError(s.person.Ready(person.Outbound))
 }

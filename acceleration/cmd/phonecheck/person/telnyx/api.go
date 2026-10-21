@@ -24,12 +24,12 @@ type api struct {
 
 // newAPI reads the credentials. The person app is only needed to place a call.
 func newAPI() (api, error) {
-	key, account := os.Getenv("TELNYX_API_KEY"), os.Getenv("TELNYX_ACCOUNT_SID")
+	key, account := os.Getenv("TELNYX_PERSON_API_KEY"), os.Getenv("TELNYX_PERSON_ACCOUNT_SID")
 	switch {
 	case key == "":
-		return api{}, errors.New("TELNYX_API_KEY is not set")
+		return api{}, errors.New("TELNYX_PERSON_API_KEY is not set")
 	case account == "":
-		return api{}, errors.New("TELNYX_ACCOUNT_SID is not set")
+		return api{}, errors.New("TELNYX_PERSON_ACCOUNT_SID is not set")
 	}
 	return api{
 		base: apiBase, key: key, account: account, appID: os.Getenv("TELNYX_PERSON_CONNECTION_ID"),

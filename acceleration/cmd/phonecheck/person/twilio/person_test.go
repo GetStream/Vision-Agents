@@ -30,8 +30,8 @@ func TestTwilioSuite(t *testing.T) { suite.Run(t, new(TwilioSuite)) }
 func (s *TwilioSuite) SetupTest() {
 	s.fake = newFakeTwilio()
 	s.T().Cleanup(s.fake.server.Close)
-	s.T().Setenv("TWILIO_ACCOUNT_SID", fakeSID)
-	s.T().Setenv("TWILIO_AUTH_TOKEN", fakeToken)
+	s.T().Setenv("TWILIO_PERSON_ACCOUNT_SID", fakeSID)
+	s.T().Setenv("TWILIO_PERSON_AUTH_TOKEN", fakeToken)
 
 	oldBase, oldEvery, oldMargin := apiBase, pollEvery, waitMargin
 	apiBase, pollEvery, waitMargin = s.fake.server.URL, time.Millisecond, time.Second
@@ -197,10 +197,20 @@ func (s *TwilioSuite) TestATimeThatCannotBeReadIsLeftEmptyAndWarnedAbout() {
 
 func (s *TwilioSuite) TestReadyNamesMissingCredentials() {
 	s.Require().NoError(s.person.Ready(person.Outbound))
-	s.T().Setenv("TWILIO_ACCOUNT_SID", "")
+	s.T().Setenv("TWILIO_PERSON_ACCOUNT_SID", "")
 
-	s.ErrorContains(s.person.Ready(person.Inbound), "TWILIO_ACCOUNT_SID")
+	s.ErrorContains(s.person.Ready(person.Inbound), "TWILIO_PERSON_ACCOUNT_SID")
 	s.Empty(s.fake.paths())
+}
+
+// The person is in an account of its own choosing, never the router's by inheritance.
+func (s *TwilioSuite) TestTheRoutersCredentialsAreNotThePersons() {
+	s.T().Setenv("TWILIO_PERSON_ACCOUNT_SID", "")
+	s.T().Setenv("TWILIO_PERSON_AUTH_TOKEN", "")
+	s.T().Setenv("TWILIO_ACCOUNT_SID", fakeSID)
+	s.T().Setenv("TWILIO_AUTH_TOKEN", fakeToken)
+
+	s.ErrorContains(s.person.Ready(person.Inbound), "TWILIO_PERSON_ACCOUNT_SID")
 }
 
 func (s *TwilioSuite) TestNothingButCallsIsSent() {
@@ -235,9 +245,9 @@ func (s *TwilioSuite) TestNothingLoggedCarriesTheAuthToken() {
 }
 
 func (s *TwilioSuite) TestMissingCredentialsAreNamed() {
-	s.T().Setenv("TWILIO_AUTH_TOKEN", "")
+	s.T().Setenv("TWILIO_PERSON_AUTH_TOKEN", "")
 
 	err := s.person.Dial(context.Background(), s.call(person.Inbound))
 
-	s.ErrorContains(err, "TWILIO_AUTH_TOKEN")
+	s.ErrorContains(err, "TWILIO_PERSON_AUTH_TOKEN")
 }

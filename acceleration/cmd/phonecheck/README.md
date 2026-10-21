@@ -70,13 +70,17 @@ Inbound also needs:
 
 ## 3. Environment
 
+The person side is someone with a phone number of their own, so its provider account is set
+apart from the router's: it can be the same account, or your own. The router's
+`TWILIO_*` and `TELNYX_*` variables are never read for it.
+
 | Variable | Used for |
 |---|---|
 | `STREAM_ACCELERATION_CUSTOMER_ID` | The customer. `-customer` overrides it |
 | `STREAM_API_KEY`, `STREAM_API_SECRET` | As the Go SDK needs them for your router |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | `-provider twilio` |
-| `TELNYX_API_KEY` | `-provider telnyx` |
-| `TELNYX_ACCOUNT_SID` | `-provider telnyx`: the account UUID, which Telnyx's call endpoints need in the path |
+| `TWILIO_PERSON_ACCOUNT_SID`, `TWILIO_PERSON_AUTH_TOKEN` | `-provider twilio`: the account the person number is in |
+| `TELNYX_PERSON_API_KEY` | `-provider telnyx`: the account the person number is in |
+| `TELNYX_PERSON_ACCOUNT_SID` | `-provider telnyx`: that account's UUID, which Telnyx's call endpoints need in the path |
 | `TELNYX_PERSON_CONNECTION_ID` | `-provider telnyx`: the TeXML app the person number is on. Only read. Not the router's `TELNYX_CONNECTION_ID` |
 | `IPINFO_TOKEN` | Optional. Better place names for addresses |
 

@@ -320,11 +320,11 @@ func (s *RunSuite) TestASlowJoinIsNotBlamedOnTheWebhook() {
 }
 
 func (s *RunSuite) TestAPersonSideThatIsNotReadyPlacesNothing() {
-	s.person.readyErr = errors.New("TWILIO_AUTH_TOKEN is not set")
+	s.person.readyErr = errors.New("TWILIO_PERSON_AUTH_TOKEN is not set")
 
 	err := s.run()
 
-	s.ErrorContains(err, "TWILIO_AUTH_TOKEN is not set")
+	s.ErrorContains(err, "TWILIO_PERSON_AUTH_TOKEN is not set")
 	s.False(s.steps.placedACall(), "steps: %v", s.steps.all())
 	s.Equal([]string{"ready"}, s.steps.all(), "checked before the router is asked anything")
 }

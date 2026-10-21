@@ -22,12 +22,12 @@ type api struct {
 }
 
 func newAPI() (api, error) {
-	sid, token := os.Getenv("TWILIO_ACCOUNT_SID"), os.Getenv("TWILIO_AUTH_TOKEN")
+	sid, token := os.Getenv("TWILIO_PERSON_ACCOUNT_SID"), os.Getenv("TWILIO_PERSON_AUTH_TOKEN")
 	switch {
 	case sid == "":
-		return api{}, errors.New("TWILIO_ACCOUNT_SID is not set")
+		return api{}, errors.New("TWILIO_PERSON_ACCOUNT_SID is not set")
 	case token == "":
-		return api{}, errors.New("TWILIO_AUTH_TOKEN is not set")
+		return api{}, errors.New("TWILIO_PERSON_AUTH_TOKEN is not set")
 	}
 	return api{base: apiBase, sid: sid, token: token, http: &http.Client{Timeout: 30 * time.Second}}, nil
 }
