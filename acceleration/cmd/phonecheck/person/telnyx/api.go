@@ -90,6 +90,9 @@ func (a api) hangup(ctx context.Context, sid string) error {
 	return a.do(ctx, http.MethodPost, "/"+url.PathEscape(sid), "application/x-www-form-urlencoded", form, nil)
 }
 
+// errNotFound marks a 404, which on a call just placed only means it is not readable yet.
+var errNotFound = errors.New("not found")
+
 // do sends one request under the account's TeXML Calls. Errors carry the status and
 // Telnyx's message, never the request or the key.
 func (a api) do(ctx context.Context, method, path, contentType string, body io.Reader, out any) error {
@@ -109,6 +112,9 @@ func (a api) do(ctx context.Context, method, path, contentType string, body io.R
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("telnyx %s calls%s: %s: %s: %w", method, path, resp.Status, apiMessage(resp.Body), errNotFound)
+		}
 		return fmt.Errorf("telnyx %s calls%s: %s: %s", method, path, resp.Status, apiMessage(resp.Body))
 	}
 	if out == nil {

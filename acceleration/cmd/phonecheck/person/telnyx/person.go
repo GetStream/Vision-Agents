@@ -4,6 +4,7 @@ package telnyx
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"slices"
@@ -105,13 +106,16 @@ func waitUnobserved(ctx context.Context, call person.Call) error {
 func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string) error {
 	followCtx, cancel := context.WithTimeout(ctx, call.Talk+waitMargin)
 	defer cancel()
-	last := ""
+	last, seen := "", false
 	for {
 		rec, err := a.call(followCtx, sid)
-		if err != nil && followCtx.Err() == nil {
+		// Telnyx reads are eventually consistent: a call just placed may 404 for a moment.
+		notYet := !seen && errors.Is(err, errNotFound)
+		if err != nil && !notYet && followCtx.Err() == nil {
 			return err
 		}
 		if err == nil {
+			seen = true
 			p.setCall(sid, rec.Status)
 			if rec.Status != last {
 				logStatus(call, rec)

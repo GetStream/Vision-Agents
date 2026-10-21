@@ -28,6 +28,7 @@ type fakeTelnyx struct {
 	hungUp    []url.Values
 	statuses  []string // the life of the placed call; each read moves on, the last stays
 	failWith  int
+	notFound  int // reads of the placed call that answer 404 before it becomes readable
 	callsPath string
 }
 
@@ -81,6 +82,12 @@ func (f *fakeTelnyx) hangup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeTelnyx) read(w http.ResponseWriter) {
+	if f.notFound > 0 {
+		f.notFound--
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errors":[{"detail":"not found yet"}]}`))
+		return
+	}
 	start := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
 	rec := map[string]any{
 		"sid": fakeSID, "status": f.statuses[0],

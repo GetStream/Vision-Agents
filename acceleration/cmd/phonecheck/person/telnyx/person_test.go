@@ -192,3 +192,28 @@ func (s *TelnyxSuite) TestNothingLoggedCarriesTheAPIKey() {
 		s.NotContains(err.Error(), fakeKey)
 	}
 }
+
+func (s *TelnyxSuite) TestWaitKeepsPollingWhileAJustPlacedCallIsNotYetReadable() {
+	s.fake.notFound = 3
+	s.fake.setStatuses("in-progress", "completed")
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+
+	err := s.person.Wait(context.Background(), call)
+
+	s.Require().NoError(err)
+	s.Contains(s.logs.String(), "status=in-progress")
+	s.Contains(s.logs.String(), "status=completed")
+}
+
+func (s *TelnyxSuite) TestACallThatNeverBecomesReadableStopsBeingWaitedOn() {
+	waitMargin = 50 * time.Millisecond
+	s.fake.notFound = 1 << 20
+	call := s.call(person.Inbound)
+	call.Talk = 0
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+
+	err := s.person.Wait(context.Background(), call)
+
+	s.ErrorContains(err, "did not end")
+}
