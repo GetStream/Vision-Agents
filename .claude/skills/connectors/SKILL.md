@@ -180,7 +180,7 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
 - Before each run a new credential revision updates the secret; a connection that needs a
-  reconnect deletes it. Daytona refuses a request that carries a placeholder it does not
+  reconnect, or was deleted, deletes it. Daytona refuses a request that carries a placeholder it does not
   substitute (another host, the query, another session's): 502 «could not reach upstream host».
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
   grants, the connector limiter and the audit. That is intended.

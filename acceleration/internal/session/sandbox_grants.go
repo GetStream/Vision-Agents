@@ -63,15 +63,15 @@ func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, er
 
 // sandboxTokens resolves a grant's credential and reads it as its scheme sends it: the token
 // of the Authorization header Wrap puts on a request to the grant's first host. A connection
-// that is not connected gives sandbox.ErrNoCredential; a renewal that failed just now
-// (resolver.ErrTemporarilyUnavailable) does not.
+// that is not connected, or was deleted, gives sandbox.ErrNoCredential; a renewal that failed
+// just now (resolver.ErrTemporarilyUnavailable) does not.
 func (m *Manager) sandboxTokens(schemes map[string]core.Scheme) sandbox.Tokens {
 	return func(ctx context.Context, grant sandbox.Grant) (sandbox.Token, error) {
 		if m.options.Connectors.Resolver == nil {
 			return sandbox.Token{}, stack.Wrap(fmt.Errorf("%w: connectors are off on this deployment", sandbox.ErrNoCredential))
 		}
 		credential, err := m.options.Connectors.Resolver.Resolve(ctx, grant.Connection, core.CredentialRequest{})
-		if errors.Is(err, resolver.ErrNotConnected) {
+		if errors.Is(err, resolver.ErrNotConnected) || errors.Is(err, store.ErrNoConnectorConnection) {
 			return sandbox.Token{}, fmt.Errorf("%w: %w", sandbox.ErrNoCredential, err)
 		}
 		if err != nil {
