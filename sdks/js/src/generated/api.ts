@@ -149,7 +149,7 @@ export type paths = {
          * Route one modality over a socket, for a pipeline running elsewhere
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
-         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
+         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
          *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
@@ -808,7 +808,7 @@ export type paths = {
          * Set a connection's credentials
          * @description Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
          *
-         *     A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+         *     A bearer or api_key connection given its token or key again, or a none connection given nothing again, moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4031,6 +4031,8 @@ export type components = {
              * @default false
              */
             readonly required?: boolean;
+            /** @description Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false. */
+            readonly sandbox?: boolean;
             /**
              * Format: int64
              * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
@@ -4837,7 +4839,7 @@ export type components = {
             readonly definition_broken_reason?: string;
             /**
              * Format: int64
-             * @description The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
+             * @description The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again, or a none connection's empty credentials (PUT .../credentials), moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
              */
             readonly definition_revision: number;
             readonly definition_status: components["schemas"]["ConnectionDefinitionStatus"];
@@ -4890,7 +4892,7 @@ export type components = {
             };
         };
         /**
-         * @description current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
+         * @description current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
          * @enum {string}
          */
         readonly ConnectionDefinitionStatus: "current" | "outdated" | "broken";
@@ -5095,6 +5097,8 @@ export type components = {
              * @description The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
              */
             readonly revision: number;
+            /** @description How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access. */
+            readonly sandbox?: components["schemas"]["ConnectorSandbox"];
             /** @description How a connection may authenticate, such as oauth2_code. */
             readonly schemes: readonly string[] | null;
             /** @description The scopes a consent asks for. */
@@ -5337,6 +5341,13 @@ export type components = {
             readonly config_refresh_token?: string;
             /** @description The app's name in the customer's workspace. */
             readonly name: string;
+        };
+        /** @description How code in an agent's sandbox reaches the provider's API with a connection's credential. */
+        readonly ConnectorSandbox: {
+            /** @description The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox's egress puts the connection's credential in its place, only in a request header and only to one of hosts. */
+            readonly env: string;
+            /** @description The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it. */
+            readonly hosts: readonly string[];
         };
         /** @description What a person does at the provider before the first consent. */
         readonly ConnectorSetup: {
@@ -6337,6 +6348,8 @@ export type components = {
              * @description Request to completed response or failed create.
              */
             readonly duration_ms?: number;
+            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure. */
+            readonly error_code?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
             readonly model: string;

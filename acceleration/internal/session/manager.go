@@ -128,6 +128,13 @@ type ManagerOptions struct {
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
+	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
+	// code in a sandbox. daytona.BrokerName is the one there is.
+	SandboxBroker string
+	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
+	// environment in every credential a broker leaves with the sandbox provider. A session
+	// with a sandbox binding is refused without it.
+	SandboxSecretPrefix string
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -435,7 +442,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	box, err := m.box(spec)
+	box, err := m.box(spec, connectors)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -478,6 +485,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	tools := append([]harness.Tool(nil), spec.Tools...)
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, tools, callers)
+	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
@@ -548,6 +556,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
+	created.end = func() { m.end(created) }
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -699,7 +708,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
-	go created.consume(built, created.transcript)
+	go created.consume(built, created.transcript, created.track(built))
 
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
@@ -1206,6 +1215,32 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
+// end ends found when its timeout is reached, as Close does but interrupting the agent:
+// nobody is left to hear the end of its sentence. A reopened conversation can take the id
+// of a session that ended, so it does nothing unless found is still the session held under
+// its id.
+func (m *Manager) end(found *Session) {
+	m.mu.Lock()
+	if held, ok := m.sessions[found.id]; !ok || held != found {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.sessions, found.id)
+	m.closing++
+	m.ended.Add(1)
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.closing--
+		m.mu.Unlock()
+		m.ended.Done()
+	}()
+	m.release(found.id)
+
+	m.logger.Info("ending the session at its timeout", "session", found.id)
+	found.abandon()
+}
+
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
 const releaseTimeout = 2 * time.Second
@@ -1329,15 +1364,24 @@ func (m *Manager) Shutdown() error {
 
 // box is where the session's subagent runs the code it writes, which is nowhere unless the
 // caller asked for a sandbox. Nothing is created here: the provider opens one the first
-// time code is actually run, so a session that never delegates never pays for it.
-func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
+// time code is actually run, so a session that never delegates never pays for it. Neither
+// is a credential handed to the broker before then.
+func (m *Manager) box(spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
 	if spec.Sandbox == "" {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
+	options := daytona.Options{Config: spec.SandboxOptions, Logger: m.logger}
+	if connectors != nil && len(connectors.grants) > 0 {
+		broker, err := m.broker(spec, connectors)
+		if err != nil {
+			return nil, err
+		}
+		options.Grants, options.Broker = connectors.grants, broker
+	}
+	return daytona.New(options)
 }
 
 // reading reports whether this session has anything to look things up in, which is a

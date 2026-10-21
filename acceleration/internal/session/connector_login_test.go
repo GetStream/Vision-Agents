@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -386,6 +387,35 @@ func (s *ConnectorLoginSuite) TestAnImpliedConnectionOnARevisionMarkedBrokenIsTh
 	s.Equal(mine, s.requested[0].ConnectionID)
 }
 
+// TestANoneConnectionThatCannotBeUsedIsRejectedNotAskedToLogIn: a none connection takes no
+// consent (begin refuses it), so one on a revision marked broken, or one the resolver
+// invalidated, is unavailable as credential_rejected, and the login that waits for it begins no
+// consent.
+func (s *ConnectorLoginSuite) TestANoneConnectionThatCannotBeUsedIsRejectedNotAskedToLogIn() {
+	broken := func(mine string) {
+		s.seedCRM(2, "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")
+	}
+	invalidated := func(mine string) {
+		s.setState(mine, func(state *core.CredentialState) { state.Status = store.ConnectionNeedsReauthorization })
+	}
+	for name, spoil := range map[string]func(string){"a broken revision": broken, "needs reauthorization": invalidated} {
+		s.connectorID, s.revision = "crm"+strings.ReplaceAll(uuid.NewString(), "-", ""), 1
+		s.seedCRM(1, "")
+		mine := s.noneConnection("alice", "primary")
+		spoil(mine)
+		s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+		d, _, unavailable, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": mine})))
+		s.Require().NoError(err, name)
+
+		told, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+		s.Require().NoError(err, name)
+		s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableCredentialRejected}}, unavailable, name)
+		s.Contains(told, `"status":"credential_rejected"`, name)
+		s.Zero(s.begins, name)
+	}
+}
+
 // TestAConnectionOnAnOutdatedRevisionStillOpens: a later revision that marks nothing broken
 // leaves the connection's binding open.
 func (s *ConnectorLoginSuite) TestAConnectionOnAnOutdatedRevisionStillOpens() {
@@ -621,6 +651,21 @@ func (s *ConnectorLoginSuite) pending(user, account string) string {
 		OwnerType: store.OwnerUser, OwnerID: user, AuthScheme: bearer.Name, Inputs: map[string]string{"account": account},
 	}
 	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, s.registry, connection))
+	return connection.ID
+}
+
+// noneConnection is a connected none connection of user's to account, which holds no secret.
+func (s *ConnectorLoginSuite) noneConnection(user, account string) string {
+	connection := &store.ConnectorConnection{
+		CustomerID: s.customerID, ConnectorID: s.connectorID, DefinitionRevision: s.revision,
+		OwnerType: store.OwnerUser, OwnerID: user, AuthScheme: none.Name, Inputs: map[string]string{"account": account},
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, s.registry, connection))
+	stored, _, err := none.New().Complete(s.ctx, core.CompleteInput{})
+	s.Require().NoError(err)
+	s.setState(connection.ID, func(state *core.CredentialState) {
+		state.Credentials, state.Status = stored, store.ConnectionConnected
+	})
 	return connection.ID
 }
 

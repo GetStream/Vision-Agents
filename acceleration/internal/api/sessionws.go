@@ -535,13 +535,19 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.ModelCall:
-		return frame{
+		called := frame{
 			"type": "model_call", "operation_id": typed.OperationID,
 			"purpose": typed.Purpose, "turn_id": typed.TurnID,
 			"provider": typed.Provider, "model": typed.Model,
 			"ttft_ms": typed.TTFTMs, "duration_ms": typed.DurationMs,
 			"success": typed.Success,
-		}, true
+		}
+		// Only a call that did not run to its end adds it, so a served call's frame is the
+		// one it always was.
+		if typed.ErrorCode != "" {
+			called["error_code"] = typed.ErrorCode
+		}
+		return called, true
 
 	case agent.Delegated:
 		return frame{

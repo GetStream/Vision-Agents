@@ -83,6 +83,26 @@ type Playout interface {
 	DropSpeech()
 }
 
+// PlayoutStats is what an edge's outgoing queue has done with the agent's speech since the
+// edge was made. Queued frames went in, Sent ones were taken by the track, and Dropped ones were
+// thrown away before it got to them, on an interruption or on leaving.
+type PlayoutStats struct {
+	Queued, Sent, Dropped uint64
+	// Waiting is the speech in the queue now.
+	Waiting time.Duration
+	// Peak is the most speech the queue held at once since the stats were last read.
+	Peak time.Duration
+}
+
+// PlayoutCounter is an edge that counts what its outgoing queue does.
+//
+// Separate from Playout, because only a queue can be counted: an edge without one, which is
+// what an in-process loopback is, reports nothing rather than zeros that read as an empty
+// queue. Reading the stats starts the next peak, so they have one reader.
+type PlayoutCounter interface {
+	PlayoutStats() PlayoutStats
+}
+
 // Roster is an edge that can say who else is in the call.
 //
 // Separate from Edge rather than a fifth method on it, because it is only answerable by a
@@ -91,6 +111,7 @@ type Playout interface {
 // speaks, audio says nothing about who is listening.
 type Roster interface {
 	// Attendance reports who comes and goes, starting with whoever was already there when
-	// the edge joined. The channel closes when the edge leaves.
+	// the edge joined. The channel closes when the edge leaves. Those already in the call
+	// must be queued on it before Join returns.
 	Attendance() <-chan Attendance
 }

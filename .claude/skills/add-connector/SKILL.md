@@ -21,9 +21,11 @@ Dashboard: **Library › Connectors › New connector**. API: `POST /v1/agents/c
 
 - The id starts with `custom_`, for example `custom_crm`. Built-ins never use that prefix.
 - `endpoint` is the MCP server's https URL.
-- `schemes` is how a connection signs in: `oauth2_code`, `bearer`, `api_key`.
-- A custom connector with no credential at all is not possible yet (AI-1059). For a public
-  server, use `api_key` with a dummy header and value, and say so in its description.
+- `schemes` is how a connection signs in: `oauth2_code`, `bearer`, `api_key`, or `none`.
+- A public server that needs no credential takes `schemes: ["none"]`. Create the connection,
+  then connect it with `PUT /v1/agents/connections/{id}/credentials` and the body
+  `{"expected_revision": <its revision>}`, with no `values`. The same empty write moves it to
+  the connector's latest revision later, as a token saved again moves a `bearer` connection.
 - Then add a connection to it and bind it to an agent, as for any connector.
 - Delete answers 409 while an agent config binds it. The message names the bindings. Force
   deletes it anyway and leaves those bindings broken.

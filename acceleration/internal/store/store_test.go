@@ -605,6 +605,18 @@ func (s *StoreSuite) TestACallRemembersWhoTheAgentSpokeTo() {
 	s.Equal("ada", found.UserID)
 }
 
+func (s *StoreSuite) TestARequestItsCallerCancelledIsLoggedAsNoError() {
+	s.Require().NoError(s.store.StartCall(s.ctx, &Call{ID: "call", CustomerID: "cancel-log", AgentID: "agent", ConfigID: "cfg", StartedAt: s.base}))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{Modality: "llm", CustomerID: "cancel-log", AgentID: "agent", Provider: "openai", Model: "gpt",
+		StartedAt: s.base.Add(time.Second), OutputTokens: 4, Success: false, ErrorCode: ErrorCancelled}))
+	logs, err := s.store.AgentLogs(s.ctx, LogFilter{CustomerID: "cancel-log", Limit: 10})
+	s.Require().NoError(err)
+	s.Require().Len(logs, 1)
+
+	s.Equal("llm request cancelled", logs[0].Message)
+	s.Equal("info", logs[0].Severity)
+}
+
 func (s *StoreSuite) TestANumberIsHeldUntilItIsReleased() {
 	number := &PhoneNumber{
 		E164: "+15125551234", Vendor: "twilio", Country: "US",

@@ -156,6 +156,18 @@ const (
 // which is not news to anyone.
 const cancelNotActive = "response_cancel_not_active"
 
+// activeResponse is the server refusing a reply because another is still open. It refuses
+// the reply it opens on its own at the caller's stop the same way, when the caller's turn
+// ends during a reply it was told not to cut off (interrupt_response false). Only one
+// response may write to the conversation at a time:
+// https://developers.openai.com/api/reference/resources/realtime/client-events (response.create).
+const activeResponse = "conversation_already_has_active_response"
+
+// clientResponse is the event_id every response.create from here carries. The server echoes
+// it in an error about that request, so a refusal that names no event is one of the replies
+// the server opens on its own.
+const clientResponse = "client_response"
+
 // Options configures the provider. APIKey falls back to the vendor's environment variable.
 type Options struct {
 	Vendor Vendor
@@ -194,6 +206,7 @@ type Options struct {
 // clientEvent is a frame sent to the server. Type says which of the fields matter.
 type clientEvent struct {
 	Type     string           `json:"type"`
+	EventID  string           `json:"event_id,omitempty"`
 	Session  *session         `json:"session,omitempty"`
 	Audio    string           `json:"audio,omitempty"`
 	Image    string           `json:"image,omitempty"`
@@ -363,6 +376,8 @@ type apiError struct {
 	Type    string `json:"type"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// EventID is the client event the error is about, empty when it is about none.
+	EventID string `json:"event_id"`
 }
 
 func (e *apiError) Error() string {
@@ -390,8 +405,11 @@ type STS struct {
 	// heard and who it heard start and stop.
 	participant sts.Participant
 	// heardAt is when the model decided the caller had finished, which is what the reply
-	// that follows is timed from. Zero once a reply has claimed it.
-	heardAt time.Time
+	// that follows is timed from. Zero once a reply has claimed it. A stop heard while a
+	// reply is open goes to that reply instead, and stoppedFor remembers which, so the
+	// commit after that stop is not taken for another.
+	heardAt    time.Time
+	stoppedFor *sts.Turn
 	// turn is the reply in flight, and generation counts them.
 	turn       *sts.Turn
 	generation int
@@ -403,8 +421,14 @@ type STS struct {
 	// speech stops is settled; OpenAI reports once, after the stop.
 	speaking   bool
 	heardSoFar string
-	started    bool
-	closed     bool
+	// owed is a reply the server refused to open, for the caller's turn or for a request of
+	// ours, because another was still open. It is asked for once that one is done; a caller
+	// who speaks again cancels it, since the server answers their next stop on its own.
+	// asked is the last reply request of ours, owed as it was sent when it is refused.
+	owed    *clientEvent
+	asked   clientEvent
+	started bool
+	closed  bool
 }
 
 // New validates the settings and returns an unstarted provider.
@@ -600,7 +624,7 @@ func (s *STS) SendText(text string, participant sts.Participant) error {
 	}}); err != nil {
 		return err
 	}
-	return s.send(clientEvent{Type: eventResponseCreate})
+	return s.ask(clientEvent{Type: eventResponseCreate})
 }
 
 // SendFrame offers the model a still image as context for its next reply.
@@ -677,7 +701,7 @@ func (s *STS) Answer(callID string, output string, err error) error {
 	}}); sendErr != nil {
 		return sendErr
 	}
-	return s.send(clientEvent{Type: eventResponseCreate})
+	return s.ask(clientEvent{Type: eventResponseCreate})
 }
 
 // Prompt asks the model to reply now, guided by the text.
@@ -698,9 +722,9 @@ func (s *STS) Prompt(text string) error {
 		}}); err != nil {
 			return err
 		}
-		return s.send(clientEvent{Type: eventResponseCreate})
+		return s.ask(clientEvent{Type: eventResponseCreate})
 	}
-	return s.send(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
+	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
 }
 
 // Interrupt stops the reply in flight and tells the model how much of it was heard, so its
@@ -712,6 +736,7 @@ func (s *STS) Interrupt(playedMs int) error {
 
 	s.mu.Lock()
 	turn, itemID := s.turn, s.itemID
+	s.owed = nil
 	s.mu.Unlock()
 	if turn == nil {
 		return nil
@@ -1042,6 +1067,7 @@ func (s *STS) handleMessage(event serverEvent) {
 	case eventSpeechStarted:
 		s.mu.Lock()
 		s.speaking = true
+		s.owed = nil
 		s.mu.Unlock()
 		s.emitter.Send(sts.SpeechStarted{Participant: s.speaker(), At: time.Now()})
 
@@ -1053,7 +1079,7 @@ func (s *STS) handleMessage(event serverEvent) {
 		// commit is the moment the caller started waiting. Under a silence timer the stop
 		// came first and this adds nothing.
 		s.mu.Lock()
-		waiting := !s.heardAt.IsZero()
+		waiting := !s.heardAt.IsZero() || (s.turn != nil && s.turn == s.stoppedFor)
 		s.mu.Unlock()
 		if !waiting {
 			s.stoppedHearing()
@@ -1112,14 +1138,18 @@ func (s *STS) handleMessage(event serverEvent) {
 }
 
 // stoppedHearing marks the moment the caller finished, which the next reply is timed from.
-// A reply the model opened while the caller was still talking is timed from here too.
+// A reply opened while the caller was still talking, as a Prompt can, takes the stop
+// instead: the server refuses another reply while it is open, so none that follows answers
+// this stop, and one that did would be timed from a wait long over.
 func (s *STS) stoppedHearing() {
 	now := time.Now()
 	s.mu.Lock()
-	s.heardAt = now
 	s.speaking = false
 	if s.turn != nil {
 		s.turn.HeardAt(now)
+		s.stoppedFor = s.turn
+	} else {
+		s.heardAt = now
 	}
 	participant := s.participant
 	s.mu.Unlock()
@@ -1243,6 +1273,14 @@ func (s *STS) finishTurn(event serverEvent) {
 
 	interrupted := status == "cancelled" || reason == "turn_detected" || reason == "client_cancelled"
 	s.settleTurn(interrupted, cost)
+
+	s.mu.Lock()
+	owed := s.owed
+	s.owed = nil
+	s.mu.Unlock()
+	if owed != nil {
+		s.answer(*owed)
+	}
 }
 
 // settleTurn closes the reply in flight, if there is one, and reports it.
@@ -1267,12 +1305,63 @@ func (s *STS) fail(event serverEvent) {
 		s.logger.Debug("nothing to cancel")
 		return
 	}
+	if event.Error.Code == activeResponse && s.owe(event.Error.EventID) {
+		return
+	}
 	s.emitter.Send(sts.Error{
 		Provider: s.options.Vendor.Provider,
 		Model:    s.options.Model,
 		Err:      event.Error,
 		Context:  "server",
 	})
+}
+
+// owe answers a reply the server refused to open: after the reply in flight, or now when
+// that reply is already done, because the refusal can arrive after its response.done (live,
+// gpt-realtime-2.1, 2026-10-20). A caller already speaking again is answered at their next
+// stop by the server itself, also when the reply is still open. A refusal of ours with no
+// reply open is not owed: it reports false, and the caller reports it as an error.
+func (s *STS) owe(eventID string) bool {
+	s.mu.Lock()
+	open, speaking := s.turn != nil, s.speaking
+	request := clientEvent{Type: eventResponseCreate}
+	if eventID == clientResponse {
+		if !open {
+			s.mu.Unlock()
+			return false
+		}
+		request = s.asked
+	}
+	if open && (eventID == clientResponse || (s.owed == nil && !speaking)) {
+		s.owed = &request
+	}
+	s.mu.Unlock()
+	if !open && !speaking {
+		s.answer(request)
+	}
+	return true
+}
+
+// ask sends a reply request of ours, remembered so a refusal of it is asked for again.
+func (s *STS) ask(event clientEvent) error {
+	event.EventID = clientResponse
+	s.mu.Lock()
+	s.asked = event
+	s.mu.Unlock()
+	return s.send(event)
+}
+
+// answer asks for the reply that is owed. A refusal of this one names the request, so it is
+// owed again only while another reply is open, and reported otherwise.
+func (s *STS) answer(request clientEvent) {
+	if err := s.ask(request); err != nil {
+		s.emitter.Send(sts.Error{
+			Provider: s.options.Vendor.Provider,
+			Model:    s.options.Model,
+			Err:      err,
+			Context:  "response",
+		})
+	}
 }
 
 // responseID is the id of the reply an event belongs to, which is the event's own when it

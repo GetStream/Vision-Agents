@@ -198,6 +198,35 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 	s.ErrorContains(err, "runs.concurrent_per_app")
 }
 
+// TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor: the defaults, the
+// variables that set them, and a broker there is none of refused.
+func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "daytona"}, config.CodeSandbox)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", "stg")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg"}, config.CodeSandbox)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.broker")
+}
+
+// TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.
+func (s *ConfigSuite) TestTheSecretPrefixHoldsNoUnderscore() {
+	for _, prefix := range []string{"stg_dev", "Stg", "stg-dev", "stg.dev"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", prefix)
+		_, _, err := Load("")
+		s.ErrorContains(err, "code_sandbox.secret_prefix", prefix)
+	}
+	s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", "stg2")
+	_, _, err := Load("")
+	s.NoError(err)
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
@@ -539,4 +568,15 @@ func (s *ConfigSuite) TestShardsListingThisOneElsewhereAreRefused() {
 
 	_, _, err := Load("")
 	s.ErrorContains(err, "another DSN")
+}
+
+func (s *ConfigSuite) TestMetricsAreNotServedUnlessAnAddressIsSet() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.MetricsAddr)
+
+	s.T().Setenv("ROUTER_METRICS_ADDR", ":9091")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(":9091", config.MetricsAddr)
 }

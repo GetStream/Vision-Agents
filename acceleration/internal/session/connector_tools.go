@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -30,6 +31,9 @@ type Connectors struct {
 	// Limiter holds a connector's calls after its provider answered 429, until Retry-After
 	// passes. Nil, as without Redis, limits nothing.
 	Limiter *core.Limiter
+	// Resolver hands a sandbox binding's credential to the sandbox's broker. Nil gives no
+	// sandbox binding a credential.
+	Resolver core.Resolver
 }
 
 // defaultConnectorTimeout bounds one connector tool call whose binding sets no timeout_ms.
@@ -83,6 +87,9 @@ const (
 	// unavailableDropped: a fork's or a reopened chat's selection for an alias its config no
 	// longer declares as a session binding.
 	unavailableDropped = "selection_dropped"
+	// unavailableSandbox: a required binding with sandbox set, whose connection was saved on
+	// a connector revision without a sandbox block.
+	unavailableSandbox = "sandbox_unavailable"
 )
 
 // unavailableWhy is each reason in words, for the error a required binding fails with.
@@ -99,6 +106,7 @@ var unavailableWhy = map[string]string{
 	unavailableOpenFailed:   "its tools could not be listed",
 	unavailableTool: "the provider no longer offers a granted tool with the schema it was granted against, " +
 		"or the connector leaves a granted tool out because it needs a scope the connector never asks for",
+	unavailableSandbox: "its connection was saved on a connector revision that gives a sandbox no access; reconnect it",
 }
 
 // attachConnectors opens the connector bindings the session may use and returns the
@@ -278,7 +286,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	switch connection.Status {
 	case store.ConnectionConnected:
 	case store.ConnectionNeedsReauthorization:
-		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+		if none.SavedAgain(registry.Schemes, connection.AuthScheme) {
 			return unavailableCredentialRejected, nil
 		}
 		return unavailableReauthorize, nil
@@ -303,7 +311,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		return "", err
 	}
 	if broken {
-		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+		if none.SavedAgain(registry.Schemes, connection.AuthScheme) {
 			return unavailableCredentialRejected, nil
 		}
 		return unavailableReauthorize, nil
@@ -393,7 +401,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		}
 		return unavailableTool, nil
 	}
-	return "", nil
+	return m.sandboxGrant(binding, connection, manifest, scheme, d), nil
 }
 
 // patternToolCap is how many tools one pattern binding offers. It is the maxItems on

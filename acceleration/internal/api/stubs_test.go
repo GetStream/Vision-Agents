@@ -336,6 +336,31 @@ func (s *refusingSTT) Close() error {
 	return nil
 }
 
+// handingOverModel refuses the account the way refusingModel does, for a socket that lists
+// a model after it. It is its own, and new each run, so the refusal that marks
+// refusingModel unavailable does not send that socket straight to the next model. New each
+// process: the test clears its health first, which a run before it in the process left
+// unavailable.
+var handingOverModel = fmt.Sprintf("handing-over-%d", time.Now().UnixNano())
+
+// echoingSTT settles a turn for every frame of audio it hears.
+type echoingSTT struct{ emitter *stt.Emitter }
+
+func (s *echoingSTT) Start(context.Context) error { return nil }
+func (s *echoingSTT) Events() <-chan stt.Event    { return s.emitter.Events() }
+func (s *echoingSTT) Provider() string            { return "echoing" }
+func (s *echoingSTT) Model() string               { return "echoing-model" }
+
+func (s *echoingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	s.emitter.Send(stt.Transcript{Text: "heard", Mode: stt.ModeFinal, Provider: "echoing", Model: "echoing-model"})
+	return nil
+}
+
+func (s *echoingSTT) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
 // batchOnlySTT is a batch model dialled live, which Deepgram's live endpoint turns away
 // as it does Nova-3: "deepgram: connect failed" (internal/stt/deepgram/deepgram.go).
 type batchOnlySTT struct{}
@@ -458,8 +483,20 @@ func recorderRegistry() *ttsrouter.Recorders {
 	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
 		return &recordedVoice{model: spec.Model}, nil
 	})
+	registry.Register("down", func(spec routing.Spec) (tts.Recorder, error) {
+		return &downVoice{recordedVoice{model: spec.Model}}, nil
+	})
 	return registry
 }
+
+// downVoice is a vendor that fails every recording, as one answering 503 does.
+type downVoice struct{ recordedVoice }
+
+func (*downVoice) Record(context.Context, tts.Recording) (tts.Recorded, error) {
+	return tts.Recorded{}, errors.New("down: record: 503 Service Unavailable: overloaded")
+}
+
+func (*downVoice) Provider() string { return "down" }
 
 func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.Recorded, error) {
 	format := recording.Format

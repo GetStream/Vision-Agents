@@ -654,6 +654,32 @@ Swift has `SessionOptions.returnURL` and `AgentSession.declineLogin`, and Stream
 way; its Gmail button, and its backend's routes to start, read and delete the Gmail connection,
 are gone.
 
+### The router serves Prometheus metrics, and warns when the agent talks over itself
+
+`metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
+on a listener of its own, never the public one; it is empty by default, which serves none.
+When a voice publishes the audio of two utterances of one session interleaved, which the
+caller hears as the agent speaking over itself, the router logs one warning for the pair
+naming both syntheses and turns, and counts it in `router_agent_speech_overlaps_total` and
+`router_agent_speech_overlap_seconds_total` (label `provider`). The agent's log lines now
+carry `session` and `call`. What is spoken is unchanged (AI-1550).
+
+### The router logs which turn a turn follows, each tool call and each utterance
+
+`voice turn timing` names what started the turn (`kind`: `caller`, `tool`, `chase`) and, for a
+turn the agent started on its own, the caller turn it follows (`parent`). Each tool call the
+model makes logs one INFO line when it comes back, with its tool, `tool_call`, turn, `duration_ms` and
+`outcome` (`ok`, `error`, `still-running`, `cancelled`, `refused` for a call the router turned back itself, before the tool ran), and is counted in
+`router_agent_tool_call_seconds` (label `outcome`). An utterance's start and end, a line the
+agent chose to say (a hold line, an update, a check-in) and a chase for a call a reply owed are
+logged at INFO, without what is said. `router_agent_open_utterances` (label `provider`) counts,
+for each chunk published, how many of the agent's utterances were open. What is spoken is
+unchanged (AI-1551).
+
+### The router logs what it heard from each caller, and counts inbound audio
+
+When a caller's turn settles, when the agent checks in on a silence, and when the call ends, the agent logs `what the agent heard from a participant` at INFO, one line per participant (`moment`: `turn`, `checkin`, `end`): the audio chunks received from the call (`frames`, `audio_ms`), counted from the start of the call and not per turn, the transcripts with words in them (`partials`, `finals`), and how long ago the last of each came (`since_frame_ms`, `since_words_ms`, `-1` for never). No transcript text. Two lines tell a caller who went quiet (no frames) from a transcriber that stopped answering (frames, no words). `router_agent_inbound_audio_frames_total` (no labels), `router_agent_stt_partials_total` and `router_agent_stt_finals_total` (label `provider`) count the same for Prometheus. What is heard and answered is unchanged (AI-1553).
+
 ### An agent config has a `role`, and the app's moderator agent is found by it
 
 `AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
@@ -677,6 +703,48 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 /v1/agents/runs` adds it after the config's and the caller's instructions on every run of an
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
+
+### Simulations for the moderator template
+
+`acceleration/templates/agent_moderator/simulations/moderation.yaml` holds eight reviews Nora
+must get right, ported from the Nora prototype's evals: casual profanity in an adult market and
+the same words in an education app, an educational quotation, targeted abuse, repeat confirmed
+harassment, an overturned incident that must not escalate, an innocent message from a user with
+prior bans, and an instruction injected into the message. A simulation talks to Nora in chat
+rather than through a run, so each one hands over the policy with its cases, and its assertion
+judges the verdicts rather than the answer format. Run them after editing the agent with
+`getstream agents simulate nora` (AI-1506).
+### The app's moderator reads the app's moderation data
+
+A session or run of an `agent_moderator` config is offered six read-only tools on the app's
+moderation data: `query_review_queue`, `get_review_queue_item` (with its flags and actions),
+`query_moderation_configs` (with their LLM labels), `query_moderation_rules`, `list_blocklists`
+and `query_moderation_logs`. They act with the Stream identity the router already holds for the
+app, so no secret is passed in. They are offered only to a session the customer's backend
+opens (a server-side caller), never one an end user's device opens, and only in an app of the
+customer's own: a session in the deployment's shared app is offered none. Reading the review queue never locks an item, and a
+tool the caller declares under the same name stays the caller's (AI-1504).
+### The moderator template proposes configuration changes from Ask Nora
+
+`acceleration/templates/agent_moderator/skills/suggest_policy.md` moves the Nora proof of
+concept's configuration suggestions into the template. From the live policy, the last 7 days of
+reviews (or the days the moderator names) and where Nora disagreed with the first layer, it
+proposes up to 8 changes to label actions, LLM labels and severities, the app context, blocklists,
+rules and the flooding filter, each with the counts behind it, as the JSON the dashboard saves.
+It only proposes: nothing changes until the moderator confirms in the dashboard (AI-1505).
+
+### A recording moves to the next model when the vendor fails it
+
+`POST /v1/tts/recordings` on a shortcut or a priority list no longer fails when the model chosen
+fails the recording itself: an error status (a 5xx, a 429, a 402 out of credits), a timeout or
+an answer that cannot be read. The text goes to the next model the request resolved to, in the
+order of the priority list or the shortcut's ranking, and the job names the model that spoke it.
+The failure is still counted against the failing model's health. A model that refuses this
+request alone (a text over Inworld's 2,000-unit limit, a format the vendor cannot make) hands it
+on too, without a health hit. When every model fails, the job fails with no provider or model
+and an error naming each model's reason, cut to 300 bytes each. A pinned model fails as before.
+A recording with nothing to say is refused before any vendor is asked, and no longer counts
+against the model (AI-1465).
 
 ### An Android demo, the Android half of swift_demo
 
@@ -2292,6 +2360,12 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A live transcription the vendor refuses part way through, such as ElevenLabs's `unaccepted_terms`, goes on with the next model the session could use (the next in its `stt.providers`, or its target's next candidate), and with none that refused it. The session ended with one `error` and the agent's next audio could reopen it on the model that had just refused it. What the caller had said of the turn still open when the vendor refused is lost; what they say from then on is heard by the next model. `/v1/stt/stream` sends no `error` frame for a refusal another model takes over and goes on with its transcripts. With no other model left, the session ends with the one `error` it ended with before. A socket that drops, and an error the vendor goes on after, end the session or are passed on as before (AI-1587).
+- `/v1/stt/stream` says which model transcribes after a refusal hands the socket to the next one: another `started` frame naming its `provider` and `model`, the same shape as the first. Until now the caller learnt of the switch only from the `provider` on the next transcript. A socket no model refuses still sends one `started` (AI-1588).
+- `a tool call came back` names the tool call under `tool_call`; it logged it as a second `call` key, beside the session's `call`. A check-in's `what the agent heard from a participant` line and its `could not write a line to say` warning log `purpose` as `hold`, `update` or `checkin` instead of the whole prompt the line was written from (AI-1585, AI-1586).
+- An OpenAI Realtime agent with `interrupt_response: false` answers a caller whose turn ends while it is still speaking. The server refused its own reply with `conversation_already_has_active_response`, which the agent logged as an error, and the caller's question was never answered. The agent now asks for that reply once the one in flight is done, and does the same for a refused prompt, text or tool result; a caller who speaks again or barges in gets the server's answer to their next turn instead (AI-1548).
+- A phone session ends on its own: 10 seconds after the last person leaves the call, and when a phone call is never answered (90 seconds for an outbound call, 30 seconds for an inbound one). The agent stops talking and leaves rather than finishing its sentence to an empty call. The Python SDK now tells the router a session is a phone call, as the Go SDK does, so a Python agent on a phone call can also transfer the caller to a person. Sessions that are not phone calls are unchanged.
+
 ### A Kotlin voice call asks only for the microphone
 
 `VoiceSession` joined an agent's call with Stream Video's default foreground service, which
@@ -2300,11 +2374,12 @@ on, with no service holding it. It now runs Stream's audio-call service, and the
 builds asks for the camera only while the camera is on. A call type the app configured on its
 own `StreamVideo` is left as it is.
 
+- A model call its caller cancelled (a superseded flow decision, a losing hedge, a barge-in) is reported as cancelled, not as a success: the router log, the session socket's `model_call` frame and the call timeline's `ModelCallTiming` say `success: false` with `error_code: "cancelled"`, and still carry its tokens, since it is billed. A failure has any other `error_code`. Live and stored views of one call used to disagree: the frame said it succeeded, the timeline that it failed. The agent log writes a cancelled request at info, as `llm request cancelled` (AI-1466).
 - A flow decision that has said nothing for `ROUTER_FLOW_HEDGE` (`400ms` by default, `0` turns it off, `cmd/agent -flow-hedge`) is asked of another candidate of `llm-flow` as well, and whichever says something first rules on the turn, as a late reply already is under `ROUTER_REPLY_HEDGE`. A flow controller that stalled on its first token made the caller wait out its 3 s deadline on every turn it did, and the turn was then answered with no ruling (#1040).
 - A line the agent says on a call (`say`, and the greeting) is in its transcript and its responses, and the model knows it was said. It went straight to the voice with no reply announced, so the Chat channel and `responses.items` never had it, and the caller's answer to a greeting's question reached the model and the flow controller with no question before it. A line that opens the call is told to the model in its instructions rather than as a first turn, which chat templates that need a user turn first refuse; a conversation is not named after its greeting (#1040).
 - The agent's spoken replies in a call's Chat channel carry `ai_generated`, as replies in a conversation held in writing already did, so Stream's AI components render them as the assistant's (#1040).
 - What a caller says after an answer, on a transcriber that keeps the run of speech open (Deepgram Flux resuming a turn), is heard as only the new words. The whole run was passed on each time, so every later turn repeated the earlier ones to the model, the flow controller, in `heard` and in the transcript, more each turn. Words added to something being read out ("order 1 2" then "3 4", "one two" then "three", letters spelled out) are still heard whole (#1040).
-- `LiveReasoning` keeps each reply's reasoning apart, in the Swift, JS, Kotlin and Dart SDKs. It looked a step up by its id alone, and every reply numbers its steps from `r1`, so a later reply's live thinking was dropped when its round was shorter than an earlier reply's, or joined onto the earlier text when it was longer, and the earlier reply's thinking showed in its place. A step is now read by its reply and its id: `reasoning[message: message.id, step: step.id]` in Swift, `reasoning.get(message.id, step.id)` in JS, `reasoning[message.id, step.id]` in Kotlin (whose `add` now takes the message id before the step id), and `reasoning[(message: message.id, step: step.id)]` in Dart.
+- `LiveReasoning` keeps each reply's reasoning apart, in the Swift, JS, Kotlin and Dart SDKs. It looked a step up by its id alone, and every reply numbers its steps from `r1`, so a later reply's live thinking was dropped when its round was shorter than an earlier reply's, or joined onto the earlier text when it was longer, and the earlier reply's thinking showed in its place. A step is now read by its reply and its id: `reasoning[message: message.id, step: step.id]` in Swift, `reasoning.get(message.id, step.id)` in JS, `reasoning[message.id, step.id]` in Kotlin (whose `add` now takes the message id before the step id), and `reasoning[(message: message.id, step: step.id)]` in Dart. (#1051)
 - The router's agent answers a question whose turn decision timed out. The decision call is given 3 s; when its stream had opened but no token came by then, the call was closed and no ruling was sent, so the question was never answered nor stored. That ruling now carries the timeout, and the agent answers a finished question whose ruling failed, as it already did when the call timed out before it opened (AI-1460).
 - A person on a voice call with no display name goes under `Speaker 1`, `Speaker 2` and on, numbered in the order such people first spoke, in what the reply model reads (`Speaker 1: what about me`) and in what the flow controller is asked. Their user id, or their participant id when they had no user, went ahead of their words instead, so the model read the app's internal ids. Their name, once it is known, still replaces the label, and named people read as before (AI-1458).
 - A phone's tools work on the call of a person's saved conversation. Every tool call there needed a typed question's request id, which a spoken question and the vision skill's request for camera frames never have, so on a call each was refused with `session: tool call has no durable command binding` and the agent said the tool did not work. A request id is now needed only in a conversation held in writing, as taking the results already was.
@@ -2319,7 +2394,9 @@ own `StreamVideo` is left as it is.
 - A `/v1/{modality}/stream` socket that routing refuses, such as a live transcription pinned to a batch model, closes with 1008 (policy violation) instead of 1011. Any other failure still closes with 1011, and the reason is the same refusal (AI-1456).
 - People on a voice call keep their names after the session switches between voice and writing: the next turn reads `<name>: <words>` and the instructions still say several people are talking. Both were lost until two people spoke again. Two people with the same display name now get distinct labels, in the order they first spoke: `Alex`, then `Alex (2)`, then `Alex (3)`. A label stays the same for the whole session, even if the person rejoins or renames themselves (AI-1437, AI-1438).
 - `GET /v1/agents/calls/{id}/timeline` pairs each turn with its own words: `heard` is what the caller said to start it and `said` is the agent's answer. Both were one turn off: `heard` held the agent's answer and `said` the caller's next question, and the first question was missing. Several things said before one answer are joined into `heard`; a turn the agent started, such as a greeting, has no `heard`, and a turn cut off before the agent spoke has no `said`. `/transcript` was right and is unchanged (AI-1432).
+- A voice agent on GPT-Live (`openai/gpt-live-1*`) files each reply as its own turn. The model streams audio for the whole session, digital silence between replies included, so one reply opened when the agent joined and closed only when it left, and a reply the caller cut off kept every later one muted. A reply now opens on the model's words or on audio with something to hear in it, and closes after 800 ms with neither (AI-1533).
 - A voice agent on Gemini Live (`gemini/*`) files every reply as its own turn. When the model's words came before its audio, the reply opened before the caller's turn was settled, so `GET /v1/agents/calls/{id}/timeline` lost the first turn and filed each later one under the next reply, with the previous caller's words and a round trip of about 12 s; the session socket's `responding` prompt was the turn before. The caller's turn is now settled, and the wait timed from their last word, before the reply opens. GPT-Live (`openai/gpt-live-1*`) opened a reply on its words the same way and gets the same fix (AI-1464).
+- A speech-to-speech turn's round trip runs from the moment the model's own detector decided the caller had finished, on Gemini Live (`gemini/*`) as on GPT-Realtime. Gemini's was timed from the caller's last transcribed words, which arrive with the reply, so it read 0-4 ms; it is now placed from the `audioOffset` of the server's `ACTIVITY_END` and reads about 160-370 ms on `gemini-3.8-live`. On GPT-Realtime (`openai/gpt-realtime*`), a stop heard while a reply to `Prompt` was still open timed the next reply from it: a follow-up 12 s later read a 13,030 ms round trip. That stop now belongs to the open reply, and the next reply is not timed from it (AI-1534, AI-1535).
 - `GET /v1/agents/voices/library` lists every Cartesia voice. It stopped at the first 1,000 (ten pages of 100), and Cartesia had 1,049 on 2026-10-19. `provider=fish` now says Fish voices cannot be browsed through the router yet and to name one by its Fish model id, rather than `fish publishes no voice library`. A provider that will not list voices for the router's key (a 401 or 403) is reported as `the inworld key cannot list voices (http 403)` rather than as a refused voice (AI-1413).
 - A recording on a model that only streams, such as `cartesia/sonic-preview`, `inworld/inworld-tts-2` or `breeze/breeze-tts-2`, is refused when it is sent, with a 400 that names the models that record: `routing: cartesia/sonic-preview can only stream speech, not record it; models that record: elevenlabs/...`. It was accepted and failed with `no factory registered`, in the job or in the inline answer. Only ElevenLabs records; a shortcut that reaches it, such as `tts-quality`, is served by it as before, and so is a priority list with it in. `GET /v1/tts/routes` and `/v1/tts/routes/{target}` now say per candidate whether a recording can use it (`Candidate.can_record`); STT and STS leave it out (AI-1412).
 
@@ -2328,6 +2405,7 @@ own `StreamVideo` is left as it is.
 - A request that names one model and asks it for an option it does not take is refused naming that model: `routing: microsoft/MAI-Transcribe-2-Streaming does not take keyterms`. It read `routing: no provider can express keyterms`, as if the router had looked beyond the model the caller chose. This is the `/v1/stt/stream`, `/v1/tts/stream` and `/v1/sts/stream` `error` frame and every other refusal of a term; a shortcut keeps the old message (#1014, AI-1419).
 - The `/v1/stt/stream` start frame is refused with `stt: at most 100 keyterms may be named, and this asks for 101` past 100 keyterms, as a session already is. Deepgram took any number, and the others refused a long list each in its own words (#1014, AI-1419).
 - A live transcription whose vendor fails for good mid-call, such as ElevenLabs refusing an account that has not accepted its terms (`unaccepted_terms`), reports it once: `/v1/stt/stream` sent one more `error` frame per frame of audio after it (779 in one call). The stat row keeps the vendor's reason as its `error_message`, and the model is unavailable in `GET /v1/stt/providers` and ranked last for the next five minutes, however many turns it served before (AI-1417).
+- A live transcription whose vendor closes the socket with a refusal code, such as Muse's `1008` "Ingress below real-time", marks the model unavailable as any other refusal does. It was counted as a dropped connection, which leaves the model available. The refusal codes are `1002`, `1003`, `1007` to `1010` and `4000` to `4999`; every other close (`1005`, `1006`, `1011` to `1014`, `3xxx`) and a network error is still a drop. A stat recorded after the router began shutting down is dropped instead of panicking (AI-1436).
 - A `/v1/stt/stream`, `/v1/tts/stream`, `/v1/llm/stream` or `/v1/sts/stream` socket the router ends now closes with a close frame after its last frame: `1000` after a clean end, `1011` after a failure with the failure as the reason (cut to 123 bytes). It dropped the connection instead, so a caller saw `1006`, and a caller still sending audio after a refused start was reset and could lose the `error` frame itself, as `stream.STT(...).start()` did in 2 of 5 runs on staging ("the router closed the socket before it started"). The router now reads and drops what the caller sends for up to a second after its close frame, until the caller answers it (AI-1425).
 
 - `stream.STT.start()` raises the router's refusal as a `RouterError`, such as a model that takes no keyterms or has no API key. It sent the start frame and returned at once, so a refusal arrived only as an `STTErrorEvent`, and an agent nobody subscribed to errors on got no `started`, no error and no transcripts. `start()` now waits for the router's `started` or `error` frame. An error after `started` is still an `STTErrorEvent`, and the sockets opened later for other participants work as before (AI-1422).

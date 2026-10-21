@@ -130,6 +130,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -142,7 +147,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -239,6 +244,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -251,7 +261,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(config)
+	s.warnPluginsSaved(ctx, config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -704,6 +714,39 @@ func leftOutGrant(binding AgentConnectorBinding, manifest core.Manifest) (string
 	return "", true
 }
 
+// sandboxBindingsComplaint refuses a binding with sandbox set that the config cannot honour:
+// the config runs no sandbox, the connector's latest manifest has no sandbox block, or another
+// sandbox binding's connector names the same env var, which one sandbox holds once. It reads
+// the config as it is about to be stored, so a binding kept from before is checked against a
+// sandbox the save takes away. A config with no sandbox binding asks the store nothing.
+func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+	envs := map[string]string{}
+	for _, binding := range config.Connectors {
+		if !binding.Sandbox {
+			continue
+		}
+		if config.Sandbox == "" {
+			return fmt.Sprintf("connector binding %q sets sandbox, and the config has no sandbox for code to "+
+				"run in: set sandbox, such as %s", binding.Name, Daytona), false, nil
+		}
+		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
+		if err != nil {
+			return "", false, err
+		}
+		rule := definition.Manifest.Sandbox
+		if rule == nil {
+			return fmt.Sprintf("connector binding %q sets sandbox, and connector %q offers no access from a "+
+				"sandbox", binding.Name, binding.ConnectorID), false, nil
+		}
+		if other, taken := envs[rule.Env]; taken {
+			return fmt.Sprintf("connector bindings %q and %q both set sandbox and would both give the sandbox "+
+				"%s: set it on one", other, binding.Name, rule.Env), false, nil
+		}
+		envs[rule.Env] = binding.Name
+	}
+	return "", true, nil
+}
+
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
 // config is. A plugin's tools are offered as <plugin>__<tool> (plugins.Prefix,
 // internal/plugins/mcp.go), a user plugin's as <plugin>__ and a suffix
@@ -765,6 +808,7 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 			TimeoutMs:    value(binding.TimeoutMs),
 			Events:       bindingEventsOf(binding.Events),
 			Policy:       bindingPolicyOf(binding.Policy),
+			Sandbox:      binding.Sandbox,
 		})
 	}
 	return stored
@@ -826,6 +870,7 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 			Tools:        tools,
 			ToolPatterns: copyPatterns(binding.ToolPatterns),
 			Required:     &required,
+			Sandbox:      binding.Sandbox,
 		}
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
@@ -1061,11 +1106,11 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 // many plugin entries no binding replaces: a migrated config keeps its entries beside the
 // bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
 // an unbound entry is real use.
-func (s *Server) warnPluginsSaved(config store.AgentConfig) {
+func (s *Server) warnPluginsSaved(ctx context.Context, config store.AgentConfig) {
 	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
 		return
 	}
-	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
+	plugins.ReportUse(ctx, s.logger, plugins.PathConfigSave,
 		"customer", config.CustomerID, "config", config.ID,
 		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
 		"plugin_events", len(config.PluginEvents))
@@ -1990,6 +2035,7 @@ type AgentConnectorBinding struct {
 	TimeoutMs    *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
 	Events       *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
 	Policy       *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+	Sandbox      bool                     `json:"sandbox,omitempty" doc:"Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false."`
 }
 
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.

@@ -548,7 +548,7 @@ func (m *manager) consume(running *task, stream *llm.Stream) llm.Response {
 func (m *manager) tools(running *task) []llm.Tool {
 	var tools []llm.Tool
 	if m.box != nil {
-		tools = append(tools, sandbox.Tool())
+		tools = append(tools, sandbox.Tool(m.box))
 	}
 	if len(running.bundle) > 0 {
 		tools = append(tools, readFileTool(slices.Sorted(maps.Keys(running.bundle))))
