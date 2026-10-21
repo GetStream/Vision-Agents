@@ -1973,7 +1973,7 @@ export type paths = {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a line the agent says as written rather than asking the model, such as its greeting, with the purpose it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
          *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
          *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
@@ -8553,11 +8553,24 @@ export type components = {
             readonly agent?: boolean;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description The line is still being written: a reply still streaming, or words still being said, stored as they first were. The session's live frames carry the rest. */
+            readonly generating?: boolean;
+            /** @description The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard frames named it by; any other line has an id Chat gave it. */
+            readonly id: string;
+            /** @description The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to say, of which some or none was heard. */
+            readonly interrupted?: boolean;
             /** @description That speaker's display name, when they have one. */
             readonly name?: string;
+            /**
+             * @description Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+             * @enum {string}
+             */
+            readonly purpose?: "greeting" | "checkin" | "update";
             /** @description Who said it, the agent under its own user id. */
             readonly speaker: string;
             readonly text: string;
+            /** @description The turn a reply was written for, as the session's response frames name it. */
+            readonly turn_id?: string;
         };
         readonly TranscriptWord: {
             /** Format: float */

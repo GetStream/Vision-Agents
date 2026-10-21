@@ -833,19 +833,19 @@ func (e CustomModelRequestTrainsOnData) Valid() bool {
 
 // Defines values for DataChangeOp.
 const (
-	Delete DataChangeOp = "delete"
-	Insert DataChangeOp = "insert"
-	Update DataChangeOp = "update"
+	DataChangeOpDelete DataChangeOp = "delete"
+	DataChangeOpInsert DataChangeOp = "insert"
+	DataChangeOpUpdate DataChangeOp = "update"
 )
 
 // Valid indicates whether the value is a known member of the DataChangeOp enum.
 func (e DataChangeOp) Valid() bool {
 	switch e {
-	case Delete:
+	case DataChangeOpDelete:
 		return true
-	case Insert:
+	case DataChangeOpInsert:
 		return true
-	case Update:
+	case DataChangeOpUpdate:
 		return true
 	default:
 		return false
@@ -2331,6 +2331,27 @@ func (e TranscriptFormat) Valid() bool {
 	case Srt:
 		return true
 	case Vtt:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TranscriptMessagePurpose.
+const (
+	TranscriptMessagePurposeCheckin  TranscriptMessagePurpose = "checkin"
+	TranscriptMessagePurposeGreeting TranscriptMessagePurpose = "greeting"
+	TranscriptMessagePurposeUpdate   TranscriptMessagePurpose = "update"
+)
+
+// Valid indicates whether the value is a known member of the TranscriptMessagePurpose enum.
+func (e TranscriptMessagePurpose) Valid() bool {
+	switch e {
+	case TranscriptMessagePurposeCheckin:
+		return true
+	case TranscriptMessagePurposeGreeting:
+		return true
+	case TranscriptMessagePurposeUpdate:
 		return true
 	default:
 		return false
@@ -7710,13 +7731,31 @@ type TranscriptMessage struct {
 	Agent     *bool     `json:"agent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 
+	// Generating The line is still being written: a reply still streaming, or words still being said, stored as they first were. The session's live frames carry the rest.
+	Generating *bool `json:"generating,omitempty"`
+
+	// Id The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard frames named it by; any other line has an id Chat gave it.
+	Id string `json:"id"`
+
+	// Interrupted The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to say, of which some or none was heard.
+	Interrupted *bool `json:"interrupted,omitempty"`
+
 	// Name That speaker's display name, when they have one.
 	Name *string `json:"name,omitempty"`
+
+	// Purpose Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+	Purpose *TranscriptMessagePurpose `json:"purpose,omitempty"`
 
 	// Speaker Who said it, the agent under its own user id.
 	Speaker string `json:"speaker"`
 	Text    string `json:"text"`
+
+	// TurnId The turn a reply was written for, as the session's response frames name it.
+	TurnId *string `json:"turn_id,omitempty"`
 }
+
+// TranscriptMessagePurpose Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
+type TranscriptMessagePurpose string
 
 // TranscriptWord defines model for TranscriptWord.
 type TranscriptWord struct {

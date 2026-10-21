@@ -2014,3 +2014,252 @@ func (s *ConfigsSuite) TestPatchingASandboxBindingOntoAConfigWithoutASandboxIsRe
 	s.Contains(failure, `connector binding "code" sets sandbox, and the config has no sandbox`)
 	s.Nil(s.read(created.Id).Connectors)
 }
+
+// sessionNessy binds nessy, which nessy.yaml marks sensitive, through the connection a
+// session's end user picks, granting org_lookup, the first of Nessy's read-only tools
+// (GetStream/Nessy backend/agenttools/api.go:35-36 at 7e238ffa).
+func sessionNessy(alias string) map[string]any {
+	return map[string]any{
+		"name": alias, "connector_id": "nessy",
+		"connection": map[string]any{"type": "session"},
+		"tools":      []map[string]any{{"name": "org_lookup"}},
+	}
+}
+
+// sessionGitHubGranting is sessionGitHub granting tools by name, which github.yaml's source
+// does not say only read.
+func sessionGitHubGranting(alias string, tools ...string) map[string]any {
+	binding := sessionGitHub(alias, false)
+	granted := []map[string]any{}
+	for _, tool := range tools {
+		granted = append(granted, map[string]any{"name": tool})
+	}
+	binding["tools"] = granted
+	return binding
+}
+
+// useInternalApp gives the test an app Stream marks internal, the only kind that sees nessy.
+func (s *ConfigsSuite) useInternalApp() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+}
+
+// TestNessyBesideAnotherConnectorsWriteToolIsRefused is AI-1545's «Done when»: a config
+// binding nessy and a tool that may send data out is a 400 naming both, and stores nothing.
+func (s *ConfigsSuite) TestNessyBesideAnotherConnectorsWriteToolIsRefused() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), sessionGitHubGranting("code", "create_issue")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and connector binding "code" can send data out with no person's approval`)
+	var listed []AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs?name=athena", nil, &listed))
+	s.Empty(listed)
+}
+
+// A tool pattern grants whatever matches, so it is as outbound as a tool named.
+func (s *ConfigsSuite) TestNessyBesideAToolPatternBindingIsRefused() {
+	s.useInternalApp()
+	patterned := sessionGitHub("code", false)
+	patterned["tool_patterns"] = []string{"list_*"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{patterned, sessionNessy("customers")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" can send data out`)
+}
+
+// A binding granting no tool offers the model nothing, so it sends nothing out, unless its
+// sandbox key hands code the connector's whole API.
+func (s *ConfigsSuite) TestNessyBesideABindingGrantingNoToolIsAcceptedUnlessItsCodeCallsTheAPI() {
+	s.useInternalApp()
+	s.createConfig(map[string]any{"name": "athena", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionNessy("customers"), sessionGitHub("code", false)}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionNessy("customers"), sessionGitHub("code", true)},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" can send data out`)
+}
+
+// slack_bot.yaml lists no source, so a binding to it offers no tool, whatever it grants.
+func (s *ConfigsSuite) TestNessyBesideAConnectorWithNoSourceIsAccepted() {
+	s.useInternalApp()
+	bot := sessionSlack("bot")
+	bot["connector_id"] = "slack_bot"
+
+	created := s.createConfig(map[string]any{"name": "athena",
+		"connectors": []map[string]any{sessionNessy("customers"), bot}})
+
+	s.Len(value(created.Connectors), 2)
+}
+
+// Every tool that sends data out is named, so one answer says all that has to go.
+func (s *ConfigsSuite) TestNessyBesideSeveralOutboundToolsNamesThemAll() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
+		"connectors":  []map[string]any{sessionGitHubGranting("code", "create_issue"), sessionNessy("customers")},
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+		"plugins":     []map[string]any{{"name": "github"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy"`)
+	s.Contains(failure, `and connector binding "code", MCP server "tablejourney", plugin "github", `+
+		`the sandbox's network access can send data out with no person's approval`)
+}
+
+// TestNessyBesideAConnectorWithOneOutboundSourceAmongSeveralIsRefused: a connector sends data
+// out if any of its sources may, not only the first. Manifest.Validate accepts several sources
+// and CreateConnectorDefinition takes any manifest, so a custom connector can put a source that
+// says outbound: false before one that does not.
+func (s *ConfigsSuite) TestNessyBesideAConnectorWithOneOutboundSourceAmongSeveralIsRefused() {
+	s.useInternalApp()
+	source, err := providers.FS.ReadFile("github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(source)
+	s.Require().NoError(err)
+	manifest.ID = "custom_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	readOnly := manifest.Sources[0]
+	readOnly.Outbound = new(false)
+	manifest.Sources = []core.SourceRule{readOnly, manifest.Sources[0]}
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	custom := sessionGitHubGranting("code", "create_issue")
+	custom["connector_id"] = manifest.ID
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), custom},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" can send data out with no person's approval`)
+}
+
+// nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
+func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
+	s.useInternalApp()
+
+	created := s.createConfig(map[string]any{"name": "athena",
+		"connectors": []map[string]any{sessionNessy("customers"), sessionNessy("billing")}})
+
+	s.Len(value(created.Connectors), 2)
+}
+
+func (s *ConfigsSuite) TestNessyBesideAnMCPServerIsRefused() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and MCP server "tablejourney" can send data out`)
+}
+
+// A plugin's read-only endpoint offers no tool that writes (PluginEntry.Readonly), so only the
+// plugin reached at its full one is refused.
+func (s *ConfigsSuite) TestNessyBesideAPluginIsRefusedUnlessItIsReadOnly() {
+	s.useInternalApp()
+	s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
+		"plugins": []map[string]any{{"name": "linear", "readonly": true}}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "builder", "connectors": []map[string]any{sessionNessy("customers")},
+		"plugins": []map[string]any{{"name": "linear", "readonly": true}, {"name": "github"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and plugin "github" can send data out`)
+}
+
+// A sandbox reaches no network unless its options open some (sandbox.Config.Isolated), and
+// options with no sandbox run no code.
+func (s *ConfigsSuite) TestNessyBesideASandboxIsRefusedOnlyWhenItReachesTheNetwork() {
+	s.useInternalApp()
+	s.createConfig(map[string]any{"name": "athena", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionNessy("customers")}})
+	s.createConfig(map[string]any{"name": "researcher", "sandbox_options": map[string]any{"network": true},
+		"connectors": []map[string]any{sessionNessy("customers")}})
+
+	for name, options := range map[string]map[string]any{
+		"network": {"network": true},
+		"domains": {"allowed_domains": []string{"example.com"}},
+		"cidrs":   {"network_allow_list": []string{"10.0.0.0/8"}},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+			"name": name, "sandbox": "daytona", "sandbox_options": options,
+			"connectors": []map[string]any{sessionNessy("customers")},
+		})
+
+		s.Equal(http.StatusBadRequest, status, name)
+		s.Contains(failure, "and the sandbox's network access can send data out", name)
+	}
+}
+
+// An update and a patch read the config as it is about to be stored: a binding added to a
+// config with an MCP server is refused, and so is the MCP server added to a config binding nessy.
+func (s *ConfigsSuite) TestAnUpdateOrAPatchBringingNessyBesideAnOutboundToolIsRefused() {
+	s.useInternalApp()
+	created := s.createConfig(map[string]any{"name": "athena",
+		"connectors": []map[string]any{sessionNessy("customers")}})
+
+	updated, updateFailure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "athena", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}}})
+	patched, patchFailure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{sessionNessy("customers"), sessionGitHubGranting("code", "create_issue")}})
+
+	s.Equal(http.StatusBadRequest, updated)
+	s.Contains(updateFailure, `and MCP server "tablejourney" can send data out`)
+	s.Equal(http.StatusBadRequest, patched)
+	s.Contains(patchFailure, `and connector binding "code" can send data out`)
+	s.Len(value(s.read(created.Id).Connectors), 1)
+	s.Nil(s.read(created.Id).McpServers)
+}
+
+// TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTools is the control: the base,
+// a103c19ab, answered 201 to the same request (ai1545/author-1.md, «Control probe»).
+func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTools() {
+	created := s.createConfig(map[string]any{
+		"name": "builder", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
+		"connectors":  []map[string]any{sessionGitHubGranting("code", "create_issue")},
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+		"plugins":     []map[string]any{{"name": "github"}},
+	})
+
+	s.Len(value(created.Connectors), 1)
+}
+
+// TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAccepted: a forced connector delete
+// leaves its bindings behind (store.refuseUndefined), and a binding to a connector with no
+// definition opens nothing. The base, a103c19ab, answered 200 (ai1545/author-1.md, «Control
+// probe»).
+func (s *ConfigsSuite) TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAccepted() {
+	source, err := providers.FS.ReadFile("github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(source)
+	s.Require().NoError(err)
+	manifest.ID = "custom_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	custom := sessionGitHubGranting("code", "create_issue")
+	custom["connector_id"] = manifest.ID
+	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{custom}})
+	s.Require().Equal(http.StatusNoContent,
+		s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+manifest.ID+"?force=true", nil, nil))
+
+	status, _ := s.serverClient.call(http.MethodPut, "/v1/agents/configs/"+created.Id, map[string]any{"name": "builder"})
+
+	s.Equal(http.StatusOK, status)
+}
