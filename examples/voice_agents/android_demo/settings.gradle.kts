@@ -15,6 +15,10 @@ dependencyResolutionManagement {
         maven("https://stream-io-repo.com") {
             content { includeGroup("io.getstream") }
         }
+        // The voice glow is not in a release of Stream Chat yet, only in a snapshot of its develop.
+        maven("https://snapshots.stream-io-repo.com") {
+            content { includeGroup("io.getstream") }
+        }
     }
 }
 
