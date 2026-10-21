@@ -310,6 +310,10 @@ func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
 			s.False(takesFloor(lone), "a lone word that is no interruption is somebody waiting to be answered")
 		})
 	}
+	for _, noise := range []string{"huh", "uh", "mm", "hm", "hmm"} {
+		s.True(overlapNoise(noise), "%q said alone is noise", noise)
+	}
+	s.False(overlapNoise("okay"), "assent said alone is still put to the controller over the agent")
 	for _, more := range []string{"Hey,", "okay wait", "yeah the second one", "got it but"} {
 		s.Run(more, func() {
 			s.True(takesFloor(more), "a word past assent is the caller saying more")
