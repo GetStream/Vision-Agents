@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -360,6 +361,10 @@ type Server struct {
 	mcpEvents     *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
+	// Stream, and how long to wait before each read. Tests replace both.
+	readCallStats  readCallStats
+	callStatsWaits []time.Duration
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -499,6 +504,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		eventForwarder:     options.EventForwarder,
 		mcpEvents:          options.MCPEvents,
 		episodes:           options.Episodes,
+		readCallStats:      streamCallStats,
+		callStatsWaits:     slices.Clone(defaultCallStatsWaits),
 		slackApps:          options.SlackApps,
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,

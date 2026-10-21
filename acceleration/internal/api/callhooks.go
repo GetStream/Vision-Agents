@@ -24,10 +24,12 @@ const signatureHeader = "X-Signature"
 // epoch nanoseconds and writes RFC 3339, so a delivery carrying one format fails to parse
 // as the other and would be refused as though it were unsigned. Nothing here needs a
 // timestamp off the wire — a call event arrives while the phone is still ringing, so when it
-// was received is when it started — and the fields that are needed are three strings.
+// was received is when it started — and the fields that are needed are a few strings.
 type callEvent struct {
 	CallCid string `json:"call_cid"`
-	Call    struct {
+	// SessionID is Stream's own session of the call, which its call stats are kept under.
+	SessionID string `json:"session_id"`
+	Call      struct {
 		// Custom is whatever was put on the Stream call. Stream takes arbitrary JSON here.
 		Custom map[string]any `json:"custom"`
 		// Session lists who is in the call, which is where the caller's number is.
@@ -92,8 +94,13 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
+		// Asked before the release, which deletes what marks a placed call.
+		ended, phoneCall := s.endedPhoneCall(r, origin, event)
 		s.releaseEndedCall(r, origin, event)
 		s.endCallEpisodes(r, origin, event)
+		if phoneCall {
+			s.logCallSites(ended)
+		}
 
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
