@@ -136,10 +136,17 @@ func (s *SessionSuite) startOn(router *Router, providers ...string) *Session {
 func (s *SessionSuite) failed(router *Router) *Session {
 	session := s.startOn(router, s.refusing+"/live")
 	s.Require().Equal(s.refusing, session.Provider())
+	deadline := time.After(5 * time.Second)
 	for {
 		s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
-		if _, failed := (<-session.Events()).(stt.Error); failed {
-			return session
+		select {
+		case event := <-session.Events():
+			if _, failed := event.(stt.Error); failed {
+				return session
+			}
+		case <-deadline:
+			s.FailNow("the provider never failed")
+			return nil
 		}
 	}
 }
