@@ -262,11 +262,11 @@ working. What the router writes is what it renders:
   an `AIToolApprover` whose `decide` is `session.decide`. On a call there is no channel; show
   `session.approvals` with `AIToolApprovalCard`.
 - A connector call that waits for the person to sign in is `awaiting_authorization` with an
-  `authorization`: `AIToolAuthorizationView`, shown when the `AIToolApprover` has an
+  `authorization`, which `AIToolAuthorizationView` shows when the `AIToolApprover` has an
   `AIToolAuthorizer`. Its `callbackScheme` is the scheme of the session's
   `SessionOptions.returnURL` (the app's own, in reverse domain form), and its `decline` is
-  `session.declineLogin`. The view opens `authorization.launchURL` (the page with the handoff
-  token in its fragment) in a web authentication sheet; the router updates the step once the
+  `session.declineLogin`. The view opens `authorization.launchURL`, the page with the handoff
+  token in its fragment, in a web authentication sheet. The router updates the step once the
   provider has answered, and the call runs in the same reply. A session made without a
   `returnURL` sends the sign-in back to the dashboard, and the sheet never comes back.
 - `ai_indicator.update` and `.clear` say what the agent is doing before the answer starts:

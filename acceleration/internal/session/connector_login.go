@@ -128,9 +128,15 @@ type login struct {
 	connectedBefore *time.Time
 	// opened holds the binding's routes once the login is made. Nil before.
 	opened *dispatcher
-	// held are the calls waiting for the person to answer the consent on their step, by call
-	// id, each sent how it ended.
-	held map[string]chan string
+	// held are the calls waiting for the person to answer a consent on their step, by call id.
+	held map[string]waiting
+}
+
+// waiting is a call waiting for the person to answer the consent of authorizationID, which is
+// sent how it ended.
+type waiting struct {
+	authorizationID string
+	answer          chan string
 }
 
 // maxBegun bounds the attempts a login remembers. Each lives ten minutes
@@ -138,7 +144,7 @@ type login struct {
 // as many asking replies (conversation.maxAsked).
 const maxBegun = 10
 
-// loginPoll is how often a call waiting for a login reads its connection again: a consent
+// loginPoll is how often a call waiting for a login reads its connection again. A consent
 // finished on another router is never handed back to this one (ConnectorConsentFinished), so
 // the store is the only place it shows.
 const loginPoll = 3 * time.Second
@@ -310,9 +316,10 @@ func (d *dispatcher) openConnected(ctx context.Context, l *login) bool {
 	return false
 }
 
-// waitForLogin holds the call until the person answers the consent on its step. Connected, it
-// carries on with the binding the login opened; declined, expired or failed, the model is told
-// so. A turn that ends first, interrupted or closed, ends the call.
+// waitForLogin holds the call until the person answers the consent on its step. Once they
+// connect, it carries on with the binding the login opened, and when the consent is declined,
+// expires or fails, the model is told so. A turn that ends first, interrupted or closed, ends
+// the call.
 func (d *dispatcher) waitForLogin(ctx context.Context, l *login, callID string, answer <-chan string, expires time.Time) (*dispatcher, string, error) {
 	defer func() {
 		l.mu.Lock()
@@ -392,8 +399,8 @@ func connectedSince(now, before *time.Time) bool {
 
 // askToLogIn shows the caller a consent for their own connection on the reply being written,
 // and on the step of callID, which then waits for their answer on the channel it returns.
-// Without a channel, what the model reads instead: it names no URL and no token, which are
-// for the person. l.mu is held.
+// Without a channel it returns what the model reads instead, which names no URL and no token,
+// since those are for the person. l.mu is held.
 //
 // The config is read first, as the dispatcher does before every call (recheck), so a binding
 // the config no longer declares as the caller's own begins no consent. A second call in the
@@ -428,9 +435,9 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login, callID string) (c
 	}
 	answer := make(chan string, 1)
 	if l.held == nil {
-		l.held = map[string]chan string{}
+		l.held = map[string]waiting{}
 	}
-	l.held[callID] = answer
+	l.held[callID] = waiting{authorizationID: consent.AuthorizationID, answer: answer}
 	return answer, ""
 }
 
@@ -603,12 +610,12 @@ func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connect
 		}
 		opened := d.openLogin(ctx, l, connectionID)
 		handed := 0
-		for _, answer := range l.held {
+		for _, call := range l.held {
 			if !opened {
 				break
 			}
 			select {
-			case answer <- persistent.AuthorizationConnected:
+			case call.answer <- persistent.AuthorizationConnected:
 				handed++
 			default:
 			}
@@ -620,8 +627,8 @@ func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connect
 	return "", false, 0
 }
 
-// loginEndedWithout ends the wait of the calls waiting for the consent of this attempt, for this
-// connection, as status says: the consent ended without connecting, and the attempt is spent,
+// loginEndedWithout ends, as status says, the wait of the calls waiting for this attempt's
+// consent on this connection. The consent ended without connecting and the attempt is spent,
 // so a call after this begins another. It reports false when none of d's logins began it.
 func (d *dispatcher) loginEndedWithout(authorizationID, connectionID, status string) bool {
 	if d.logins == nil {
@@ -636,9 +643,13 @@ func (d *dispatcher) loginEndedWithout(authorizationID, connectionID, status str
 		if l.last.AuthorizationID == authorizationID {
 			l.last = Consent{}
 		}
-		for _, answer := range l.held {
+		// A call of a later reply may wait on a newer consent, which is still open.
+		for _, call := range l.held {
+			if call.authorizationID != authorizationID {
+				continue
+			}
 			select {
-			case answer <- status:
+			case call.answer <- status:
 			default:
 			}
 		}
@@ -656,11 +667,11 @@ func (d *dispatcher) declineLogin(callID string) bool {
 	}
 	for _, l := range d.logins.byAlias {
 		l.mu.Lock()
-		answer, ok := l.held[callID]
+		call, ok := l.held[callID]
 		l.mu.Unlock()
 		if ok {
 			select {
-			case answer <- persistent.AuthorizationDeclined:
+			case call.answer <- persistent.AuthorizationDeclined:
 			default:
 			}
 			return true
@@ -719,9 +730,9 @@ func (m *Manager) ConnectorConsentFinished(ctx context.Context, customerID, conn
 }
 
 // ConnectorConsentEnded hands a consent the router's callback ended without connecting back to
-// the session that asked for it in its conversation, as status says (declined for one the
-// person refused at the provider, failed otherwise): its calls waiting for the login stop
-// waiting, rather than wait out an attempt nobody can finish any more.
+// the session that asked for it in its conversation. Its calls waiting for the login stop
+// waiting with status, declined when the person refused at the provider and failed otherwise,
+// rather than wait out an attempt nobody can finish any more.
 func (m *Manager) ConnectorConsentEnded(customerID, connectionID, authorizationID, status string) {
 	m.mu.Lock()
 	held := make([]*Session, 0, len(m.sessions))
@@ -738,8 +749,8 @@ func (m *Manager) ConnectorConsentEnded(customerID, connectionID, authorizationI
 	}
 }
 
-// DeclineLogin ends the wait of a connector call for the person's login, as they declined it:
-// the call runs nothing, and the model is told they did not connect. It reports whether the
+// DeclineLogin ends the wait of a connector call for the person's login, as they declined it.
+// The call runs nothing, and the model is told they did not connect. It reports whether the
 // call was waiting.
 func (s *Session) DeclineLogin(callID string) bool {
 	return s.connectors != nil && s.connectors.declineLogin(callID)

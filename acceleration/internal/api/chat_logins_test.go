@@ -388,10 +388,9 @@ func (s *ChatLoginsSuite) TestAReopenedChatUsesTheConnectionTheLoginChose() {
 	s.Equal(1, attempts, "no second consent")
 }
 
-// TestAConsentFinishedWithoutAHandBackIsPickedUpByTheWaitingCall: the connection the chat
-// asked about is connected by a consent the session did not begin (as one that finished on
-// another router is never handed back here). The call waiting for the login reads the
-// connection again and runs the tool on it, with no second consent from the chat.
+// The connection the chat asked about is connected by a consent the session did not begin, as
+// one that finished on another router is never handed back here. The call waiting for the login
+// reads the connection again and runs the tool on it, with no second consent from the chat.
 func (s *ChatLoginsSuite) TestAConsentFinishedWithoutAHandBackIsPickedUpByTheWaitingCall() {
 	connector, grant := s.connector()
 	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
@@ -443,10 +442,10 @@ func (s *ChatLoginsSuite) TestANewChatUsesTheCallersOneConnectedConnection() {
 	s.Equal(1, attempts, "no second consent")
 }
 
-// TestAReconnectThatComesBackWithAnotherAccountIsRefused: a new chat asks on the caller's
-// connection, which needs reauthorization, and the person consents as another account. T17
-// keeps the old grant, and the chat does not use the connection: the call that waited for the
-// login ends, and the model is told it did not go through.
+// A new chat asks on the caller's connection, which needs reauthorization, and the person
+// consents as another account. T17 keeps the old grant, and the chat does not use the
+// connection. The call that waited for the login ends, and the model is told it did not go
+// through.
 func (s *ChatLoginsSuite) TestAReconnectThatComesBackWithAnotherAccountIsRefused() {
 	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.CommaScopes)
 	connector, grant := s.connectorWith(`
@@ -492,9 +491,8 @@ identity: [team_id, user_id]
 	s.Equal(1, s.connectionsOf(s.client, connector))
 }
 
-// TestADeclinedLoginEndsTheCallWithoutRunningIt: the person answers the step with "Not now",
-// a tool_approval that does not allow it. The call ends at once, the model is told they
-// declined, and nothing reaches the provider.
+// The person answers the step with "Not now", a tool_approval that does not allow it. The call
+// ends at once, the model is told they declined, and nothing reaches the provider.
 func (s *ChatLoginsSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
 	connector, grant := s.connector()
 	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
@@ -765,8 +763,8 @@ func (s *ChatLoginsSuite) attemptKind(id string) string {
 
 // loginOn is the first connector_authorization attachment with status a conversation_updated
 // frame on events carries. A login not finished yet is also on the step of the call that asked
-// for it, which waits for the person: the same launch page and handoff token, and no tool_ran
-// until they answer.
+// for it, with the same launch page and handoff token, and that call sends no tool_ran until
+// the person answers.
 func (s *ChatLoginsSuite) loginOn(events *websocket.Conn, status string) map[string]any {
 	var found, step map[string]any
 	s.Require().NoError(events.SetReadDeadline(time.Now().Add(settleFor)))
@@ -779,7 +777,7 @@ func (s *ChatLoginsSuite) loginOn(events *websocket.Conn, status string) map[str
 				found = login
 			}
 			if waiting := waitingStepIn(frame); waiting != nil {
-				step = waiting
+				step, _ = waiting["authorization"].(map[string]any)
 			}
 		case "tool_ran":
 			s.NotEqual(loginCallTool, frame["tool"], "the call waits for the login")
@@ -799,13 +797,8 @@ func (s *ChatLoginsSuite) waitingCallOn(events *websocket.Conn) string {
 	for {
 		var frame map[string]any
 		s.Require().NoError(events.ReadJSON(&frame))
-		message, _ := frame["message"].(map[string]any)
-		parts, _ := message["parts"].([]any)
-		for _, part := range parts {
-			found, _ := part.(map[string]any)
-			if frame["type"] == "conversation_updated" && found["name"] == loginCallTool && found["status"] == "awaiting_authorization" {
-				return found["id"].(string)
-			}
+		if step := waitingStepIn(frame); frame["type"] == "conversation_updated" && step != nil {
+			return step["id"].(string)
 		}
 	}
 }
@@ -822,16 +815,15 @@ func stepIn(frame map[string]any, id string) map[string]any {
 	return nil
 }
 
-// waitingStepIn is the authorization on the step of loginCallTool waiting for the person to
-// sign in, in a conversation_updated frame, or nil.
+// waitingStepIn is the step of loginCallTool waiting for the person to sign in, in a
+// conversation_updated frame, or nil.
 func waitingStepIn(frame map[string]any) map[string]any {
 	message, _ := frame["message"].(map[string]any)
 	parts, _ := message["parts"].([]any)
 	for _, part := range parts {
 		found, _ := part.(map[string]any)
 		if found["name"] == loginCallTool && found["status"] == "awaiting_authorization" {
-			authorization, _ := found["authorization"].(map[string]any)
-			return authorization
+			return found
 		}
 	}
 	return nil

@@ -150,17 +150,17 @@ A `fixed` binding names `connection.connection_id` and pins each tool's `schema_
 A `session` binding may grant a tool by name alone.
 
 Test it in **Playground**. For a `session` binding the end user may have no connection yet.
-The call then waits for them to sign in, on its own `ai_tool_call` step
-(`awaiting_authorization`, with an `authorization`: `provider`, `title`, `url`, `handoff_token`,
-`expires_at`), and the reply also carries a `connector_authorization` card, which the dashboard
-renders. **Connect** opens the consent popup; once they consent, the same call runs in the same
-reply. `tool_approval` with only the `tool_call_id` and `allowed: false` declines it, and a
-consent refused, failed or not finished in ten minutes ends it: the model is told, and nothing
-runs. A native app opens `url#handoff_token=<handoff_token>` in its web authentication sheet,
-with the session's `return_url` its own scheme; on iOS that is StreamChatAI's
-`AIToolAuthorizationView` (`examples/voice_agents/swift_assistant` does it for Gmail and Linear).
-A spoken turn on a call has no reply to show it on, so by voice the binding answers that it is
-not available.
+The call then waits for them to sign in on its own `ai_tool_call` step, which is
+`awaiting_authorization` and carries an `authorization` with the `provider`, `title`, `url`,
+`handoff_token` and `expires_at`. The reply also carries a `connector_authorization` card, which
+the dashboard renders. **Connect** opens the consent popup, and once they consent the same call
+runs in the same reply. A `tool_approval` with only the `tool_call_id` and `allowed: false`
+declines it, and a consent that is refused, fails or is not finished in ten minutes ends it.
+Either way the model is told, and nothing runs. A native app opens
+`url#handoff_token=<handoff_token>` in its web authentication sheet, with its own scheme as the
+session's `return_url`. On iOS that is StreamChatAI's `AIToolAuthorizationView`, which
+`examples/voice_agents/swift_assistant` uses for Gmail and Linear. A spoken turn on a call has
+no reply to show it on, so by voice the binding answers that it is not available.
 
 For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the

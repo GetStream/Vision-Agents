@@ -157,8 +157,8 @@ func signIn() Authorization {
 	}
 }
 
-// TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConnected: the step is shown whatever
-// visible_tools says, addressed to the person who asked, and goes on running once they sign in.
+// The step is shown whatever visible_tools says, addressed to the person who asked, and goes on
+// running once they sign in.
 func (s *DisplaySuite) TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConnected() {
 	c := s.open("on_call")
 	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
@@ -188,7 +188,7 @@ func (s *DisplaySuite) TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConn
 	s.Equal("completed", current(c).Parts[0].Status)
 }
 
-// TestADeclinedSignInCancelsTheCallsStep: the call never ran, whatever its result says.
+// A declined call never ran, whatever its result says.
 func (s *DisplaySuite) TestADeclinedSignInCancelsTheCallsStep() {
 	c := s.open("on_call")
 	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
@@ -206,8 +206,8 @@ func (s *DisplaySuite) TestADeclinedSignInCancelsTheCallsStep() {
 	s.NotNil(part.FinishedAt)
 }
 
-// TestASignInIsAskedOnlyOfTheConversationsOwnerForACallOfTheReply: whoever reads the step
-// first can hand the consent off, as with AskToConnect.
+// Whoever reads the step first can hand the consent off, so only the conversation's owner is
+// asked, as with AskToConnect, and only for a call the reply made.
 func (s *DisplaySuite) TestASignInIsAskedOnlyOfTheConversationsOwnerForACallOfTheReply() {
 	c := s.open("on_call")
 	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")

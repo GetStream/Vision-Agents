@@ -70,12 +70,12 @@ type Part struct {
 	FinishedAt    *time.Time     `json:"finished_at,omitempty"`
 }
 
-// Authorization is a sign-in a call waits for: the person opens URL in a browser and signs in
-// at the provider, and the call runs once they have. It holds no credential: URL is the
-// router's launch page, and HandoffToken binds it to the first browser that hands it off,
-// which a native app does by opening URL#handoff_token=<HandoffToken>.
+// Authorization is a sign-in a call waits for. The person opens URL in a browser and signs in
+// at the provider, and the call runs once they have. It holds no credential, since URL is the
+// router's launch page and HandoffToken only binds it to the first browser that hands it off.
+// A native app hands it off by opening URL#handoff_token=<HandoffToken>.
 type Authorization struct {
-	// Type is how they sign in: oauth, a consent at the provider.
+	// Type is how they sign in, oauth for a consent at the provider.
 	Type string `json:"type"`
 	// Provider is the connector, and ProviderName what people call it.
 	Provider     string `json:"provider"`
@@ -269,7 +269,7 @@ func decided(m *Message, id string, allowed bool, summary string, now time.Time)
 }
 
 // AwaitAuthorization has the call id of the reply being written wait for owner to sign in,
-// with found on its step, which is shown whatever the agent config shows: somebody is
+// with found on its step. The step is shown whatever the agent config shows, since somebody is
 // waiting on it. It reports false when owner cannot be asked here (CanAskToConnect), or the
 // reply made no such call.
 func (c *Conversation) AwaitAuthorization(owner, id string, found Authorization) bool {
@@ -306,9 +306,9 @@ func (c *Conversation) AwaitAuthorization(owner, id string, found Authorization)
 	return true
 }
 
-// AuthorizationEnded settles the sign-in the call id waits for, as status says: connected, the
-// call runs; declined, expired or failed, it is cancelled and never runs. It reports whether
-// the call was waiting.
+// AuthorizationEnded settles the sign-in the call id waits for. Once connected the call runs,
+// and when the sign-in was declined, expired or failed it is cancelled and never runs. It
+// reports whether the call was waiting.
 func (c *Conversation) AuthorizationEnded(id, status string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -639,22 +639,26 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 ### A tool call waits for the person to sign in, and carries on once they have
 
 When the agent calls a connector bound as each person's own (`connection.type: session`) that
-the person has not connected, the call no longer answers "press the button" and ends the reply.
-It waits on its own `ai_tool_call` step, `awaiting_authorization`, with an `authorization`:
-`type` (`oauth`), `provider`, `provider_name`, `title`, `message`, `url`, `handoff_token` and
-`expires_at`. Once the person signs in, the same call runs in the same reply, on their account.
-`tool_approval` naming only the `tool_call_id`, with `allowed: false`, declines it; a consent the
-person refused at the provider, one that came back with another account, or one not finished in
-ten minutes ends it too (`authorization.status` `declined`, `failed` or `expired`), and the agent
-is told so. The `connector_authorization` attachment is still written for the clients that
-render it. This also fixes the chat that carried on after a login: its follow-up made the same
-call again, which the agent answered with the earlier "not connected" rather than running it.
+the person has not connected, the call now waits for them to sign in, instead of telling them to
+press a button and ending the reply. Its `ai_tool_call` step is `awaiting_authorization` and
+carries an `authorization` with the `type` (`oauth`), `provider`, `provider_name`, `title`,
+`message`, sign-in `url`, `handoff_token` and `expires_at`. Once the person signs in, the same
+call runs in the same reply, on their account.
+
+A `tool_approval` that names only the `tool_call_id`, with `allowed` false, declines the sign-in.
+A consent refused at the provider, one that came back with another account, and one not
+finished in ten minutes end the call too, and `authorization.status` says which (`declined`,
+`failed` or `expired`). The agent is told either way. The `connector_authorization` attachment
+is still written for the clients that render it.
+
+This also fixes the chat that carried on after a login. Its follow-up made the same call again,
+and the agent answered it with the earlier "not connected" rather than running it.
 
 Swift has `SessionOptions.returnURL` and `AgentSession.declineLogin`, and Stream's
-`AIToolAuthorizationView` shows the sign-in in a web authentication sheet, given an
-`AIToolAuthorizer` on the `AIToolApprover`. The Swift assistant connects Linear and Gmail this
-way; its Gmail button, and its backend's routes to start, read and delete the Gmail connection,
-are gone.
+`AIToolAuthorizationView` shows the sign-in in a web authentication sheet when the
+`AIToolApprover` has an `AIToolAuthorizer`. The Swift assistant connects Linear and Gmail this
+way, so its Gmail button is gone, and so are its backend's routes to start, read and delete the
+Gmail connection.
 
 ### An agent config sets the guide its calls are reviewed by
 

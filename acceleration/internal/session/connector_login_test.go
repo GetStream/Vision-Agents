@@ -715,9 +715,8 @@ func (s *ConnectorLoginSuite) persisted(spec Spec) Spec {
 	return spec
 }
 
-// TestACallWaitsForTheLoginOnItsStepAndRunsOnceConnected: the consent is shown on the call's
-// own step, the call waits, and once the person connects it runs on their account and answers
-// as though they had been connected all along.
+// The consent is shown on the call's own step and the call waits. Once the person connects, it
+// runs on their account and answers as though they had been connected all along.
 func (s *ConnectorLoginSuite) TestACallWaitsForTheLoginOnItsStepAndRunsOnceConnected() {
 	mine := s.pending("alice", "primary")
 	expires := time.Now().Add(10 * time.Minute).UTC()
@@ -744,8 +743,8 @@ func (s *ConnectorLoginSuite) TestACallWaitsForTheLoginOnItsStepAndRunsOnceConne
 	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
 }
 
-// TestADeclinedLoginEndsTheCallWithoutRunningIt: "Not now" answers the call at once, with
-// words for the model and nothing sent to the provider.
+// "Not now" answers the call at once, with words for the model and nothing sent to the
+// provider.
 func (s *ConnectorLoginSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
 	mine := s.pending("alice", "primary")
 	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
@@ -766,9 +765,9 @@ func (s *ConnectorLoginSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
 	}, 300*time.Millisecond, 50*time.Millisecond, "nothing reached the provider")
 }
 
-// TestAConsentThatEndsWithoutConnectingEndsTheCall: the provider refused, or the person came
-// back as another account. The attempt is spent, so the call stops waiting, and the next call
-// begins another consent rather than wait on that one.
+// The provider refused, or the person came back as another account. The attempt is spent, so
+// the call stops waiting, and the next call begins another consent rather than wait on that one.
+// The old consent failing again later leaves the call waiting on the new one alone.
 func (s *ConnectorLoginSuite) TestAConsentThatEndsWithoutConnectingEndsTheCall() {
 	mine := s.pending("alice", "primary")
 	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
@@ -784,15 +783,17 @@ func (s *ConnectorLoginSuite) TestAConsentThatEndsWithoutConnectingEndsTheCall()
 	s.Contains(got.said, `"status":"failed"`)
 	s.Equal(persistent.AuthorizationFailed, s.endedOf("call-1"))
 
+	s.begun.AuthorizationID = "attempt-alice-2"
 	again := s.callInBackground(s.ctx, d, "call-2", "crm__call_tool", `{"tool":"whoami"}`)
 	s.Require().Eventually(func() bool { return s.stepOf("call-2") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(2, s.begins, "a spent attempt is not shown again")
+	s.True(d.loginEndedWithout("attempt-alice", mine, persistent.AuthorizationFailed))
+	s.Never(func() bool { return len(again) > 0 }, 200*time.Millisecond, 20*time.Millisecond, "the new consent is still open")
 	s.True(d.declineLogin("call-2"))
-	s.answerOf(again)
+	s.Contains(s.answerOf(again).said, `"status":"declined"`)
 }
 
-// TestALoginNotFinishedInTimeEndsTheCall: the consent lives ten minutes in production; once it
-// is spent, the call stops waiting.
+// A consent lives ten minutes in production, and once that is spent the call stops waiting.
 func (s *ConnectorLoginSuite) TestALoginNotFinishedInTimeEndsTheCall() {
 	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM",
 		ExpiresAt: time.Now().Add(300 * time.Millisecond)}
@@ -805,8 +806,8 @@ func (s *ConnectorLoginSuite) TestALoginNotFinishedInTimeEndsTheCall() {
 	s.Equal(persistent.AuthorizationExpired, s.endedOf("call-1"))
 }
 
-// TestALoginFinishedOnAnotherRouterIsPickedUpWhileTheCallWaits: the callback ran elsewhere,
-// so nothing is handed back here; the waiting call reads the connection again and carries on.
+// The callback ran on another router, so nothing is handed back here. The waiting call reads
+// the connection again and carries on.
 func (s *ConnectorLoginSuite) TestALoginFinishedOnAnotherRouterIsPickedUpWhileTheCallWaits() {
 	mine := s.pending("alice", "primary")
 	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
@@ -824,8 +825,8 @@ func (s *ConnectorLoginSuite) TestALoginFinishedOnAnotherRouterIsPickedUpWhileTh
 	s.False(handedBack, "a hand-back that arrives after is not run again")
 }
 
-// TestATurnThatEndsStopsTheWait: an interruption, or the session closing, ends the call rather
-// than leave it waiting out the consent.
+// An interruption, or the session closing, ends the call rather than leave it waiting out the
+// consent.
 func (s *ConnectorLoginSuite) TestATurnThatEndsStopsTheWait() {
 	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM",
 		ExpiresAt: time.Now().Add(10 * time.Minute)}
@@ -843,7 +844,7 @@ func (s *ConnectorLoginSuite) TestATurnThatEndsStopsTheWait() {
 }
 
 // held is a dispatcher for alice's crm binding whose conversation shows the consent on the
-// steps of its calls, which then wait for her: s.steps records what each step was shown, and
+// steps of its calls, which then wait for her. s.steps records what each step was shown, and
 // s.ended how each one's sign-in ended.
 func (s *ConnectorLoginSuite) held() *dispatcher {
 	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))

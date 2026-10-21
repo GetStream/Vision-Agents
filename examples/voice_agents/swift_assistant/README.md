@@ -47,9 +47,8 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-takes `stream-chat-swift` from a checkout beside this repository, `../stream-chat-swift`, on its
-`add/ai-tool-authorization` branch, because the AI components it uses (`AIConversationView`,
-`AIToolAuthorizationView`) are not in a released `StreamChatAI` yet.
+takes `stream-chat-swift` from its `add/ai-tool-authorization` branch, because the sign-in view
+it uses (`AIToolAuthorizationView`) is not on `develop` or in a released `StreamChatAI` yet.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, `sdks/swift/core`, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
@@ -58,43 +57,45 @@ and `INWORLD_API_KEY` for a call. Web search needs one of `EXA_API_KEY`, `TAVILY
 `PERPLEXITY_API_KEY`; without one the agent is never offered the tool, and only the router's
 log says so.
 
-## Connected accounts: Gmail and Linear
+## Gmail and Linear
 
 The agent binds `gmail` and `linear` as each person's own (`connectors:` in `agent.yaml`).
 Ask "what are my most important Linear tickets?" before Linear is connected, and the agent's
-Linear call waits on a sign-in shown on its step in the reply, with Connect and Not now:
+Linear call waits for you to sign in. Its step in the reply asks you to connect Linear, with
+Connect and Not now.
 
-1. **Connect** opens the router's sign-in page in a web authentication sheet, with the handoff
-   token in its fragment. The person signs in at Linear, and the router stores the grant and
-   hands the sheet back to the app's own scheme, `io.getstream.visionagents.swiftassistant:/connected`,
-   which every new conversation names as its session's `return_url` (the router takes one only
-   in reverse domain form, RFC 8252 section 7.1).
-2. The call that waited carries on in the same reply, on the person's own account, and the
-   agent answers with the list. Every conversation after that uses the account with no sign-in.
-3. **Not now** ends the call without it, and the agent says so. So does a sign-in the person
-   refuses at Linear, or one that is not finished within ten minutes.
+Connect opens the router's sign-in page in a web authentication sheet, with the handoff token
+in its fragment. You sign in at Linear, the router stores the grant, and it hands the sheet back
+to the app's own scheme, `io.getstream.visionagents.swiftassistant:/connected`. Every new
+conversation names that as its session's `return_url`, and the router takes one only in reverse
+domain form (RFC 8252 section 7.1). The call that waited then carries on in the same reply, on
+your own account, and the agent answers with the list. Later conversations use the account with
+no sign-in.
 
-The credentials stay sealed in the router; the app never sees them. This is one mechanism for
-every connector: the router writes the sign-in on the call's `ai_tool_call` step
+Not now ends the call without it, and the agent says so. A sign-in refused at Linear, or one not
+finished within ten minutes, ends it the same way.
+
+The credentials stay sealed in the router, and the app never sees them. Every connector signs in
+this way, Gmail included. The router writes the sign-in on the call's `ai_tool_call` step
 (`awaiting_authorization`, with an `authorization`), StreamChatAI's `AIToolAuthorizationView`
-shows it when the `AIToolApprover` has an `AIToolAuthorizer`, and `AgentSession.declineLogin`
-is Not now. Gmail signs in the same way.
+shows it when the `AIToolApprover` has an `AIToolAuthorizer`, and Not now calls
+`AgentSession.declineLogin`.
 
 Google's Gmail MCP server searches, reads, labels and drafts, but cannot send, so sending is
 `send_email`, a tool on the phone that asks first and has the backend post to Gmail's REST API
 through the router's proxy for the same connection. Asked to send before Gmail is connected, it
 tells the agent to call a Gmail tool first, which asks for the sign-in.
 
-To try the sign-in again, delete the person's connection in the Volt dashboard (**Library ›
-Connectors › Connections**) or with `DELETE /v1/agents/connections/{id}`.
+To try the sign-in again, delete the person's connection in the Volt dashboard, under Library ›
+Connectors › Connections, or with `DELETE /v1/agents/connections/{id}`.
 
 What it takes, once, besides the router's `ROUTER_CONNECTORS_ENABLED=true`, `ROUTER_AUTH_KEK`
 and `ROUTER_PUBLIC_URL=http://localhost:8080` in the repo-root `.env` (restart the router after
 a change), and `go run ./configure` again, which binds both:
 
-- **Linear** needs nothing more. Its MCP server registers the router's client by itself
+- Linear needs nothing more, since its MCP server registers the router's client by itself
   (dynamic client registration).
-- **Gmail** needs a Google OAuth client. In a Google Cloud project, enable
+- Gmail needs a Google OAuth client. In a Google Cloud project, enable
   `gmail.googleapis.com` and `gmailmcp.googleapis.com`, and enroll the project in the
   [Workspace Developer Preview](https://developers.google.com/workspace/preview), which the
   Gmail MCP server is part of. Set up the consent screen with the `gmail.readonly` and
@@ -133,13 +134,13 @@ a change), and `go run ./configure` again, which binds both:
 - **Sources.** A reply lists what it read in `support_message.sources` only when a shown
   tool's result is a citations object, and the built-in search answers in prose, so a searched
   reply never carries any. Neither SDK nor `StreamChatAI` has a view for them yet either.
-- **Signing in on a call.** A call's words are written by its transcript, so there is no reply
-  to show a sign-in on: by voice, an account not connected yet is not available. Connect it in
-  writing first.
-- **Connecting again after closing the sheet midway.** The router hands a sign-in to the first
-  browser that opens it, so once its page has handed it off, Connect cannot open it again. Not
-  now and asking again begins a fresh one.
-- **Conversations from before this.** A session created without a `return_url` sends its
-  sign-ins back to the dashboard, and the sheet never comes back. Start a new chat.
+- A sign-in is not asked for on a call. A call's words are written by its transcript, so there
+  is no reply to show it on, and an account not connected yet is not available by voice.
+  Connect it in writing first.
+- Closing the sign-in sheet midway leaves its Connect button unable to open it again, because
+  the router hands a sign-in to the first browser that opens it. Not now and asking again
+  begins a fresh one.
+- A conversation from before this has no `return_url`, so its sign-ins go back to the dashboard
+  and the sheet never comes back. Start a new chat.
 - **Memory across conversations** needs `MEM0_API_KEY` on the router and a `memory` on the
   session, which `SessionOptions` has no field for.
