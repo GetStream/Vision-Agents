@@ -11,6 +11,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
+const poolKey = apiKeyEnvVar + "_1"
+
 type GemmaSuite struct {
 	suite.Suite
 }
@@ -77,6 +79,13 @@ func (s *GemmaSuite) TestWithoutAGemmaKeyTheBasetenKeyIsTheBearerToken() {
 	s.T().Setenv(basetenAPIKeyEnvVar, "baseten-key")
 
 	s.Equal("Bearer baseten-key", s.bearerSent(Options{}))
+}
+
+func (s *GemmaSuite) TestAPooledGemmaKeyIsTheBearerToken() {
+	s.T().Setenv(poolKey, "pooled-key")
+	s.T().Setenv(basetenAPIKeyEnvVar, "baseten-key")
+
+	s.Equal("Bearer pooled-key", s.bearerSent(Options{}))
 }
 
 func (s *GemmaSuite) TestAGivenKeyBeatsBothVariables() {

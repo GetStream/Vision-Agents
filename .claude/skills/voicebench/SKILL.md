@@ -25,7 +25,7 @@ Run the checks below from the repository root.
 Baseten, ElevenLabs v4 Turbo, GPT-6.1 Sol) and the benches use. The check prints names only:
 
 ```bash
-f=.env; [ -f benchmark/.env ] && f=benchmark/.env; echo "voicebench reads $f"; for k in STREAM_API_KEY STREAM_API_SECRET ELEVENLABS_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY GEMMA_BASE_URL BASETEN_API_KEY INWORLD_API_KEY GOOGLE_API_KEY; do v=$(grep -E "^$k=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"); [ -n "$v" ] && echo "ok       $k" || echo "MISSING  $k"; done; grep -qE '^GEMMA_BASE_URL=https://' "$f" || echo "BAD      GEMMA_BASE_URL is not an https URL"
+f=.env; [ -f benchmark/.env ] && f=benchmark/.env; echo "voicebench reads $f"; for k in STREAM_API_KEY STREAM_API_SECRET ELEVENLABS_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY GEMMA_BASE_URL GEMMA_API_KEY BASETEN_API_KEY INWORLD_API_KEY GOOGLE_API_KEY; do v=$(grep -E "^$k=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"); [ -n "$v" ] && echo "ok       $k" || echo "MISSING  $k"; done; grep -qE '^GEMMA_BASE_URL=https://' "$f" || echo "BAD      GEMMA_BASE_URL is not an https URL"
 ```
 
 **If any is missing, fetch the environment** with rocky, which writes every key the team keeps
@@ -47,10 +47,11 @@ only the ElevenLabs probe spends anything (three characters):
 
 ```bash
 key() { grep -E "^$1=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"; }
+gkey() { for k in GEMMA_API_KEY GEMMA_API_KEY_1 BASETEN_API_KEY BASETEN_API_KEY_1; do v=$(key $k); [ -n "$v" ] && { echo "${v%%,*}"; return; }; done; }
 curl -sS -o /dev/null -w "Deepgram   HTTP %{http_code}\n" -H "Authorization: Token $(key DEEPGRAM_API_KEY)" https://api.deepgram.com/v1/projects
 curl -sS -o /dev/null -w "OpenAI     HTTP %{http_code}\n" -H "Authorization: Bearer $(key OPENAI_API_KEY)" https://api.openai.com/v1/models
 curl -sS -o /dev/null -w "ElevenLabs HTTP %{http_code}\n" -H "xi-api-key: $(key ELEVENLABS_API_KEY)" -H 'Content-Type: application/json' -d '{"text":"Hi.","model_id":"eleven_flash_v2_5"}' "https://api.elevenlabs.io/v1/text-to-speech/VR6AewLTigWG4xSOukaG?output_format=pcm_16000"
-curl -sS -m 90 -o /dev/null -w "Gemma      HTTP %{http_code} in %{time_total}s\n" "$(key GEMMA_BASE_URL)/chat/completions" -H "Authorization: Bearer $(key BASETEN_API_KEY)" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}'
+curl -sS -m 90 -o /dev/null -w "Gemma      HTTP %{http_code} in %{time_total}s\n" "$(key GEMMA_BASE_URL)/chat/completions" -H "Authorization: Bearer $(gkey)" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}'
 ```
 
 All four should be `200`. What the others mean:
@@ -89,7 +90,7 @@ until it answers fast, the way the CI job does. A deployment scaled to zero take
 and `f` come from the checks above):
 
 ```bash
-for i in $(seq 1 40); do t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$(key GEMMA_BASE_URL)/chat/completions" -H "Authorization: Bearer $(key BASETEN_API_KEY)" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}'); echo "Gemma $t"; case "$t" in 200\ 0.*|200\ 1.*) break;; esac; sleep 15; done
+for i in $(seq 1 40); do t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$(key GEMMA_BASE_URL)/chat/completions" -H "Authorization: Bearer $(gkey)" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}'); echo "Gemma $t"; case "$t" in 200\ 0.*|200\ 1.*) break;; esac; sleep 15; done
 ```
 
 **Caller lines are cached.** Caller audio is ElevenLabs speech cached in `benchmark/cache/tts/`

@@ -136,14 +136,17 @@ jobs:
         if: startsWith(env.VOICEBENCH_MODEL || 'gemma/', 'gemma/')
         timeout-minutes: 12
         run: |
-          if [[ -z "$GEMMA_BASE_URL" || -z "$BASETEN_API_KEY" ]]; then
-            echo "::error::GEMMA_BASE_URL and BASETEN_API_KEY must be set: the agent runs on our Gemma deployment"
+          # The router's rule: GEMMA_API_KEY, else BASETEN_API_KEY; the first item of a comma list.
+          key="${GEMMA_API_KEY:-$BASETEN_API_KEY}"
+          key="${key%%,*}"
+          if [[ -z "$GEMMA_BASE_URL" || -z "$key" ]]; then
+            echo "::error::GEMMA_BASE_URL and GEMMA_API_KEY or BASETEN_API_KEY must be set: the agent runs on our Gemma deployment"
             exit 1
           fi
           answer="$RUNNER_TEMP/gemma.json"
           deadline=$((SECONDS + 600))
           until [[ "$(curl -sS -m 60 -o "$answer" -w '%{http_code}' "$GEMMA_BASE_URL/chat/completions" \
-              -H "Authorization: Bearer ${GEMMA_API_KEY:-$BASETEN_API_KEY}" -H 'Content-Type: application/json' \
+              -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
               -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}' \
               2>/dev/null)" == 200 ]]; do
             if (( SECONDS >= deadline )); then
