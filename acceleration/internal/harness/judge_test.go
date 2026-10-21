@@ -117,6 +117,7 @@ func (s *JudgeSuite) TestACompleteThoughtForTheAgentIsAnswered() {
 
 	s.Require().NoError(got.Err)
 	s.Equal(Respond, got.Disposition)
+	s.Equal(Primary, got.Ruler, "the judge has no model to fall back on")
 	s.Equal("A table for four at seven, please.", s.states[0]["heard"])
 }
 

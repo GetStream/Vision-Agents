@@ -52,6 +52,10 @@ type candidate struct {
 	Unfinished bool
 	// Ended says the transcriber marked the end of the turn, or never marks one.
 	Ended bool
+	// Final says the transcriber marked these words final.
+	Final bool
+	// OverAgent says the turn was put to the controller while the agent was talking.
+	OverAgent bool
 }
 
 // cadence decides when an evolving transcript has stayed unchanged long enough to act on.
@@ -515,6 +519,7 @@ func (c *cadence) emit(participantID string, generation int64) {
 		RevisedAt:    current.revisedAt,
 		ReadyAt:      time.Now(),
 		Ended:        current.ended || !c.marksEnds,
+		Final:        current.ended,
 	}
 	current.askedEnded = ready.Ended
 	c.mu.Unlock()

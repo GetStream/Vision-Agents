@@ -267,7 +267,7 @@ func (f *flow) run(asked *candidate) {
 
 	stopExpiry := context.AfterFunc(asked.ctx, func() { _ = stream.Close() })
 	defer stopExpiry()
-	f.consume(asked, stream)
+	f.consume(asked, stream, model.LLM())
 }
 
 // advance starts the newest waiting turn, or marks the controller idle.
@@ -426,7 +426,7 @@ func (f *flow) setModel(model *llmrouter.Session) {
 }
 
 // consume waits for one decision and reports it.
-func (f *flow) consume(asked *candidate, stream *llm.Stream) {
+func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
 	candidateID := asked.turn.ID
 	response, err := llm.Collect(stream)
 	if f.forget(candidateID) == nil {
@@ -453,6 +453,7 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream) {
 	}
 
 	answer, err := parseFlow(response.OutputText)
+	var ruler Ruler
 	if err != nil {
 		// Truncated JSON used to mean continue, which is how Gemini thinking ate the
 		// token budget and the caller talking over the agent never took the floor.
@@ -469,12 +470,19 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream) {
 		f.logger.Debug("flow controller answered",
 			"candidate", candidateID, "answer", response.OutputText,
 			"took_ms", response.TimeToFirstTokenMs)
+		// A stream is stamped by the provider that wrote it, and a hedge or a failover is
+		// another provider or model behind the same session.
+		ruler = Primary
+		if response.Provider != primary.Provider() || response.Model != primary.Model() {
+			ruler = Fallback
+		}
 	}
 	f.emitter.Send(Decided{
 		CandidateID: candidateID,
 		Disposition: answer.Disposition,
 		Floor:       answer.Floor,
 		TookMs:      took,
+		Ruler:       ruler,
 	})
 }
 

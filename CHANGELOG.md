@@ -634,6 +634,8 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+- Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601).
+
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 
 `metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
@@ -2386,6 +2388,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent no longer starts its reply over a caller who has started talking again: when the caller says more before any of the reply to their last turn has been heard, that reply is dropped unheard and the newer words are answered, with the earlier ones still in the history. A cough, "mm" or a lone "okay" leaves the reply to play, and once some of it has played, talking over it goes to the flow controller as before (AI-1601).
 - A live transcription the vendor refuses part way through, such as ElevenLabs's `unaccepted_terms`, goes on with the next model the session could use (the next in its `stt.providers`, or its target's next candidate), and with none that refused it. The session ended with one `error` and the agent's next audio could reopen it on the model that had just refused it. What the caller had said of the turn still open when the vendor refused is lost; what they say from then on is heard by the next model. `/v1/stt/stream` sends no `error` frame for a refusal another model takes over and goes on with its transcripts. With no other model left, the session ends with the one `error` it ended with before. A socket that drops, and an error the vendor goes on after, end the session or are passed on as before (AI-1587).
 - `/v1/stt/stream` says which model transcribes after a refusal hands the socket to the next one: another `started` frame naming its `provider` and `model`, the same shape as the first. Until now the caller learnt of the switch only from the `provider` on the next transcript. A socket no model refuses still sends one `started` (AI-1588).
 - A write to a vendor that has just refused the session no longer reaches the caller as an `error` frame on `/v1/stt/stream`, or as an `stt` failure in the agent's log, when the next model takes the session over: the caller hears only of the takeover. A write that fails with nothing from the vendor behind it still reaches the caller; one that fails behind a socket that dropped is told once, by the drop's own `error` frame. The router now logs each such takeover on `/v1/stt/stream` at INFO, with the model that refused, the model taking over and the vendor's reason (AI-1603, AI-1606).

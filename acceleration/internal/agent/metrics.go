@@ -62,4 +62,39 @@ var (
 		Name:      "agent_stt_finals_total",
 		Help:      "Transcripts with words in them that the transcriber settled",
 	}, []string{"provider"})
+	staleReplies = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_stale_replies_dropped_total",
+		Help:      "Replies to a caller's turn dropped before any of their audio went out, because the same caller said more",
+	})
+	// kind is the turn kind (turns.go), a fixed set.
+	talkedOver = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_replies_started_over_caller_total",
+		Help:      "Replies whose first audio went out while a caller was mid-utterance, by what started the reply",
+	}, []string{"kind"})
+	playedBeforeInterrupt = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "router",
+		Name:      "agent_played_before_interrupt_seconds",
+		Help:      "How long a reply had been going out, from its first published audio, when an interruption took the floor",
+		// 100 ms to 12.8 s: barge-in is ruled on within a second or two of a reply starting.
+		Buckets: prometheus.ExponentialBuckets(0.1, 2, 8),
+	}, []string{"kind"})
+	flowDecisions = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_flow_decisions_total",
+		Help:      "Rulings of the flow controller, by disposition and by whose answer was used",
+	}, []string{"disposition", "ruler"})
+	flowDecisionSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "router",
+		Name:      "agent_flow_decision_seconds",
+		Help:      "How long the flow controller took to rule, by whose answer was used",
+		// 50 ms to 12.8 s, past the controller's own deadlines (harness flowDeadline).
+		Buckets: prometheus.ExponentialBuckets(0.05, 2, 9),
+	}, []string{"ruler"})
+	settledOverAgent = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_settled_over_agent_total",
+		Help:      "Settled turns put to the flow controller while the agent was talking, by how many words, whether the transcriber marked them final, and what came of them",
+	}, []string{"words", "final", "action"})
 )

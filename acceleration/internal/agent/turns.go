@@ -213,6 +213,14 @@ func (t *turnTracker) ttsStarted(turnID string, at time.Time) {
 	}
 }
 
+// voiced reports whether any of a turn's reply has been sent to the voice.
+func (t *turnTracker) voiced(turnID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	current, ok := t.open[turnID]
+	return ok && !current.ttsAt.IsZero()
+}
+
 // firstAudio records the moment the first audio of a reply reached the edge, which is
 // what ends the participant's wait.
 func (t *turnTracker) firstAudio(turnID string, at time.Time) {
