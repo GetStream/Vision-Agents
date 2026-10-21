@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmsuite"
 )
@@ -19,12 +20,16 @@ type GemmaIntegrationSuite struct {
 }
 
 func TestGemmaIntegrationSuite(t *testing.T) {
+	// Requires needs every name it lists, and either key will do.
+	if keypool.Getenv(apiKeyEnvVar, basetenAPIKeyEnvVar) == "" {
+		t.Skip(apiKeyEnvVar + " or " + basetenAPIKeyEnvVar + " not set")
+	}
 	suite.Run(t, &GemmaIntegrationSuite{Suite: llmsuite.Suite{
 		New: func() llm.LLM {
 			provider, err := New(Options{})
 			require.NoError(t, err)
 			return provider
 		},
-		Requires: []string{apiKeyEnvVar, baseURLEnvVar},
+		Requires: []string{baseURLEnvVar},
 	}})
 }
