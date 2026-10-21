@@ -225,13 +225,13 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
     none of them;
   - any other host, a non-public address or a port other than 443: it refuses.
   A host both cover is a grant's. A config with `network: true` and no `allowed_domains`, or with
-  a `network_allow_list`, is refused when the session starts: the proxy reaches hosts by name
+  a `network_allow_list`, is refused when a session with a sandbox grant starts: the proxy reaches hosts by name
   only. Unverified until the staging E2E (AI-1663): that netleash sends the allowed hosts on to
   the proxy.
 - Sandbox code has root (`sudo` with no password, live probe 2026-10-21). No control inside the
   sandbox protects anything: code can change its env, its CA files and its routes. The controls
-  are the token, which stays in the router; Daytona's domain allow list; and the proxy's grant
-  check.
+  are the token, which stays in the router; Daytona's domain allow list, which forces every
+  connection through netleash (a route change as root: unverified); and the proxy's grant check.
 - A connection the proxy cannot get a token for just now (a provider outage) keeps its grant; a
   connection that needs a reconnect gives the sandbox nothing, and refuses a `required` binding.
 - Revocation through the proxy is immediate: it resolves the token on every request and keeps no
