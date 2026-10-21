@@ -1114,6 +1114,326 @@ func (s *ConverseSuite) TestAnAnnouncedMonologueIsNotAnsweredUntilItEnds() {
 	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
 }
 
+func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardOnALineOfItsOwn() {
+	// The caller's queued words shared a line with what they said next, which the agent
+	// let go of. That line is gone, so the queued words are heard under one of their own,
+	// not written over whatever line is open by the time the agent stops.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it six",
+	}, s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 8, Text: "hang on, the door",
+	}, s.quiet())
+	asked := s.converse.Settled(s.held(), s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: asked.Candidate.ID, Disposition: harness.Ignore, Floor: harness.Continue,
+	}, s.quiet())
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the queued turn was never heard")
+	heard := s.heard()[0]
+	s.Equal("make it six", heard.Text)
+	s.NotEmpty(heard.LineID)
+	s.NotEqual(queued.LineID, heard.LineID, "it was heard under the line let go of")
+}
+
+func (s *ConverseSuite) TestATurnQueuedInALineHeardSinceIsNotHeardAgain() {
+	// The line it waited in was heard with its words in it.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it six",
+	}, s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 8, Text: "and a high chair",
+	}, s.quiet())
+	asked := s.converse.Settled(s.held(), s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: asked.Candidate.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(queued.LineID, action.LineID)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the line was never heard")
+	s.Equal("make it six and a high chair", s.heard()[0].Text)
+	s.Never(func() bool { return len(s.heard()) > 1 }, 50*time.Millisecond, 5*time.Millisecond,
+		"the queued words were heard a second time")
+}
+
+// hearings is every Hearing reported so far.
+func (s *ConverseSuite) hearings() []Hearing {
+	var kept []Hearing
+	for _, event := range s.seen() {
+		if typed, ok := event.(Hearing); ok {
+			kept = append(kept, typed)
+		}
+	}
+	return kept
+}
+
+func (s *ConverseSuite) TestALineKeepsItsIdFromItsFirstWordsToWhenItIsHeard() {
+	// A watcher shown the words as they arrive is shown the settled line later, and the
+	// transcript stores it under the same id: matching them by their words is how a
+	// watcher drew one line twice.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a"}, s.quiet())
+	ready := s.settle("book a table", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the turn was never heard")
+
+	hearings := s.hearings()
+	s.Require().Len(hearings, 2)
+	line := hearings[0].LineID
+	s.Require().NotEmpty(line)
+	s.Equal(line, hearings[1].LineID, "a line's revisions are one line")
+	s.Equal(line, s.heard()[0].LineID, "the line is heard under the id it arrived as")
+
+	s.converse.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "for four"}, s.quiet())
+	s.eventually(func() bool { return len(s.hearings()) == 3 }, "the next words were never reported")
+	s.NotEqual(line, s.hearings()[2].LineID, "words after a heard line are a line of their own")
+}
+
+func (s *ConverseSuite) TestALineTheCallerCarriesOnWithIsGrownRatherThanStartedAgain() {
+	// "Woah." was heard and queued behind the reply, and the caller went on: "Woah. This is
+	// weird." The queued turn is dropped as grown, and its words are the start of the new
+	// ones, so they are one line, not "Woah." stored beside "Woah. This is weird."
+	s.build(DuplexOptions{})
+	ready := s.settle("Woah.", s.talking())
+	queued := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.talking())
+	s.Require().Equal([]ActionKind{ActQueue}, kinds(queued))
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the turn was never heard")
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "Woah. This is weird.",
+	}, s.quiet())
+	s.eventually(func() bool { return len(s.hearings()) == 2 }, "the words were never reported")
+
+	s.Equal(s.heard()[0].LineID, s.hearings()[1].LineID, "the line grows under the id it was heard as")
+	s.Equal("Woah. This is weird.", s.hearings()[1].Text, "a line carried on with is shown whole")
+}
+
+func (s *ConverseSuite) TestATurnWaitingOnTheAgentNamesTheLineItWasHeardAs() {
+	// A watcher says of the caller's line that it is answered once the agent finishes,
+	// which it can only do knowing which line the queued turn is.
+	s.build(DuplexOptions{})
+	s.overhears("okay wait make it six", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the queued turn was never heard")
+
+	line := s.heard()[0].LineID
+	s.Require().NotEmpty(line)
+	for _, decision := range s.decisions() {
+		if decision.Kind == string(ActQueue) || decision.Kind == string(ActAnswer) {
+			s.Equal(line, decision.LineID, decision.Kind+" names the line")
+		}
+	}
+}
+
+func (s *ConverseSuite) TestWhatIsSaidOverAnAnswerIsANewLineOfItsOwnWords() {
+	// A test call's caller asked about today, then about tomorrow while the agent worked
+	// on the answer. Flux sent both as one utterance, and the second line read as the
+	// first one changed.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 3,
+		Text: "What is it like today?",
+	}, s.quiet())
+	ready := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 3,
+		Text: "What is it like today? And tomorrow?",
+	}, s.quiet())
+	next := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.Equal("What is it like today? And tomorrow?", next.Text, "the agent hears all of it")
+	s.converse.Ruled(harness.Decided{
+		CandidateID: next.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the second line was never heard")
+
+	s.Equal("And tomorrow?", s.hearings()[len(s.hearings())-1].Text)
+	s.Equal("And tomorrow?", s.heard()[1].Text)
+	s.NotEqual(s.heard()[0].LineID, s.heard()[1].LineID)
+}
+
+func (s *ConverseSuite) TestWordsQueuedBehindTheAgentStayInTheirLine() {
+	// "Tell me" settled while the agent answered "Hi there." and was queued, then the
+	// caller went on in a run of speech of its own. Written over, the line lost it.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "Hi there.",
+	}, s.quiet())
+	ready := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "Hi there. Tell me",
+	}, s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "is it going to rain",
+	}, s.quiet())
+	s.eventually(func() bool {
+		hearings := s.hearings()
+		return hearings[len(hearings)-1].Text == "Tell me is it going to rain"
+	}, "the queued words were written over")
+	hearings := s.hearings()
+	s.Equal("Tell me", hearings[1].Text, "only the line heard before is a repeat")
+	s.Equal(hearings[1].LineID, hearings[len(hearings)-1].LineID)
+}
+
+func (s *ConverseSuite) TestTheTailOfAHeardLineSaidAgainIsNotRepeated() {
+	// The line heard ran across two runs of speech; the transcriber goes over the last of
+	// them on the way to more, and only that run is said again.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "Is this all working",
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "Wow. Okay.",
+	}, s.quiet())
+	ready := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2,
+		Text: "Wow. Okay. Can you explain the forecast?",
+	}, s.quiet())
+
+	s.eventually(func() bool {
+		hearings := s.hearings()
+		return hearings[len(hearings)-1].Text == "Can you explain the forecast?"
+	}, "the run of speech already heard was shown again")
+}
+
+func (s *ConverseSuite) TestWordsQueuedAndNeverHeardAreNoRepeat() {
+	// "Wait. Wait." was queued while the agent talked and dropped once the caller went
+	// on; the transcriber then sent it again in front of "Actually", and stripped as a
+	// repeat the line read "Actually," alone.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "Is it going to rain?",
+	}, s.quiet())
+	ready := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "Wait. Wait.",
+	}, s.talking())
+	s.Require().Equal(ActQueue, s.converse.Settled(s.held(), s.talking()).Kind)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "Wait. Wait. Actually,",
+	}, s.quiet())
+
+	s.eventually(func() bool {
+		hearings := s.hearings()
+		return hearings[len(hearings)-1].Text == "Wait. Wait. Actually,"
+	}, "words never heard were taken for a repeat")
+}
+
+func (s *ConverseSuite) TestALineKeepsTheWordsItOpenedWith() {
+	// "What" was heard on its own; the next run of speech opened "What... Amsterdam
+	// today." and was shown so, then lost its first word once the transcriber went
+	// back over the run: a line read as being rewritten under the caller.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "What",
+	}, s.quiet())
+	ready := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "What... Amsterdam today.",
+	}, s.talking())
+	s.Require().Equal(ActQueue, s.converse.Settled(s.held(), s.talking()).Kind)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2,
+		Text: "What... Amsterdam today. Is it going to rain",
+	}, s.quiet())
+
+	s.eventually(func() bool {
+		hearings := s.hearings()
+		return hearings[len(hearings)-1].Text == "What... Amsterdam today. Is it going to rain"
+	}, "the line lost the words it opened with")
+}
+
+func (s *ConverseSuite) TestAnIgnoredLineIsItsOwnWords() {
+	// "Do you think the" was heard; the transcriber went back over it on the way to the
+	// rest, which was ignored, and the ignored line read as both.
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 4, Text: "Do you think the",
+	}, s.quiet())
+	ready := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 4,
+		Text: "Do you think the pyramids were built by giants?",
+	}, s.quiet())
+	next := s.converse.Settled(s.held(), s.quiet()).Candidate
+	s.converse.Ruled(harness.Decided{
+		CandidateID: next.ID, Disposition: harness.Ignore, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.eventually(func() bool {
+		for _, decision := range s.decisions() {
+			if decision.Kind == string(ActIgnore) {
+				return decision.Text == "pyramids were built by giants?"
+			}
+		}
+		return false
+	}, "the ignored line repeated the one heard before it")
+}
+
+func (s *ConverseSuite) TestAnIgnoredLineIsLetGoByName() {
+	s.build(DuplexOptions{})
+	ready := s.settle("are you getting the door", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Ignore, Floor: harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool {
+		for _, decision := range s.decisions() {
+			if decision.Kind == string(ActIgnore) {
+				return true
+			}
+		}
+		return false
+	}, "the ignore was never reported")
+
+	for _, decision := range s.decisions() {
+		if decision.Kind == string(ActIgnore) {
+			s.Equal(s.hearings()[0].LineID, decision.LineID, "a watcher is told which line to drop")
+		}
+	}
+}
+
 func (s *ConverseSuite) TestAfterAProvisionalStopTheSettledWordsAreAnsweredOnce() {
 	asked := s.overhears("actually wait", s.talking())
 	stopped := s.converse.Ruled(harness.Decided{
@@ -1847,4 +2167,17 @@ func (s *ConverseSuite) TestWorkThatNeedsTheCallerAskedRecordsTheQuestion() {
 	back := s.decisions()[1]
 	s.Equal("Where are you starting from?", back.Text,
 		"the question is the useful half of what came back")
+}
+
+func TestWordsGoneBackOverAreJoinedOnce(t *testing.T) {
+	for _, tc := range []struct{ held, more, want string }{
+		{"When Wait. Wait.", "Wait. Wait.", "When Wait. Wait."},
+		{"Tell me", "is it going to rain", "Tell me is it going to rain"},
+		{"Tell me", "Tell me, is it going to rain", "Tell me, is it going to rain"},
+		{"make it six", "six people please", "make it six people please"},
+	} {
+		if got := joinOverlapping(tc.held, tc.more); got != tc.want {
+			t.Errorf("joinOverlapping(%q, %q) = %q, want %q", tc.held, tc.more, got, tc.want)
+		}
+	}
 }

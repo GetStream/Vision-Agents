@@ -399,6 +399,116 @@ func (s *CadenceSuite) TestWordsCarriedIntoANewUtteranceSurviveItsRevisions() {
 	s.Equal(saying, s.ready().Text)
 }
 
+func (s *CadenceSuite) TestTheTailOfACarriedTurnRestatedIsNotAnsweredAgain() {
+	// A test call answered "Is this all working Wow. Okay. Okay.", carried across two
+	// utterances, then heard the second utterance's "Wow. Okay. Okay." again as Flux went
+	// over it, talked over its own reply with it and answered it a second time.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "Is this all working",
+	})
+	s.ready()
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "Wow. Okay. Okay.",
+	})
+	s.Require().Equal("Is this all working Wow. Okay. Okay.", saying)
+	answered := s.ready()
+	s.Equal(int64(2), answered.Utterance, "a candidate says which run of speech it came from")
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	superseded, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "Wow. Okay. Okay.",
+	})
+
+	s.Empty(superseded)
+	s.Empty(saying, "the transcriber going over the words it added is not the caller saying them again")
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestGoingBackOverTheStartOfAnAnsweredUtteranceIsNotNew() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "wow okay okay",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "Wow. Okay.",
+	})
+
+	s.Empty(saying, "a revision that says less than the answered turn adds nothing")
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestAWordThatOnlyStartsLikeAnAnsweredOneIsHeard() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "is this working",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "I",
+	})
+
+	s.Equal("I", saying, `"I" does not open "is this working": words are compared whole`)
+}
+
+func (s *CadenceSuite) TestMoreSaidAfterAnAnsweredUtteranceSaysWhatItRepeats() {
+	// Flux sends a run of speech whole: the question answered, then what the caller
+	// said over the answer, as one revision of the same utterance.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 3,
+		Text: "What is the weather like in Amsterdam today?",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 3,
+		Text: "What is the weather like in Amsterdam today? What about tomorrow?",
+	})
+
+	s.Equal("What is the weather like in Amsterdam today? What about tomorrow?", saying,
+		"the turn is answered on everything the caller said")
+	repeats := s.cadence.Repeating("alice")
+	s.Equal("What is the weather like in Amsterdam today?", repeats)
+	s.Equal("What about tomorrow?", unrepeated(s.ready().Text, repeats))
+}
+
+func (s *CadenceSuite) TestTheSameWordsInANewUtteranceRepeatNothing() {
+	// The caller asking again is a line of its own, whole.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 3, Text: "Where is my order?",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 4, Text: "Where is my order? It is late.",
+	})
+
+	s.Empty(s.cadence.Repeating("alice"))
+}
+
+func TestWhatALineSaysWithoutWhatWasAlreadyHeard(t *testing.T) {
+	for _, tc := range []struct{ text, repeats, want string }{
+		{"Okay. Okay. Thanks.", "Okay.", "Okay. Thanks."},
+		{"What is it like today? And tomorrow?", "what is it like today", "And tomorrow?"},
+		{"Member ID ABC123456", "member id abc12345", "Member ID ABC123456"},
+		{"Hello there", "", "Hello there"},
+		{"Okay.", "Okay", ""},
+	} {
+		if got := unrepeated(tc.text, tc.repeats); got != tc.want {
+			t.Errorf("unrepeated(%q, %q) = %q, want %q", tc.text, tc.repeats, got, tc.want)
+		}
+	}
+}
+
 func (s *CadenceSuite) TestASameUtteranceCorrectionReplacesRatherThanConcatenates() {
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{

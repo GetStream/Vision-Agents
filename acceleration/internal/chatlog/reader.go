@@ -3,6 +3,7 @@ package chatlog
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"time"
 
@@ -37,6 +38,20 @@ type Spoken struct {
 	Agent bool
 	Text  string
 	At    time.Time
+	// ID is the stored message's id. A participant's line is stored under the line id it was
+	// heard as, which the session's live frames name too.
+	ID string
+	// Generating says the line is still being written: a reply still streaming, or words a
+	// participant is still saying, stored as they first were.
+	Generating bool
+	// TurnID is the turn a reply was written for, when it was written for one.
+	TurnID string
+	// Interrupted says the caller talked over the reply. Its text is what it was going to
+	// say, of which the caller heard the start.
+	Interrupted bool
+	// Purpose is why the agent said the line unasked, empty for an answer: a greeting, a
+	// check-in on a quiet caller, or an update on work still running.
+	Purpose string
 }
 
 // NewReaderFromClient reads through a client the caller built, which is how a test points
@@ -92,10 +107,23 @@ func (r *Reader) Transcript(ctx context.Context, read Read) ([]Spoken, error) {
 	said := make([]Spoken, 0, len(found.Messages))
 	for _, stored := range found.Messages {
 		text := conversation.WithoutTimings(stored.Text, stored.Custom)
+		interrupted, _ := stored.Custom[interruptedField].(bool)
+		if planned, ok := stored.Custom[interruptedTextField].(string); ok && text == "" && interrupted {
+			text = planned
+		}
 		if text == "" || stored.DeletedAt != nil {
 			continue
 		}
-		line := Spoken{Speaker: stored.User.ID, Text: text}
+		line := Spoken{Speaker: stored.User.ID, Text: text, ID: stored.ID, Interrupted: interrupted}
+		if generating, ok := stored.Custom[generatingField].(bool); ok {
+			line.Generating = generating
+		}
+		if turn, ok := stored.Custom[turnField].(string); ok {
+			line.TurnID = turn
+		}
+		if purpose, ok := stored.Custom[purposeField].(string); ok && slices.Contains(purposes, purpose) {
+			line.Purpose = purpose
+		}
 		if stored.CreatedAt.Time != nil {
 			line.At = *stored.CreatedAt.Time
 		}

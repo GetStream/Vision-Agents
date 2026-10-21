@@ -57,6 +57,10 @@ type Hearing struct {
 	Participant stt.Participant
 	Text        string
 	Language    string
+	// LineID names the line these words are, from the first of them until they are heard
+	// or let go. It is what the transcript stores the line under, so a watcher can tell
+	// the words still arriving and the stored line apart from a second one.
+	LineID string
 }
 
 func (Hearing) isAgentEvent() {}
@@ -66,11 +70,39 @@ func (Hearing) isAgentEvent() {}
 // acting on one would mean answering half a sentence.
 type Heard struct {
 	Participant stt.Participant
-	Text        string
-	Language    string
+	// Text is the line as the participant said it: without words a transcriber restated
+	// from the line before, and with any held from earlier in the same line in front. The
+	// words the turn is answered on can differ, and are Responding's Prompt.
+	Text     string
+	Language string
+	// LineID is the line the words were heard as while they arrived, which the transcript
+	// stores them under.
+	LineID string
 }
 
 func (Heard) isAgentEvent() {}
+
+// Said is words the agent speaks as they are, without asking the model: a greeting, or
+// any other line it was told to say. A voice reports it in place of a Responded, which is
+// the model's answer to somebody, so nothing waiting on an answer takes the greeting for
+// one. A conversation in writing has no voice and reports the line as Responded instead.
+// It is reported so a transcript has the line, and a watcher sees what the caller hears.
+type Said struct {
+	TurnID string
+	Text   string
+	// Purpose is what the line is for, PurposeGreeting for the call's opening and empty
+	// for any other line the agent was told to say.
+	Purpose string
+}
+
+// What a line the agent says unasked is for, as Said and Responded name it.
+const (
+	PurposeGreeting = "greeting"
+	PurposeCheckIn  = "checkin"
+	PurposeUpdate   = "update"
+)
+
+func (Said) isAgentEvent() {}
 
 // Decided is one judgement the conversation made about how to handle the call: whether
 // the caller had finished, whether what they said was meant for the agent, who keeps the
@@ -91,6 +123,10 @@ type Decided struct {
 	Text string
 	// LatencyMs is what the flow controller took to rule. Zero where nothing was asked.
 	LatencyMs float64
+	// LineID is the caller's line the judgement was about, when it was about one: the line
+	// an ignore lets go of, so a watcher drops the words it was showing, or the line a turn
+	// queued, held or answered was heard as.
+	LineID string
 }
 
 func (Decided) isAgentEvent() {}
@@ -132,6 +168,9 @@ type Responded struct {
 	PendingWork bool
 	TurnID      string
 	Text        string
+	// Purpose is why the agent said it unasked, empty for an answer: PurposeCheckIn or
+	// PurposeUpdate. A watcher tells the caller why the agent spoke up.
+	Purpose string
 	// TimeToFirstTokenMs is how long the participant waited for the model to start.
 	TimeToFirstTokenMs float64
 }

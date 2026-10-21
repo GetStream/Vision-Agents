@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -452,6 +453,8 @@ type stubTTS struct {
 	startOnce        sync.Once
 	// silent stops the stub producing audio, so a test can hold a turn open.
 	silent bool
+	// refuses, if set, is what every synthesis fails with.
+	refuses error
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -483,7 +486,7 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 		return errors.New("stub: not started")
 	}
 	s.said = append(s.said, request)
-	silent := s.silent
+	silent, refuses := s.silent, s.refuses
 	if request.Text != "" {
 		s.active[request.ID] = struct{}{}
 	}
@@ -492,6 +495,9 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 	}
 	s.mu.Unlock()
 
+	if refuses != nil {
+		return refuses
+	}
 	if silent {
 		return nil
 	}
@@ -4050,6 +4056,98 @@ func (s *AgentSuite) TestAnAgentThatLostItsVoiceMidReplyIsNoLongerTalking() {
 		"the agent was still talking in a voice it had lost")
 }
 
+func (s *AgentSuite) TestTheGreetingIsSaidAsTheGreeting() {
+	s.join(true)
+
+	s.Require().NoError(s.agent.Greet(s.ctx, "Northwind, how can I help?", false))
+
+	s.eventually(func() bool {
+		for _, event := range s.reported() {
+			if said, ok := event.(Said); ok && said.Purpose == PurposeGreeting {
+				return true
+			}
+		}
+		return false
+	}, "the greeting was never reported as the greeting")
+}
+
+func (s *AgentSuite) TestALineALostVoiceWasSayingIsReportedCutOff() {
+	// A greeting said in a voice out of quota was never heard, and a transcript kept it as
+	// still being said for the rest of the call.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.Require().NoError(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
+	var turn string
+	s.eventually(func() bool {
+		for _, event := range s.reported() {
+			if said, ok := event.(Said); ok {
+				turn = said.TurnID
+				return true
+			}
+		}
+		return false
+	}, "the greeting was never reported")
+
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+
+	s.eventually(func() bool {
+		for _, event := range s.reported() {
+			if cut, ok := event.(Interrupted); ok && cut.TurnID == turn {
+				return true
+			}
+		}
+		return false
+	}, "the line the lost voice was saying was never reported cut off")
+}
+
+func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {
+	// Reported before its sound, so a watcher has it in time: a line never said is then
+	// closed, not left as still coming.
+	s.join(false)
+	s.voice.refuses = errors.New("text too long")
+
+	s.Require().Error(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
+
+	s.eventually(func() bool {
+		said, saidOK := firstOf[Said](s.reported())
+		cut, cutOK := firstOf[Interrupted](s.reported())
+		return saidOK && cutOK && cut.TurnID == said.TurnID
+	}, "the line was left as still being said")
+	s.False(s.agent.floor().Talking)
+}
+
+func (s *AgentSuite) TestAReplyStillBeingWrittenGoesOnWhenItsVoiceIsLost() {
+	// The rest of it is said in the voice that replaces the lost one, so it is not over.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.model.reply = nil
+	lost := s.agent.voice()
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	turn := s.model.requests()[0].ID
+	s.model.writes(turn, "Let me look that up. ")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+	s.eventually(func() bool { return s.agent.voice() != lost }, "the lost voice was never replaced")
+
+	for _, event := range s.reported() {
+		if cut, ok := event.(Interrupted); ok {
+			s.NotEqual(turn, cut.TurnID, "a reply still being written was reported cut off")
+		}
+	}
+	s.False(s.agent.abandonedTurn(turn), "the rest of the reply would be dropped")
+	s.model.writes(turn, "It shipped on Monday.")
+	s.model.finishes(turn)
+}
+
 func (s *AgentSuite) TestWhatIsTypedIntoACallIsHeardAsTheCallerSaid() {
 	// The transcript, the review and the logs take a caller's line from Heard. Without it
 	// a line typed into a call is answered and then nowhere to be read.
@@ -4141,6 +4239,27 @@ func (s *AgentSuite) TestSayGoesStraightToTheVoice() {
 	s.True(s.voice.spoken()[0].Final)
 }
 
+func (s *AgentSuite) TestWhatIsSaidAsItIsIsReportedAsSaidNotAsAnAnswer() {
+	// A transcript needs the greeting the caller heard, and nothing that treats an answer
+	// as the model's reply to somebody should count it as one.
+	s.join(true)
+
+	s.Require().NoError(s.agent.Say(s.ctx, "welcome"))
+
+	s.eventually(func() bool {
+		for _, event := range s.events.seen() {
+			if said, ok := event.(Said); ok && said.Text == "welcome" && said.TurnID != "" {
+				return true
+			}
+		}
+		return false
+	}, "the line was never reported as said")
+	for _, event := range s.events.seen() {
+		_, answered := event.(Responded)
+		s.False(answered, "a scripted line is not an answer")
+	}
+}
+
 func (s *AgentSuite) TestASaidLineIsReportedBeforeItsVoiceFinishes() {
 	// The transcript stores a turn's text when its voice finishes, so the text has to have
 	// arrived by then or a greeting never reaches the transcript or the responses.
@@ -4150,13 +4269,11 @@ func (s *AgentSuite) TestASaidLineIsReportedBeforeItsVoiceFinishes() {
 
 	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the greeting was never spoken")
 	reported := s.reported()
-	responding, _ := firstOf[Responding](reported)
-	responded, _ := firstOf[Responded](reported)
+	said, _ := firstOf[Said](reported)
 	spoke, _ := firstOf[Spoke](reported)
-	s.Equal(spoke.TurnID, responding.TurnID, "the line opens a turn of its own")
-	s.Equal(spoke.TurnID, responded.TurnID)
-	s.Equal("welcome", responded.Text)
-	s.Less(slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Responded); return ok }),
+	s.Equal(spoke.TurnID, said.TurnID, "the line opens a turn of its own")
+	s.Equal("welcome", said.Text)
+	s.Less(slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Said); return ok }),
 		slices.IndexFunc(reported, func(event Event) bool { _, ok := event.(Spoke); return ok }),
 		"the text arrives before the voice finishes")
 }
@@ -4209,9 +4326,9 @@ func (s *AgentSuite) TestALineTheVoiceCouldNotSayIsNotToldToTheModel() {
 
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
 		"the transcript was never told the line went unheard")
-	responded, _ := firstOf[Responded](s.reported())
+	said, _ := firstOf[Said](s.reported())
 	interrupted, _ := firstOf[Interrupted](s.reported())
-	s.Equal(responded.TurnID, interrupted.TurnID)
+	s.Equal(said.TurnID, interrupted.TurnID)
 	s.agent.mu.Lock()
 	instructions := s.agent.instructions()
 	s.agent.mu.Unlock()
@@ -4661,4 +4778,10 @@ func (s *AgentSuite) TestAHoldOrADoneClaimOwesACall() {
 	s.True(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", false))
 	s.False(owesACall("Your appointment has been successfully rescheduled to Tuesday morning.", true),
 		"a claim a tool backs")
+}
+
+func TestALineComposedUnaskedSaysWhatItIsFor(t *testing.T) {
+	require.Equal(t, PurposeCheckIn, composedFor(idlePurpose))
+	require.Equal(t, PurposeUpdate, composedFor(updatePurpose))
+	require.Empty(t, composedFor(greetPurpose), "a varied greeting is said as the greeting, not composed as a check-in")
 }

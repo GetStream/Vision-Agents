@@ -406,11 +406,16 @@ func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscri
 	messages := make([]TranscriptMessage, 0, len(said))
 	for _, line := range said {
 		messages = append(messages, TranscriptMessage{
-			Speaker:   line.Speaker,
-			Name:      optional(line.Name),
-			Agent:     &line.Agent,
-			Text:      line.Text,
-			CreatedAt: line.At,
+			Id:          line.ID,
+			Speaker:     line.Speaker,
+			Name:        optional(line.Name),
+			Agent:       &line.Agent,
+			Text:        line.Text,
+			CreatedAt:   line.At,
+			Generating:  &line.Generating,
+			TurnId:      optional(line.TurnID),
+			Interrupted: &line.Interrupted,
+			Purpose:     optional(line.Purpose),
 		})
 	}
 	return &getCallTranscriptResponse{Body: messages}, nil
@@ -646,6 +651,9 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 			ErrorCode:    optional(request.ErrorCode),
 		})
 	}
+	// A reply talked over is in the transcript as what it was going to say, which is not
+	// what the turn said.
+	said = slices.DeleteFunc(slices.Clone(said), func(line chatlog.Spoken) bool { return line.Interrupted })
 	timeline := make([]TimelineEntry, 0, len(turns))
 	var since time.Time
 	for index, turn := range turns {
@@ -1315,9 +1323,14 @@ type TimelineEntry struct {
 
 // TranscriptMessage is the TranscriptMessage schema.
 type TranscriptMessage struct {
-	Agent     *bool     `json:"agent,omitempty" doc:"Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it holds however the agent was named."`
-	CreatedAt time.Time `json:"created_at"`
-	Name      *string   `json:"name,omitempty" doc:"That speaker's display name, when they have one."`
-	Speaker   string    `json:"speaker" doc:"Who said it, the agent under its own user id."`
-	Text      string    `json:"text"`
+	Agent       *bool     `json:"agent,omitempty" doc:"Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it holds however the agent was named."`
+	CreatedAt   time.Time `json:"created_at"`
+	Generating  *bool     `json:"generating,omitempty" doc:"The line is still being written: a reply still streaming, or words still being said, stored as they first were. The session's live frames carry the rest."`
+	Id          string    `json:"id" doc:"The stored line's id. A line a participant was heard saying has the line_id its session's hearing and heard frames named it by; any other line has an id Chat gave it."`
+	Interrupted *bool     `json:"interrupted,omitempty" doc:"The reply was cut off, by the caller talking over it or its voice failing. Its text is what it was going to say, of which some or none was heard."`
+	Name        *string   `json:"name,omitempty" doc:"That speaker's display name, when they have one."`
+	Purpose     *string   `json:"purpose,omitempty" enum:"greeting,checkin,update" doc:"Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer."`
+	Speaker     string    `json:"speaker" doc:"Who said it, the agent under its own user id."`
+	Text        string    `json:"text"`
+	TurnId      *string   `json:"turn_id,omitempty" doc:"The turn a reply was written for, as the session's response frames name it."`
 }
