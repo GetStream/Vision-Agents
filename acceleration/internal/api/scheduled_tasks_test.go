@@ -1541,6 +1541,27 @@ func (s *ScheduledTasksSuite) TestAOneShotTheAgentResumesAfterItsTimeRecordsTheO
 	s.NotNil(read.LastRunAt, "the missed run is the task's last run")
 }
 
+func (s *ScheduledTasksSuite) TestAOneShotTheAgentResumesLateNamesTheMissedTimeInTheTasksZone() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.Timezone = pointerTo("Asia/Tokyo")
+	created := s.createTask(user, body)
+	due := s.pausedAt(created.Id, time.Now().Add(-time.Hour))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.say(user, opened.Id, "turn it back on")
+	answer := s.ranResult(watching)
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	s.Require().NoError(err)
+	local := due.In(tokyo).Format(time.RFC3339)
+	s.Contains(local, "+09:00")
+	s.Contains(answer, `"missed":"`+local+` passed while the task was paused, so it did not run"`)
+}
+
 func (s *ScheduledTasksSuite) TestAOneShotResumedAfterItsTimeCompletesAtTheLimitAndOfADeletedConfig() {
 	limited := s.agentWithScheduling(func(request *AgentConfigRequest) {
 		request.Scheduling.MaxTasksPerUser = pointerTo(1)
