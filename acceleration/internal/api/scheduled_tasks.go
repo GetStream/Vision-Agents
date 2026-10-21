@@ -491,37 +491,42 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		return nil, conflict("a completed task cannot be resumed; schedule a new one")
 	}
 	if task.State == store.ScheduledTaskPaused || task.State == store.ScheduledTaskFailed {
-		maxActive := scheduling.MaxActivePerUser
-		// A deleted config leaves a task nothing to run on; any other failure to read it is not that.
-		config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID)
-		if errors.Is(err, store.ErrNoAgentConfig) {
-			return nil, errUnknownConfig
-		}
-		if err == nil && config.Scheduling.MaxTasksPerUser > 0 {
-			maxActive = config.Scheduling.MaxTasksPerUser
-		}
-		active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID, task.ConfigID)
-		if err != nil {
-			return nil, err
-		}
-		if active >= maxActive {
-			return nil, errTooManyScheduledTasks
-		}
 		schedule, err := scheduling.FromStored(task.StartLocal, task.Timezone, task.RRule, untilOf(task))
 		if err != nil {
 			return nil, scheduleFailure(err)
 		}
 		// Counted from now: what a pause slept through is never replayed.
 		next, ok := schedule.Next(time.Now())
-		if !ok {
-			if missed := scheduling.SleptThrough(task); missed != nil {
-				if err := s.store.InsertScheduledTaskRun(ctx, missed); err != nil {
-					return nil, err
-				}
+		// A one-shot whose time has gone takes no place and runs on nothing: it
+		// is only closed, with the occurrence it slept through on record.
+		missed := scheduling.SleptThrough(task)
+		if !ok && missed != nil {
+			if err := s.store.InsertScheduledTaskRun(ctx, missed); err != nil {
+				return nil, err
 			}
 			task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
 		} else {
-			task.State, task.NextRunAt = store.ScheduledTaskActive, &next
+			maxActive := scheduling.MaxActivePerUser
+			// A deleted config leaves a task nothing to run on; any other failure to read it is not that.
+			config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID)
+			if errors.Is(err, store.ErrNoAgentConfig) {
+				return nil, errUnknownConfig
+			}
+			if err == nil && config.Scheduling.MaxTasksPerUser > 0 {
+				maxActive = config.Scheduling.MaxTasksPerUser
+			}
+			active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID, task.ConfigID)
+			if err != nil {
+				return nil, err
+			}
+			if active >= maxActive {
+				return nil, errTooManyScheduledTasks
+			}
+			if ok {
+				task.State, task.NextRunAt = store.ScheduledTaskActive, &next
+			} else {
+				task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
+			}
 		}
 		task.ConsecutiveFailures = 0
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {

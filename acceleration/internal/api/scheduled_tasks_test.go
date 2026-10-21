@@ -1524,7 +1524,9 @@ func (s *ScheduledTasksSuite) TestAOneShotTheAgentResumesAfterItsTimeRecordsTheO
 	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
 		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
 	s.say(user, opened.Id, "turn it back on")
-	s.Contains(s.ranResult(watching), `"state":"completed"`)
+	answer := s.ranResult(watching)
+	s.Contains(answer, `"state":"completed"`)
+	s.Contains(answer, `"missed":"`+due.Format(time.RFC3339)+` passed while the task was paused, so it did not run"`)
 
 	task := s.taskReloaded(store.ScheduledTask{ID: created.Id})
 	s.Equal(store.ScheduledTaskCompleted, task.State)
@@ -1537,6 +1539,38 @@ func (s *ScheduledTasksSuite) TestAOneShotTheAgentResumesAfterItsTimeRecordsTheO
 	var read ScheduledTask
 	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+created.Id, nil, &read))
 	s.NotNil(read.LastRunAt, "the missed run is the task's last run")
+}
+
+func (s *ScheduledTasksSuite) TestAOneShotResumedAfterItsTimeCompletesAtTheLimitAndOfADeletedConfig() {
+	limited := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Scheduling.MaxTasksPerUser = pointerTo(1)
+	})
+	user := s.data.createUser()
+	late := s.createTask(user, utcTaskRequest(limited))
+	s.pausedAt(late.Id, time.Now().Add(-time.Hour))
+	running := s.createTask(user, taskRequest(limited))
+
+	var resumed ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+late.Id+"/resume", nil, &resumed),
+		"a task that cannot run again takes no place, so the limit is not asked")
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	s.Len(s.runsOf(store.ScheduledTask{ID: late.Id}), 1)
+
+	// An active one-shot still due later takes a place: the limit holds.
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+running.Id+"/pause", nil, nil))
+	s.createTask(user, taskRequest(limited))
+	status, answered := s.taskFailure(user, http.MethodPost, "/v1/agents/scheduled-tasks/"+running.Id+"/resume", nil)
+	s.Equal(http.StatusConflict, status)
+	s.Equal(codeTooManyTasks, answered.Error.Code)
+
+	config := s.agentWithScheduling(nil)
+	orphaned := s.createTask(user, utcTaskRequest(config))
+	s.pausedAt(orphaned.Id, time.Now().Add(-time.Hour))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+orphaned.Id+"/resume", nil, &resumed),
+		"a late one-shot of a deleted config is closed with its missed run")
+	s.Equal(store.ScheduledTaskCompleted, resumed.State)
+	s.Len(s.runsOf(store.ScheduledTask{ID: orphaned.Id}), 1)
 }
 
 func (s *ScheduledTasksSuite) TestResumingALateOneShotTwiceRecordsItsOccurrenceOnce() {

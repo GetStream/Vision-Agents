@@ -337,6 +337,7 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		return nil, err
 	}
 	now := r.now()
+	var slept *store.ScheduledTaskRun
 	if args.Title != nil {
 		if refusal := checkTitle(*args.Title); refusal != nil {
 			return refusal, nil
@@ -371,6 +372,7 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 				return nil, err
 			}
 			task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
+			slept = missed
 			break
 		}
 		if !ok {
@@ -428,7 +430,12 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 	if fresh, err := storedSchedule(&task); err == nil {
 		schedule = fresh
 	}
-	return result(r.taskResult(&task, schedule, now)), nil
+	out := r.taskResult(&task, schedule, now)
+	if slept != nil {
+		out["missed"] = slept.ScheduledFor.In(schedule.Location()).Format(time.RFC3339) +
+			" passed while the task was paused, so it did not run"
+	}
+	return result(out), nil
 }
 
 // kickScheduled wakes the scheduled-task worker, when this process runs one.
