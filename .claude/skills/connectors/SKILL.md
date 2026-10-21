@@ -183,11 +183,18 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   reconnect, or was deleted, deletes it. Daytona refuses a request that carries a placeholder it
   does not substitute (another host, the query, another session's): 502 «could not reach upstream
   host».
+- Daytona also substitutes a verbatim placeholder inside Basic auth to a granted host (live check
+  A12, staging 2026-10-21).
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
   grants, the connector limiter and the audit. That is intended.
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
   host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
   broker closes it.
+- Known limit (Daytona propagation): a secret the router withdraws (connection deleted or needs a
+  reconnect) keeps being substituted until Daytona propagates the delete. Daytona's docs say
+  «within 15 seconds» (https://www.daytona.io/docs/en/secrets.md). On staging (v0.6.103,
+  2026-10-21) requests still got 200 at +16 s and 502 at +36 s. Wave 14's proxy broker resolves
+  per request and revokes at once.
 - Known limit: a router crash, or a Close that fails or times out, leaves the secret (a live
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
 - `go test -tags daytona_live -run TestLiveSuite ./internal/sandbox/daytona` runs the attacks
