@@ -166,7 +166,7 @@ func (s *Session) forward() {
 		if failure, ok := event.(stt.Error); ok && failure.Fatal && !transportDrop(failure) && s.reopen != nil {
 			from := current.config.Name()
 			refused = append(refused, from)
-			if next, nextConfig, err := s.reopen(refused); err == nil && s.swap(current.provider, next, nextConfig) {
+			if next, nextConfig, err := s.reopenAnswering(refused); err == nil && s.swap(current.provider, next, nextConfig) {
 				// Before the Failover is passed on: a write that fails meanwhile went to next.
 				current = &relay{provider: next, config: nextConfig}
 				s.pass(current, stt.Failover{Provider: nextConfig.Provider, Model: nextConfig.Model, From: from, Err: failure.Err})
@@ -174,6 +174,31 @@ func (s *Session) forward() {
 			}
 		}
 		s.pass(current, event)
+	}
+}
+
+// reopenAnswering starts the next candidate, and answers a failed write while it does: the
+// session has failed already, so the write is dropped rather than waiting for the dial. On
+// the socket the writer is the loop that reads the caller, which must see a hang-up and
+// close the session, ending the dial (router.go, Start).
+func (s *Session) reopenAnswering(refused []string) (stt.STT, routing.ProviderConfig, error) {
+	type opened struct {
+		provider stt.STT
+		config   routing.ProviderConfig
+		err      error
+	}
+	result := make(chan opened, 1)
+	go func() {
+		next, config, err := s.reopen(refused)
+		result <- opened{provider: next, config: config, err: err}
+	}()
+	for {
+		select {
+		case opened := <-result:
+			return opened.provider, opened.config, opened.err
+		case read := <-s.readAhead:
+			close(read)
+		}
 	}
 }
 

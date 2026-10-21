@@ -497,6 +497,61 @@ func (s *SessionSuite) TestAWriteThatFailsWhileTheNextModelStartsDoesNotWaitForI
 	}
 }
 
+func (s *SessionSuite) TestAWriteThatFailsAsTheVendorRefusesNeverWaitsForTheNextModelsDial() {
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	// The refusal reaches forward as the write fails, so the write asks forward to read
+	// ahead either before forward starts the next model or while it does: about one run
+	// in two takes the second order.
+	for run := range 50 {
+		provider := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
+		release := make(chan struct{})
+		reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+			<-release
+			return &quietSTT{emitter: stt.NewEmitter(64)}, routing.ProviderConfig{Provider: "next", Model: "live"}, nil
+		}
+		session := newSession(provider, routing.ProviderConfig{Provider: "closed", Model: "live"},
+			routing.Owner{CustomerID: s.customerID}, recorder, reopen, nil)
+
+		// The dial is released only after the write returns, so a write waiting for it never does.
+		s.Require().NoError(s.write(session), "run %d", run)
+		close(release)
+		s.Require().IsType(stt.Failover{}, s.event(session), "run %d", run)
+		s.Require().NoError(session.Close())
+	}
+}
+
+func (s *SessionSuite) TestACallerThatHangsUpWhileTheNextModelDialsEndsTheDial() {
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	provider := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
+	ctx, cancel := context.WithCancel(context.Background())
+	dialling, dialEnded := make(chan struct{}), make(chan struct{})
+	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+		defer close(dialEnded)
+		close(dialling)
+		// As a vendor's handshake does: only the session's context ends it.
+		<-ctx.Done()
+		return nil, routing.ProviderConfig{}, ctx.Err()
+	}
+	session := newSession(provider, routing.ProviderConfig{Provider: "closed", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, reopen, cancel)
+	s.Require().NoError(s.write(session))
+	<-dialling
+	// The socket's read loop is the writer: back from the write, it reads the hang-up.
+	s.Require().NoError(s.write(session), "a write while the next model dials")
+
+	s.Require().NoError(session.Close())
+	select {
+	case <-dialEnded:
+	case <-time.After(3 * time.Second):
+		s.FailNow("closing the session left the next model's dial running")
+	}
+	events := s.drain(session)
+	s.Require().Len(events, 1)
+	s.IsType(stt.Error{}, events[0], "a session closed while the next model dialled ends on the refusal")
+}
+
 func (s *SessionSuite) TestAudioAfterAnErrorTheProviderOutlivesStillFails() {
 	failure := refused()
 	failure.Fatal = false
