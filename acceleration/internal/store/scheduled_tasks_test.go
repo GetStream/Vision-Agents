@@ -343,7 +343,8 @@ func (s *StoreSuite) TestAPostponedTaskIsHeldUnderItsClaimUntilTheHoldEnds() {
 
 func (s *StoreSuite) TestAPostponeUnderAStolenClaimHoldsNothing() {
 	due := s.base.Add(-time.Minute)
-	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
+	// A repeat: an edit to a one-shot being delivered leaves it that delivery.
+	s.task("one", func(task *ScheduledTask) { task.NextRunAt, task.RRule = &due, "FREQ=DAILY" })
 
 	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
 	s.Require().NoError(err)
