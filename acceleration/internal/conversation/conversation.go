@@ -207,6 +207,10 @@ type Conversation struct {
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
+	// resumed is when the model last began working towards what it says next: a response
+	// starting, its latest words, or a tool's result. A round of thinking that opens after it
+	// began then, which matters for a model that sends its thinking only once it is done.
+	resumed time.Time
 	// indicated is the last AI indicator sent to watchers, and lived when the last live
 	// update went out. Only run touches them.
 	indicated indication
@@ -1375,6 +1379,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !c.acceptTurn(e.TurnID, true) {
 			return
 		}
+		c.resumed = time.Now()
 		c.state("thinking")
 		c.settleThinking(m, time.Now())
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
@@ -1388,6 +1393,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		c.state("writing")
 		c.settleThinking(m, time.Now())
+		c.resumed = time.Now()
 		m.Text += e.Text
 		m.Saved = false
 	case agent.ReasoningDelta:
@@ -1438,6 +1444,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !c.acceptTurn(e.TurnID, false) {
 			return
 		}
+		c.resumed = time.Now()
 		changed := false
 		for i := range m.Tools {
 			t := &m.Tools[i]
@@ -2009,6 +2016,13 @@ func (c *Conversation) run() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := c.send(ctx, operation{Message: *m, reasoning: window, live: &snapshot}, true, visible)
 				cancel()
+				// A refused or slow live update holds back every update after it, so the reply
+				// stops moving for people watching it: say so, rather than have it look like
+				// the model paused.
+				if took := time.Since(now); err != nil || took > time.Second {
+					c.service.logger.Warn("a live Stream Chat update was refused or slow; watchers see the reply stop until the next",
+						"cid", c.data.CID, "message", m.ID, "took", took.Round(time.Millisecond), "error", err)
+				}
 				c.mu.Lock()
 				current := c.data.Current != nil && c.data.Current.ID == m.ID
 				// A settled reply's thinking is best effort, like its indicator: it is
@@ -2019,6 +2033,8 @@ func (c *Conversation) run() {
 				if err != nil {
 					c.liveFailures++
 					c.liveRetry = now.Add(liveBackoff(err, c.liveFailures, now))
+					c.service.logger.Warn("live Stream Chat updates pause after a refused one",
+						"cid", c.data.CID, "message", m.ID, "failures", c.liveFailures, "pause", c.liveRetry.Sub(now).Round(time.Millisecond))
 				} else {
 					c.liveFailures = 0
 				}
@@ -2087,7 +2103,14 @@ func (c *Conversation) sendIndicator(messageID, state string) {
 	if err != nil {
 		return
 	}
-	_, _ = client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+	// The live loop sends it, so a slow one holds back the reply's live updates until it is
+	// answered: say so, rather than have it look like the model paused.
+	started := time.Now()
+	_, err = client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+	if took := time.Since(started); err != nil || took > time.Second {
+		c.service.logger.Warn("an AI indicator was refused or slow; watchers see the reply stop until it was answered",
+			"cid", c.data.CID, "message", messageID, "type", event.Type, "took", took.Round(time.Millisecond), "error", err)
+	}
 }
 
 // aiState maps a live reply to Stream's AI indicator states: generating once the answer

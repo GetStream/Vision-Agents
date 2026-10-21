@@ -56,6 +56,19 @@ func (s *PartsSuite) TestEachRoundOfThinkingIsAStep() {
 	s.Equal("r2", s.c.reasoning.id, "windows follow the streaming step")
 }
 
+func (s *PartsSuite) TestARoundIsTimedFromWhenTheModelBeganWorkingTowardsIt() {
+	start := time.Now()
+	s.c.resumed = start
+	s.c.thought(s.m, "All of the thinking, sent once it is done.", start.Add(6*time.Second))
+	s.c.settleThinking(s.m, start.Add(6*time.Second))
+	s.EqualValues(6000, s.m.Parts[0].DurationMS, "a model that sends its thinking at the end thought from the start")
+
+	s.c.resumed = start.Add(8 * time.Second)
+	s.c.thought(s.m, "A second round.", start.Add(9*time.Second))
+	s.c.reasoning.add(" Done.", start.Add(10*time.Second))
+	s.EqualValues(2000, s.c.reasoning.snapshot().durationMS, "a later round counts from when the model resumed")
+}
+
 func (s *PartsSuite) TestTheSummaryIsTheFirstSentence() {
 	s.Equal("We need to solve a puzzle.", summaryOf("We need to solve a puzzle. Let me parse."))
 	s.Equal("Five engineers", summaryOf("  Five engineers\n4 weeks"))
