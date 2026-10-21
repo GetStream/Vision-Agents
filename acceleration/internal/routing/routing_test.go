@@ -317,24 +317,24 @@ func (s *RoutingSuite) TestTheShippedConversationShortcutComesFirst() {
 	s.NotContains(config[LLM].Offered(), "llm-scenario-runner", "a simulation's default is not a choice for a conversation")
 }
 
-// shippedSTT is a router over the configuration the binary ships, for the shortcuts whose
+// shipped is a router over the configuration the binary ships, for the shortcuts whose
 // membership is the thing being tested rather than the mechanism behind it. Every provider
 // builds, since what a base group resolves to is a question about the config and not about
 // whether the vendor's own factory is happy.
-func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
+func (s *RoutingSuite) shipped(modality Modality) *Router[*stubProvider] {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	registry := NewRegistry[*stubProvider]()
-	for _, provider := range config[STT].Providers {
+	for _, provider := range config[modality].Providers {
 		registry.Register(provider.Provider, func(spec Spec) (*stubProvider, error) {
 			return &stubProvider{model: spec.Model}, nil
 		})
 	}
 
 	router, err := New(Options[*stubProvider]{
-		Modality: STT,
-		Config:   config[STT],
+		Modality: modality,
+		Config:   config[modality],
 		Registry: registry,
 		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 	})
@@ -344,7 +344,7 @@ func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
 }
 
 func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
-	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-fast"},
 	})
 	s.Require().NoError(err)
@@ -361,8 +361,36 @@ func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 		"a group is the list it names and nothing else, so a model joining the router does not join it")
 }
 
+func (s *RoutingSuite) TestTheConversationalGroupLeadsWithLunaAndKeepsGemmaToFailOverTo() {
+	candidates, err := s.shipped(LLM).resolveChain(s.ctx, Request{
+		Providers: []string{"llm-conversational"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("openai/gpt-5.6-luna", names(candidates)[0],
+		"Gemma 4 26B's GPUs are down (AI-1569), so a turn must not wait on them first")
+	s.ElementsMatch([]string{
+		"openai/gpt-5.6-luna",
+		"gemma/gemma-4-26B-A4B-it",
+		"cerebras/gemma-4-31b",
+	}, names(candidates),
+		"Gemma stays in the group, so it goes back first by changing prefer alone (AI-1664)")
+}
+
+func (s *RoutingSuite) TestTheFlowGroupLeadsWithLuna() {
+	candidates, err := s.shipped(LLM).resolveChain(s.ctx, Request{
+		Providers: []string{"llm-flow"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("openai/gpt-5.6-luna", names(candidates)[0],
+		"Gemma 4 26B's GPUs are down (AI-1569), so a ruling must not wait on them first")
+	s.Contains(names(candidates), "gemma/gemma-4-26B-A4B-it",
+		"the rest of the fast tier, Gemma with it, still catches Luna being down")
+}
+
 func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoice() {
-	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
@@ -379,7 +407,7 @@ func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoic
 
 func (s *RoutingSuite) TestABaseGroupIsALiveGroupOnly() {
 	batch := false
-	_, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	_, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 		Realtime:  &batch,
 	})
@@ -392,7 +420,7 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	// The whole of what these groups do not carry: naming one asks for its models, not for
 	// its options. Of the accurate group only Muse declares diarize, so a config that names
 	// the group and then asks to be told who spoke gets that one rather than all four.
-	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
