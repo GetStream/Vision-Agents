@@ -684,6 +684,20 @@ judgments, evidence, a flag assessment and summaries, is not in the template: `P
 `agent_moderator` config, so no edit can break parsing. Other configs' runs, and sessions such as
 Ask Nora, are not held to it (AI-1479).
 
+### The app's moderator counts moderation data across the app
+
+Two more read-only tools for an `agent_moderator` session answer questions no single page of
+the review queue can, such as "who is the most violating user this week?":
+`top_flagged_users` ranks the users whose content was flagged by violations (flagged items
+whose action was not restored or unbanned), each with flags, items a moderator acted on,
+overturned items, Nora's recommendations and top labels, optionally for one label or entity
+type. `moderation_summary` counts flagged items by label (with how many were overturned), by
+action and by channel. Both read a window of up to 30 days (7 by default) and the router does
+the counting. A call reads at most 2,000 items, newest first; past that the answer is marked
+`partial` and says its counts are a lower bound. They are offered on the same terms as the
+other moderation tools. The moderator template tells Nora to use them, and two simulations
+check it ranks by violations and says when counts are partial (AI-1612).
+
 ### Simulations for the moderator template
 
 `acceleration/templates/agent_moderator/simulations/moderation.yaml` holds eight reviews Nora
