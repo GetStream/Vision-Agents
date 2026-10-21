@@ -25,7 +25,7 @@ Run the checks below from the repository root.
 Baseten, ElevenLabs v4 Turbo, GPT-6.1 Sol) and the benches use. The check prints names only:
 
 ```bash
-f=.env; [ -f benchmark/.env ] && f=benchmark/.env; echo "voicebench reads $f"; for k in STREAM_API_KEY STREAM_API_SECRET ELEVENLABS_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY GEMMA_BASE_URL GEMMA_API_KEY BASETEN_API_KEY INWORLD_API_KEY GOOGLE_API_KEY; do v=$(grep -E "^$k=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"); [ -n "$v" ] && echo "ok       $k" || echo "MISSING  $k"; done; grep -qE '^GEMMA_BASE_URL=https://' "$f" || echo "BAD      GEMMA_BASE_URL is not an https URL"
+f=.env; [ -f benchmark/.env ] && f=benchmark/.env; echo "voicebench reads $f"; for k in STREAM_API_KEY STREAM_API_SECRET ELEVENLABS_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY GEMMA_BASE_URL INWORLD_API_KEY GOOGLE_API_KEY; do v=$(grep -E "^$k=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"); [ -n "$v" ] && echo "ok       $k" || echo "MISSING  $k"; done; grep -qE '^(GEMMA|BASETEN)_API_KEY=[^ ]' "$f" && echo "ok       GEMMA_API_KEY or BASETEN_API_KEY" || echo "MISSING  GEMMA_API_KEY or BASETEN_API_KEY"; grep -qE '^GEMMA_BASE_URL=https://' "$f" || echo "BAD      GEMMA_BASE_URL is not an https URL"
 ```
 
 **If any is missing, fetch the environment** with rocky, which writes every key the team keeps

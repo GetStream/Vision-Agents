@@ -88,6 +88,7 @@ preflight() {
     [[ -n "${!k:-}" ]] || missing+=("$k")
   done
   [[ -n "$(first_key GEMMA_API_KEY BASETEN_API_KEY)" ]] || missing+=("GEMMA_API_KEY or BASETEN_API_KEY")
+  [[ -z "${BENCH_WAKE_URL:-}" || -n "$(first_key BASETEN_API_KEY)" ]] || missing+=("BASETEN_API_KEY (BENCH_WAKE_URL is a Baseten deployment)")
   if (( ${#missing[@]} )); then
     echo "missing from .env: ${missing[*]} (fetch with: rocky agents local secrets create_env -f <file>)"
     return 1
