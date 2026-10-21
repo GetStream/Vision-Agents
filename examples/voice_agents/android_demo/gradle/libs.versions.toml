@@ -6,7 +6,7 @@ material-icons = "1.7.8"
 activity = "1.11.0"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
-stream-chat-ai-compose = "7.15.1-202610201345-SNAPSHOT"
+stream-chat-ai-compose = "7.15.1-202610211125-SNAPSHOT"
 
 [libraries]
 vision-agents-core = { module = "io.getstream:vision-agents-core", version = "0.1.0-SNAPSHOT" }
