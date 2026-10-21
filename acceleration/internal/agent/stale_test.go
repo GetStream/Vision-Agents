@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -475,6 +476,32 @@ func (s *AgentSuite) TestEveryDroppedReplyInARowIsOwed() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the last words were never answered")
 	s.Contains(s.model.requests()[2].Instructions, missedNote("two wait no three"))
+}
+
+func (s *AgentSuite) TestWhatDroppedRepliesOweKeepsOnlyTheNewestWords() {
+	numbered := func(prefix string, from, to int) string {
+		var words []string
+		for i := from; i <= to; i++ {
+			words = append(words, fmt.Sprintf("%s%d", prefix, i))
+		}
+		return strings.Join(words, " ")
+	}
+	s.join(true)
+	first := s.answering(numbered("w", 1, 80))
+	s.mutters(nash, "x1 x2")
+	s.eventually(func() bool { return s.model.script(first).Abandoned() }, "the first reply kept going")
+	s.says(nash, numbered("x", 1, 80))
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
+	second := s.model.requests()[1].ID
+	s.mutters(nash, "y1 y2")
+	s.eventually(func() bool { return s.model.script(second).Abandoned() }, "the second reply kept going")
+
+	s.says(nash, numbered("y", 1, 10))
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the last words were never answered")
+	s.Contains(s.model.requests()[2].Instructions,
+		missedNote(numbered("w", 61, 80)+" "+numbered("x", 1, 80)),
+		"the newest hundred words of the two dropped turns are owed, the oldest twenty are not")
 }
 
 func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsNotUsedForWhatADroppedReplyOwes() {

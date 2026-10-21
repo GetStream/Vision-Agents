@@ -1671,7 +1671,7 @@ func (a *Agent) perform(action Action) {
 		a.mu.Lock()
 		missed := a.missedLocked(action.Candidate.Participant)
 		a.unheard = unheardReply{turnID: action.Candidate.ID, participant: action.Candidate.Participant.ID,
-			decidedAt: time.Now(), said: strings.TrimSpace(missed + " " + action.Candidate.Said())}
+			decidedAt: time.Now(), said: newestWords(strings.TrimSpace(missed+" "+action.Candidate.Said()), missedWords)}
 		a.mu.Unlock()
 		note := joinNotes(action.Clarify, missedNote(missed))
 		if a.adoptSpeculation(action.Candidate, note) {
@@ -3960,6 +3960,20 @@ func (a *Agent) missedLocked(participant stt.Participant) string {
 		return ""
 	}
 	return a.missed.said
+}
+
+// missedWords is how many of a caller's unanswered words a dropped reply's note carries.
+// About forty seconds of speech at a conversational 150 words a minute: a caller who goes on longer over every reply is answered on
+// what they are still on, and the note is not resent ever larger on each turn.
+const missedWords = 100
+
+// newestWords is the last limit words of text.
+func newestWords(text string, limit int) string {
+	fields := strings.Fields(text)
+	if len(fields) <= limit {
+		return text
+	}
+	return strings.Join(fields[len(fields)-limit:], " ")
 }
 
 // missedNote tells the model what a dropped reply was for, so the caller's turn after it
