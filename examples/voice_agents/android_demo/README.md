@@ -52,11 +52,16 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   `ChatComposer` asks, dictates and stops a reply; `AISuggestions` starts a conversation.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
   the user `setUser` named, with the token `backend` signed. It asks for the microphone first,
-  and only the microphone: the call runs Stream's audio-call service. What was said is written
-  out underneath as it happens, off the session's socket rather than out of the call, with
-  "Listening", "Thinking" or "Working on refund decision" while there is nothing to read yet.
-  The call carries on while the Chat tab is shown, and ends with the hang-up button or when the
-  agent leaves.
+  and only the microphone: the call runs Stream's audio-call service. The agent is Stream's
+  voice glow (`AIVoiceGlow`), moving with the agent's voice in Stream's colors and with yours
+  in red, with a word for what it is doing underneath: "Listening", "Thinking", "Working on
+  refund decision", "Speaking". The style button at the top right opens a sheet showing the
+  glow and Stream's voice wave (`AIVoiceWave`), each moving, to pick from. What is said is
+  captioned at the bottom, two lines at a time. The agent speaking is heard on its audio track;
+  you speaking is the call's own speaking flag, set from what the phone sends after echo
+  cancellation, because the microphone itself also hears the agent from the speaker. The call
+  carries on while the Chat tab is shown, and ends with the hang-up button or when the agent
+  leaves.
 - **`lookup_order`** is a tool the model calls that runs in `Demo.kt`. Its data never leaves
   the phone; the agent asks, and only sees the answer. Ask about order `A-1042` or `A-1043`.
 - **`issue_refund`** asks first. Ask for a refund on `A-1042`: once the refund skill says it is

@@ -776,8 +776,9 @@ against the model (AI-1465).
 `examples/voice_agents/android_demo` talks to swift_demo's agent from an Android app, built
 against `sdks/kotlin` as it is in the checkout. Its Chat screen shows the conversation with
 Stream Chat's AI components: the reply streaming in, its reasoning, each tool call, and the
-refund's question on the reply. Its Voice screen puts the agent on a call and writes out what
-was said, with the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
+refund's question on the reply. Its Voice screen puts the agent on a call and shows it as
+Stream's voice glow, moving with whoever is talking, with what is said captioned two lines at a
+time and the refund's question as a card over the call. CI builds it beside the Kotlin SDK.
 
 ### Inworld records speech
 

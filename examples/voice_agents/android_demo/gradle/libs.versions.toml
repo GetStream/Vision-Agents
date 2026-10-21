@@ -6,11 +6,11 @@ material-icons = "1.7.8"
 activity = "1.11.0"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
-stream-chat = "7.15.0"
+stream-chat-ai-compose = "7.15.1-202610211125-SNAPSHOT"
 
 [libraries]
 vision-agents-core = { module = "io.getstream:vision-agents-core", version = "0.1.0-SNAPSHOT" }
-stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "stream-chat" }
+stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "stream-chat-ai-compose" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-ui = { module = "androidx.compose.ui:ui" }
