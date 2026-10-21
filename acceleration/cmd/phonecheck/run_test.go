@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
@@ -156,6 +157,22 @@ func (s *RunSuite) TestTeardownHangsUpThenClosesTheSession() {
 
 	calls := s.steps.calls()
 	s.Equal([]string{"hangup", "close"}, calls[len(calls)-2:])
+}
+
+func (s *RunSuite) TestASessionThatAlreadyEndedClosesQuietly() {
+	s.session.closeErr = websocket.ErrCloseSent
+
+	s.Require().NoError(s.run())
+
+	s.Empty(s.linesSaying("could not close the agent's session"))
+}
+
+func (s *RunSuite) TestASessionThatFailsToCloseIsLogged() {
+	s.session.closeErr = errors.New("router unreachable")
+
+	s.Require().NoError(s.run())
+
+	s.Len(s.linesSaying("could not close the agent's session"), 1)
 }
 
 func (s *RunSuite) TestTeardownRunsWhenTheRunIsCancelled() {

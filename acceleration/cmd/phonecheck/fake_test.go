@@ -159,6 +159,7 @@ type fakeSession struct {
 	steps       *steps
 	id          string
 	personEnded <-chan struct{}
+	closeErr    error
 }
 
 func (s *fakeSession) ID() string { return s.id }
@@ -175,7 +176,7 @@ func (s *fakeSession) Wait(ctx context.Context) error {
 
 func (s *fakeSession) Close(context.Context) error {
 	s.steps.add("close")
-	return nil
+	return s.closeErr
 }
 
 // fakePerson is a provider named "fake" with one flag of its own.

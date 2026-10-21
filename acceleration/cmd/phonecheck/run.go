@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
 )
 
@@ -279,10 +281,16 @@ func (c *callRun) teardown(ctx context.Context) {
 		}
 	}
 	if c.session != nil {
-		if err := c.session.Close(ctx); err != nil {
+		if err := c.session.Close(ctx); err != nil && !alreadyClosed(err) {
 			c.logger.Warn("could not close the agent's session", "error", err)
 		}
 	}
+}
+
+// alreadyClosed: the SDK sends its close frame on a socket that already said goodbye when the
+// session ended on its own, and gets the websocket's ErrCloseSent back. The session is done.
+func alreadyClosed(err error) bool {
+	return errors.Is(err, websocket.ErrCloseSent)
 }
 
 func routerHost(address string) string {
