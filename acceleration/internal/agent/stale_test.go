@@ -236,6 +236,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBinding
 	case <-time.After(3 * time.Second):
 		s.FailNow("tool did not start")
 	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
 
 	s.mutters(nash, "hello?")
 
@@ -265,6 +266,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardAnswersARunningToolStill
 	case <-time.After(3 * time.Second):
 		s.FailNow("tool did not start")
 	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
 
 	s.mutters(nash, "hello?")
 
@@ -303,7 +305,12 @@ func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
 			s.False(takesFloor(assent), "assent is somebody listening")
 		})
 	}
-	for _, more := range []string{"okay wait", "yeah the second one", "got it but"} {
+	for _, lone := range []string{"Mom", "two"} {
+		s.Run(lone, func() {
+			s.False(takesFloor(lone), "a lone word that is no interruption is somebody waiting to be answered")
+		})
+	}
+	for _, more := range []string{"Hey,", "okay wait", "yeah the second one", "got it but"} {
 		s.Run(more, func() {
 			s.True(takesFloor(more), "a word past assent is the caller saying more")
 		})
