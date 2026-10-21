@@ -59,10 +59,11 @@ func (s *AgentSuite) voiceRequests() []string {
 	return sent
 }
 
-// callerTurn is the turn id the agent answered the caller's words with.
+// callerTurn is the turn id the agent answered the caller's words with. It waits, because a
+// log line can be written before the collector has drained the Responding sent ahead of it.
 func (s *AgentSuite) callerTurn() string {
-	responding, ok := firstOf[Responding](s.reported())
-	s.Require().True(ok, "the caller was never answered")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) > 0 }, "the caller was never answered")
+	responding, _ := firstOf[Responding](s.reported())
 	return responding.TurnID
 }
 
