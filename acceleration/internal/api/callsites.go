@@ -115,11 +115,16 @@ func (s *Server) endedPhoneCall(r *http.Request, origin hookOrigin, event callEv
 	call := endedCall{callType: callType, callID: callID, streamSession: event.SessionID}
 
 	resources, err := s.store.CallResourcesInApp(r.Context(), origin.scope(), callType, callID)
-	if err == nil && len(resources) > 0 {
+	if err != nil {
+		s.logger.Warn("could not read an ended call's resources", "session_id", callID, "error", err)
+	}
+	if len(resources) > 0 {
 		call.customer, call.app = resources[0].CustomerID, resources[0].StreamAppPK
 	} else if rung, ok := customOf(event.Call.Custom)[phone.NumberKey]; ok {
 		number, err := s.store.NumberRungInApp(r.Context(), origin.scope(), rung)
 		if err != nil {
+			// Not the error itself: it names the number.
+			s.logger.Warn("could not tell whose number an ended call rang; its sites are not logged", "session_id", callID)
 			return endedCall{}, false
 		}
 		call.customer, call.app = number.CustomerID, number.StreamAppPK

@@ -36,10 +36,18 @@ type CallHooksSuite struct {
 	callID string
 	// stats stands in for Stream's call stats, so no test in the suite reaches Stream.
 	stats *recordedStats
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestCallHooksSuite(t *testing.T) {
 	runSuite(t, new(CallHooksSuite))
+}
+
+func (s *CallHooksSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *CallHooksSuite) SetupTest() {
@@ -232,6 +240,13 @@ func (s *CallHooksSuite) TestAnEndedInboundCallsRowNamesTheNumbersSIPHost() {
 	s.Require().Equal(http.StatusOK, s.end(fmt.Sprintf(`{"phone_number":%q}`, s.e164)))
 
 	s.Equal("sip.example.com", s.callSitesRow().Details["stream_sip_host"])
+}
+
+func (s *CallHooksSuite) TestAnEndedCallRingingANumberNobodyHoldsIsWarnedAbout() {
+	s.Require().Equal(http.StatusOK, s.end(fmt.Sprintf(`{"phone_number":%q}`, s.e164)))
+
+	s.Contains(s.logged.String(), "could not tell whose number an ended call rang")
+	s.NotContains(s.logged.String(), "no number "+s.e164+" is attached")
 }
 
 func (s *CallHooksSuite) TestAnEndedVideoCallGetsNoCallSitesRow() {
