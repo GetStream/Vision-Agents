@@ -278,3 +278,20 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardAnswersARunningToolStill
 	default:
 	}
 }
+
+func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	s.model.writes(two, "")
+	s.model.finishes(two)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never settled")
+	s.eventually(func() bool { return s.agent.floor().Quiet }, "the agent never fell quiet")
+
+	s.mutters(nash, "tell me more please")
+
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the caller was never heard")
+	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+		"a reply that had ended was dropped")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}

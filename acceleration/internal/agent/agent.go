@@ -1582,8 +1582,9 @@ func (a *Agent) floor() floor {
 		LastParticipant: a.lastParticipant,
 		Asked:           owesAnAnswer(lastAssistantSaid(a.history)),
 	}
-	// A reply cut off, or followed by a murmur or a tool's reply, is no reply to drop.
-	if a.unheard.turnID == a.speakingTurn {
+	// A reply cut off, or followed by a murmur or a tool's reply, is no reply to drop, and
+	// nor is one that ended with nothing said: the agent is quiet again.
+	if !state.Quiet && a.unheard.turnID == a.speakingTurn {
 		state.Unheard = a.unheard
 	}
 	tools := slices.Sorted(maps.Values(a.toolsRunning))
