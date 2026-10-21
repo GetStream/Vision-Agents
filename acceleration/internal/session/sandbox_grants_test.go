@@ -140,9 +140,12 @@ func (s *SandboxGrantsSuite) TestAResolverFailureThatMayPassIsNoReasonToWithdraw
 	s.NotErrorIs(err, sandbox.ErrNoCredential)
 }
 
+// TestABindingWithoutSandboxGivesTheSandboxNothing, on a router with no secret prefix: such a
+// session needs none.
 func (s *SandboxGrantsSuite) TestABindingWithoutSandboxGivesTheSandboxNothing() {
 	s.sandboxRevision()
 	id := s.connection("", "primary")
+	s.manager.options.SandboxSecretPrefix = ""
 
 	box, _ := s.opened(s.config(s.fixed("crm", id, "whoami")))
 

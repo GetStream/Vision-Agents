@@ -45,9 +45,10 @@ type platform struct {
 	// or a sandbox's creation, in order, as "<method> <path>".
 	secrets map[string]*heldSecret
 	calls   []string
-	// refuse answers every request with a 500; createStatus, when set, answers a sandbox's
-	// creation with it.
+	// refuse answers every request with a 500, and refuseSecret the creation of a secret
+	// whose name holds it; createStatus, when set, answers a sandbox's creation with it.
 	refuse       bool
+	refuseSecret string
 	createStatus int
 	// test is the test the platform serves, when tests share it.
 	test string
@@ -148,6 +149,9 @@ func (p *platform) secret(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/secret/")
 	held := p.secrets[id]
 	switch {
+	case r.Method == http.MethodPost && p.refuseSecret != "" && strings.Contains(body.Name, p.refuseSecret):
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	case r.Method == http.MethodPost:
 		p.sequence++
 		id = "secret-" + string(rune('0'+p.sequence))

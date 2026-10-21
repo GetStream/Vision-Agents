@@ -169,6 +169,22 @@ func (s *SecretsSuite) TestASandboxDaytonaWouldNotCreateLeavesNoSecret() {
 	s.Empty(s.platform.secretNames())
 }
 
+// TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret: the grants made before it are deleted.
+func (s *SecretsSuite) TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret() {
+	gitlab := github
+	gitlab.Binding, gitlab.Env = "gitlab", "GITLAB_TOKEN"
+	box := s.granted("stg", sandbox.Config{}, github, gitlab)
+	s.platform.mu.Lock()
+	s.platform.refuseSecret = "_gitlab_"
+	s.platform.mu.Unlock()
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().Error(err)
+	s.Empty(s.platform.secretNames())
+	s.NotContains(s.platform.history(), "POST /api/sandbox")
+}
+
 func (s *SecretsSuite) TestASecretNameKeepsToDaytonasCharacters() {
 	box := s.granted("dev.kanat/mac", sandbox.Config{}, github)
 

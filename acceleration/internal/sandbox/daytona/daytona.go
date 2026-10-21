@@ -44,8 +44,8 @@ type Options struct {
 	Config     sandbox.Config
 	HTTPClient *http.Client
 	Logger     *slog.Logger
-	// Grants are the connections code in the sandbox may call with, through Broker. Without
-	// grants the broker is never asked for anything.
+	// Grants are the connections code in the sandbox may call with, through Broker, which
+	// is nil without grants.
 	Grants []sandbox.Grant
 	Broker sandbox.CredentialBroker
 }
@@ -105,7 +105,7 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	if err := s.started(ctx); err != nil {
 		return sandbox.Result{}, err
 	}
-	if s.brokered() {
+	if s.broker != nil {
 		if err := s.broker.BeforeRun(ctx); err != nil {
 			return sandbox.Result{}, err
 		}
@@ -164,7 +164,7 @@ func (s *Sandbox) started(ctx context.Context) error {
 	if s.box == nil {
 		create, end := context.WithTimeout(ctx, s.timeout)
 		defer end()
-		if s.brokered() {
+		if s.broker != nil {
 			mount, err := s.broker.Prepare(create, s.grants)
 			if err != nil {
 				return err
@@ -173,7 +173,7 @@ func (s *Sandbox) started(ctx context.Context) error {
 		}
 		box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
 		if err != nil {
-			if s.brokered() {
+			if s.broker != nil {
 				return errors.Join(err, s.broker.Close(ctx))
 			}
 			return err
@@ -244,7 +244,7 @@ func (s *Sandbox) Close() error {
 
 	// The secrets go first: a sandbox Daytona would not delete keeps no credential.
 	var released error
-	if s.brokered() {
+	if s.broker != nil {
 		released = s.broker.Close(ctx)
 	}
 	if s.box == nil {
@@ -280,9 +280,4 @@ func (s *Sandbox) domains() []string {
 		}
 	}
 	return domains
-}
-
-// brokered reports whether the sandbox has grants a broker holds the credentials of.
-func (s *Sandbox) brokered() bool {
-	return s.broker != nil && len(s.grants) > 0
 }
