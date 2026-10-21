@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.connector_client import ConnectorClient
     from ..models.connector_input import ConnectorInput
+    from ..models.connector_sandbox import ConnectorSandbox
     from ..models.connector_setup import ConnectorSetup
 
 
@@ -46,6 +47,8 @@ class Connector:
                 every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by
                 /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when
                 ROUTER_PUBLIC_URL is not set, since no consent can start then.
+            sandbox (ConnectorSandbox | Unset): How code in an agent's sandbox reaches the provider's API with a
+                connection's credential.
             setup (ConnectorSetup | Unset): What a person does at the provider before the first consent.
     """
 
@@ -62,6 +65,7 @@ class Connector:
     category: str | Unset = UNSET
     description: str | Unset = UNSET
     redirect_uri: str | Unset = UNSET
+    sandbox: ConnectorSandbox | Unset = UNSET
     setup: ConnectorSetup | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -110,6 +114,10 @@ class Connector:
 
         redirect_uri = self.redirect_uri
 
+        sandbox: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sandbox, Unset):
+            sandbox = self.sandbox.to_dict()
+
         setup: dict[str, Any] | Unset = UNSET
         if not isinstance(self.setup, Unset):
             setup = self.setup.to_dict()
@@ -136,6 +144,8 @@ class Connector:
             field_dict["description"] = description
         if redirect_uri is not UNSET:
             field_dict["redirect_uri"] = redirect_uri
+        if sandbox is not UNSET:
+            field_dict["sandbox"] = sandbox
         if setup is not UNSET:
             field_dict["setup"] = setup
 
@@ -145,6 +155,7 @@ class Connector:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.connector_client import ConnectorClient
         from ..models.connector_input import ConnectorInput
+        from ..models.connector_sandbox import ConnectorSandbox
         from ..models.connector_setup import ConnectorSetup
 
         d = dict(src_dict)
@@ -220,6 +231,13 @@ class Connector:
 
         redirect_uri = d.pop("redirect_uri", UNSET)
 
+        _sandbox = d.pop("sandbox", UNSET)
+        sandbox: ConnectorSandbox | Unset
+        if isinstance(_sandbox, Unset):
+            sandbox = UNSET
+        else:
+            sandbox = ConnectorSandbox.from_dict(_sandbox)
+
         _setup = d.pop("setup", UNSET)
         setup: ConnectorSetup | Unset
         if isinstance(_setup, Unset):
@@ -241,6 +259,7 @@ class Connector:
             category=category,
             description=description,
             redirect_uri=redirect_uri,
+            sandbox=sandbox,
             setup=setup,
         )
 

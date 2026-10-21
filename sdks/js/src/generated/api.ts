@@ -4031,6 +4031,8 @@ export type components = {
              * @default false
              */
             readonly required?: boolean;
+            /** @description Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false. */
+            readonly sandbox?: boolean;
             /**
              * Format: int64
              * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
@@ -5095,6 +5097,8 @@ export type components = {
              * @description The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
              */
             readonly revision: number;
+            /** @description How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access. */
+            readonly sandbox?: components["schemas"]["ConnectorSandbox"];
             /** @description How a connection may authenticate, such as oauth2_code. */
             readonly schemes: readonly string[] | null;
             /** @description The scopes a consent asks for. */
@@ -5337,6 +5341,13 @@ export type components = {
             readonly config_refresh_token?: string;
             /** @description The app's name in the customer's workspace. */
             readonly name: string;
+        };
+        /** @description How code in an agent's sandbox reaches the provider's API with a connection's credential. */
+        readonly ConnectorSandbox: {
+            /** @description The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox's egress puts the connection's credential in its place, only in a request header and only to one of hosts. */
+            readonly env: string;
+            /** @description The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it. */
+            readonly hosts: readonly string[];
         };
         /** @description What a person does at the provider before the first consent. */
         readonly ConnectorSetup: {

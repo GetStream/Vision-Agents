@@ -461,6 +461,9 @@ components:
           default: false
           description: Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
           type: boolean
+        sandbox:
+          description: Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false.
+          type: boolean
         timeout_ms:
           description: How long one tool call may take, in milliseconds. Omitted, the session's default applies.
           format: int64
@@ -2389,6 +2392,10 @@ components:
           format: int64
           readOnly: true
           type: integer
+        sandbox:
+          $ref: '#/components/schemas/ConnectorSandbox'
+          description: How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access.
+          readOnly: true
         schemes:
           description: How a connection may authenticate, such as oauth2_code.
           items:
@@ -2858,6 +2865,22 @@ components:
           type: string
       required:
         - name
+      type: object
+    ConnectorSandbox:
+      additionalProperties: false
+      description: How code in an agent's sandbox reaches the provider's API with a connection's credential.
+      properties:
+        env:
+          description: 'The env var code in the sandbox reads, such as GITHUB_TOKEN. Its value is a placeholder: the sandbox''s egress puts the connection''s credential in its place, only in a request header and only to one of hosts.'
+          type: string
+        hosts:
+          description: 'The hosts a request may carry the credential to: an exact host, or *. and a domain for the domain and every name under it.'
+          items:
+            type: string
+          type: array
+      required:
+        - env
+        - hosts
       type: object
     ConnectorSetup:
       additionalProperties: false
