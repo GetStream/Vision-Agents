@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
 )
 
 // AgentSuite checks the SDK router against a fake router over HTTP.
@@ -47,7 +49,7 @@ func (s *AgentSuite) SetupTest() {
 func (s *AgentSuite) TearDownTest() { s.server.Close() }
 
 func (s *AgentSuite) router() *sdkRouter {
-	r, err := sdkRouterAt(s.server.URL, "customer-1", newLogger("text", io.Discard))
+	r, err := newSDKRouter(s.server.URL, "customer-1", newLogger("text", io.Discard))
 	s.Require().NoError(err)
 	return r
 }
@@ -70,4 +72,30 @@ func (s *AgentSuite) TestARouterWithoutPostgresKeepsNoLogs() {
 	err := s.router().LogsAvailable(context.Background())
 
 	s.ErrorIs(err, errNoLogStore)
+}
+
+// runCall runs against the SDK router, with fakes for everything else.
+func (s *AgentSuite) runCall(r *sdkRouter, address string) error {
+	cfg := Config{Direction: person.Outbound, Router: address, AgentNumber: agentNumber, PersonNumber: personNumber}
+	return runCall(context.Background(), cfg, deps{
+		router: r, person: &fakePerson{steps: &steps{}}, locator: fakeLocator{}, logger: newLogger("text", io.Discard),
+	})
+}
+
+func (s *AgentSuite) TestNothingIsWrittenToTheRouterWhenAPreconditionFails() {
+	err := s.runCall(s.router(), s.server.URL)
+
+	s.ErrorContains(err, "is not registered")
+	s.NotEmpty(s.methods)
+	for _, method := range s.methods {
+		s.Equal(http.MethodGet, method)
+	}
+}
+
+func (s *AgentSuite) TestAnUnreachableRouterSaysToStartItFirst() {
+	s.server.Close()
+
+	err := s.runCall(s.router(), s.server.URL)
+
+	s.ErrorContains(err, "no router answers at "+s.server.URL+"; start it first")
 }

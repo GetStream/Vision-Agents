@@ -83,7 +83,7 @@ func runCommand(args []string) error {
 func newDeps(ctx context.Context, cfg Config, p person.Person) (deps, error) {
 	logger := newLogger(cfg.LogFormat, os.Stderr)
 	client := &http.Client{Timeout: 30 * time.Second}
-	r, err := newSDKRouter(ctx, cfg.Router, cfg.Customer, logger)
+	r, err := newSDKRouter(cfg.Router, cfg.Customer, logger)
 	if err != nil {
 		return deps{}, err
 	}

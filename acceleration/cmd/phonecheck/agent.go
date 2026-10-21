@@ -47,22 +47,12 @@ type sdkRouter struct {
 	client  *acceleration.ClientWithResponses
 	backend stream.Backend
 	logger  *slog.Logger
+	saved   bool
 }
 
-// newSDKRouter saves the agent's config on the router once and leaves it there. An empty
-// customer is left to the SDK, which reads STREAM_ACCELERATION_CUSTOMER_ID.
-func newSDKRouter(ctx context.Context, address, customer string, logger *slog.Logger) (*sdkRouter, error) {
-	r, err := sdkRouterAt(address, customer, logger)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := r.agent.Sync(ctx); err != nil {
-		return nil, fmt.Errorf("save the %s agent config: %w", agentName, err)
-	}
-	return r, nil
-}
-
-func sdkRouterAt(address, customer string, logger *slog.Logger) (*sdkRouter, error) {
+// newSDKRouter only builds the client; nothing reaches the router yet. An empty customer is
+// left to the SDK, which reads STREAM_ACCELERATION_CUSTOMER_ID.
+func newSDKRouter(address, customer string, logger *slog.Logger) (*sdkRouter, error) {
 	agent, err := agents.New(agents.Options{
 		Name:         agentName,
 		Instructions: "You are on a short test phone call. Answer in one sentence.",
@@ -147,7 +137,23 @@ func (r *sdkRouter) LogRow(ctx context.Context, id string) (acceleration.AgentLo
 	return *resp.JSON200, nil
 }
 
+// saveConfig saves the agent's config once, on the first call, so a run whose checks fail
+// writes nothing. The config is left on the router.
+func (r *sdkRouter) saveConfig(ctx context.Context) error {
+	if r.saved {
+		return nil
+	}
+	if _, err := r.agent.Sync(ctx); err != nil {
+		return fmt.Errorf("save the %s agent config: %w", agentName, err)
+	}
+	r.saved = true
+	return nil
+}
+
 func (r *sdkRouter) StartCall(ctx context.Context, from, to string) (agentSession, error) {
+	if err := r.saveConfig(ctx); err != nil {
+		return nil, err
+	}
 	session, err := r.agent.StartCall(ctx, from, to)
 	if err != nil {
 		return nil, err
@@ -158,6 +164,9 @@ func (r *sdkRouter) StartCall(ctx context.Context, from, to string) (agentSessio
 // Listen registers a worker for one call to number. It is not agents.Agent.WaitForCall,
 // which attaches the number first and so could rewire it.
 func (r *sdkRouter) Listen(ctx context.Context, number string) (listener, error) {
+	if err := r.saveConfig(ctx); err != nil {
+		return nil, err
+	}
 	dispatch, err := stream.NewDispatch(stream.DispatchOptions{Backend: r.backend, Capacity: 1, Logger: r.logger})
 	if err != nil {
 		return nil, err
