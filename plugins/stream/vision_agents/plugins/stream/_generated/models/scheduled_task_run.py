@@ -22,15 +22,16 @@ class ScheduledTaskRun:
         delivered_to (str): Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it
             lands.
         error (None | str): Why it failed, as a short code, when it did: delivery_failed, timed_out,
-            schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number
-            or not_answered. The full error is in the router's logs. Null otherwise.
+            schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number,
+            no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so
+            the user is not rung again). The full error is in the router's logs. Null otherwise.
         finished_at (datetime.datetime | None):
         id (str):
         scheduled_for (str): When the occurrence was due, RFC 3339 with the task zone's offset.
         session_id (str):
         started_at (datetime.datetime | None):
         state (ScheduledTaskRunState): running (retries included), delivered, failed, or missed (it fell outside the
-            grace period).
+            grace period, or its call would have rung more than 15 minutes late).
         task_id (str):
         trigger (ScheduledTaskRunTrigger): schedule when it came due, manual when it was run by hand.
     """

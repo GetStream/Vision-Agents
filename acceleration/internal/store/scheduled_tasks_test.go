@@ -378,6 +378,41 @@ func (s *StoreSuite) TestAUserTimezoneIsStoredAndMoved() {
 	s.Equal("authenticated", user.Kind, "moving a zone never rewrites what the credential proved")
 }
 
+func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
+	s.task("one", nil)
+	run := ScheduledTaskRun{
+		TaskID: "one", CustomerID: "acme", ScheduledFor: s.base, Trigger: ScheduledTaskTriggerManual,
+		Prompt: "Remind Sam to stretch.", State: ScheduledTaskRunRunning, Attempts: 1, StartedAt: &s.base,
+	}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &run))
+	take := func(customer, call string) bool {
+		took, err := s.store.TakeScheduledTaskRunCall(s.ctx, customer, run.ID, call)
+		s.Require().NoError(err)
+		return took
+	}
+
+	s.False(take("globex", "call-0"), "another customer's run is not taken")
+	s.True(take("acme", "call-1"))
+	s.False(take("acme", "call-2"), "a run that placed a call places no second one")
+
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-2"))
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "globex", run.ID, "call-1"))
+	s.False(take("acme", "call-3"), "only the call taken, on the customer's own run, is given back")
+
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1"))
+	s.True(take("acme", "call-3"), "a call given back may be placed again")
+
+	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-3", "not_answered"))
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3"))
+	runs, err := s.store.ScheduledTaskRuns(s.ctx, "acme", "one", 25, nil)
+	s.Require().NoError(err)
+	s.Require().Len(runs, 1)
+	s.Equal("call-3", runs[0].SessionID, "a finished run keeps the call it made")
+
+	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "", "delivery_failed"))
+	s.False(take("acme", "call-4"), "a finished run places no call")
+}
+
 // held claims the due task id and holds its occurrence until until, as quiet
 // hours do, returning the claim.
 func (s *StoreSuite) held(id string, until time.Time) ClaimedScheduledTask {
@@ -451,6 +486,7 @@ func (s *StoreSuite) TestAnEditKeepingTheNextRunSettlesARepeatsOccurrenceRatherT
 	s.True(again[0].AlreadySettled, "the old instructions are not delivered")
 	s.Equal(claim.Run.ID, again[0].Run.ID)
 	s.Equal(ScheduledTaskRunMissed, again[0].Run.State)
+	s.False(again[0].WorkersLost, "the run was settled by the edit, not failed by this claim")
 }
 
 func (s *StoreSuite) TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads() {
@@ -658,12 +694,13 @@ func (s *StoreSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCa
 	s.Require().NoError(err)
 	s.Require().Len(failed, 1)
 	s.True(failed[0].AlreadySettled, "the worker settles the task without delivering again")
+	s.True(failed[0].WorkersLost, "the worker says why")
 	s.Equal(ScheduledTaskRunFailed, failed[0].Run.State)
 	stored := s.run(runID)
 	s.Equal(ScheduledTaskRunFailed, stored.State)
 	s.Equal(3, stored.Attempts, "the first claim and two takeovers")
 	s.Require().NotNil(stored.Error)
-	s.Contains(*stored.Error, "worker was lost")
+	s.Equal("delivery_failed", *stored.Error, "a code a device is shown, not the story")
 	s.NotNil(stored.FinishedAt)
 	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
 	s.Require().NoError(err)

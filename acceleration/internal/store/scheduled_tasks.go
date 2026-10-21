@@ -58,6 +58,11 @@ const scheduledTaskStaleRun = 10 * time.Minute
 // router every scheduledTaskStaleRun until the occurrence's grace ran out.
 const maxScheduledTaskRunAttempts = 3
 
+// scheduledTaskRunWorkersLost is the reason a run failed at
+// maxScheduledTaskRunAttempts is recorded under: scheduling.ReasonFailed, one
+// of the codes a device is shown, which this package cannot import.
+const scheduledTaskRunWorkersLost = "delivery_failed"
+
 // ScheduledTask is something the agent agreed to do for one end user at a
 // wall-clock time in that user's zone, once or on a repeat.
 type ScheduledTask struct {
@@ -434,12 +439,14 @@ func (s *Store) ActiveScheduledTaskCount(ctx context.Context, customerID, userID
 // ClaimedScheduledTask is a task a worker has claimed, with the run it is to
 // deliver. AlreadySettled says the occurrence's run is finished already and
 // only the task's advance was lost; the worker settles the task without
-// delivering again.
+// delivering again. WorkersLost says this claim failed the run itself, every
+// worker it was started under having been lost, which the worker logs.
 type ClaimedScheduledTask struct {
 	Task           ScheduledTask
 	Run            ScheduledTaskRun
 	ClaimID        string
 	AlreadySettled bool
+	WorkersLost    bool
 }
 
 // ClaimDueScheduledTasks claims up to limit due tasks under a lease of the
@@ -488,6 +495,7 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 			}
 
 			if runErr == nil {
+				lost := false
 				switch {
 				case run.State != ScheduledTaskRunRunning:
 					// The occurrence was settled and the advance was lost.
@@ -507,7 +515,7 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 					}
 					continue
 				case run.Attempts >= maxScheduledTaskRunAttempts:
-					failure := fmt.Sprintf("the occurrence was started %d times and its worker was lost each time", run.Attempts)
+					failure := scheduledTaskRunWorkersLost
 					if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 						Set("state = ?", ScheduledTaskRunFailed).
 						Set("error = ?", failure).
@@ -517,6 +525,7 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 						return fmt.Errorf("store: fail scheduled task run: %w", err)
 					}
 					run.State, run.Error, run.FinishedAt = ScheduledTaskRunFailed, &failure, &now
+					lost = true
 				default:
 					// Stale: take it over under the same run, so the same
 					// command id, so a copy that did land is refused.
@@ -546,7 +555,7 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 					}
 					task.LeaseUntil = &leaseUntil
 					task.ClaimID = claimID
-					claimed = append(claimed, ClaimedScheduledTask{Task: task, Run: run, ClaimID: claimID, AlreadySettled: true})
+					claimed = append(claimed, ClaimedScheduledTask{Task: task, Run: run, ClaimID: claimID, AlreadySettled: true, WorkersLost: lost})
 					continue
 				}
 			} else {
@@ -770,6 +779,44 @@ func (s *Store) FinishManualScheduledTaskRun(ctx context.Context, runID, state, 
 	}
 	if _, err := update.Exec(ctx); err != nil {
 		return stack.Wrap(fmt.Errorf("store: finish scheduled task run: %w", err))
+	}
+	return nil
+}
+
+// TakeScheduledTaskRunCall records on a running run the session of the call
+// about to be placed for it, and reports false when the run already has one:
+// an earlier attempt, or a worker that stopped, placed a call for this
+// occurrence, so the user is not rung again.
+func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (bool, error) {
+	result, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("session_id = ?", sessionID).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id = ''").
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+	}
+	return affected > 0, nil
+}
+
+// ReleaseScheduledTaskRunCall gives back a call TakeScheduledTaskRunCall
+// took and could not place, so a later attempt may ring.
+func (s *Store) ReleaseScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) error {
+	_, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("session_id = ''").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id = ?", sessionID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: release scheduled task run call: %w", err))
 	}
 	return nil
 }

@@ -113,6 +113,7 @@ const (
 	ReasonNoNumber    = "no_phone_number"
 	ReasonNoLine      = "no_agent_number"
 	ReasonNotAnswered = "not_answered"
+	ReasonRungAlready = "already_called"
 )
 
 // ReasonOf is the code a failed attempt is recorded under.
@@ -295,6 +296,10 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 		})
 		return
 	}
+	if claim.WorkersLost {
+		s.logger.Error("a scheduled task's occurrence failed: it was started this many times and its worker was lost each time",
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "attempts", claim.Run.Attempts)
+	}
 	if claim.AlreadySettled {
 		// The occurrence was settled and only the advance was lost: settle the
 		// task from the run as it stands, without delivering again.
@@ -409,9 +414,23 @@ func (s *Scheduler) deliverWithRetries(ctx context.Context, claim store.ClaimedS
 			return deliveredTo, sessionID, err
 		case <-timer.C:
 		}
+		earlier := err
 		deliveredTo, sessionID, err = s.deliver(ctx, claim)
+		err = rungEarlier(earlier, err)
 	}
 	return deliveredTo, sessionID, err
+}
+
+// rungEarlier is a later attempt's failure, kept under the reason the earlier
+// attempt failed under when the later one found the occurrence's call placed
+// already: that call is the earlier attempt's, and how it went (nobody
+// answered, say) is the run's reason, not that it was placed.
+func rungEarlier(earlier, later error) error {
+	var failure *Failure
+	if !errors.As(later, &failure) || failure.Reason != ReasonRungAlready {
+		return later
+	}
+	return &Failure{Reason: ReasonOf(earlier), Final: failure.Final, Err: later}
 }
 
 // postpone holds a claimed task until until, under the claim that delivered

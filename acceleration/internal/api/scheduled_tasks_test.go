@@ -1930,6 +1930,7 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
 	s.Require().NotNil(runs[0].Error)
 	s.Equal(scheduling.ReasonFailed, *runs[0].Error, "a device is told a short reason, not the vendor's words")
+	s.Empty(runs[0].SessionID, "the call that could not be placed was given back")
 	s.Equal(1, s.taskReloaded(task).ConsecutiveFailures)
 }
 
@@ -2037,16 +2038,18 @@ func (s *ScheduledTasksSuite) TestACallNobodyPicksUpIsNotAnswered() {
 	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
 	s.Require().True(live)
 
-	err := s.router.holdCall(context.Background(), found)
+	err := s.router.holdCall(context.Background(), found, scheduledDelivery{})
 	s.Equal(scheduling.ReasonNotAnswered, scheduling.ReasonOf(err), "the ring ran out: %v", err)
+	s.True(s.failure(err).Final, "the user is not rung again")
 
 	scheduledPhoneWindow = time.Minute
 	held := make(chan error, 1)
-	go func() { held <- s.router.holdCall(context.Background(), found) }()
+	go func() { held <- s.router.holdCall(context.Background(), found, scheduledDelivery{}) }()
 	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
 	select {
 	case err := <-held:
 		s.Equal(scheduling.ReasonNotAnswered, scheduling.ReasonOf(err), "the call ended unanswered: %v", err)
+		s.True(s.failure(err).Final, "the user is not rung again")
 	case <-time.After(30 * time.Second):
 		s.Fail("the call that ended was still held")
 	}
@@ -2405,6 +2408,33 @@ func (s *ScheduledTasksSuite) TestPausingATaskWritesTheOccurrenceItHeldMissed() 
 	s.Require().Len(page.Items, 1)
 	s.Equal(store.ScheduledTaskRunMissed, page.Items[0].State, "the held occurrence is settled, not left running for good")
 	s.NotNil(page.Items[0].FinishedAt)
+}
+
+func (s *ScheduledTasksSuite) TestAnOccurrenceWhoseWorkersKeepDyingListsACodeAsItsReason() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	task := s.tasksOf(user)[0]
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task.NextRunAt = &due
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &task))
+	// Three workers took it up and died: the store's cap.
+	started := time.Now().Add(-time.Hour)
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: s.customerID(), ScheduledFor: due,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunRunning, Attempts: 3, StartedAt: &started}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &stale))
+	s.runWorker()
+
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	var page ScheduledTaskRunPage
+	s.Require().Eventually(func() bool {
+		page = ScheduledTaskRunPage{}
+		return user.do(http.MethodGet, path+"/runs", nil, &page) == http.StatusOK &&
+			len(page.Items) == 1 && page.Items[0].State == store.ScheduledTaskRunFailed
+	}, 30*time.Second, 250*time.Millisecond, "the occurrence was never failed")
+	s.Require().NotNil(page.Items[0].Error)
+	s.Equal(scheduling.ReasonFailed, *page.Items[0].Error, "a code from the closed set, the story in the logs")
 }
 
 func (s *ScheduledTasksSuite) TestListingReadsWhenEveryTaskLastRanInOneQuery() {
