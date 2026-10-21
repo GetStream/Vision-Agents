@@ -1,0 +1,44 @@
+name: flutter_demo
+description: The Flutter half of swift_demo — the same agent, talked to by a Flutter app.
+publish_to: none
+version: 0.1.0
+
+# Stream Chat 10.4's floor, which vision_agents_chat follows.
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow.
+  # From the branch that adds AIConversationView and the voice views, until they are released.
+  stream_chat_flutter_ai:
+    git:
+      url: https://github.com/GetStream/stream-chat-flutter-ai.git
+      ref: renefloor/flu-1043-aivoiceglowview-and-aivoicewaveview-show-what-a-voice-agent
+      path: packages/stream_chat_flutter_ai
+  # The channel a written conversation is kept in; the version vision_agents_chat pins.
+  stream_chat: 10.4.0
+  stream_video_flutter: 1.6.0
+  # The SDKs as they are in this checkout, as the Android demo's included build does.
+  vision_agents_core:
+    path: ../../../sdks/dart/core
+  vision_agents_chat:
+    path: ../../../sdks/dart/chat
+  vision_agents_rtc:
+    path: ../../../sdks/dart/rtc
+
+# The chat and rtc packages ask for vision_agents_core from pub.dev, which it is not on yet.
+dependency_overrides:
+  vision_agents_core:
+    path: ../../../sdks/dart/core
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
