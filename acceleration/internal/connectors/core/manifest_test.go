@@ -316,6 +316,25 @@ func (s *ManifestSuite) TestKeepPathNeedsHostSuffixes() {
 	s.ErrorContains(err, "capture[0].keep_path: keep_path needs host_suffixes")
 }
 
+// owner_email compares an email only an id_token the scheme checked can carry: one from the
+// token response's own JSON or the callback would be the provider's or the browser's word.
+func (s *ManifestSuite) TestOwnerEmailNeedsARequiredEmailFromTheIDToken() {
+	parsed, err := ParseManifest(minimal("owner_email: true\ncapture:\n  - name: email\n    from: id_token\n    path: $.email\n"))
+	s.Require().NoError(err)
+	s.True(parsed.OwnerEmail)
+
+	for name, capture := range map[string]string{
+		"none":           "",
+		"token response": "capture:\n  - name: email\n    from: token_response\n    path: $.email\n",
+		"callback":       "capture:\n  - name: email\n    from: callback_query\n    key: email\n",
+		"optional":       "capture:\n  - name: email\n    from: id_token\n    path: $.email\n    optional: true\n",
+		"another name":   "capture:\n  - name: mail\n    from: id_token\n    path: $.email\n",
+	} {
+		_, err := ParseManifest(minimal("owner_email: true\n" + capture))
+		s.ErrorContains(err, "owner_email: needs a capture rule named email, from the id_token and not optional", name)
+	}
+}
+
 func (s *ManifestSuite) TestGoogleReadsTheAccountFromTheIDTokenSub() {
 	resolved, err := s.load("google").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)

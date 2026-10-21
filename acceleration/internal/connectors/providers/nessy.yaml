@@ -12,7 +12,7 @@
 # https://linear.app/stream/document/nessy-as-a-connector-150504c74466, opened October 20, 2026.
 id: nessy
 # A new revision for any change to what this file says; see AGENTS.md.
-revision: 3
+revision: 4
 name: Nessy
 category: Internal tools
 description: Read Stream's customer data in Nessy as the staff member who connected.
@@ -104,14 +104,31 @@ scopes:
   # [n]:backend/cliauth/client.go:146-170). So one list serves every app, whatever it
   # registered: mcp asks for the client's permission keys, and a key the client lacks would be
   # refused with invalid_scope ([n]:backend/cliauth/service.go:216-223). openid adds an id_token
-  # naming who consented ([n]:docs/mcp.md:115-128). Nothing reads it yet: a later revision's
-  # account check (AI-1543) will.
+  # naming who consented ([n]:docs/mcp.md:115-128), which capture and owner_email below read.
   list: [mcp, openid]
   # No separator, so a space: Nessy splits the scope on whitespace
   # ([n]:backend/cliauth/client.go:159).
-# No identity yet: the id_token's sub and email ([n]:docs/mcp.md:115-128) become the account in
-# a later revision, with the check that the person who consents is the one who started it
-# ([design], change 8).
+# Who consented, from the id_token: «iss (the issuer), sub (the user id), aud (the client id),
+# exp, iat and email» (Nessy origin/main at 7e238ffa, docs/mcp.md:115-123; IDClaims in
+# backend/cliauth/token.go:116-119). The router checks iss, aud and exp and lets TLS stand in
+# for the signature (oauth2code checkIDToken; OpenID Connect Core 1.0 section 3.1.3.7 item 6).
+# Nessy sends no email_verified; it is read if it ever does, and false refuses the consent.
+capture:
+  - name: sub
+    from: id_token
+    path: $.sub
+  - name: email
+    from: id_token
+    path: $.email
+  - name: email_verified
+    from: id_token
+    path: $.email_verified
+    optional: true
+identity: [sub]
+# [design], change 8 (AI-1543): a link to a staff member's consent works in any browser, so a
+# user-owned connection's first consent must sign in as the email Athena's backend sent for
+# that staff member (X-Stream-User-Email); another account is refused and nothing is stored.
+owner_email: true
 refresh:
   # Every refresh rotates the refresh token, and presenting a rotated-out one revokes the whole
   # family, so there is no grace ([n]:docs/mcp.md:129-134). The token response always carries

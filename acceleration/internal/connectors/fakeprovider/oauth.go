@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) protectedResource(w http.ResponseWriter, _ *http.Request) {
@@ -394,6 +395,9 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request, c *client) {
 	code.used = true
 	code.grant = &grant{clientID: c.id, scopes: code.scopes, claims: code.claims, account: s.account}
 	body := s.shape(s.issue(code.grant, !s.is(NoRefreshToken)), code.grant)
+	if s.is(OpenID) && slices.Contains(code.scopes, "openid") {
+		body["id_token"] = s.idToken(c.id, code.grant.account)
+	}
 	if s.is(CommaScopes) && len(code.userScopes) > 0 {
 		// The user token is a grant of its own, so it refreshes on its own refresh token.
 		code.userGrant = &grant{clientID: c.id, scopes: code.userScopes, user: true}
@@ -495,6 +499,26 @@ func (s *Server) clientCredentialsGrant(w http.ResponseWriter, r *http.Request, 
 	// asked for is granted.
 	g := &grant{clientID: c.id, scopes: split(r.PostForm.Get("scope"), " "), account: s.account}
 	writeToken(w, s.shape(s.issue(g, false), g))
+}
+
+// idToken is OpenID's id_token for account, issued to clientID. Call it with mu held.
+func (s *Server) idToken(clientID, account string) string {
+	now := s.now()
+	segment := func(claims map[string]any) string {
+		raw, err := json.Marshal(claims)
+		if err != nil {
+			s.t.Fatalf("fakeprovider: id_token: %v", err)
+		}
+		return base64.RawURLEncoding.EncodeToString(raw)
+	}
+	signing := segment(map[string]any{"alg": "HS256", "typ": "JWT"}) + "." + segment(map[string]any{
+		"iss": s.URL, "sub": account, "aud": clientID, "email": emailOf(account),
+		// Nessy's id_token lives 10 minutes (docs/mcp.md:117).
+		"iat": now.Unix(), "exp": now.Add(10 * time.Minute).Unix(),
+	})
+	mac := hmac.New(sha256.New, []byte(s.ClientSecret+"-id-token"))
+	mac.Write([]byte(signing))
+	return signing + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // issue hands out an access token for g and, when rotate is set, a new refresh token that

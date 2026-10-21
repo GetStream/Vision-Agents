@@ -39,7 +39,7 @@ type AuditEntry struct {
 	Action       AuditAction       `json:"action"`
 	Source       AuditSource       `json:"source"`
 	ActorID      string            `json:"actor_id,omitempty" doc:"Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup."`
-	ActorName    string            `json:"actor_name,omitempty" doc:"Their name, as their client named them. Never an email address: the router keeps none."`
+	ActorName    string            `json:"actor_name,omitempty" doc:"Their name, as their client named them. Never an email address: the only one the router keeps is the one a backend says its user signs in with, X-Stream-User-Email, which no audit entry names."`
 	RequestID    string            `json:"request_id,omitempty" doc:"The X-Request-Id of the request that made it."`
 	Changes      []AuditChange     `json:"changes" nullable:"false" doc:"Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved."`
 	CreatedAt    time.Time         `json:"created_at"`

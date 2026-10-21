@@ -80,6 +80,13 @@ type Manifest struct {
 	RateLimit RateLimitRule       `yaml:"rate_limit,omitempty" json:"rate_limit,omitzero"`
 	Sources   []SourceRule        `yaml:"sources,omitempty" json:"sources,omitempty"`
 	Hooks     map[string]HookName `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	// OwnerEmail makes the first consent of a user-owned connection sign in as its owner: the
+	// email captured from the id_token must be the one the app's backend last said that user
+	// signs in with, or the grant is refused and nothing is stored. It needs a capture rule
+	// named email from the id_token (OpenID Connect Core 1.0 section 5.1's claim), so the
+	// scheme checks the token's iss, aud and exp. Left out of the JSON when false, so the JSON
+	// of every manifest stored before it stays as it was.
+	OwnerEmail bool `yaml:"owner_email,omitempty" json:"owner_email,omitempty"`
 	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
 	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
 	// (AI-1544), and left out of the JSON when false, so the JSON of every manifest stored
@@ -291,6 +298,13 @@ type CaptureRule struct {
 	// fetches, but never an endpoint's origin.
 	KeepPath bool `yaml:"keep_path,omitempty" json:"keep_path,omitempty"`
 }
+
+// The captured names an owner_email consent reads: OpenID Connect Core 1.0 section 5.1's
+// email and email_verified claims, under their own names.
+const (
+	OwnerEmailCapture  = "email"
+	OwnerEmailVerified = "email_verified"
+)
 
 // ValueSource is where a captured value is read from.
 type ValueSource string
@@ -585,6 +599,10 @@ func (m Manifest) Validate() error {
 		}
 	}
 
+	if email := captures[OwnerEmailCapture]; m.OwnerEmail && (email.From != FromIDToken || email.Optional) {
+		fail("owner_email", "needs a capture rule named %s, from the id_token and not optional", OwnerEmailCapture)
+	}
+
 	for i, name := range m.Identity {
 		field := fmt.Sprintf("identity[%d]", i)
 		rule, ok := captures[name]
@@ -802,6 +820,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 		Scopes:          m.Scopes,
 		Identity:        slices.Clone(m.Identity),
 		Capture:         slices.Clone(m.Capture),
+		OwnerEmail:      m.OwnerEmail,
 		Refresh:         m.Refresh,
 		RateLimit:       m.RateLimit,
 		Sources:         slices.Clone(m.Sources),
