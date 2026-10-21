@@ -11,6 +11,15 @@ skill asks what to test, sets it up, runs, reports and puts things back.
 
 ## Rules for every step
 
+- **Main session only.** The wizard (every question and the Approve) runs in the main session
+  with the human, never in a sub-agent. If this skill is invoked inside a sub-agent, stop and
+  say the wizard must run in the main session. Sub-agents only read logs and write the
+  per-call report.
+- **Long processes run in the background.** Start the router, the tunnel and each phonecheck run
+  with the Bash tool's `run_in_background`, each writing to its own log in the scratchpad:
+  `<scratchpad>/router.log`, `<scratchpad>/tunnel.log`, `<scratchpad>/phonecheck-<n>.log`.
+  Right after starting one, print its log's full path, so the human can `tail -f` it or ask
+  questions while the call runs. The main session stays free to answer.
 - **Shell.** The user's shell is fish. Run every snippet as `bash -c '…'`. Shell variables do not
   last between tool calls: write literal values (env file path, router address, customer id,
   numbers, ids) into each command.
@@ -123,8 +132,8 @@ to its database (migrations, and the router's own background work).
 3. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something
    does, show it and ask. Starting it runs migrations, binds :8080 and may start background
    work that writes rows or calls models; ask a yes. From `acceleration/`, start
-   `ROUTER_AUTH_MODE=noauth go run ./cmd/router` in the background, output to a file; write its
-   process id to the state file. Wait for `listening`. If it never comes, show the last lines of
+   `ROUTER_AUTH_MODE=noauth go run ./cmd/router > <scratchpad>/router.log 2>&1` in the background;
+   once it listens, write its process id (`lsof -tiTCP:8080 -sTCP:LISTEN`) to the state file. Wait for `listening`. If it never comes, show the last lines of
    the file and stop. Note the Stream app id from `stream_app=<id>` in
    `stream: the deployment acts in its own Stream app`, if that line appears.
 4. **Customer.** Never assumed. *Local:* list numbers for `.env`'s
@@ -191,7 +200,8 @@ No yes: nothing is bought or changed; stop the router this skill started and end
 In this order, each change into the state file:
 
 1. **Tunnel and hooks** (local only). `command -v cloudflared`; if missing, ask the human. Start
-   `cloudflared tunnel --url http://localhost:8080` in the background, take its
+   `cloudflared tunnel --url http://localhost:8080 > <scratchpad>/tunnel.log 2>&1` in the
+   background, write its process id to the state file, take its
    `https://<random>.trycloudflare.com` URL, then `go run ./cmd/phone hooks -url <tunnel URL>`
    (`-remove <stale URL>` only if approved; `-app <id>` only for a router in app mode). A local
    Telnyx router's own TeXML app (`TELNYX_CONNECTION_ID`) needs its voice URL on the tunnel; the
@@ -211,19 +221,23 @@ In this order, each change into the state file:
 ## Run
 
 List the customer's numbers again and check the rules in 1.5. If another attached number
-blocks an inbound run, stop and tell the human. Then, per combination:
+blocks an inbound run, stop and tell the human. Then, per combination `<n>` (1, 2, …), in the
+background, one at a time:
 
 ```bash
-bash -c 'set -a; . <env file>; set +a; cd acceleration/cmd/phonecheck && go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east -log-format json'
+bash -c 'set -a; . <env file>; set +a; cd acceleration/cmd/phonecheck && go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east > <scratchpad>/phonecheck-<n>.log 2>&1'
 ```
 
-`-provider` is the person's vendor; `inbound` for the other direction. The tool waits up to 90 s
-for the `call_sites` row. Keep its stderr and, locally, the router's lines with each run's
-`session_id` (logged in `the agent is on the call`).
+`-provider` is the person's vendor; `inbound` for the other direction. Print the log's path. The
+tool waits up to 90 s for the `call_sites` row. Start the next run once this one's exit is
+reported.
 
 ## Report
 
-Per call, one short block:
+After each run, dispatch one sub-agent (Agent tool) to read `<scratchpad>/phonecheck-<n>.log`
+and, locally, the lines of `<scratchpad>/router.log` with that run's `session_id` (logged in
+`the agent is on the call`). It returns the block below, so the large logs stay out of the
+main session. Per call, one short block:
 
 - **Hops:** agent SFU, router address, Stream SIP host, SFUs used and where, person side and
   `region_label`, each with `observed`, `inferred` or `reported`.
@@ -245,7 +259,8 @@ it lists, in reverse:
    Person number: Twilio `DELETE …/IncomingPhoneNumbers/<sid>.json`, Telnyx
    `DELETE /v2/phone_numbers/<id>`. Say what is kept and what stays attached: an attached
    number blocks inbound tests on other numbers.
-4. Stop the tunnel, then the router.
+4. Stop the tunnel, then the router: their background tasks, and check by the process ids in
+   the state file that nothing is left.
 
 If a run was killed hard, a call may still be up and the state file says what is left to undo;
 tell the human its path.
