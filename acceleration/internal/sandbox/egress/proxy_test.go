@@ -535,6 +535,9 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainKeepsTheTLSHelloAndEndsWithTheH
 
 	s.Require().NoError(err)
 	s.Contains(string(answer), "200 OK")
+	// TLS ended with the host's close_notify; the proxy then closes the sandbox's connection.
+	_, err = eager.reader.ReadByte()
+	s.ErrorIs(err, io.EOF)
 }
 
 // TestAWildcardGrantTakesTheDomainAndTheNamesUnderItOnly: *. as core.SandboxRule reads it.
