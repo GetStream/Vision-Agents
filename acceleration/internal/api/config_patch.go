@@ -247,6 +247,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, heard); !ok {
 		return nil, invalidRequest(message)
 	}
