@@ -22,8 +22,8 @@ import (
 // Subject is one broker under the contract, and its provider as the test sees it.
 type Subject struct {
 	Broker sandbox.CredentialBroker
-	// Held is the credential and hosts the provider keeps under ref, a value of
-	// Mount.Secrets; ok is false once there is none.
+	// Held is the credential and hosts the provider keeps under ref, the value of a grant's
+	// env var; ok is false once there is none.
 	Held func(ref string) (value string, hosts []string, ok bool)
 	// Left is everything the broker has left with the provider, of every session.
 	Left func() []string
@@ -31,6 +31,10 @@ type Subject struct {
 	Refuse func()
 	// Recover has the provider answer again.
 	Recover func()
+	// Live is a broker whose egress asks for the credential on every request and keeps no
+	// copy: Held is what a request gets now, so a credential that cannot be had just now
+	// reaches no request, and a refresh the provider refused still sends the newest.
+	Live bool
 }
 
 // BrokerContract is the suite. New builds a broker for session over tokens, logging to
@@ -121,6 +125,14 @@ func (s *BrokerContract) returned(err error) error {
 	return err
 }
 
+// ref is the value of the sandbox's env var name: a secret's name, or a placeholder.
+func ref(mount sandbox.Mount, name string) string {
+	if secret, ok := mount.Secrets[name]; ok {
+		return secret
+	}
+	return mount.Env[name]
+}
+
 func grant(binding, env string) sandbox.Grant {
 	return sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-" + binding},
 		Binding: binding, Env: env, Hosts: []string{"api.github.com", "uploads.github.com"}}
@@ -135,10 +147,10 @@ func (s *BrokerContract) TestTheSandboxGetsAReferenceNeverTheToken() {
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
 
 	s.Require().NoError(s.returned(err))
-	ref := mount.Secrets["GITHUB_TOKEN"]
-	s.Require().NotEmpty(ref)
+	reference := ref(mount, "GITHUB_TOKEN")
+	s.Require().NotEmpty(reference)
 	s.NotContains(fmt.Sprintf("%+v", mount), "gho_first")
-	value, hosts, ok := subject.Held(ref)
+	value, hosts, ok := subject.Held(reference)
 	s.Require().True(ok)
 	s.Equal("gho_first", value)
 	s.Equal([]string{"api.github.com", "uploads.github.com"}, hosts)
@@ -152,7 +164,7 @@ func (s *BrokerContract) TestANewRevisionIsHandedOverBeforeTheNextRun() {
 	s.connect("github", "gho_second", 2)
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
 
-	value, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	value, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.Require().True(ok)
 	s.Equal("gho_second", value)
 }
@@ -178,7 +190,7 @@ func (s *BrokerContract) TestADisconnectedConnectionGivesNoEnvAndAWarning() {
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
 
 	s.Require().NoError(s.returned(err))
-	s.NotContains(mount.Secrets, "GITHUB_TOKEN")
+	s.Empty(ref(mount, "GITHUB_TOKEN"))
 	s.Empty(subject.Left())
 	s.Contains(s.logs.String(), `"level":"WARN"`)
 	s.Contains(s.logs.String(), "github")
@@ -208,13 +220,13 @@ func (s *BrokerContract) TestAConnectionRevokedMidSessionIsWithdrawn() {
 	s.disconnect("github")
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
 
-	_, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	_, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.False(ok)
 	s.Contains(s.logs.String(), `"level":"WARN"`)
 }
 
 // TestACredentialUnavailableJustNowIsKeptAndAskedForAgain: a renewal that failed just now
-// withdraws nothing, and the next run asks again.
+// withdraws nothing, and the next run asks again. A live egress has no copy to send meanwhile.
 func (s *BrokerContract) TestACredentialUnavailableJustNowIsKeptAndAskedForAgain() {
 	subject := s.subject("session-1")
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
@@ -223,14 +235,18 @@ func (s *BrokerContract) TestACredentialUnavailableJustNowIsKeptAndAskedForAgain
 	s.unavailable("github")
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
 
-	value, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
-	s.Require().True(ok)
-	s.Equal("gho_first", value)
+	value, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
+	if subject.Live {
+		s.False(ok)
+	} else {
+		s.Require().True(ok)
+		s.Equal("gho_first", value)
+	}
 	s.Contains(s.logs.String(), `"level":"WARN"`)
 
 	s.connect("github", "gho_second", 2)
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
-	value, _, _ = subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	value, _, _ = subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.Equal("gho_second", value)
 }
 
@@ -243,11 +259,11 @@ func (s *BrokerContract) TestTwoSessionsNeverShareACredential() {
 	s.Require().NoError(s.returned(err))
 	other, err := second.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
 	s.Require().NoError(s.returned(err))
-	s.NotEqual(one.Secrets["GITHUB_TOKEN"], other.Secrets["GITHUB_TOKEN"])
+	s.NotEqual(ref(one, "GITHUB_TOKEN"), ref(other, "GITHUB_TOKEN"))
 
 	s.Require().NoError(s.returned(first.Broker.Close(s.ctx)))
 
-	_, _, ok := second.Held(other.Secrets["GITHUB_TOKEN"])
+	_, _, ok := second.Held(ref(other, "GITHUB_TOKEN"))
 	s.True(ok)
 }
 
@@ -261,7 +277,8 @@ func (s *BrokerContract) TestAProviderThatRefusesLeavesTheTokenInNoError() {
 }
 
 // TestARefusedRefreshIsAnErrorWithoutTheToken is A13 on the refresh path: a new revision the
-// provider refuses to take fails the run, and the error holds no token.
+// provider refuses to take fails the run, and the error holds no token. A live egress sends
+// the new one all the same.
 func (s *BrokerContract) TestARefusedRefreshIsAnErrorWithoutTheToken() {
 	subject := s.subject("session-1")
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
@@ -272,28 +289,34 @@ func (s *BrokerContract) TestARefusedRefreshIsAnErrorWithoutTheToken() {
 
 	s.Error(s.returned(subject.Broker.BeforeRun(s.ctx)))
 	subject.Recover()
-	value, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	value, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.Require().True(ok)
-	s.Equal("gho_first", value)
+	if subject.Live {
+		s.Equal("gho_second", value)
+	} else {
+		s.Equal("gho_first", value)
+	}
 }
 
 // TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried: a revoked connection's credential
 // the provider would not delete fails the run, stays held, and goes on the next run or Close.
+// A live egress sends a revoked connection's credential to no request even then.
 func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried() {
 	subject := s.subject("session-1")
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN"), grant("gitlab", "GITLAB_TOKEN")})
 	s.Require().NoError(s.returned(err))
-	s.Require().Len(mount.Secrets, 2)
+	s.Require().NotEmpty(ref(mount, "GITHUB_TOKEN"))
+	s.Require().NotEmpty(ref(mount, "GITLAB_TOKEN"))
 
 	s.disconnect("github")
 	subject.Refuse()
 	s.Error(s.returned(subject.Broker.BeforeRun(s.ctx)))
-	_, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
-	s.True(ok, "the secret stays while the provider refuses")
+	_, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
+	s.Equal(!subject.Live, ok, "the secret stays while the provider refuses")
 
 	subject.Recover()
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
-	_, _, ok = subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	_, _, ok = subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.False(ok, "the next run withdraws it")
 	s.Len(subject.Left(), 1)
 

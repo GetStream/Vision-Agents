@@ -67,7 +67,19 @@ type Decided struct {
 	// spent waiting to be answered and is worth reporting alongside the answer.
 	TookMs float64
 	Err    error
+	// Ruler is whose answer the decision is, empty when no model's answer was read.
+	Ruler Ruler
 }
+
+// Ruler is which model a decision came from.
+type Ruler string
+
+const (
+	// Primary is the controller's own model.
+	Primary Ruler = "primary"
+	// Fallback is another model the request was hedged or failed over to.
+	Fallback Ruler = "fallback"
+)
 
 func (d Decided) Valid() bool {
 	return d.Err == nil && d.CandidateID != "" && d.Disposition.Valid() && d.Floor.Valid()

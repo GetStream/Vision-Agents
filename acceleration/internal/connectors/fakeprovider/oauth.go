@@ -590,6 +590,14 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := r.PostForm.Get("token")
+	switch {
+	case s.refresh[token] != nil:
+		s.revoked = append(s.revoked, "refresh_token")
+	case s.access[token] != nil:
+		s.revoked = append(s.revoked, "access_token")
+	default:
+		s.revoked = append(s.revoked, "")
+	}
 	if s.is(AccessTokenNotRevocable) && s.access[token] != nil {
 		s.tokenError(w, http.StatusBadRequest, "unsupported_token_type", "")
 		return

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -52,6 +53,9 @@ type stubLLM struct {
 	order   []string
 	// capabilities is what the model says it accepts, which is nothing unless a test says.
 	capabilities llm.Capabilities
+	// writtenBy, if set, is the provider and model a response says wrote it, as one a request
+	// was hedged or failed over to does.
+	writtenBy [2]string
 }
 
 func newStubLLM() *stubLLM {
@@ -63,7 +67,7 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold := s.holdCreate
+	hold, provider, model := s.holdCreate, cmp.Or(s.writtenBy[0], s.Provider()), cmp.Or(s.writtenBy[1], s.Model())
 	s.mu.Unlock()
 
 	if hold != nil {
@@ -76,8 +80,8 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,
-		Provider:   s.Provider(),
-		Model:      s.Model(),
+		Provider:   provider,
+		Model:      model,
 	})
 
 	s.mu.Lock()

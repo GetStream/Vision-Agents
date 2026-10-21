@@ -80,6 +80,11 @@ type Manifest struct {
 	RateLimit RateLimitRule       `yaml:"rate_limit,omitempty" json:"rate_limit,omitzero"`
 	Sources   []SourceRule        `yaml:"sources,omitempty" json:"sources,omitempty"`
 	Hooks     map[string]HookName `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
+	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
+	// (AI-1544), and left out of the JSON when false, so the JSON of every manifest stored
+	// before it stays as it was.
+	RevokeOnDelete bool `yaml:"revoke_on_delete,omitempty" json:"revoke_on_delete,omitempty"`
 	// Channel is how the connector is an inbound channel (channel.go). A connector has
 	// sources, a channel, or both.
 	Channel *ChannelRule `yaml:"channel,omitempty" json:"channel,omitempty"`

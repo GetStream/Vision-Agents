@@ -413,3 +413,29 @@ func (p *platform) history() []string {
 	defer p.mu.Unlock()
 	return slices.Clone(p.calls)
 }
+
+// TestAGrantedSandboxIsCreatedAsOnBase is the control for the proxy broker: with Daytona's
+// broker, the default, a granted sandbox is asked for as before it, and nothing is written
+// into it. The expected requests are from a probe on origin/accelerate a103c19ab (a temporary
+// SecretsSuite test printing requests()[0] and history() for these three configs).
+func (s *SecretsSuite) TestAGrantedSandboxIsCreatedAsOnBase() {
+	expected := []string{
+		`{"domainAllowList":"api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
+		`{"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
+		`{"labels":{"code-toolbox-language":"python"},"networkAllowList":"10.0.0.0/8","networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}`,
+	}
+	for i, config := range []sandbox.Config{{}, {Network: true, AllowedDomains: []string{"pypi.org"}}, {NetworkAllowList: []string{"10.0.0.0/8"}}} {
+		s.platform = newPlatform()
+		s.T().Cleanup(s.platform.server.Close)
+		box := s.granted("stg", config, github)
+
+		_, err := box.Run(s.ctx, "print(1)", nil)
+
+		s.Require().NoError(err)
+		raw, err := json.Marshal(s.platform.requests()[0])
+		s.Require().NoError(err)
+		s.JSONEq(strings.Replace(expected[i], "SECRET", s.platform.secretNames()[0], 1), string(raw))
+		s.Equal([]string{"POST /api/secret", "POST /api/sandbox"}, s.platform.history())
+		s.Empty(s.platform.uploads)
+	}
+}

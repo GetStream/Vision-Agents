@@ -21,8 +21,18 @@ The router's egress proxy for code in a sandbox. The sandbox holds a placeholder
 
 - A host that echoes the token in a form the rewrite does not know (another escape, split across headers, its case changed) gives it to the sandbox. Grant only hosts that do not.
 - A host that keeps the token it was sent and returns it later, in the response to a request that carries no placeholder, gives it to the sandbox: only a response to a request with the token is rewritten.
+- A sandbox's proxy credential is in its `HTTPS_PROXY`, and so in what Daytona is asked to create the sandbox with. Should Daytona answer a create with an error that quotes that request, the router logs the error and the model reads it in `run_code`'s result. That is a proxy credential, never a token, and it is as exposed as the sandbox's env already is (next item); whether Daytona quotes it is unverified.
 - A valid proxy credential works from wherever the proxy is reachable: the proxy cannot tell the sandbox from someone who copied the credential out of it. The accepted controls are the network and the credential's life, not code here: the port is reachable only from the sandbox provider's egress (AI-1582), and each sandbox gets its own random credential that expires with its session (`Store.Put`'s ttl) and ends on `Delete`.
+
+## The broker
+
+`Broker` (`broker.go`) is the `sandbox.CredentialBroker` for `code_sandbox.broker: proxy`.
+
+- `Prepare` gives each grant a placeholder (`va_ph_<random>`) in its env var, stores one `Record` under a new proxy credential, and returns the proxy URL with that credential (HTTP(S)_PROXY), the CA certificate file and the CA env vars. Only a connection that gives `sandbox.ErrNoCredential` leaves its grant out (or refuses a required one); one that cannot give a token just now keeps it, since the proxy asks on every request.
+- The CA file holds the setting's `CERTIFICATE` blocks alone. Node adds it to its roots (`NODE_EXTRA_CA_CERTS`); OpenSSL, Python requests and git replace theirs with a file, so `Mount.Setup` writes `/tmp/va-egress-ca-bundle.pem` from the image's own roots and the CA before any code, and fails, running no code, on an image with no roots file.
+- `BeforeRun` withdraws a grant whose connection needs a reconnect and stores the record again, which renews its TTL. With no grant left, or after a `Close` the store refused, it deletes the record instead.
+- `Close` deletes the record: the next request through the proxy is a 407.
 
 ## Tests
 
-`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL.
+`proxy_test.go` (tag `integration`, needs `ROUTER_REDIS_ADDR`) runs the attack table A1-A14 of the sandbox broker waves against a proxy whose hosts are `httptest` TLS servers and whose sandbox is a Go `http.Client` with the proxy URL. `broker_test.go` runs `brokertest` and the broker's own tests through the same proxy.
