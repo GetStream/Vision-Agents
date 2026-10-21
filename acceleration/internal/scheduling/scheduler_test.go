@@ -514,7 +514,10 @@ func (s *SchedulerSuite) TestPausingATaskStopsItsDeliveryInFlight() {
 
 func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
 	deliver := &deliverer{err: errors.New("the conversation would not take it")}
-	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal, task.RRule = due, "FREQ=DAILY"
+	})
 	scheduler := s.started(deliver.deliver, func(scheduler *Scheduler) {
 		scheduler.renewEvery = 20 * time.Millisecond
 		scheduler.retries = []time.Duration{time.Hour}
@@ -529,25 +532,130 @@ func (s *SchedulerSuite) TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt() {
 	s.save(task, func(task *store.ScheduledTask) {
 		task.Title, task.Instructions = "Stretch twice", "Remind them to stretch twice."
 	})
+	scheduler.Kick()
 
-	// The edit wrote the occurrence missed and the one-shot came due again,
-	// so the reminder is delivered as it now reads rather than lost, and not
-	// with the instructions it had before.
+	// The edit took the claim and wrote the occurrence missed, so the repeat
+	// goes on to its next occurrence rather than retrying the old text.
+	s.Require().Eventually(func() bool {
+		next := s.read(task).NextRunAt
+		return next != nil && next.After(due) && scheduler.Running() == 0
+	}, 10*time.Second, 10*time.Millisecond, "the hour's wait ended with the claim")
+	s.Len(deliver.callsFor(task.ID), 1, "the worker that lost the claim does not retry")
+	s.Equal(0, s.read(task).ConsecutiveFailures, "a lost claim is not a failure")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunMissed, runs[0].State)
+}
+
+// sendOnce delivers the first occurrence only when released, the user being
+// reached (sent) before or after it waits, and every later one at once. It
+// records the text of each that reached the user.
+type sendOnce struct {
+	mu        sync.Mutex
+	sent      []string
+	started   int
+	release   chan struct{}
+	sendFirst bool
+}
+
+func (d *sendOnce) deliver(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+	d.mu.Lock()
+	d.started++
+	first := d.started == 1
+	if !first || d.sendFirst {
+		d.sent = append(d.sent, claimed.Run.Prompt)
+	}
+	d.mu.Unlock()
+	if !first {
+		return "conversation", "", nil
+	}
+	select {
+	case <-d.release:
+	case <-ctx.Done():
+		return "", "", ctx.Err()
+	}
+	if !d.sendFirst {
+		d.mu.Lock()
+		d.sent = append(d.sent, claimed.Run.Prompt)
+		d.mu.Unlock()
+	}
+	return "conversation", "", nil
+}
+
+func (d *sendOnce) state() ([]string, int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.sent...), d.started
+}
+
+// editInFlight edits a one-shot while its delivery is under way, with the
+// worker's own lease and renewal, and kicks the worker as a save through the
+// API or the agent's tools does.
+func (s *SchedulerSuite) editInFlight(sendFirst bool) {
+	deliver := &sendOnce{release: make(chan struct{}), sendFirst: sendFirst}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	scheduler := s.started(deliver.deliver, nil)
+	s.Require().Eventually(func() bool {
+		_, started := deliver.state()
+		return started == 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	s.save(task, func(task *store.ScheduledTask) {
+		task.Title, task.Instructions = "Stretch twice", "Remind them to stretch twice."
+	})
+	scheduler.Kick()
+	s.Never(func() bool {
+		_, started := deliver.state()
+		return started > 1
+	}, time.Second, 10*time.Millisecond, "the edit does not start a second delivery")
+	close(deliver.release)
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskCompleted && scheduler.Running() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+	sent, _ := deliver.state()
+	s.Equal([]string{"Remind them to stretch."}, sent, "the reminder reaches the user once, as it read when it went out")
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
+	s.Equal("Stretch twice", s.read(task).Title, "the edit is kept")
+}
+
+func (s *SchedulerSuite) TestAOneShotEditedWhileItsDeliveryWaitsIsDeliveredOnce() {
+	s.editInFlight(false)
+}
+
+func (s *SchedulerSuite) TestAOneShotEditedAfterItsDeliveryReachedTheUserIsDeliveredOnce() {
+	s.editInFlight(true)
+}
+
+func (s *SchedulerSuite) TestAOneShotEditedWhileHeldIsDeliveredAsItNowReads() {
+	deliver := &holdDeliverer{hold: time.Hour}
+	task := s.task(time.Now().UTC().Add(-time.Minute).Truncate(time.Second), nil)
+	scheduler := s.started(deliver.deliver, nil)
+	s.Require().Eventually(func() bool {
+		runs := s.runs(task)
+		return len(runs) == 1 && runs[0].PostponedUntil != nil
+	}, 10*time.Second, 10*time.Millisecond)
+
+	s.save(task, func(task *store.ScheduledTask) {
+		task.Title, task.Instructions = "Stretch twice", "Remind them to stretch twice."
+	})
+	scheduler.Kick()
+
 	s.Require().Eventually(func() bool {
 		return s.read(task).State == store.ScheduledTaskCompleted
 	}, 10*time.Second, 10*time.Millisecond)
-	calls := deliver.callsFor(task.ID)
-	s.Require().Len(calls, 2)
-	s.Equal("Stretch twice", calls[1].Task.Title)
+	deliver.mu.Lock()
+	calls := append([]store.ClaimedScheduledTask(nil), deliver.calls...)
+	deliver.mu.Unlock()
+	s.Require().Len(calls, 2, "held once, then delivered as it now reads")
 	s.Equal("Remind them to stretch twice.", calls[1].Run.Prompt)
-	s.Equal(0, s.read(task).ConsecutiveFailures, "a lost claim is not a failure")
+	s.Equal("Stretch twice", calls[1].Task.Title)
 	runs := s.runs(task)
 	s.Require().Len(runs, 2)
 	s.Equal(store.ScheduledTaskRunDelivered, runs[0].State)
-	s.Equal(store.ScheduledTaskRunMissed, runs[1].State)
-	s.Require().Eventually(func() bool {
-		return scheduler.Running() == 0
-	}, 10*time.Second, 10*time.Millisecond, "the hour's wait ended with the claim")
+	s.Equal(store.ScheduledTaskRunMissed, runs[1].State, "the held occurrence is settled")
 }
 
 func (s *SchedulerSuite) TestAnOccurrenceThatOutlastsItsBudgetFails() {

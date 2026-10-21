@@ -270,8 +270,11 @@ func (s *Store) ScheduledTasks(ctx context.Context, customerID string, filter Sc
 // later with the instructions it had before the change. An active one-shot
 // whose occurrence that was is due again at the save, so it is delivered as
 // it now reads (and held again if quiet hours still hold); a repeating task
-// goes on to its next occurrence. The caller reads the task, changes it, and
-// saves it back.
+// goes on to its next occurrence. An active one-shot whose occurrence a
+// worker is delivering under a live lease, not held, keeps that claim and
+// run: the delivery under way completes with the text it has, since bringing
+// the one-shot forward would deliver it a second time. The caller reads the
+// task, changes it, and saves it back.
 func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	if task.CustomerID == "" || task.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a task id are required"))
@@ -283,24 +286,46 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 		task.Channels = []string{ScheduledTaskDeliveredConversation}
 	}
 	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		oneShot := task.RRule == "" && task.State == ScheduledTaskActive && task.NextRunAt != nil
+		// The run of a one-shot's occurrence a worker holds: its lease is live
+		// and no quiet-hours hold is on it. The task row is locked, so no
+		// renewal or claim moves the lease meanwhile.
+		var delivering []string
+		if oneShot {
+			if err := tx.NewSelect().Model((*ScheduledTaskRun)(nil)).
+				Column("str.id").
+				Join("JOIN scheduled_tasks AS st ON st.customer_id = str.customer_id AND st.id = str.task_id").
+				Where("st.customer_id = ?", task.CustomerID).
+				Where("st.id = ?", task.ID).
+				Where("st.lease_until > now()").
+				Where("str.trigger = ?", ScheduledTaskTriggerSchedule).
+				Where("str.scheduled_for = ?", *task.NextRunAt).
+				Where("(str.postponed_until IS NULL OR str.postponed_until <= now())").
+				For("UPDATE OF st").
+				Scan(ctx, &delivering); err != nil {
+				return fmt.Errorf("store: save scheduled task: %w", err)
+			}
+		}
 		// A run made by hand is left to the delivery that made it, which
 		// always records its outcome.
-		var settled []time.Time
-		if err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		settle := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 			Set("state = ?", ScheduledTaskRunMissed).
 			Set("finished_at = now()").
 			Where("customer_id = ?", task.CustomerID).
 			Where("task_id = ?", task.ID).
 			Where("trigger = ?", ScheduledTaskTriggerSchedule).
-			Where("state = ?", ScheduledTaskRunRunning).
-			Returning("scheduled_for").
-			Scan(ctx, &settled); err != nil {
+			Where("state = ?", ScheduledTaskRunRunning)
+		if len(delivering) > 0 {
+			settle = settle.Where("id NOT IN (?)", bun.In(delivering))
+		}
+		var settled []time.Time
+		if err := settle.Returning("scheduled_for").Scan(ctx, &settled); err != nil {
 			return fmt.Errorf("store: settle scheduled task runs: %w", err)
 		}
 		// The occurrence keeps its run, so a one-shot left at it would only
 		// be advanced past it: it comes due again at the save instead, on the
 		// database's clock, which the claim compares against.
-		if task.RRule == "" && task.State == ScheduledTaskActive && task.NextRunAt != nil {
+		if oneShot {
 			for _, scheduledFor := range settled {
 				if !scheduledFor.Equal(*task.NextRunAt) {
 					continue
@@ -313,8 +338,11 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 				break
 			}
 		}
-		result, err := tx.NewUpdate().Model(task).
-			ExcludeColumn("customer_id", "created_at").
+		save := tx.NewUpdate().Model(task).ExcludeColumn("customer_id", "created_at")
+		if len(delivering) > 0 {
+			save = save.ExcludeColumn("claim_id", "lease_until")
+		}
+		result, err := save.
 			Where("customer_id = ?", task.CustomerID).
 			Where("id = ?", task.ID).
 			Exec(ctx)
