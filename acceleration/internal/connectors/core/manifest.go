@@ -185,6 +185,10 @@ type RateLimitRule struct {
 	// leave per second.
 	Bucket        int `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	LeakPerSecond int `yaml:"leak_per_second,omitempty" json:"leak_per_second,omitempty"`
+	// MaxConcurrentCalls is how many of a connection's tool calls one router sends at once; a
+	// call over it waits for one to end. 0 is no cap, and is left out of the JSON, so a
+	// manifest without one marshals as it was stored.
+	MaxConcurrentCalls int `yaml:"max_concurrent_calls,omitempty" json:"max_concurrent_calls,omitempty"`
 }
 
 // SourceRule is one tool source the connector offers and the endpoint it runs against.
@@ -621,6 +625,9 @@ func (m Manifest) Validate() error {
 	}
 	if m.RateLimit.Bucket < 0 || m.RateLimit.LeakPerSecond < 0 {
 		fail("rate_limit", "bucket and leak_per_second cannot be negative")
+	}
+	if m.RateLimit.MaxConcurrentCalls < 0 {
+		fail("rate_limit.max_concurrent_calls", "cannot be negative")
 	}
 
 	for i, source := range m.Sources {

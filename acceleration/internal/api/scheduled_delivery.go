@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -166,13 +167,15 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 
 // deliverChain walks a task's channels in order against the session its
 // conversation is held in, and stops at the first that lands. A failure
-// names every channel tried, so the run says why nothing reached the user.
+// names every channel tried, for the logs, and is recorded under the first
+// channel's reason.
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	where := delivery.Channels
 	if len(where) == 0 {
 		where = []string{store.ScheduledTaskDeliveredConversation}
 	}
 	var tried []string
+	reason := ""
 	for _, channel := range where {
 		deliveredTo, sessionID, err := s.deliverOn(ctx, delivery, found, channel)
 		if err == nil {
@@ -182,8 +185,14 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 			return "", "", err
 		}
 		tried = append(tried, channel+": "+err.Error())
+		reason = cmp.Or(reason, scheduling.ReasonOf(err))
 	}
-	return "", "", fmt.Errorf("the task could not be delivered (%s)", strings.Join(tried, "; "))
+	return "", "", undelivered(reason, fmt.Errorf("the task could not be delivered (%s)", strings.Join(tried, "; ")))
+}
+
+// undelivered is a failed attempt recorded under reason.
+func undelivered(reason string, err error) error {
+	return &scheduling.Failure{Reason: reason, Err: err}
 }
 
 // deliverOn puts one occurrence on one channel. The reply the agent gives
@@ -209,7 +218,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		// A send the channel would refuse is refused before the turn that
 		// writes it is paid for.
 		if err := s.reachableText(ctx, delivery, channel); err != nil {
-			return "", "", err
+			return "", "", undelivered(scheduling.ReasonUnreachable, err)
 		}
 		text, err := s.captureReply(ctx, found, delivery)
 		if err != nil {
@@ -224,7 +233,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		// call on top of the first; the occurrence waits for a retry
 		// instead, as every other channel waits the call out.
 		if found.Voicing() {
-			return "", "", errors.New("the user is on a call")
+			return "", "", undelivered(scheduling.ReasonOnACall, errors.New("the user is on a call"))
 		}
 		return s.deliverByPhone(ctx, delivery)
 	default:
@@ -243,7 +252,7 @@ func waitOutCall(ctx context.Context, found *session.Session, window time.Durati
 			return errScheduledNotHere
 		}
 		if time.Now().After(deadline) {
-			return errors.New("the user is still on a call")
+			return undelivered(scheduling.ReasonOnACall, errors.New("the user is still on a call"))
 		}
 		if err := waitFor(ctx, scheduledPoll); err != nil {
 			return err
@@ -313,10 +322,10 @@ func readBackReply(ctx context.Context, found *session.Session, id string) (stri
 		case "completed":
 			return replyText([]string{text})
 		case "cancelled", "interrupted", "failed":
-			return "", fmt.Errorf("the reply to this occurrence was %s", state)
+			return "", undelivered(scheduling.ReasonReplyFailed, fmt.Errorf("the reply to this occurrence was %s", state))
 		}
 		if time.Now().After(deadline) {
-			return "", errors.New("the reply to this occurrence is still being written")
+			return "", undelivered(scheduling.ReasonNoReply, errors.New("the reply to this occurrence is still being written"))
 		}
 		if err := waitFor(ctx, scheduledPoll); err != nil {
 			return "", err
@@ -328,7 +337,7 @@ func readBackReply(ctx context.Context, found *session.Session, id string) (stri
 func replyText(said []string) (string, error) {
 	text := strings.Join(said, "\n")
 	if text == "" {
-		return "", errors.New("the agent said nothing to carry")
+		return "", undelivered(scheduling.ReasonNoReply, errors.New("the agent said nothing to carry"))
 	}
 	return text, nil
 }
@@ -625,7 +634,7 @@ func (s *Server) deliverByPhone(ctx context.Context, delivery scheduledDelivery)
 		from = config.Channels.Lines()["whatsapp"]
 	}
 	if from == "" {
-		return "", "", errors.New("the agent has no number to call from")
+		return "", "", undelivered(scheduling.ReasonNoLine, errors.New("the agent has no number to call from"))
 	}
 	placed, err := s.phone.Call(ctx, phone.CallRequest{
 		Owner: routing.Owner{CustomerID: delivery.CustomerID},
@@ -689,7 +698,7 @@ func (s *Server) callableNumber(ctx context.Context, delivery scheduledDelivery)
 			return "", err
 		}
 	}
-	return "", errors.New("the user has no number to call: they have never texted this agent")
+	return "", undelivered(scheduling.ReasonNoNumber, errors.New("the user has no number to call: they have never texted this agent"))
 }
 
 // holdCall waits for the agent to speak on a call the task placed, then
@@ -708,14 +717,14 @@ func (s *Server) holdCall(ctx context.Context, created *session.Session) error {
 			return ctx.Err()
 		case event, open := <-events:
 			if !open {
-				return errors.New("the call ended before anybody answered")
+				return undelivered(scheduling.ReasonNotAnswered, errors.New("the call ended before anybody answered"))
 			}
 			if _, spoke := event.(agent.Responded); spoke {
 				ring.Stop()
 				return s.holdAnsweredCall(ctx, events)
 			}
 		case <-ring.C:
-			return errors.New("the call was not answered")
+			return undelivered(scheduling.ReasonNotAnswered, errors.New("the call was not answered"))
 		}
 	}
 }
