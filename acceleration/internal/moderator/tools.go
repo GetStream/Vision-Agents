@@ -14,7 +14,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// The tools a session of an agent_moderator config reads the app's moderation data with.
+// The tools a session of an agent_moderator config reads the app's moderation data with. The
+// ones that count it across the app are in aggregate.go.
 const (
 	QueryReviewQueueTool       = "query_review_queue"
 	GetReviewQueueItemTool     = "get_review_queue_item"
@@ -71,6 +72,28 @@ func Tools() []harness.Tool {
 			Parameters:   queryParameters("Filter on fields such as entity_id, entity_type, entity_creator_id, user_id or created_at."),
 			DisplayTitle: "Reading the moderation logs",
 		},
+		{
+			Name: TopFlaggedUsersTool,
+			Description: "Rank the users whose content was flagged over the last days by violations: flagged items " +
+				"whose action was not overturned by a restore or unban. Each user comes with their flagged items, flags, " +
+				"items a human moderator acted on, overturned items, Nora's recommendations and most common labels. " +
+				"Use it for questions such as who violates most; the router does the counting. When partial is true, " +
+				"say the counts are partial.",
+			Parameters: windowParameters(map[string]any{
+				"label": map[string]any{"type": "string", "description": "Count only items flagged with this label, such as harassment."},
+				"limit": map[string]any{"type": "integer", "description": "How many users to return, at most 25. Defaults to 10.", "minimum": 1, "maximum": maxLimit},
+			}),
+			DisplayTitle: "Counting the most flagged users",
+		},
+		{
+			Name: ModerationSummaryTool,
+			Description: "Count the items flagged over the last days by label (with how many were overturned), by " +
+				"moderation action taken on them (with how many a human moderator took) and by channel, the 25 largest " +
+				"of each. Use it for questions such as which labels fire most or are most often overturned, or which " +
+				"channels have the most flagged content. When partial is true, say the counts are partial.",
+			Parameters:   windowParameters(nil),
+			DisplayTitle: "Counting the moderation activity",
+		},
 	}
 }
 
@@ -108,6 +131,10 @@ type arguments struct {
 	Sort   []getstream.SortParamRequest `json:"sort"`
 	Limit  *int                         `json:"limit"`
 	Next   *string                      `json:"next"`
+
+	Days       *int   `json:"days"`
+	Label      string `json:"label"`
+	EntityType string `json:"entity_type"`
 }
 
 // Runner runs the moderation tools it was given in one Stream app, the session's, and hands
@@ -170,6 +197,10 @@ func (r *Runner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		data, err = read(moderation.QueryModerationLogs(ctx, &getstream.QueryModerationLogsRequest{
 			Filter: args.Filter, Sort: args.Sort, Limit: args.Limit, Next: args.Next,
 		}))
+	case TopFlaggedUsersTool:
+		data, err = r.topFlaggedUsers(ctx, args)
+	case ModerationSummaryTool:
+		data, err = r.moderationSummary(ctx, args)
 	default:
 		return r.next.Run(ctx, call)
 	}
