@@ -46,6 +46,41 @@ func (l *logLines) records(message string) []map[string]any {
 	return found
 }
 
+// keyCounts returns, for every record logged with message, how many times key appears in
+// it: a record with a key twice decodes to one value and hides the other.
+func (l *logLines) keyCounts(message, key string) []int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var counts []int
+	lines := bufio.NewScanner(bytes.NewReader(l.buf.Bytes()))
+	for lines.Scan() {
+		var record map[string]any
+		if json.Unmarshal(lines.Bytes(), &record) != nil || record["msg"] != message {
+			continue
+		}
+		decoder := json.NewDecoder(bytes.NewReader(lines.Bytes()))
+		count := 0
+		if _, err := decoder.Token(); err != nil {
+			panic(err)
+		}
+		for decoder.More() {
+			name, err := decoder.Token()
+			if err != nil {
+				panic(err)
+			}
+			var value json.RawMessage
+			if err := decoder.Decode(&value); err != nil {
+				panic(err)
+			}
+			if name == key {
+				count++
+			}
+		}
+		counts = append(counts, count)
+	}
+	return counts
+}
+
 // chunkOf is a piece of an utterance whose samples all hold value, so where it went is
 // told by its length and its sum.
 func chunkOf(synthesisID string, samples int, value int16) tts.AudioChunk {

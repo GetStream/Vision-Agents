@@ -135,13 +135,16 @@ func (s *AgentSuite) TestATurnTheAgentStartedNamesTheCallerTurnItFollows() {
 
 func (s *AgentSuite) TestAToolCallIsLoggedWhenItComesBack() {
 	s.logs = &logLines{}
+	s.callID = "default:room-7"
 	before, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "ok")
 	s.waitsOnATool()
 
 	back := s.loggedOnce(toolBack)
 	s.Equal("INFO", back["level"])
 	s.Equal("lookup_order", back["tool"])
-	s.Equal("call-1", back["call"])
+	s.Equal("call-1", back["tool_call"])
+	s.Equal([]int{1}, s.logs.keyCounts(toolBack, "call"), "the tool call is not a second call key")
+	s.Equal("default:room-7", back["call"], "call is the call the session serves")
 	s.Equal(s.callerTurn(), back["turn"])
 	s.Equal("ok", back["outcome"])
 	s.Contains(back, "duration_ms")
