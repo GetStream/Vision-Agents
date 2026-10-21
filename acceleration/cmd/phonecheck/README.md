@@ -91,6 +91,10 @@ lines it can say `TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID` instead of copy
 The router's address is `-router` only. The tool checks the provider's variables before it
 places anything.
 
+The tool's agent always uses the same models: `deepgram/flux-general-en`,
+`gemini/gemini-3.8-flash` and `inworld/inworld-tts-2-flash`. The router needs their keys:
+`DEEPGRAM_API_KEY`, `GOOGLE_API_KEY`, `INWORLD_API_KEY`.
+
 ## 4. Set up the person side by hand
 
 **The tool changes nothing at any vendor.** The person number must not be registered on the

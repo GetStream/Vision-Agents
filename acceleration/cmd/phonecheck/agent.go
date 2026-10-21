@@ -52,6 +52,10 @@ func newSDKRouter(address, customer string, logger *slog.Logger) (*sdkRouter, er
 		LLM: stream.Accelerated(stream.Config{
 			Agent:   agentName,
 			Backend: stream.Backend{URL: address, CustomerID: customer},
+			// Fixed, so a run does not change with the router's default models.
+			STT: "deepgram/flux-general-en",
+			LLM: "gemini/gemini-3.8-flash",
+			TTS: "inworld/inworld-tts-2-flash",
 		}),
 		Logger: logger,
 	})
