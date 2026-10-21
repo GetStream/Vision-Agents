@@ -279,6 +279,28 @@ func (b Bridge) Validate() error {
 	return nil
 }
 
+// BridgeHost is the host of a sip: or sips: URI alone, for logs: no user, password, port
+// or parameters. It is empty for anything that is not a readable SIP URI.
+func BridgeHost(uri string) string {
+	scheme, rest, ok := strings.Cut(uri, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") {
+		return ""
+	}
+	if i := strings.LastIndex(rest, "@"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	rest, _, _ = strings.Cut(rest, ";")
+	if strings.HasPrefix(rest, "[") {
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			return ""
+		}
+		return rest[:end+1]
+	}
+	host, _, _ := strings.Cut(rest, ":")
+	return host
+}
+
 // WithNumber is the bridge with the number as the user part of its URI. Stream finds the
 // trunk and its routing rule by the number in the To user, so a URI without it reaches
 // nothing.

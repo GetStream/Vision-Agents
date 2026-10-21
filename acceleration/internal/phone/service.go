@@ -736,6 +736,10 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 
 	committed = true
+	sipHost := BridgeHost(outbound.Bridge.URI)
+	s.logger.Info("placed a phone call", "session_id", sessionID,
+		"vendor_call_id", dialed.VendorCallID, "vendor", held.Vendor, "stream_sip_host", sipHost)
+	s.recordPlaced(ctx, request.Owner.CustomerID, sessionID, dialed, held.Vendor, sipHost)
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,
 		RouteID:     routeID,
@@ -759,6 +763,32 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		CallType:     callType,
 		StreamApp:    pin,
 	}, nil
+}
+
+// recordPlaced keeps which Stream SIP host a placed call was sent to, found later by its
+// session id. The call is already ringing, so a failure is logged and goes no further.
+func (s *Service) recordPlaced(
+	ctx context.Context,
+	customerID, sessionID string,
+	placed Dialed,
+	vendor, sipHost string,
+) {
+	err := s.store.RecordAgentLog(context.WithoutCancel(ctx), &store.AgentLog{
+		CustomerID: customerID,
+		SessionID:  sessionID,
+		Source:     "system",
+		Severity:   "info",
+		EventType:  "call_placed",
+		Message:    "Call placed",
+		Details: map[string]any{
+			"stream_sip_host": sipHost,
+			"vendor":          vendor,
+			"vendor_call_id":  placed.VendorCallID,
+		},
+	})
+	if err != nil {
+		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)
+	}
 }
 
 // bridgeLifetime is how long a parked bridge is claimable for. It has to outlast the longest

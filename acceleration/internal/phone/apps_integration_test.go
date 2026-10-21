@@ -4,6 +4,7 @@ package phone
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -606,6 +607,50 @@ func (s *AppsSuite) TestAPlacedCallLandsInTheCallOfTheSessionItWasPlacedFor() {
 
 	s.Equal(id, placed.SessionID)
 	s.Equal(id, placed.CallID)
+}
+
+func (s *AppsSuite) callPlacedRows(placed Placed) []store.AgentLog {
+	rows, err := s.store.AgentLogs(s.ctx, store.LogFilter{
+		CustomerID: s.customer, SessionID: placed.SessionID, Limit: 250,
+	})
+	s.Require().NoError(err)
+	var found []store.AgentLog
+	for _, row := range rows {
+		if row.EventType == "call_placed" {
+			found = append(found, row)
+		}
+	}
+	return found
+}
+
+func (s *AppsSuite) TestAPlacedCallWritesACallPlacedRow() {
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	rows := s.callPlacedRows(placed)
+	s.Require().Len(rows, 1)
+	row, err := s.store.AgentLog(s.ctx, s.customer, rows[0].ID)
+	s.Require().NoError(err)
+	s.Equal(BridgeHost(s.vendor.dialed.Bridge.URI), row.Details["stream_sip_host"])
+	s.NotEmpty(row.Details["stream_sip_host"])
+	s.Equal("twilio", row.Details["vendor"])
+	s.Equal(placed.VendorCallID, row.Details["vendor_call_id"])
+	for key, value := range row.Details {
+		s.NotContains(value, s.vendor.dialed.Bridge.Password, key)
+	}
+}
+
+func (s *AppsSuite) TestACallTheVendorRefusedWritesNoCallPlacedRow() {
+	s.vendor.err = errors.New("the vendor refused")
+
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111", SessionID: "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3f",
+	})
+	s.Require().Error(err)
+
+	s.Empty(s.callPlacedRows(Placed{SessionID: "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3f"}))
 }
 
 func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {

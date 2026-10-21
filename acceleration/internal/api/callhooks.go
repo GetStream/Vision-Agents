@@ -179,6 +179,11 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	s.logger.Info("handed an arriving call to a worker",
 		"call", event.CallCid, "customer", number.CustomerID,
 		"number", number.E164, "caller", call.CallerNumber, "worker", worker.ID)
+	arrived := []any{"worker", worker.ID, "stream_sip_host", phone.BridgeHost(number.BridgeURI)}
+	if call.SessionID != "" {
+		arrived = append(arrived, "session_id", call.SessionID)
+	}
+	s.logger.Info("arriving call sites", arrived...)
 }
 
 // releaseEndedCall tears down the per-call SIP trunks a placed call or transfer created,

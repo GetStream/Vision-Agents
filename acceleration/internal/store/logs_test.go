@@ -38,3 +38,16 @@ func TestSafeLogDetailsKeepsTheSFUKeys(t *testing.T) {
 		t.Fatalf("details = %v, want only the two SFU keys", details)
 	}
 }
+
+func TestSafeLogDetailsKeepsTheCallPlacedKeys(t *testing.T) {
+	details := safeLogDetails(map[string]any{
+		"stream_sip_host": "trunk-1.sip.example.com",
+		"vendor":          "twilio",
+		"vendor_call_id":  "twilio-call",
+		"token":           "secret-value",
+	})
+	if len(details) != 3 || details["stream_sip_host"] != "trunk-1.sip.example.com" ||
+		details["vendor"] != "twilio" || details["vendor_call_id"] != "twilio-call" {
+		t.Fatalf("details = %v, want only the three call placed keys", details)
+	}
+}
