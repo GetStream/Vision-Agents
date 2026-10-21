@@ -19,6 +19,11 @@ description: Read Stream's customer data in Nessy as the staff member who connec
 # [design] «Who sees it»: only apps whose settings say internal_connectors, since Nessy holds
 # Stream's customer data and only Stream staff can sign in to it ([n]:docs/mcp.md:29).
 internal: true
+# [design] change 13 (AI-1545): Nessy's tools read Stream's customer data, so an agent config
+# that binds it may bind no tool that sends data out, such as another connector's write tool,
+# an MCP server, a plugin or a sandbox that reaches the network (internal/api/configs.go,
+# sensitiveBindingsComplaint).
+sensitive: true
 setup:
   # The Admin page ([n]:frontend/src/App.tsx:308) shows «Registered OAuth clients» to a holder
   # of oauth_clients:manage ([n]:frontend/src/pages/Admin.tsx:850,1057).
@@ -128,3 +133,8 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # /mcp offers only agenttools.DefaultTools, «a write tool is refused at startup», and its
+    # instructions say «nothing here writes» (GetStream/Nessy origin/main at 7e238ffa,
+    # docs/mcp.md:35-36,100; backend/agenttools/api.go:30-35,196-197; backend/agenttools/mcp.go:35).
+    # So a Nessy tool sends nothing out, and a config may bind it beside itself.
+    outbound: false

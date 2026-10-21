@@ -700,7 +700,29 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		a.lostVoices = append(a.lostVoices, lost.Provider()+"/"+lost.Model())
 	}
 	settings, failed := a.settingsLocked(), slices.Clone(a.lostVoices)
+	// Whatever the voice had been given all of is over with it: a greeting, a check-in, or a
+	// reply the model has finished writing. Each is reported cut off like a reply talked
+	// over, since a transcript otherwise keeps it as still being said until the call ends,
+	// and what was handed to it is owed to the caller again. What the edge already had
+	// plays out. A reply the model is still writing goes on in the voice that replaces
+	// this one, so it is left to finish, and a murmur was never a reply.
+	cut := ""
+	if lost == a.tts && a.speakingTurn != "" && !a.generating &&
+		!strings.HasPrefix(a.speakingTurn, backchannelPrefix) {
+		cut = a.speakingTurn
+		a.abandoned[cut] = struct{}{}
+		a.speakingTurn = ""
+		a.saying = ""
+	}
+	current := a.harness
 	a.mu.Unlock()
+	if cut != "" {
+		if current != nil {
+			current.Release(cut)
+		}
+		a.turns.interrupt(cut)
+		a.emitter.Send(Interrupted{TurnID: cut})
+	}
 	if !replace {
 		return
 	}

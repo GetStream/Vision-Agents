@@ -539,7 +539,7 @@ func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
 		"revoke":    "https://nessy.getstream.io/api/oauth/revoke",
 		"resource":  "https://nessy.getstream.io/mcp",
 	}, manifest.Endpoints)
-	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources)
+	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp", Outbound: new(false)}}, manifest.Sources)
 	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
 	resolved := s.atFake(srv, manifest)
 	wire := &tokenWire{next: srv.Client().Transport}

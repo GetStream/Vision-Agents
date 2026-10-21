@@ -52,6 +52,8 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 
 A manifest has `sources`, a `channel` block, or both: Linear has only `sources`, Telegram and Linq only `channel`, Slack and WhatsApp both. `sources` is what tools run against; `channel` is what the provider's inbound requests say: messages a person wrote (an inbound channel), signals about grants, or both. An inbound channel is never a kind of tool. The channel block lives in `channel.go`; `Manifest.Validate` checks it with the rest.
 
+`sensitive: true` marks a connector that reads private data, and `sources[].outbound: false` says a source offers only tools that read; left out, a tool may write and counts as sending data out. A config binding a sensitive connector is refused beside any binding with a source that may send out (`providers/AGENTS.md`, `sensitiveBindingsComplaint`).
+
 | Term | What it is | In code |
 | --- | --- | --- |
 | channel block | How a provider's inbound request is verified, where it keeps each message and each signal, and how a reply goes back | `ChannelRule`, manifest `channel` |
