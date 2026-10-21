@@ -32,23 +32,23 @@ skill asks what to test, sets it up, runs, reports and puts things back.
 - **Never touch a number the skill did not buy.** It attaches and releases only numbers listed
   under "bought this run". An existing number is used as it is.
 
-## 1. Ask and look (read only)
+## 1. Ask and look
 
-1. **Router.**
-   - *Local (default).* Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`. If something
-     does, show it and ask. After step 2, start the router now: it changes no account, and the
-     customer id comes from it. From `acceleration/`, `go run ./cmd/router` in the background,
-     output to a file; write its process id to the state file. Wait for `listening`. If it never
-     comes, show the last lines of the file and stop. Read `stream_app=<id>` from
-     `stream: the deployment acts in its own Stream app`: that is the customer. If `.env`'s
-     `STREAM_ACCELERATION_CUSTOMER_ID` differs, say so.
-   - *Remote.* Ask the URL and the customer id. phonecheck checks it answers and keeps logs, and
-     refuses it otherwise. It must already receive the Stream app's call webhook.
-2. **Database.** Before the first `phone` command, show only the host of `ROUTER_POSTGRES_DSN`
-   (`printf '%s\n' "$ROUTER_POSTGRES_DSN" | sed -E 's#^[^@]*@##; s#[/?].*##'`; for a
-   `key=value` DSN show only `host=`). `phone list` applies migrations to it. If it is not a local
-   Postgres, get a yes first. For a remote router, `phone` only sees its numbers if this DSN and
-   the Stream keys are that router's; otherwise numbers are the human's to set up.
+Nothing here costs money or changes a vendor or Stream account. Starting a local router and
+`phone list` do write to the database (migrations, and the router's own background work).
+
+1. **Router.** Local (default) or remote. *Remote:* ask the URL. phonecheck checks it answers and
+   keeps logs, and refuses it otherwise. It must already receive the Stream app's call webhook.
+2. **Database.** Before the router starts and before any `phone` command, show only the host of
+   `ROUTER_POSTGRES_DSN`:
+
+   ```bash
+   bash -c 'set -a; . <env file>; set +a; python3 -I -c "import os,urllib.parse as u; print(u.urlsplit(os.environ[\"ROUTER_POSTGRES_DSN\"]).hostname)"'
+   ```
+
+   (A `key=value` DSN prints `None`; then show only its `host=` value.) If the host is not
+   `localhost` or `127.0.0.1`, get a yes first. For a remote router, `phone` only sees its
+   numbers if this DSN and the Stream keys are that router's; otherwise numbers are the human's.
 3. **Env names** (only the chosen vendors' matter):
 
    ```bash
@@ -57,7 +57,20 @@ skill asks what to test, sets it up, runs, reports and puts things back.
 
    The `*_PERSON_*` account may be the router's (`TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID`
    in `.env`, after the router's lines). See README §3.
-4. **What to test.** One combination, "pick one at random", or "all" = person vendor (Twilio,
+4. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something
+   does, show it and ask. Starting it runs migrations, binds :8080 and may start background
+   work that writes rows or calls models; ask a yes. From `acceleration/`, start
+   `go run ./cmd/router` in the background, output to a file; write its process id to the state
+   file. Wait for `listening`. If it never comes, show the last lines of the file and stop. Note
+   the Stream app id from `stream_app=<id>` in `stream: the deployment acts in its own Stream app`,
+   if that line appears. It is the app, not the customer.
+5. **Customer.** Never assumed. List numbers for `.env`'s `STREAM_ACCELERATION_CUSTOMER_ID`
+   (`go run ./cmd/phone list -customer <id>`; it defaults to `demo`, so always pass it). If the
+   app id is known and differs, list for it too: the local dashboard buys numbers under the app
+   id. Show both lists and ask which customer to use (default: the one holding the numbers the
+   human named; for a remote router, ask). Use that literal id in every `phone` and phonecheck
+   command.
+6. **What to test.** One combination, "pick one at random", or "all" = person vendor (Twilio,
    Telnyx) × router number vendor (Twilio, Telnyx, `sip_trunk`) × direction (inbound, outbound),
    minus what the rules forbid:
    - Inbound (person calls the router number): the router number must be attached, and no other
@@ -73,11 +86,10 @@ skill asks what to test, sets it up, runs, reports and puts things back.
      `phone detach`: a second bought number for inbound needs the first one released mid-run.
      That release goes in the Approve summary.
    - `sip_trunk` numbers are registered through the router's API, not `phone`. Use an existing one.
-5. **Numbers.** Existing (default) or buy new, per side.
-   - Existing router numbers: `go run ./cmd/phone list -customer <customer>`. Pass `-customer`; it
-     defaults to `demo`. Show the list. An existing number used for inbound must already be
-     attached and be the only attached one; used for outbound it must be unattached. If not,
-     show it and stop. Never attach or release it.
+7. **Numbers.** Existing (default) or buy new, per side.
+   - Existing router numbers: from the chosen customer's list (step 5). An existing number used
+     for inbound must already be attached and be the only attached one; used for outbound it
+     must be unattached. If not, show it and stop. Never attach or release it.
    - The person number must not be in that list.
    - New router number: `go run ./cmd/phone search -vendor <twilio|telnyx> -country US -limit 3`
      (`NUMBER`, `PER MONTH`).
@@ -87,17 +99,17 @@ skill asks what to test, sets it up, runs, reports and puts things back.
      `GET https://api.telnyx.com/v2/available_phone_numbers` with `filter[country_code]=US`,
      `filter[features][]=voice`, `filter[limit]=1` (keep `data[].phone_number`,
      `data[].cost_information.monthly_cost`).
-6. **Talk and runs.** `-talk` (default `20s`), `-runs` (default 1), `-region` label (default
+8. **Talk and runs.** `-talk` (default `20s`), `-runs` (default 1), `-region` label (default
    empty; ask which region the person number is set to).
-7. **Person setup.** Skill (default) or the human per README §4. Read the current values now:
+9. **Person setup.** Skill (default) or the human per README §4. Read the current values now:
    Twilio `GET …/IncomingPhoneNumbers.json` with `PhoneNumber=<n>` (keep
    `incoming_phone_numbers[].sid`, `.voice_url`, `.voice_method`); Telnyx
    `GET /v2/phone_numbers` with `filter[phone_number]=<n>` (keep `data[].id`,
    `data[].connection_id`), `GET /v2/texml_applications/<person app id>` (keep
    `data.voice_url`, `data.voice_method`), and the numbers on that app,
    `GET /v2/phone_numbers` with `filter[connection_id]=<person app id>` (keep `data[].phone_number`).
-8. **Local only: hooks.** Run the read-only `go run ./cmd/phone hooks` and show it. Note any stale tunnel URL to remove.
-9. **Keep or release** the bought numbers: not asked now. Asked per number at cleanup.
+10. **Local only: hooks.** Run the read-only `go run ./cmd/phone hooks` and show it. Note any stale tunnel URL to remove.
+11. **Keep or release** the bought numbers: not asked now. Asked per number at cleanup.
 
 ## Approve
 
@@ -105,14 +117,15 @@ Show ONE summary and wait for an explicit yes:
 
 - the calls, in order: each combination × runs, each about `-talk` plus 30 to 40 s, a few cents each;
 - numbers to buy, vendor and monthly cost, and any mid-run release of a just-bought number;
+- the customer id every command uses;
 - account changes: hooks pointed at a tunnel URL (app-wide: while it is up the local router
-  also gets the Stream app's other call events); any stale hook URL to remove; numbers to attach;
-  Twilio voice URLs to set; the Telnyx person app's voice URL (it changes every number listed on
-  that app);
+  also gets the Stream app's other call events and its new-message events); any stale hook URL
+  to remove; numbers to attach; Twilio voice URLs to set; the Telnyx person app's voice URL,
+  with the numbers on that app listed (it changes all of them);
 - cleanup: what goes back (hooks, voice URLs, `connection_id`s, tunnel, router), what stays (the
   bought numbers, until you say otherwise), and that release is asked per number afterwards.
 
-No yes, nothing happens.
+No yes: nothing is bought or changed; stop the router this skill started and end.
 
 ## 2. Do (after the yes)
 
@@ -126,7 +139,7 @@ In this order, each change into the state file:
    human sets that.
 2. **Router numbers.** `go run ./cmd/phone buy -vendor <v> -number <n> -country US -customer <customer> -tag purpose=phonecheck`;
    add to "bought this run". For inbound, after its outbound runs:
-   `go run ./cmd/phone attach -number <n> -customer <customer>` (Twilio only, see 1.4).
+   `go run ./cmd/phone attach -number <n> -customer <customer>` (Twilio only, see 1.6).
 3. **Person numbers.** Twilio `POST …/IncomingPhoneNumbers.json` with `PhoneNumber=<n>` (keep
    `sid`, `phone_number`). Telnyx `POST /v2/number_orders` with
    `{"phone_numbers":[{"phone_number":"<n>"}],"connection_id":"<person app id>"}` (keep
@@ -139,12 +152,11 @@ In this order, each change into the state file:
 
 ## Run
 
-Re-run `go run ./cmd/phone list -customer <customer>` and check the rules in 1.4. If another
-attached number blocks an inbound run, stop and tell the human. Then from
-`acceleration/cmd/phonecheck`, per combination, env loaded:
+Re-run `go run ./cmd/phone list -customer <customer>` and check the rules in 1.6. If another
+attached number blocks an inbound run, stop and tell the human. Then, per combination:
 
 ```bash
-go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east -log-format json
+bash -c 'set -a; . <env file>; set +a; cd acceleration/cmd/phonecheck && go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east -log-format json'
 ```
 
 `-provider` is the person's vendor; `inbound` for the other direction. The tool waits up to 90 s
