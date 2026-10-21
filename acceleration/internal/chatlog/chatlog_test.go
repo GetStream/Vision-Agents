@@ -280,6 +280,42 @@ func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
 	s.NotEqual(generated, stored.Text, "unplayed model text must not look like a finished spoken reply")
 }
 
+func (s *ChatLogSuite) TestAnInterruptedReplyIsReadBackAsTalkedOver() {
+	// The caller heard the start of it, and a watcher was shown it as it was written: a
+	// transcript that leaves it out reads as the agent having said nothing at all.
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, text: "Tomorrow will be", turnID: "turn-1", kind: piece, source: SourceAgent})
+	writer.show()
+	writer.handle(message{author: s.log.agent, text: "Tomorrow will be sunny.", turnID: "turn-1", kind: prepared, source: SourceAgent})
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: interrupt, source: SourceAgent})
+	reader := &Reader{client: s.log.client}
+
+	said, err := reader.Transcript(context.Background(), Read{Channel: "agent-1"})
+
+	s.Require().NoError(err)
+	s.Require().Len(said, 1)
+	s.Equal("Tomorrow will be sunny.", said[0].Text)
+	s.True(said[0].Interrupted)
+	s.Equal("turn-1", said[0].TurnID)
+}
+
+func (s *ChatLogSuite) TestAScriptedLineIsStoredOnceItIsSaid() {
+	// A greeting is said without asking the model, and was in no transcript at all.
+	s.useChat()
+	s.log.Record(agent.Said{TurnID: "say-1", Text: "Hi, thanks for getting in touch."})
+	s.log.Record(agent.Spoke{TurnID: "say-1"})
+	writer := newWriter(s.log)
+	for _, queued := range s.queued() {
+		writer.handle(queued)
+	}
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Equal("Hi, thanks for getting in touch.", stored[0].Text)
+	s.Equal(SourceAgent, stored[0].Custom[SourceField])
+}
+
 func (s *ChatLogSuite) TestANativePartialAfterInterruptIsKeptAsInterrupted() {
 	s.useChat()
 	writer := newWriter(s.log)
@@ -413,6 +449,151 @@ func (s *ChatLogSuite) TestWhatAParticipantIsSayingIsOneMessageThatSettles() {
 	s.Equal(false, stored[0].Custom[generatingField])
 	s.Equal(SourceSpeech, stored[0].Custom[SourceField])
 	s.Empty(writer.listening)
+}
+
+func (s *ChatLogSuite) TestALineIsStoredUnderTheIdItWasHeardAs() {
+	// The session's live frames name a line by its id, so the stored copy carries the same
+	// one and a watcher never has to match the two by their words.
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "where is", lineID: "line-1", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, text: "Where is my order?", lineID: "line-1", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "Thanks.", lineID: "line-2", kind: heard, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 2)
+	s.Equal("line-1", stored[0].ID, "a line shown while it was heard keeps its id once it settles")
+	s.Equal("line-2", stored[1].ID, "a line heard before it was shown is stored under its id too")
+}
+
+func (s *ChatLogSuite) TestALineHeardAgainGrownIsWrittenOverRatherThanStoredTwice() {
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "Woah.", lineID: "line-1", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "Woah. This is", lineID: "line-1", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, text: "Woah. This is weird.", lineID: "line-1", kind: heard, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1, "the line carried on is the same line")
+	s.Equal("Woah. This is weird.", stored[0].Text)
+	s.Equal(false, stored[0].Custom[generatingField])
+}
+
+func (s *ChatLogSuite) TestTwoLinesUnderOneUserAreKeptApart() {
+	// The same person on two devices is two participants with one user id: each line is
+	// its own message, and settling one leaves the other being said.
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "is it", lineID: "line-1", kind: hearing, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "hello", lineID: "line-2", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, text: "Hello?", lineID: "line-2", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "is it raining", lineID: "line-1", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, text: "Is it raining?", lineID: "line-1", kind: heard, source: SourceSpeech})
+
+	// Lines shown in one tick are stored in no particular order.
+	texts := map[string]string{}
+	for _, stored := range s.channel() {
+		texts[stored.ID] = stored.Text
+	}
+	s.Equal(map[string]string{"line-1": "Is it raining?", "line-2": "Hello?"}, texts)
+}
+
+func (s *ChatLogSuite) TestALineHeardAgainAndLetGoOfKeepsWhatWasHeard() {
+	// "Woah." was heard; what the caller went on to say in the same line was not taken as
+	// meant for the agent. That much was said, and the transcript keeps it.
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "Woah.", lineID: "line-1", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "Woah. Hang on, the door", lineID: "line-1", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, lineID: "line-1", kind: ignored, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1, "the line heard was removed with the words let go of")
+	s.Equal("Woah.", stored[0].Text)
+	s.Equal(false, stored[0].Custom[generatingField])
+}
+
+func (s *ChatLogSuite) TestALineStoredAgainUnderItsIdIsWrittenOver() {
+	// Chat refuses an id it has: a line remembered no longer, said again, is still the
+	// line, not lost.
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "Woah.", lineID: "line-1", kind: heard, source: SourceSpeech})
+	clear(writer.heardLines)
+	writer.handle(message{author: alice, text: "Woah. This is weird.", lineID: "line-1", kind: heard, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Equal("Woah. This is weird.", stored[0].Text)
+	s.Equal("line-1", writer.heardLines["line-1"].messageID)
+}
+
+func (s *ChatLogSuite) TestTheTranscriptSaysWhatEachLineIsAndWhetherItIsFinished() {
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: s.log.agent, text: "Your order ships", turnID: "turn-9", kind: piece, source: SourceAgent})
+	writer.handle(message{author: alice, text: "and when", lineID: "line-3", kind: hearing, source: SourceSpeech})
+	writer.show()
+	reader := &Reader{client: s.log.client}
+
+	said, err := reader.Transcript(context.Background(), Read{Channel: "agent-1"})
+
+	s.Require().NoError(err)
+	s.Require().Len(said, 2)
+	s.Equal("turn-9", said[0].TurnID, "a reply says which turn it was written for")
+	s.True(said[0].Generating, "a reply still being written says so")
+	s.Equal("line-3", said[1].ID)
+	s.True(said[1].Generating, "words still being said are stored as they first were, and say so")
+}
+
+func (s *ChatLogSuite) TestALineSaidUnaskedIsReadBackWithWhatItWasFor() {
+	s.useChat()
+	s.log.Record(agent.Said{TurnID: "say-1", Text: "Hi there.", Purpose: agent.PurposeGreeting})
+	s.log.Record(agent.Spoke{TurnID: "say-1"})
+	s.log.Record(agent.Responded{TurnID: "back-1", Text: "Are you still there?", Purpose: agent.PurposeCheckIn})
+	s.log.Record(agent.Spoke{TurnID: "back-1"})
+	writer := newWriter(s.log)
+	for _, queued := range s.queued() {
+		writer.handle(queued)
+	}
+	reader := &Reader{client: s.log.client}
+
+	said, err := reader.Transcript(context.Background(), Read{Channel: "agent-1"})
+
+	s.Require().NoError(err)
+	s.Require().Len(said, 2)
+	s.Equal(agent.PurposeGreeting, said[0].Purpose)
+	s.Equal(agent.PurposeCheckIn, said[1].Purpose)
+}
+
+func (s *ChatLogSuite) TestALineSaidUnaskedKeepsWhatItWasForWhenCutOff() {
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, text: "Are you", turnID: "back-1", kind: piece, source: SourceAgent})
+	writer.show()
+	writer.handle(message{author: s.log.agent, turnID: "back-1", purpose: agent.PurposeCheckIn, kind: prepared, source: SourceAgent})
+	writer.handle(message{turnID: "back-1", kind: interrupt})
+	writer.store(User{ID: "alice"}, "Hello?", SourceSpeech, false, identity{purpose: "whatever"})
+	reader := &Reader{client: s.log.client}
+
+	said, err := reader.Transcript(context.Background(), Read{Channel: "agent-1"})
+
+	s.Require().NoError(err)
+	s.Require().Len(said, 2)
+	s.True(said[0].Interrupted)
+	s.Equal(agent.PurposeCheckIn, said[0].Purpose)
+	s.Empty(said[1].Purpose, "a reason no client knows is not passed on")
 }
 
 func (s *ChatLogSuite) TestSpeechTheAgentIgnoredIsNotLeftInTheChannel() {

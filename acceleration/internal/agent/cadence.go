@@ -3,6 +3,8 @@ package agent
 import (
 	"log/slog"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,13 +107,18 @@ type cadenceSpeaker struct {
 	// front of each one rather than only the first.
 	carried string
 	// committed is the utterance the agent last acted on, kept so the transcriber's own
-	// restatement of it is not mistaken for the caller repeating themselves.
+	// restatement of it is not mistaken for the caller repeating themselves. It is the
+	// utterance's own words, without any carried in front of them: those are all the
+	// transcriber restates.
 	committed string
 	// committedUtterance is which run of speech those words were, and committedAt is when
 	// they were answered, for transcribers that cannot say which run they are on.
 	committedUtterance  int64
 	committedAt         time.Time
 	committedGeneration int64
+	// repeats is what the words being gathered open with that the agent already acted on,
+	// when the transcriber restated it on the way to more.
+	repeats string
 }
 
 // heldTranscript keeps the exact candidate and carried prefix owned by a queue. Its
@@ -275,6 +282,17 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		return "", ""
 	}
 
+	// A transcriber that restates a run of speech whole sends what was answered again
+	// in front of what the caller went on to say. It is part of the words the turn is
+	// answered on, but it is not part of the line the caller is now saying.
+	if current.text == "" {
+		current.repeats = ""
+		if transcript.Utterance != 0 && transcript.Utterance == current.committedUtterance &&
+			opensWith(text, current.committed) {
+			current.repeats = current.committed
+		}
+	}
+
 	superseded = current.candidateID
 	current.text = text
 	current.candidateID = ""
@@ -318,12 +336,13 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 				"participant", current.participant.ID, "candidate", candidateID, "retry", retry)
 			c.scheduleLocked(current, retry)
 		} else {
-			current.committed = current.text
+			current.committed = ownWords(current.text, current.carried)
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
 			current.committedGeneration = current.generation
 			current.text = ""
 			current.carried = ""
+			current.repeats = ""
 			current.speaker = ""
 			current.language = ""
 			current.confidence = 0
@@ -444,6 +463,17 @@ func (c *cadence) Active() (stt.Participant, time.Time, bool) {
 
 func (c *cadence) Ready() <-chan candidate { return c.ready }
 
+// Repeating is what a participant's words being gathered open with that the agent already
+// acted on.
+func (c *cadence) Repeating(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if current, ok := c.speakers[participantID]; ok {
+		return current.repeats
+	}
+	return ""
+}
+
 func (c *cadence) Forget(participant stt.Participant) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -561,8 +591,11 @@ func (c *cadence) restating(current *cadenceSpeaker, transcript stt.Transcript, 
 		// The words a transcriber settles on need not be the words it streamed: Gemini
 		// writes an order number as "1 2 3" while the caller is talking and "one two
 		// three" when it commits. Asking for the same words back would let one reading of
-		// the number through as a second turn, and the caller is asked for it twice.
-		return transcript.Mode == stt.ModeFinal || sameWords(current.committed, text)
+		// the number through as a second turn, and the caller is asked for it twice. Nor
+		// is a revision that only goes back over the start of what was answered anything
+		// new: it says less than the turn already did.
+		return transcript.Mode == stt.ModeFinal || sameWords(current.committed, text) ||
+			opensWith(current.committed, text)
 	}
 	return sameWords(current.committed, text) && time.Since(current.committedAt) < c.settle
 }
@@ -574,6 +607,68 @@ func (c *cadence) speakerFor(participant stt.Participant) *cadenceSpeaker {
 		c.speakers[participant.ID] = current
 	}
 	return current
+}
+
+// ownWords is what an utterance said itself, without the unanswered words carried in front
+// of it. A transcriber that restates the utterance once it has been answered restates only
+// these: a turn answered as "is this all working wow okay" is followed by "Wow. Okay." again,
+// which is the transcriber settling, not the caller saying it twice.
+func ownWords(text, carried string) string {
+	before, said := wordList(carried), wordList(text)
+	if len(before) == 0 || len(said) <= len(before) || !slices.Equal(said[:len(before)], before) {
+		return text
+	}
+	// As said, not as compared.
+	return strings.Join(strings.Fields(words(text))[len(before):], " ")
+}
+
+// spokenTokens finds the words of a transcript as written, with their punctuation.
+var spokenTokens = regexp.MustCompile(`\S+`)
+
+// unrepeated is text without the words it opens with that were already heard as a line of
+// their own, as the transcript shows the line: "What is the weather like tomorrow" rather
+// than the question before it again. Text that does not open with them whole is kept as it
+// is, and text that is nothing but them comes back empty.
+func unrepeated(text, repeats string) string {
+	said := wordList(repeats)
+	if len(said) == 0 {
+		return text
+	}
+	matched := 0
+	for _, token := range spokenTokens.FindAllStringIndex(text, -1) {
+		// words drops a token's punctuation, so one token is one word or, as "—", none.
+		word := strings.ToLower(words(text[token[0]:token[1]]))
+		if word == "" {
+			continue
+		}
+		if word != said[matched] {
+			return text
+		}
+		if matched++; matched == len(said) {
+			return strings.TrimSpace(text[token[1]:])
+		}
+	}
+	return text
+}
+
+// wordList is text as the words it says, ignoring case and punctuation. The helpers below
+// compare whole words, so "I" does not open "Is this"; revisesTranscript and
+// growsTranscript compare letters, since a transcriber's revision can end part way through
+// a word.
+func wordList(text string) []string {
+	return strings.Fields(strings.ToLower(words(text)))
+}
+
+// opensWith reports whether text begins with the whole words of opening.
+func opensWith(text, opening string) bool {
+	said, start := wordList(text), wordList(opening)
+	return len(start) > 0 && len(start) <= len(said) && slices.Equal(said[:len(start)], start)
+}
+
+// endsWith reports whether text ends with the whole words of ending.
+func endsWith(text, ending string) bool {
+	said, end := wordList(text), wordList(ending)
+	return len(end) > 0 && len(end) <= len(said) && slices.Equal(said[len(said)-len(end):], end)
 }
 
 // revisesTranscript reports whether next is the same run of speech as previous, restated
