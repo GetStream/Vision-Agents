@@ -26,7 +26,7 @@ var errUnknownScheduledTask = APIError{
 	Message: "there is no such scheduled task",
 }
 
-// errTooManyScheduledTasks is a user at their active-task limit.
+// errTooManyScheduledTasks is a user at their active-task limit on the task's agent.
 var errTooManyScheduledTasks = APIError{Type: ErrorTypeConflict, Code: codeTooManyTasks,
 	Message: "the user already has the most active scheduled tasks this agent allows; " +
 		"cancel or pause one first"}
@@ -122,14 +122,11 @@ func (s *Server) listScheduledTasks(ctx context.Context, request *listScheduledT
 		return nil, err
 	}
 	rows, more := page(rows, limit)
-	listed := ScheduledTaskPage{Items: make([]ScheduledTask, 0, len(rows)), HasMore: more}
-	for _, row := range rows {
-		rendered, err := s.scheduledTaskOf(ctx, row)
-		if err != nil {
-			return nil, err
-		}
-		listed.Items = append(listed.Items, rendered)
+	items, err := s.scheduledTasksOf(ctx, customerID, rows)
+	if err != nil {
+		return nil, err
 	}
+	listed := ScheduledTaskPage{Items: items, HasMore: more}
 	if more {
 		last := rows[len(rows)-1]
 		listed.NextCursor = encodeCursor(store.ScheduledTaskPosition{CreatedAt: last.CreatedAt, ID: last.ID})
@@ -260,10 +257,7 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 		return nil, err
 	}
 	s.kickScheduled()
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &createScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -304,10 +298,7 @@ func (s *Server) getScheduledTask(ctx context.Context, request *getScheduledTask
 	if err != nil {
 		return nil, err
 	}
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &getScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -389,10 +380,7 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		return nil, err
 	}
 	s.kickScheduled()
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &updateScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -486,10 +474,7 @@ func (s *Server) pauseScheduledTask(ctx context.Context, request *pauseScheduled
 			return nil, err
 		}
 	}
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &pauseScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -510,7 +495,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		if config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID); err == nil && config.Scheduling.MaxTasksPerUser > 0 {
 			maxActive = config.Scheduling.MaxTasksPerUser
 		}
-		active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID)
+		active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID, task.ConfigID)
 		if err != nil {
 			return nil, err
 		}
@@ -534,10 +519,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		}
 		s.kickScheduled()
 	}
-	rendered, err := s.scheduledTaskOf(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	rendered := s.scheduledTaskOf(ctx, task)
 	return &resumeScheduledTaskResponse{Body: rendered}, nil
 }
 
@@ -630,9 +612,40 @@ func (s *Server) listScheduledTaskRuns(ctx context.Context, request *listSchedul
 	return &listScheduledTaskRunsResponse{Body: listed}, nil
 }
 
-// scheduledTaskOf renders a task, its times read in its own zone: one string
-// gives both the instant and the user's wall clock.
-func (s *Server) scheduledTaskOf(ctx context.Context, task store.ScheduledTask) (ScheduledTask, error) {
+// scheduledTaskOf renders one task, as scheduledTasksOf does. It answers a
+// change already saved, so a failed read of when the task last ran leaves
+// last_run_at out rather than failing a change that stands, which a client
+// retrying a create would make twice.
+func (s *Server) scheduledTaskOf(ctx context.Context, task store.ScheduledTask) ScheduledTask {
+	last, err := s.store.LastScheduledTaskRunsAt(ctx, task.CustomerID, []string{task.ID})
+	if err != nil {
+		s.logger.Error("could not read when a scheduled task last ran", "task", task.ID,
+			"customer", task.CustomerID, "error", err)
+	}
+	return scheduledTaskRendered(task, last[task.ID])
+}
+
+// scheduledTasksOf renders tasks, reading when each last ran in one query.
+func (s *Server) scheduledTasksOf(ctx context.Context, customerID string, tasks []store.ScheduledTask) ([]ScheduledTask, error) {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
+	}
+	last, err := s.store.LastScheduledTaskRunsAt(ctx, customerID, ids)
+	if err != nil {
+		return nil, err
+	}
+	rendered := make([]ScheduledTask, 0, len(tasks))
+	for _, task := range tasks {
+		rendered = append(rendered, scheduledTaskRendered(task, last[task.ID]))
+	}
+	return rendered, nil
+}
+
+// scheduledTaskRendered renders a task, its times read in its own zone: one
+// string gives both the instant and the user's wall clock. lastRunAt is zero
+// when no run has finished.
+func scheduledTaskRendered(task store.ScheduledTask, lastRunAt time.Time) ScheduledTask {
 	loc, err := scheduling.LoadZone(task.Timezone)
 	if err != nil {
 		loc = time.UTC
@@ -674,12 +687,10 @@ func (s *Server) scheduledTaskOf(ctx context.Context, task store.ScheduledTask) 
 			}
 		}
 	}
-	if s.store != nil {
-		if last, err := s.store.LastScheduledTaskRunAt(ctx, task.CustomerID, task.ID); err == nil && !last.IsZero() {
-			rendered.LastRunAt = optional(last.UTC().Format(time.RFC3339))
-		}
+	if !lastRunAt.IsZero() {
+		rendered.LastRunAt = optional(lastRunAt.UTC().Format(time.RFC3339))
 	}
-	return rendered, nil
+	return rendered
 }
 
 // scheduledTaskRunOf renders a run, its due time in its task's zone.
