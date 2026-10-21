@@ -45,7 +45,7 @@ func (t Token) GoString() string { return t.String() }
 type Tokens func(ctx context.Context, grant Grant) (Token, error)
 
 // ErrNoCredential is a connection that gives no credential until it is reconnected: it is
-// disconnected, waiting for a reconnect, or its scheme sends no bearer token.
+// disconnected, waiting for a reconnect, deleted, or its scheme sends no bearer token.
 var ErrNoCredential = errors.New("sandbox: the connection gives no credential until it is reconnected")
 
 // Mount is what a sandbox is created with so that its code reaches its grants.
