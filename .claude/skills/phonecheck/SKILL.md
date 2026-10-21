@@ -18,15 +18,18 @@ Place nothing yet.
 
 - **Which router.** Local (you start it) or remote (a URL the human gives you).
 - **Which direction and provider.** `outbound` or `inbound`; `twilio` or `telnyx`.
+- **Where the env lives.** No code here loads a `.env`; a process has only what its shell
+  exports. Ask the human for the path of the `.env` (default: the repository root's `.env`) and
+  call it `$ENV_FILE`. Every command below runs in bash with it loaded first:
+  `( set -a; . "$ENV_FILE"; set +a; <command> )`.
 - **The env is there.** The names the README lists for that provider, plus the Go SDK's router
-  variables. Print names only, never values:
+  variables, checked in the process env after loading, names only, never values:
 
 ```bash
-for k in STREAM_API_KEY STREAM_API_SECRET TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID; do [ -n "$(grep -E "^$k=" .env | tail -1 | cut -d= -f2- | tr -d "\"' \r")" ] && echo "ok       $k" || echo "MISSING  $k"; done
+( set -a; . "$ENV_FILE"; set +a; for k in STREAM_API_KEY STREAM_API_SECRET TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done )
 ```
 
-  Only the provider's own names matter; ignore the other vendor's. Use the `.env` the tester
-  uses (check `acceleration/.env` too).
+  Only the provider's own names matter; ignore the other vendor's.
 - **The person side is set up** as the README says (voice URL or TeXML app, region). You cannot
   check this; ask the human to confirm it, and what to pass as `-region`.
 - **Inbound only:** the customer has no other attached number and no other dispatch worker is
@@ -46,14 +49,14 @@ Wait for a yes. Do not change hooks or place a call without it.
 
 From `acceleration/`:
 
-1. Start the router in the background with the tester's env, without printing values:
-   `go run ./cmd/router`. Postgres must be reachable (`ROUTER_POSTGRES_DSN`), because the
+1. Start the router in the background with the env loaded, without printing values:
+   `( set -a; . "$ENV_FILE"; set +a; go run ./cmd/router )`. Postgres must be reachable (`ROUTER_POSTGRES_DSN`), because the
    `call_sites` row needs it. Send its output to a file. Wait for the `listening` line.
 2. Start a public tunnel to the router's address (`http://localhost:8080` unless configured
    otherwise) with whatever tunnel tool the human has. Note its public URL.
-3. Point the hooks at it: `go run ./cmd/phone hooks -url <tunnel URL>`. Add `-app <id>` only
+3. Point the hooks at it, env loaded: `( set -a; . "$ENV_FILE"; set +a; go run ./cmd/phone hooks -url <tunnel URL> )`. Add `-app <id>` only
    for a router in app mode.
-4. From `acceleration/cmd/phonecheck`, run:
+4. From `acceleration/cmd/phonecheck`, with the env loaded the same way, run:
 
 ```bash
 go run . outbound -provider twilio -router http://localhost:8080 -agent-number +15550100001 -person-number +15550100002 -log-format json
@@ -78,11 +81,11 @@ inbound calls never arrive and no `call_sites` row is written.
 Even when a step failed or the human stopped the run. In reverse order, and only what this run
 started:
 
-1. `go run ./cmd/phone hooks -remove <tunnel URL>` from `acceleration/`.
+1. `go run ./cmd/phone hooks -remove <tunnel URL>` from `acceleration/`, env loaded.
 2. Stop the tunnel.
 3. Stop the router.
 
-Local mode only. Check with `go run ./cmd/phone hooks` (read-only) that the tunnel URL is gone.
+Local mode only. Check with `go run ./cmd/phone hooks` (read-only, env loaded) that the tunnel URL is gone.
 If a call may still be up, the tool hangs the person's call up when it exits; tell the human if
 it was killed hard.
 
