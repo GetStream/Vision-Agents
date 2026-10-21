@@ -31,12 +31,13 @@ const (
 	reviewTokens  = 500
 )
 
-// reviewInstructions is what the reviewer is told to be.
+// reviewGuide is what the reviewer is told to judge a call by, unless the agent's config
+// says otherwise.
 //
 // It judges how the agent handled the call rather than how the call went: a caller who
 // could not be helped because the answer is no is not a badly handled call, and an agent
 // that was warm about being useless is not a well handled one.
-const reviewInstructions = `You are reviewing a recorded call between an automated voice agent and a caller.
+const reviewGuide = `You are reviewing a recorded call between an automated voice agent and a caller.
 
 Summarise what the caller wanted and what happened, in two or three sentences, written for
 someone who did not hear the call. Then score how well the agent handled it from 1 to 5:
@@ -49,9 +50,22 @@ someone who did not hear the call. Then score how well the agent handled it from
 
 Judge the handling, not the outcome. An answer the caller did not want, given clearly and
 early, is a good call. Note anything worth acting on: something the agent did not know,
-a question it kept getting wrong, a place it should have handed over sooner.
+a question it kept getting wrong, a place it should have handed over sooner.`
 
-Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`
+// reviewOutputRule ends every review prompt, a config's own guide included, because
+// parseJudgement reads nothing else.
+const reviewOutputRule = `Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`
+
+// reviewPrompt is what the reviewer is told: the config's guide, or the default one when
+// it gave none, then the output rule. A guide of only whitespace is none: it would leave
+// the reviewer nothing to judge by.
+func reviewPrompt(guide string) string {
+	guide = strings.TrimSpace(guide)
+	if guide == "" {
+		guide = reviewGuide
+	}
+	return guide + "\n\n" + reviewOutputRule
+}
 
 // judgement is what the reviewer answers with.
 type judgement struct {
@@ -96,10 +110,10 @@ func newReviewer(router *llmrouter.Router, pgStore *store.Store, logger *slog.Lo
 	}
 }
 
-// Review starts a pass over a finished call. A call nobody said anything on is not
-// reviewed: there is nothing to summarise, and asking would cost the customer money to
-// be told so.
-func (r *reviewer) Review(call store.Call, target string, said []spoken) {
+// Review starts a pass over a finished call, judged by guide, or by the default guide when
+// it is empty. A call nobody said anything on is not reviewed: there is nothing to
+// summarise, and asking would cost the customer money to be told so.
+func (r *reviewer) Review(call store.Call, target, guide string, said []spoken) {
 	if len(said) == 0 {
 		return
 	}
@@ -114,7 +128,7 @@ func (r *reviewer) Review(call store.Call, target string, said []spoken) {
 		ctx, cancel := context.WithTimeout(r.ctx, reviewTimeout)
 		defer cancel()
 
-		err := r.review(ctx, call, target, said)
+		err := r.review(ctx, call, target, guide, said)
 		switch {
 		case err == nil:
 		case r.ctx.Err() != nil:
@@ -133,7 +147,7 @@ func (r *reviewer) Close() {
 	r.running.Wait()
 }
 
-func (r *reviewer) review(ctx context.Context, call store.Call, target string, said []spoken) error {
+func (r *reviewer) review(ctx context.Context, call store.Call, target, guide string, said []spoken) error {
 	session, err := r.llm.Start(ctx, llmrouter.Request{
 		CustomerID: call.CustomerID,
 		AgentID:    call.AgentID,
@@ -148,7 +162,7 @@ func (r *reviewer) review(ctx context.Context, call store.Call, target string, s
 
 	stream, err := session.Create(ctx, llm.ResponseParams{
 		ID:              call.ID,
-		Instructions:    reviewInstructions,
+		Instructions:    reviewPrompt(guide),
 		Input:           []llm.Message{{Role: llm.User, Content: conversation(said)}},
 		MaxOutputTokens: reviewTokens,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},

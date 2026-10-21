@@ -352,6 +352,9 @@ type AgentConfig struct {
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`
+	// ReviewInstructions is what the model reviewing a finished call judges it by, in place
+	// of the default scoring guide. Empty, which most configs are, is the default.
+	ReviewInstructions string `bun:"review_instructions,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`

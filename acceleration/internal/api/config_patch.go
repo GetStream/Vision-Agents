@@ -14,6 +14,7 @@ import (
 type AgentConfigPatch struct {
 	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
 	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty"`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Stt                *string                  `json:"stt,omitempty"`
 	Tts                *string                  `json:"tts,omitempty"`
@@ -169,6 +170,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.Greeting, config.GreetingMode = greetingOf(patch.Greeting)
 	}
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
+	config.ReviewInstructions = reviewOf(config.ReviewInstructions, patch.Review)
 	config.Skills = override(config.Skills, patch.Skills)
 	if patch.Plugins != nil {
 		config.Plugins = pluginEntriesOf(*patch.Plugins)
