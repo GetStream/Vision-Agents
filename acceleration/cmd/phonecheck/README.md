@@ -25,7 +25,8 @@ go run ./cmd/router
 Wait for the `listening` log line. The router listens on `http://localhost:8080` unless you
 configured another address.
 
-**Remote.** Pass `-router https://router.example.com`. The tool only checks that it answers.
+**Remote.** Pass `-router https://router.example.com`. The tool checks that it answers and that
+it keeps logs: a remote router also needs Postgres, or the tool refuses it.
 
 ## 2. Stream's call webhook must reach the router
 
@@ -58,7 +59,6 @@ Inbound also needs:
 
 | Variable | Used for |
 |---|---|
-| `STREAM_ACCELERATION_URL` | The router's address. `-router` overrides it |
 | `STREAM_ACCELERATION_CUSTOMER_ID` | The customer. `-customer` overrides it |
 | `STREAM_API_KEY`, `STREAM_API_SECRET` | As the Go SDK needs them for your router |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | `-provider twilio` |
@@ -66,6 +66,9 @@ Inbound also needs:
 | `TELNYX_ACCOUNT_SID` | `-provider telnyx`: the account UUID, which Telnyx's call endpoints need in the path |
 | `TELNYX_PERSON_CONNECTION_ID` | `-provider telnyx`: the TeXML app the person number is on. Only read. Not the router's `TELNYX_CONNECTION_ID` |
 | `IPINFO_TOKEN` | Optional. Better place names for addresses |
+
+The router's address is `-router` only. The tool checks the provider's variables before it
+places anything.
 
 ## 4. Set up the person side by hand
 
@@ -89,9 +92,8 @@ Region, if wanted: the number's inbound processing region in the Twilio console.
 
 ### Twilio, inbound
 
-Nothing on the number. The tool dials with an inline script. The tool calls Twilio's default
-endpoint; to test from another region, set the region on the account or number in the Twilio
-console where Twilio supports it.
+Nothing on the number. The tool dials with an inline script. Inbound calls go through
+Twilio's default region; another region is not supported by the tool.
 
 ### Telnyx
 

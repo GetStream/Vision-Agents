@@ -26,14 +26,19 @@ Place nothing yet.
   variables, checked in the process env after loading, names only, never values:
 
 ```bash
-( set -a; . "$ENV_FILE"; set +a; for k in STREAM_API_KEY STREAM_API_SECRET TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done )
+( set -a; . "$ENV_FILE"; set +a; for k in STREAM_API_KEY STREAM_API_SECRET STREAM_ACCELERATION_CUSTOMER_ID ROUTER_POSTGRES_DSN TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done )
 ```
 
   Only the provider's own names matter; ignore the other vendor's.
+  `STREAM_ACCELERATION_CUSTOMER_ID` is not needed when you pass `-customer`.
+  `ROUTER_POSTGRES_DSN` only matters for a local router.
 - **The person side is set up** as the README says (voice URL or TeXML app, region). You cannot
   check this; ask the human to confirm it, and what to pass as `-region`.
 - **Inbound only:** the customer has no other attached number and no other dispatch worker is
   connected. The tool refuses the first; ask about the second.
+- **Local only: what already uses the app's hooks.** From `acceleration/`, env loaded, run the
+  read-only `go run ./cmd/phone hooks` and show the human what it lists. Adding a tunnel URL
+  changes where Stream sends the app's call events, so they should see what else is there first.
 
 ## 2. Ask the human, once
 
