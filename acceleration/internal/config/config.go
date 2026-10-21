@@ -761,12 +761,11 @@ func (c Config) export() error {
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 
-		"code_sandbox.broker":           c.CodeSandbox.Broker,
-		"code_sandbox.secret_prefix":    c.CodeSandbox.SecretPrefix,
-		"code_sandbox.proxy_addr":       c.CodeSandbox.ProxyAddr,
-		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
-		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
-		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,
+		"code_sandbox.broker":        c.CodeSandbox.Broker,
+		"code_sandbox.secret_prefix": c.CodeSandbox.SecretPrefix,
+		"code_sandbox.proxy_addr":    c.CodeSandbox.ProxyAddr,
+		"code_sandbox.proxy_ca_cert": c.CodeSandbox.ProxyCACert,
+		"code_sandbox.proxy_ca_key":  c.CodeSandbox.ProxyCAKey,
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),

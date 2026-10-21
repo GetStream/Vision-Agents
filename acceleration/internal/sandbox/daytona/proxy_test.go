@@ -74,6 +74,7 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 		domains, ranges, noProxied string
 	}{
 		{sandbox.Config{}, proxy, "proxy.stg.example", "", ""},
+		{sandbox.Config{}, "http://203.0.113.7:8091", "203.0.113.7", "", ""},
 		{sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org", "api.github.com", "github.com", "*.pythonhosted.org"}}, proxy,
 			"proxy.stg.example,pypi.org,api.github.com,github.com,*.pythonhosted.org", "", "pypi.org,.pythonhosted.org"},
 		{sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}, "http://203.0.113.7:8091", "", "10.0.0.0/8,203.0.113.7/32",
@@ -104,7 +105,7 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 	}
 	s.Len(s.platform.requests(), len(cases))
 	s.Equal([]string{"/tmp/va-egress-ca.pem after 0 runs", "/tmp/va-egress-ca.pem after 2 runs", "/tmp/va-egress-ca.pem after 4 runs",
-		"/tmp/va-egress-ca.pem after 6 runs"}, s.platform.uploads, "once per sandbox, before its first run")
+		"/tmp/va-egress-ca.pem after 6 runs", "/tmp/va-egress-ca.pem after 8 runs"}, s.platform.uploads, "once per sandbox, before its first run")
 	s.Equal("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n", string(s.platform.files["/tmp/va-egress-ca.pem"]))
 }
 

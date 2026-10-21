@@ -155,9 +155,11 @@ func (s *BrokerSuite) TestTheEnvNamesTheProxyAndTheCA() {
 	s.Len(s.mount.Env, 9)
 }
 
-// TestClosingEndsTheProxyCredential: the next CONNECT is a 407.
+// TestClosingEndsTheProxyCredential: the next CONNECT is a 407, and a run after Close does
+// not bring the credential back.
 func (s *BrokerSuite) TestClosingEndsTheProxyCredential() {
 	s.Require().NoError(s.broker.Close(s.ctx))
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
 
 	_, _, err := s.get()
 
@@ -230,6 +232,11 @@ func (s *BrokerSuite) TestNoGrantWithACredentialGivesNoProxy() {
 	exists, err := s.rig.redis.Do(s.ctx, s.rig.redis.B().Exists().Key(key(credential)).Build()).AsInt64()
 	s.Require().NoError(err)
 	s.Zero(exists, "a second Prepare ends the first one's credential")
+	s.Require().NoError(s.rig.redis.Do(s.ctx, s.rig.redis.B().Del().Key(key("")).Build()).Error())
+	s.Require().NoError(s.broker.BeforeRun(s.ctx))
+	exists, err = s.rig.redis.Do(s.ctx, s.rig.redis.B().Exists().Key(key("")).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.Zero(exists, "a run without a credential stores nothing")
 }
 
 // rig is a real proxy over Redis, whose hosts are one httptest TLS server, and the store the
@@ -260,8 +267,11 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	}
 	t.Cleanup(r.redis.Close)
 	r.gate = newRedisGate(t, address)
+	// One connection (PipelineMultiplex -1): by default rueidis spreads keyed commands over
+	// four and sends PING on the first only, so recover's PING would not prove the others back
+	// (rueidis v1.0.76 rueidis.go:220, mux.go slotfn).
 	gated, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{r.gate.listener.Addr().String()}, DisableCache: true,
-		DisableRetry: true})
+		DisableRetry: true, PipelineMultiplex: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
