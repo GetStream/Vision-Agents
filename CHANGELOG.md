@@ -693,6 +693,21 @@ create, update and patch; left out on an update, a patch or a folder sync it sta
 empty string on an update or a patch removes it. An agent with none is reviewed exactly as
 before (AI-1655, #1111).
 
+### Every phone call logs where it ran, and `phonecheck` places a test call to show it
+
+The router logs the sites a phone call used: the SFU the agent joined (and any move to another),
+the Stream SIP host for placed and arriving calls, both sides' media addresses on calls through a
+customer's own SIP trunk, and, after the call ends, how many SFUs Stream used and where. The
+agent's SFU is in the `details` of the session's `joined` log row. A placed call writes a
+`call_placed` row with its Stream SIP host, vendor and vendor call id, and an ended call writes a
+`call_sites` row with Stream's SFU count and places. No API changed.
+
+`acceleration/cmd/phonecheck` places a live outbound or inbound test call through a router, local
+or remote, with Twilio or Telnyx playing the person, and logs the site of every hop and the call's
+timings. It changes nothing at any vendor: the person side is set up by hand first, as its README
+says. The Telnyx person side needs `TELNYX_ACCOUNT_SID`. See its README, or ask Claude to run one
+with the `phonecheck` skill.
+
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 
 `metrics_addr` (`ROUTER_METRICS_ADDR`, e.g. `:9091`) serves Prometheus metrics at `/metrics`
