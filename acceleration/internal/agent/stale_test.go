@@ -390,3 +390,104 @@ func (s *AgentSuite) TestFinalWordsOverAReplyNobodyHeardDropIt() {
 	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "final words left the reply to play")
 	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
 }
+
+func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() {
+	// Voicebench restaurant.interrupt on #1100: the reply to a correction made over a tool's
+	// answer was dropped when the caller went on, and their next turn was answered alone, so
+	// the gluten-free guest was never booked.
+	s.ownsTools("a table for four at seven is free")
+	s.join(true)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{}
+	s.asksFor("lookup_order", `{"order":"4"}`)
+	s.speak(nash)
+	s.says(nash, "A table for four at seven please.")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the tool's result was never put to the model")
+	booked := s.model.requests()[1].ID
+	s.model.writes(booked, "A table for four at seven is free.")
+	s.heardSomeOf(booked)
+
+	correction := "Wait. Make it six, and one of us is gluten free instead."
+	s.says(nash, correction)
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the correction was never answered")
+	corrected := s.model.requests()[2].ID
+	s.mutters(nash, "Nine Name is")
+	s.eventually(func() bool { return s.model.script(corrected).Abandoned() }, "the reply to the correction kept going")
+	s.says(nash, "Nine Name is Alvarez.")
+	s.eventually(func() bool { return len(s.model.requests()) == 4 }, "the newer words were never answered")
+
+	newer := s.model.requests()[3]
+	s.Contains(newer.Instructions, missedNote(correction), "the correction is owed with the newer words")
+	s.NotContains(s.model.requests()[2].Instructions, "not yet answered", "nothing was dropped before the correction")
+
+	s.model.writes(newer.ID, "Six at seven, gluten free noted. Under Alvarez?")
+	s.heardSomeOf(newer.ID)
+	s.model.finishes(newer.ID)
+	s.says(nash, "Can we sit outside?")
+	s.eventually(func() bool { return len(s.model.requests()) == 5 }, "the next turn was never answered")
+	s.NotContains(s.model.requests()[4].Instructions, "not yet answered", "what was owed was answered once")
+}
+
+func (s *AgentSuite) TestATurnAnsweredWithNothingDroppedIsAskedAsBefore() {
+	// On base 318b0352 every caller turn is asked with the same instructions.
+	s.join(true)
+	two := s.answering("two")
+	s.model.writes(two, "Two of what?")
+	s.model.finishes(two)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never settled")
+
+	s.says(nash, "two tickets please")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the next turn was never answered")
+	s.Equal(s.model.requests()[0].Instructions, s.model.requests()[1].Instructions)
+}
+
+func (s *AgentSuite) TestWhatADroppedReplyWasForIsOwedToTheSameCallerAlone() {
+	s.join(true)
+	two := s.answering("two")
+	s.mutters(nash, "wait no")
+	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
+	bob := stt.Participant{ID: "bob"}
+	s.speak(bob)
+
+	s.says(bob, "Is anyone there?")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the other voice was never answered")
+	s.NotContains(s.model.requests()[1].Instructions, "not yet answered", "bob never said two")
+	s.says(nash, "wait no the second one")
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the caller was never answered")
+
+	s.Contains(s.model.requests()[2].Instructions, missedNote("two"))
+}
+
+func (s *AgentSuite) TestEveryDroppedReplyInARowIsOwed() {
+	s.join(true)
+	two := s.answering("two")
+	s.mutters(nash, "wait no")
+	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the first reply kept going")
+	s.says(nash, "wait no three")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
+	three := s.model.requests()[1].ID
+	s.mutters(nash, "actually")
+	s.eventually(func() bool { return s.model.script(three).Abandoned() }, "the second reply kept going")
+
+	s.says(nash, "actually four")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the last words were never answered")
+	s.Contains(s.model.requests()[2].Instructions, missedNote("two wait no three"))
+}
+
+func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsNotUsedForWhatADroppedReplyOwes() {
+	s.speculates = true
+	s.join(true)
+	two := s.answering("two")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply was never started")
+	s.mutters(nash, "wait no")
+	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
+
+	s.says(nash, "wait no three")
+
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return strings.Contains(requests[len(requests)-1].Instructions, missedNote("two"))
+	}, "the turn was answered by a reply written without what it owes")
+}

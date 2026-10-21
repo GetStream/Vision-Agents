@@ -380,6 +380,8 @@ type Agent struct {
 	// unheard is the caller turn being answered while none of its reply has gone out, which
 	// the same caller saying more makes stale.
 	unheard unheardReply
+	// missed is what a caller said that a dropped reply was for, owed with their next answer.
+	missed unheardReply
 	// voiced is the turn whose audio last went out, and voicedAt when its first did.
 	voiced   string
 	voicedAt time.Time
@@ -1658,12 +1660,15 @@ func (a *Agent) perform(action Action) {
 
 	case ActAnswer:
 		a.mu.Lock()
-		a.unheard = unheardReply{turnID: action.Candidate.ID, participant: action.Candidate.Participant.ID, decidedAt: time.Now()}
+		missed := a.missedLocked(action.Candidate.Participant)
+		a.unheard = unheardReply{turnID: action.Candidate.ID, participant: action.Candidate.Participant.ID,
+			decidedAt: time.Now(), said: strings.TrimSpace(missed + " " + action.Candidate.Said())}
 		a.mu.Unlock()
-		if a.adoptSpeculation(action.Candidate, action.Clarify) {
+		note := joinNotes(action.Clarify, missedNote(missed))
+		if a.adoptSpeculation(action.Candidate, note) {
 			return
 		}
-		if err := a.respondCandidate(action.Candidate, action.Clarify); err != nil {
+		if err := a.respondCandidate(action.Candidate, note); err != nil {
 			a.fail(err, "llm")
 		}
 
@@ -1986,6 +1991,9 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 // What tools showed the model before it stand as a note from here on (toolPicturesSeen).
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
 	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
+	if a.missed.participant == participant.ID {
+		a.missed = unheardReply{}
+	}
 	if participant.ID != typedCaller {
 		a.speakers[personOf(participant)] = a.speakerLocked(participant)
 	}
@@ -3917,6 +3925,27 @@ type unheardReply struct {
 	turnID      string
 	participant string
 	decidedAt   time.Time
+	// said is what the reply was to answer, with whatever an earlier dropped reply was for.
+	said string
+}
+
+// missedLocked is what the participant said that a dropped reply was for, empty when none was.
+func (a *Agent) missedLocked(participant stt.Participant) string {
+	if a.missed.participant != participant.ID {
+		return ""
+	}
+	return a.missed.said
+}
+
+// missedNote tells the model what a dropped reply was for, so the caller's turn after it
+// answers both rather than only the newest words.
+func missedNote(said string) string {
+	if said == "" {
+		return ""
+	}
+	return fmt.Sprintf("The caller said more before you could answer them, and you have not yet "+
+		"answered what they said earlier: %q. Answer everything they said since your last reply "+
+		"together. Treat their later words as a correction only where they clearly correct the earlier ones.", said)
 }
 
 // dropUnheard abandons the reply to a caller's turn the same caller said more over, while
@@ -3929,6 +3958,7 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 			return false
 		}
 		stale, a.unheard = a.unheard, unheardReply{}
+		a.missed = stale
 		return true
 	}) {
 		return
