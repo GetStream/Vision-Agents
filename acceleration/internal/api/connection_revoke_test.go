@@ -3,8 +3,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -117,11 +119,25 @@ func (s *AuthorizationsSuite) TestACallerThatHangsUpStillEndsTheGrantAtTheProvid
 	s.Require().NoError(err)
 	proxy := httputil.NewSingleHostReverseProxy(provider)
 	proxy.Transport = s.provider.Client().Transport
-	// The revoke endpoint answers only once the caller has hung up, then revokes at the fake.
+	// The revoke endpoint waits for the caller to hang up, then a second more, in which a
+	// revoke cancelled with the caller closes its connection and is dropped here; a revoke
+	// still alive is passed on to the fake.
 	slow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read up front: net/http notices a closed connection, and cancels r's context, only
+		// once the handler has read the whole body.
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		select {
 		case <-gone:
 		case <-time.After(5 * time.Second):
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(time.Second):
 		}
 		r.URL.Path = fakeprovider.PathRevoke
 		proxy.ServeHTTP(w, r)
