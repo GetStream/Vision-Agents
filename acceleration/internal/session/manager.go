@@ -205,6 +205,9 @@ func (m *Manager) SetSchedulerKick(kick func()) {
 
 // NewManager validates the options and returns a Manager. It starts nothing.
 func NewManager(options ManagerOptions) (*Manager, error) {
+	if options.SandboxBroker == egress.BrokerName && options.SandboxProxy.Store == nil {
+		return nil, errors.New("session: the proxy sandbox broker needs the store the egress proxy reads")
+	}
 	if options.LLM == nil {
 		return nil, errors.New("session: an llm router is required")
 	}

@@ -283,6 +283,14 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	s.NotContains(string(raw), tokenOf("primary"))
 }
 
+// TestAManagerWithTheProxyBrokerNeedsItsStore: the router does not start without it, rather
+// than refuse every sandbox session.
+func (s *SandboxGrantsSuite) TestAManagerWithTheProxyBrokerNeedsItsStore() {
+	_, err := NewManager(ManagerOptions{SandboxBroker: egress.BrokerName})
+
+	s.ErrorContains(err, "the proxy sandbox broker needs the store")
+}
+
 // TestTheProxyBrokerRefusesAConfigItCannotServe: an open network would reach the grants alone,
 // and Daytona's one CIDR allow list cannot hold a proxy named by a host name. Daytona's broker
 // takes both, and the proxy takes a network narrowed to domains, or ranges with its address.
