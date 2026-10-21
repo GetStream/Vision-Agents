@@ -31,10 +31,18 @@ import (
 // each direction afterwards.
 type StreamsSuite struct {
 	RouterSuite
+	// logged is what the router logged, for the line a socket that fails over leaves.
+	logged *lockedLog
 }
 
 func TestStreamsSuite(t *testing.T) {
 	runSuite(t, new(StreamsSuite))
+}
+
+func (s *StreamsSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *StreamsSuite) SetupTest() {
@@ -667,9 +675,11 @@ func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextMo
 	redis := s.live.ShardRedis()
 	s.Require().NoError(redis.Do(s.T().Context(),
 		redis.B().Del().Key("health:stt:refusing:"+handingOverModel).Build()).Error())
+	callID := s.utils.uuid()
 	listening := s.start("/v1/stt/stream", frame{
-		"target": "refusing/" + handingOverModel,
-		"stt":    frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},
+		"target":  "refusing/" + handingOverModel,
+		"call_id": callID,
+		"stt":     frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},
 	})
 	defer listening.Close()
 	started := s.nextFrame(listening)
@@ -703,6 +713,18 @@ func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextMo
 	transcript := s.nextFrame(listening)
 	s.Equal("transcript", transcript["type"], "%v", transcript)
 	s.Equal("echoing", transcript["provider"])
+
+	// The caller is not told why; the router's log says it once, with the vendor's words.
+	var failovers []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, " call="+callID+" ") {
+			failovers = append(failovers, line)
+		}
+	}
+	s.Require().Len(failovers, 1, "%v", failovers)
+	s.Contains(failovers[0], `level=INFO msg="the transcriber refused the session, the next model took it over" `+
+		`customer=`+s.customerID()+` call=`+callID+` from=refusing/`+handingOverModel+
+		` provider=echoing model=echoing-model error="`+termsRefusal+`"`)
 }
 
 func (s *StreamsSuite) TestASocketNoModelRefusesStartsOnce() {

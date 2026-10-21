@@ -39,6 +39,10 @@ type Session struct {
 	// the provider hears nothing more, so later audio is dropped rather than failing once
 	// per frame.
 	failed atomic.Bool
+	// readAhead asks forward to read what the provider sent before a write to it failed,
+	// and closes the channel it is sent once it has. done closes when forward returns.
+	readAhead chan chan struct{}
+	done      chan struct{}
 
 	closeOnce sync.Once
 }
@@ -59,6 +63,9 @@ func newSession(
 		reopen:   reopen,
 		cancel:   cancel,
 		events:   make(chan stt.Event, 64),
+		// Unbuffered, so only a forward still running takes a request, and it answers it.
+		readAhead: make(chan chan struct{}),
+		done:      make(chan struct{}),
 	}
 	go session.forward()
 	return session
@@ -72,12 +79,31 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 	}
 	provider := s.STT()
 	err := provider.ProcessAudio(pcm, participant)
-	if err != nil && (s.failed.Load() || provider != s.STT()) {
+	if err != nil && s.toldOf(provider) {
 		// The provider failed while this frame was on its way to it. The caller hears of
 		// that failure, or of the next model taking over, once, and not again for the frame.
 		return nil
 	}
 	return err
+}
+
+// toldOf reports whether the caller hears of provider's failure, or of the next model
+// taking over, from the session's events. The vendor's refusal can reach the provider just
+// before a write fails, or wait behind events the caller has not read yet, so forward is
+// first asked to read that far.
+func (s *Session) toldOf(provider stt.STT) bool {
+	told := func() bool { return s.failed.Load() || provider != s.STT() }
+	// Asked first so a write that fails while the next model dials does not wait for it.
+	if told() {
+		return true
+	}
+	read := make(chan struct{})
+	select {
+	case s.readAhead <- read:
+		<-read
+	case <-s.done:
+	}
+	return told()
 }
 
 // Events returns the provider's events. The channel closes when the session closes.
@@ -127,25 +153,90 @@ func (s *Session) Close() error {
 // candidate takes over from is not passed on: the caller hears of the Failover instead.
 // When no candidate takes over, the caller hears the refusal, as if none had been asked.
 func (s *Session) forward() {
+	defer close(s.done)
 	defer close(s.events)
 
-	provider, config := s.provider, s.config
+	current := &relay{provider: s.provider, config: s.config}
 	var refused []string
 	for {
-		event, open := <-provider.Events()
+		event, open := s.next(current)
 		if !open {
 			return
 		}
-		s.observe(config, event)
 		if failure, ok := event.(stt.Error); ok && failure.Fatal && !transportDrop(failure) && s.reopen != nil {
-			refused = append(refused, config.Name())
-			if next, nextConfig, err := s.reopen(refused); err == nil && s.swap(provider, next, nextConfig) {
-				s.events <- stt.Failover{Provider: nextConfig.Provider, Model: nextConfig.Model, From: config.Name(), Err: failure.Err}
-				provider, config = next, nextConfig
+			from := current.config.Name()
+			refused = append(refused, from)
+			if next, nextConfig, err := s.reopen(refused); err == nil && s.swap(current.provider, next, nextConfig) {
+				// Before the Failover is passed on: a write that fails meanwhile went to next.
+				current = &relay{provider: next, config: nextConfig}
+				s.pass(current, stt.Failover{Provider: nextConfig.Provider, Model: nextConfig.Model, From: from, Err: failure.Err})
 				continue
 			}
 		}
-		s.events <- event
+		s.pass(current, event)
+	}
+}
+
+// relay is the provider forward reads, and what it has read of it ahead of the caller.
+type relay struct {
+	provider stt.STT
+	config   routing.ProviderConfig
+	// ahead is what was read to answer a failed write and not passed on yet. It stops at a
+	// fatal error, so nothing the provider sends after one is read.
+	ahead []stt.Event
+}
+
+// next returns the provider's next event, observed, and reads ahead for a failed write
+// while it waits.
+func (s *Session) next(current *relay) (stt.Event, bool) {
+	for {
+		if len(current.ahead) > 0 {
+			event := current.ahead[0]
+			current.ahead = current.ahead[1:]
+			return event, true
+		}
+		select {
+		case event, open := <-current.provider.Events():
+			if !open {
+				return nil, false
+			}
+			s.observe(current.config, event)
+			return event, true
+		case read := <-s.readAhead:
+			s.readAheadOf(current)
+			close(read)
+		}
+	}
+}
+
+// pass hands the caller an event, and reads ahead for a failed write while the caller has
+// not taken it.
+func (s *Session) pass(current *relay, event stt.Event) {
+	for {
+		select {
+		case s.events <- event:
+			return
+		case read := <-s.readAhead:
+			s.readAheadOf(current)
+			close(read)
+		}
+	}
+}
+
+// readAheadOf observes what the provider has sent and forward has not read, up to a fatal
+// error, which marks the session failed.
+func (s *Session) readAheadOf(current *relay) {
+	for !s.failed.Load() {
+		select {
+		case event, open := <-current.provider.Events():
+			if !open {
+				return
+			}
+			s.observe(current.config, event)
+			current.ahead = append(current.ahead, event)
+		default:
+			return
+		}
 	}
 }
 
