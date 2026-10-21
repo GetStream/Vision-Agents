@@ -634,6 +634,8 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+- Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601, #1100).
+
 ### An agent config sets the guide its calls are reviewed by
 
 `AgentConfig` takes an optional `review` with `instructions`: what the model reviewing a
@@ -641,9 +643,7 @@ finished call judges it by, in place of Stream's default guide. The reviewer is 
 answer with a summary, a 1 to 5 score and notes, so only the guide changes. It is set on
 create, update and patch; left out on an update, a patch or a folder sync it stays, and an
 empty string on an update or a patch removes it. An agent with none is reviewed exactly as
-before (AI-1655).
-
-- Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601, #1100).
+before (AI-1655, #1111).
 
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 
