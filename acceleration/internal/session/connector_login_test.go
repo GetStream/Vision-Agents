@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -39,6 +41,11 @@ type ConnectorLoginSuite struct {
 	// begins is how many consents the router began, and requested what each was asked for.
 	begins    int
 	requested []ConsentRequest
+	// steps are the sign-ins the conversation showed on calls' steps, and ended how each
+	// one's ended, by call id (held).
+	mu    sync.Mutex
+	steps map[string]persistent.Authorization
+	ended map[string]string
 }
 
 func TestConnectorLoginSuite(t *testing.T) {
@@ -48,6 +55,7 @@ func TestConnectorLoginSuite(t *testing.T) {
 func (s *ConnectorLoginSuite) SetupTest() {
 	s.connectorFixture.SetupTest()
 	s.begun, s.shown, s.begins, s.requested = Consent{}, nil, 0, nil
+	s.steps, s.ended = map[string]persistent.Authorization{}, map[string]string{}
 }
 
 // TestWithoutConsentsABindingWithNoSelectionIsLeftOutAsBefore: a deployment with connectors
@@ -144,12 +152,12 @@ func (s *ConnectorLoginSuite) TestALoginOpensTheBindingOnlyForTheConsentItBegan(
 	s.NotContains(asked, s.begun.LaunchURL)
 	s.Equal([]string{"alice"}, s.shown, "asked of the caller")
 
-	_, unknown := d.loginFinished(s.ctx, "attempt-bob", mine)
-	_, elsewhere := d.loginFinished(s.ctx, "attempt-alice", other)
+	_, unknown, _ := d.loginFinished(s.ctx, "attempt-bob", mine)
+	_, elsewhere, _ := d.loginFinished(s.ctx, "attempt-alice", other)
 	still, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
 	s.Require().NoError(err)
 	s.connect(mine, "primary")
-	name, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	name, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
 	s.Require().NoError(err)
 	listed, err := s.call(d, "crm__list_tools", `{}`)
@@ -179,7 +187,7 @@ func (s *ConnectorLoginSuite) TestALoginTheConversationCannotShowIsNotAskedFor()
 	s.Require().NoError(err)
 	s.Contains(said, `"status":"unavailable"`)
 	s.Zero(s.begins, "no consent is begun that nobody would see")
-	_, finished := d.loginFinished(s.ctx, "attempt-alice", "unused")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", "unused")
 	s.False(finished, "nothing was asked, so nothing carries on")
 }
 
@@ -202,7 +210,7 @@ func (s *ConnectorLoginSuite) TestALoginFinishedWithoutAHandBackIsPickedUpOnTheN
 	s.Equal("primary", said)
 	s.Equal(1, s.begins, "no second consent")
 	s.Equal([]string{"alice"}, s.shown, "no second button")
-	_, handedBack := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, handedBack, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	s.False(handedBack, "a hand-back that arrives after is not run again")
 }
 
@@ -412,7 +420,7 @@ func (s *ConnectorLoginSuite) TestACallThroughALoginLeavesOneInvocationRow() {
 	s.Require().NoError(err)
 	s.Require().Contains(asked, `"status":"authorization_required"`)
 	s.connect(mine, "primary")
-	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	s.Require().True(finished)
 
 	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
@@ -436,7 +444,7 @@ func (s *ConnectorLoginSuite) TestACallThroughALoginRecordsTheShapeOfTheToolsArg
 	_, err = s.call(d, "crm__call_tool", `{"tool":"echo"}`)
 	s.Require().NoError(err)
 	s.connect(mine, "primary")
-	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	s.Require().True(finished)
 	length := 2
 	inner := []store.ArgumentShape{{Name: "note", Type: "string", Length: &length}}
@@ -467,7 +475,7 @@ func (s *ConnectorLoginSuite) TestARefusedCallThroughALoginLeavesADeniedRow() {
 	s.Require().NoError(err)
 	s.Require().Contains(asked, `"status":"authorization_required"`)
 	s.connect(mine, "primary")
-	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	s.Require().True(finished)
 	s.rebind(config, s.chosen("crm"))
 
@@ -529,7 +537,7 @@ func (s *ConnectorLoginSuite) openedLoginLoggingOf(config store.AgentConfig) (*d
 	s.Require().NoError(err)
 	s.Require().Contains(asked, `"status":"authorization_required"`)
 	s.connect(mine, "primary")
-	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
 	s.Require().True(finished)
 	return d, &logged, mine
 }
@@ -563,7 +571,7 @@ func (s *ConnectorLoginSuite) TestABindingALoginOpensAuditsWithTheSession() {
 	s.connect(mine, "secondary")
 	callback := core.WithCorrelation(s.ctx, core.Correlation{RequestID: "callback-request"})
 
-	_, opened := d.loginFinished(callback, "attempt-alice", mine)
+	_, opened, _ := d.loginFinished(callback, "attempt-alice", mine)
 
 	s.False(opened, "the provider refused the token")
 	var rows []store.ConnectorAuditEvent
@@ -660,4 +668,195 @@ func (s *ConnectorLoginSuite) attachWithConsentsOn(manager *Manager, spec Spec) 
 func (s *ConnectorLoginSuite) persisted(spec Spec) Spec {
 	spec.PersistConversation, spec.Text = true, true
 	return spec
+}
+
+// TestACallWaitsForTheLoginOnItsStepAndRunsOnceConnected: the consent is shown on the call's
+// own step, the call waits, and once the person connects it runs on their account and answers
+// as though they had been connected all along.
+func (s *ConnectorLoginSuite) TestACallWaitsForTheLoginOnItsStepAndRunsOnceConnected() {
+	mine := s.pending("alice", "primary")
+	expires := time.Now().Add(10 * time.Minute).UTC()
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", LaunchURL: "https://router.example/launch/attempt-alice",
+		HandoffToken: "handoff-alice", Name: "CRM", ExpiresAt: expires}
+	d := s.held()
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool { return len(answer) > 0 }, 200*time.Millisecond, 20*time.Millisecond, "it waits for the person")
+	s.connect(mine, "primary")
+	_, finished, handed := d.loginFinished(s.ctx, "attempt-alice", mine)
+	got := s.answerOf(answer)
+
+	s.True(finished)
+	s.Equal(1, handed, "handed to the call waiting")
+	s.Require().NoError(got.err)
+	s.Equal("primary", got.said)
+	s.Equal(persistent.Authorization{
+		Type: "oauth", Provider: s.connectorID, ProviderName: "CRM", Title: "Connect CRM",
+		Message: "You sign in at CRM, and the agent never sees your password.",
+		URL:     "https://router.example/launch/attempt-alice", HandoffToken: "handoff-alice", ExpiresAt: &expires,
+	}, *s.stepOf("call-1"))
+	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
+}
+
+// TestADeclinedLoginEndsTheCallWithoutRunningIt: "Not now" answers the call at once, with
+// words for the model and nothing sent to the provider.
+func (s *ConnectorLoginSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
+	d := s.held()
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.False(d.declineLogin("call-2"), "a call that is not waiting")
+	s.True(d.declineLogin("call-1"))
+	got := s.answerOf(answer)
+
+	s.Require().NoError(got.err)
+	s.Contains(got.said, `"status":"declined"`)
+	s.Equal(persistent.AuthorizationDeclined, s.endedOf("call-1"))
+	s.Never(func() bool {
+		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, mine, 0, nil)
+		return err != nil || len(rows) > 0
+	}, 300*time.Millisecond, 50*time.Millisecond, "nothing reached the provider")
+}
+
+// TestAConsentThatEndsWithoutConnectingEndsTheCall: the provider refused, or the person came
+// back as another account. The attempt is spent, so the call stops waiting, and the next call
+// begins another consent rather than wait on that one.
+func (s *ConnectorLoginSuite) TestAConsentThatEndsWithoutConnectingEndsTheCall() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
+	d := s.held()
+	d.logins.shows = func(id string) bool { return id == "attempt-alice" }
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.False(d.loginEndedWithout("attempt-bob", mine, persistent.AuthorizationFailed), "an attempt the login did not begin")
+	s.True(d.loginEndedWithout("attempt-alice", mine, persistent.AuthorizationFailed))
+	got := s.answerOf(answer)
+	s.Require().NoError(got.err)
+	s.Contains(got.said, `"status":"failed"`)
+	s.Equal(persistent.AuthorizationFailed, s.endedOf("call-1"))
+
+	again := s.callInBackground(s.ctx, d, "call-2", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-2") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(2, s.begins, "a spent attempt is not shown again")
+	s.True(d.declineLogin("call-2"))
+	s.answerOf(again)
+}
+
+// TestALoginNotFinishedInTimeEndsTheCall: the consent lives ten minutes in production; once it
+// is spent, the call stops waiting.
+func (s *ConnectorLoginSuite) TestALoginNotFinishedInTimeEndsTheCall() {
+	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM",
+		ExpiresAt: time.Now().Add(300 * time.Millisecond)}
+	d := s.held()
+
+	got := s.answerOf(s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`))
+
+	s.Require().NoError(got.err)
+	s.Contains(got.said, `"status":"expired"`)
+	s.Equal(persistent.AuthorizationExpired, s.endedOf("call-1"))
+}
+
+// TestALoginFinishedOnAnotherRouterIsPickedUpWhileTheCallWaits: the callback ran elsewhere,
+// so nothing is handed back here; the waiting call reads the connection again and carries on.
+func (s *ConnectorLoginSuite) TestALoginFinishedOnAnotherRouterIsPickedUpWhileTheCallWaits() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
+	d := s.held()
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.connect(mine, "primary")
+	got := s.answerOf(answer)
+
+	s.Require().NoError(got.err)
+	s.Equal("primary", got.said)
+	s.Equal(persistent.AuthorizationConnected, s.endedOf("call-1"))
+	_, handedBack, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.False(handedBack, "a hand-back that arrives after is not run again")
+}
+
+// TestATurnThatEndsStopsTheWait: an interruption, or the session closing, ends the call rather
+// than leave it waiting out the consent.
+func (s *ConnectorLoginSuite) TestATurnThatEndsStopsTheWait() {
+	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM",
+		ExpiresAt: time.Now().Add(10 * time.Minute)}
+	d := s.held()
+	turn, end := context.WithCancel(s.ctx)
+	defer end()
+
+	answer := s.callInBackground(turn, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	end()
+	got := s.answerOf(answer)
+
+	s.ErrorIs(got.err, context.Canceled)
+	s.Empty(s.endedOf("call-1"), "the reply that ended settles its own steps")
+}
+
+// held is a dispatcher for alice's crm binding whose conversation shows the consent on the
+// steps of its calls, which then wait for her: s.steps records what each step was shown, and
+// s.ended how each one's sign-in ended.
+func (s *ConnectorLoginSuite) held() *dispatcher {
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+	d.logins.await = func(owner, callID string, found persistent.Authorization) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.steps[callID] = found
+		return owner == "alice"
+	}
+	d.logins.ended = func(callID, status string) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.ended[callID] = status
+		return true
+	}
+	return d
+}
+
+// answered is what a call run in the background said.
+type answered struct {
+	said string
+	err  error
+}
+
+// callInBackground runs the call id on turn, and hands back what it said once it answers.
+func (s *ConnectorLoginSuite) callInBackground(turn context.Context, d *dispatcher, id, name, arguments string) chan answered {
+	answer := make(chan answered, 1)
+	go func() {
+		parts, err := d.Run(turn, llm.ToolCall{ID: id, Name: name, Arguments: arguments})
+		answer <- answered{said: llm.TextOf(parts), err: err}
+	}()
+	return answer
+}
+
+// answerOf waits for a call run in the background to answer, past loginPoll.
+func (s *ConnectorLoginSuite) answerOf(answer chan answered) answered {
+	select {
+	case got := <-answer:
+		return got
+	case <-time.After(2*loginPoll + 5*time.Second):
+		s.FailNow("the call never answered")
+		return answered{}
+	}
+}
+
+func (s *ConnectorLoginSuite) stepOf(callID string) *persistent.Authorization {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found, ok := s.steps[callID]
+	if !ok {
+		return nil
+	}
+	return &found
+}
+
+func (s *ConnectorLoginSuite) endedOf(callID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ended[callID]
 }

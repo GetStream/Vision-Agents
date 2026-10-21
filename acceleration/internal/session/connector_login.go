@@ -15,6 +15,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -87,6 +88,12 @@ type logins struct {
 	// connected marks one finished (conversation.ShowsLogin, conversation.ConnectorConnected).
 	shows     func(authorizationID string) bool
 	connected func(authorizationID string) bool
+	// await shows a consent on the step of the call that needs it, which then waits for the
+	// person (conversation.AwaitAuthorization), and ended settles that step
+	// (conversation.AuthorizationEnded). Without await the call answers at once that the
+	// person was shown a button.
+	await func(owner, callID string, found persistent.Authorization) bool
+	ended func(callID, status string) bool
 	// open is Manager.openBinding, which opens a binding once its connection is usable.
 	open func(ctx context.Context, spec Spec, binding store.ConnectorBinding, selection string, d *dispatcher) (string, error)
 	// implied is Manager.impliedSelection: the caller's one connected connection, which a login
@@ -121,12 +128,20 @@ type login struct {
 	connectedBefore *time.Time
 	// opened holds the binding's routes once the login is made. Nil before.
 	opened *dispatcher
+	// held are the calls waiting for the person to answer the consent on their step, by call
+	// id, each sent how it ended.
+	held map[string]chan string
 }
 
 // maxBegun bounds the attempts a login remembers. Each lives ten minutes
 // (api.attemptLifetime), so an older one is one nobody is waiting on; the conversation keeps
 // as many asking replies (conversation.maxAsked).
 const maxBegun = 10
+
+// loginPoll is how often a call waiting for a login reads its connection again: a consent
+// finished on another router is never handed back to this one (ConnectorConsentFinished), so
+// the store is the only place it shows.
+const loginPoll = 3 * time.Second
 
 // waiting is the login of alias, if alias is a binding waiting for one.
 func (w *logins) waiting(alias string) (*login, bool) {
@@ -187,18 +202,22 @@ func (d *dispatcher) askIn(conv *persistent.Conversation, chose func(name, conne
 	if d.logins != nil && conv != nil {
 		d.logins.ask, d.logins.canAsk = conv.AskToConnect, conv.CanAskToConnect
 		d.logins.shows, d.logins.connected = conv.ShowsLogin, conv.ConnectorConnected
+		d.logins.await, d.logins.ended = conv.AwaitAuthorization, conv.AuthorizationEnded
 		d.logins.chose = chose
 	}
 }
 
 // runLogin answers a call to a waiting binding's tools: the login's account once it is made,
-// and until then a consent the person is shown in the conversation.
+// and until then a consent the person is shown in the conversation, which the call waits for.
 func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) ([]llm.ContentPart, error) {
 	verb := strings.TrimPrefix(call.Name, l.binding.Name+mcp.Separator)
 	if verb != loginListTools && verb != loginCallTool {
 		return nil, errUnknownTool(call.Name)
 	}
-	opened, instead := d.openOrAsk(ctx, l)
+	opened, instead, err := d.openOrAsk(ctx, l, call.ID)
+	if err != nil {
+		return nil, err
+	}
 	if opened == nil {
 		return llm.TextParts(instead), nil
 	}
@@ -233,7 +252,25 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	return parts, err
 }
 
-// openOrAsk is the login's opened binding, or else what the model reads instead.
+// openOrAsk is the login's opened binding, or else what the model reads instead. A call whose
+// step shows the consent waits for the person to answer it (waitForLogin).
+func (d *dispatcher) openOrAsk(ctx context.Context, l *login, callID string) (*dispatcher, string, error) {
+	l.mu.Lock()
+	if l.opened != nil || d.openConnected(ctx, l) {
+		defer l.mu.Unlock()
+		return l.opened, "", nil
+	}
+	answer, instead := d.askToLogIn(ctx, l, callID)
+	expires := l.last.ExpiresAt
+	l.mu.Unlock()
+	if answer == nil {
+		return nil, instead, nil
+	}
+	return d.waitForLogin(ctx, l, callID, answer, expires)
+}
+
+// openConnected opens the login's binding on a connection the store says is usable now, and
+// reports whether it did. l.mu is held.
 //
 // A consent finished on another router, or one whose hand-back failed, still connected the
 // connection in the store, so the connection is read before anybody is asked again: once
@@ -244,12 +281,7 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 // once that consent connected it anew (connectedBefore): the person consents in this chat
 // before the session uses it, and a consent that came back with another account
 // (account_mismatch) leaves connected_at as it was.
-func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.opened != nil {
-		return l.opened, ""
-	}
+func (d *dispatcher) openConnected(ctx context.Context, l *login) bool {
 	if l.connectionID != "" && d.store != nil {
 		connection, err := d.store.ConnectorConnection(ctx, d.spec.CustomerID, l.connectionID)
 		if err == nil && connection.Status == store.ConnectionConnected &&
@@ -261,7 +293,7 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, stri
 					d.logins.connected(begun)
 				}
 			}
-			return l.opened, ""
+			return true
 		}
 	}
 	// None chosen yet: the person may have connected an account since the session opened, from
@@ -272,10 +304,62 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, stri
 		if err != nil {
 			d.logins.logger.Warn("could not read the caller's connections for a login", "connector", l.binding.Name, "error", err)
 		} else if id != "" && d.openLogin(ctx, l, id) {
-			return l.opened, ""
+			return true
 		}
 	}
-	return nil, d.askToLogIn(ctx, l)
+	return false
+}
+
+// waitForLogin holds the call until the person answers the consent on its step. Connected, it
+// carries on with the binding the login opened; declined, expired or failed, the model is told
+// so. A turn that ends first, interrupted or closed, ends the call.
+func (d *dispatcher) waitForLogin(ctx context.Context, l *login, callID string, answer <-chan string, expires time.Time) (*dispatcher, string, error) {
+	defer func() {
+		l.mu.Lock()
+		delete(l.held, callID)
+		l.mu.Unlock()
+	}()
+	expiry := time.NewTimer(time.Until(expires))
+	defer expiry.Stop()
+	poll := time.NewTicker(loginPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, "", stack.Wrap(fmt.Errorf("session: %s stopped waiting for its login: %w", l.binding.Name, ctx.Err()))
+		case status := <-answer:
+			return d.loginEnded(l, callID, status)
+		case <-expiry.C:
+			return d.loginEnded(l, callID, persistent.AuthorizationExpired)
+		case <-poll.C:
+			l.mu.Lock()
+			opened := l.opened != nil || d.openConnected(ctx, l)
+			l.mu.Unlock()
+			if opened {
+				return d.loginEnded(l, callID, persistent.AuthorizationConnected)
+			}
+		}
+	}
+}
+
+// loginEnded settles the step of a call that waited for its login as status says, and is what
+// the call carries on with.
+func (d *dispatcher) loginEnded(l *login, callID, status string) (*dispatcher, string, error) {
+	if d.logins.ended != nil {
+		d.logins.ended(callID, status)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	switch {
+	case status == persistent.AuthorizationConnected && l.opened != nil:
+		return l.opened, "", nil
+	case status == persistent.AuthorizationDeclined:
+		return nil, loginDeclined(l.name), nil
+	case status == persistent.AuthorizationFailed:
+		return nil, loginFailed(l.name), nil
+	default:
+		return nil, loginExpired(l.name), nil
+	}
 }
 
 // openLogin opens the login's binding on connectionID and records it as the session's
@@ -306,34 +390,60 @@ func connectedSince(now, before *time.Time) bool {
 	return now != nil && (before == nil || now.After(*before))
 }
 
-// askToLogIn begins a consent for the caller's own connection and shows it on the reply being
-// written. What the model reads names no URL and no token: those are for the person. l.mu is
-// held.
+// askToLogIn shows the caller a consent for their own connection on the reply being written,
+// and on the step of callID, which then waits for their answer on the channel it returns.
+// Without a channel, what the model reads instead: it names no URL and no token, which are
+// for the person. l.mu is held.
 //
 // The config is read first, as the dispatcher does before every call (recheck), so a binding
 // the config no longer declares as the caller's own begins no consent. A second call in the
 // reply that already shows a consent still open reuses it rather than begin another.
-func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
+func (d *dispatcher) askToLogIn(ctx context.Context, l *login, callID string) (chan string, string) {
 	if !d.stillWaits(ctx, l.binding) {
-		return loginUnavailable(l.binding.Name)
+		return nil, loginUnavailable(l.binding.Name)
 	}
 	if l.rejected {
-		return credentialRejected(l.binding.Name)
+		return nil, credentialRejected(l.binding.Name)
 	}
 	if d.logins.canAsk == nil || !d.logins.canAsk(d.spec.Caller.UserID) {
-		return loginUnavailable(l.binding.Name)
+		return nil, loginUnavailable(l.binding.Name)
 	}
-	if last := l.last; last.AuthorizationID != "" && time.Now().Before(last.ExpiresAt) &&
-		d.logins.shows != nil && d.logins.shows(last.AuthorizationID) {
-		return loginRequired(last.Name)
+	consent := l.last
+	if consent.AuthorizationID == "" || !time.Now().Before(consent.ExpiresAt) ||
+		d.logins.shows == nil || !d.logins.shows(consent.AuthorizationID) {
+		begun, ok := d.beginConsent(ctx, l)
+		if !ok {
+			return nil, loginUnavailable(l.binding.Name)
+		}
+		consent = begun
 	}
+	expires := consent.ExpiresAt.UTC()
+	if d.logins.await == nil || !d.logins.await(d.spec.Caller.UserID, callID, persistent.Authorization{
+		Type: "oauth", Provider: l.binding.ConnectorID, ProviderName: consent.Name,
+		Title:   "Connect " + consent.Name,
+		Message: "You sign in at " + consent.Name + ", and the agent never sees your password.",
+		URL:     consent.LaunchURL, HandoffToken: consent.HandoffToken, ExpiresAt: &expires,
+	}) {
+		return nil, loginRequired(consent.Name)
+	}
+	answer := make(chan string, 1)
+	if l.held == nil {
+		l.held = map[string]chan string{}
+	}
+	l.held[callID] = answer
+	return answer, ""
+}
+
+// beginConsent begins a consent for the caller's own connection and shows it on the reply
+// being written. It reports false when none could be begun or shown. l.mu is held.
+func (d *dispatcher) beginConsent(ctx context.Context, l *login) (Consent, bool) {
 	consent, err := d.logins.consents(ctx, ConsentRequest{
 		CustomerID: d.spec.CustomerID, ConnectorID: l.binding.ConnectorID,
 		UserID: d.spec.Caller.UserID, ConnectionID: l.connectionID, ReturnURL: d.spec.ReturnURL,
 	})
 	if err != nil {
 		d.logins.logger.Warn("could not begin a consent in the conversation", "connector", l.binding.Name, "error", err)
-		return loginUnavailable(l.binding.Name)
+		return Consent{}, false
 	}
 	shown := d.logins.ask != nil && d.logins.ask(d.spec.Caller.UserID, persistent.ConnectorAuthorization{
 		Name: l.binding.Name, ConnectorID: l.binding.ConnectorID, ConnectionID: consent.ConnectionID,
@@ -341,7 +451,7 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
 		LaunchURL: consent.LaunchURL, HandoffToken: consent.HandoffToken, ExpiresAt: consent.ExpiresAt,
 	})
 	if !shown {
-		return loginUnavailable(l.binding.Name)
+		return Consent{}, false
 	}
 	if !l.asked {
 		l.asked = true
@@ -354,7 +464,7 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
 	if len(l.begun) > maxBegun {
 		l.begun = l.begun[len(l.begun)-maxBegun:]
 	}
-	return loginRequired(consent.Name)
+	return consent, true
 }
 
 // stillWaits reports whether the stored config still declares binding as the caller's own
@@ -382,6 +492,45 @@ func loginRequired(name string) string {
 		Status: authorizationRequired,
 		Message: fmt.Sprintf("The user has not connected %s. They have been shown a button to connect it. "+
 			"Tell them to press it; you are told once they have, and then carry on.", name),
+	})
+	return string(raw)
+}
+
+// loginDeclined is what the model reads when the person chose not to connect name.
+func loginDeclined(name string) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{
+		Status: persistent.AuthorizationDeclined,
+		Message: fmt.Sprintf("The user chose not to connect %s, so nothing was done with it. Tell them, and that "+
+			"they can connect it next time they ask for something that needs it.", name),
+	})
+	return string(raw)
+}
+
+// loginExpired is what the model reads when the person did not connect name in time.
+func loginExpired(name string) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{
+		Status: persistent.AuthorizationExpired,
+		Message: fmt.Sprintf("The user did not connect %s in time, so nothing was done with it. Tell them, and "+
+			"that they can ask again to connect it.", name),
+	})
+	return string(raw)
+}
+
+// loginFailed is what the model reads when the consent for name ended without connecting it.
+func loginFailed(name string) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{
+		Status: persistent.AuthorizationFailed,
+		Message: fmt.Sprintf("Connecting %s did not go through, so nothing was done with it. Tell them, and that "+
+			"they can ask again to try once more.", name),
 	})
 	return string(raw)
 }
@@ -439,11 +588,12 @@ func listed(tools []harness.Tool, alias string) string {
 }
 
 // loginFinished opens the binding whose consent this attempt was, on the connection it
-// connected, and returns the connector's name. It reports false when none of d's logins
-// asked for it, or the connection cannot be used: the binding then stays waiting.
-func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connectionID string) (string, bool) {
+// connected, and returns the connector's name and how many calls waiting for the login it
+// handed it to. It reports false when none of d's logins asked for it, or the connection
+// cannot be used: the binding then stays waiting.
+func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connectionID string) (string, bool, int) {
 	if d.logins == nil {
-		return "", false
+		return "", false, 0
 	}
 	for _, l := range d.logins.byAlias {
 		l.mu.Lock()
@@ -452,11 +602,71 @@ func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connect
 			continue
 		}
 		opened := d.openLogin(ctx, l, connectionID)
+		handed := 0
+		for _, answer := range l.held {
+			if !opened {
+				break
+			}
+			select {
+			case answer <- persistent.AuthorizationConnected:
+				handed++
+			default:
+			}
+		}
 		name := l.name
 		l.mu.Unlock()
-		return name, opened
+		return name, opened, handed
 	}
-	return "", false
+	return "", false, 0
+}
+
+// loginEndedWithout ends the wait of the calls waiting for the consent of this attempt, for this
+// connection, as status says: the consent ended without connecting, and the attempt is spent,
+// so a call after this begins another. It reports false when none of d's logins began it.
+func (d *dispatcher) loginEndedWithout(authorizationID, connectionID, status string) bool {
+	if d.logins == nil {
+		return false
+	}
+	for _, l := range d.logins.byAlias {
+		l.mu.Lock()
+		if l.opened != nil || l.connectionID != connectionID || !slices.Contains(l.begun, authorizationID) {
+			l.mu.Unlock()
+			continue
+		}
+		if l.last.AuthorizationID == authorizationID {
+			l.last = Consent{}
+		}
+		for _, answer := range l.held {
+			select {
+			case answer <- status:
+			default:
+			}
+		}
+		l.mu.Unlock()
+		return true
+	}
+	return false
+}
+
+// declineLogin ends the wait of the call id for its login, as the person declined it. It
+// reports whether the call was waiting.
+func (d *dispatcher) declineLogin(callID string) bool {
+	if d.logins == nil {
+		return false
+	}
+	for _, l := range d.logins.byAlias {
+		l.mu.Lock()
+		answer, ok := l.held[callID]
+		l.mu.Unlock()
+		if ok {
+			select {
+			case answer <- persistent.AuthorizationDeclined:
+			default:
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // closeLogins ends the toolsets the logins opened.
@@ -488,12 +698,17 @@ func (m *Manager) ConnectorConsentFinished(ctx context.Context, customerID, conn
 	}
 	m.mu.Unlock()
 	for _, s := range held {
-		name, ok := s.connectors.loginFinished(ctx, authorizationID, connectionID)
+		name, ok, handed := s.connectors.loginFinished(ctx, authorizationID, connectionID)
 		if !ok {
 			continue
 		}
 		if s.persisted != nil {
 			s.persisted.ConnectorConnected(authorizationID)
+		}
+		// A call waiting for the login carries on with what it was asked, in the reply that
+		// asked, so there is nothing to ask again.
+		if handed > 0 {
+			return
 		}
 		text := name + " is connected now. Carry on with what I asked for before you needed it."
 		if err := s.FollowUp(context.WithoutCancel(ctx), text); err != nil {
@@ -501,4 +716,31 @@ func (m *Manager) ConnectorConsentFinished(ctx context.Context, customerID, conn
 		}
 		return
 	}
+}
+
+// ConnectorConsentEnded hands a consent the router's callback ended without connecting back to
+// the session that asked for it in its conversation, as status says (declined for one the
+// person refused at the provider, failed otherwise): its calls waiting for the login stop
+// waiting, rather than wait out an attempt nobody can finish any more.
+func (m *Manager) ConnectorConsentEnded(customerID, connectionID, authorizationID, status string) {
+	m.mu.Lock()
+	held := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.connectors != nil && s.spec.CustomerID == customerID {
+			held = append(held, s)
+		}
+	}
+	m.mu.Unlock()
+	for _, s := range held {
+		if s.connectors.loginEndedWithout(authorizationID, connectionID, status) {
+			return
+		}
+	}
+}
+
+// DeclineLogin ends the wait of a connector call for the person's login, as they declined it:
+// the call runs nothing, and the model is told they did not connect. It reports whether the
+// call was waiting.
+func (s *Session) DeclineLogin(callID string) bool {
+	return s.connectors != nil && s.connectors.declineLogin(callID)
 }

@@ -1291,7 +1291,7 @@ func (e TextContentPartType) Valid() bool {
 	}
 }
 
-// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
 type ToolApprovalCommand struct {
 	Allowed    bool                    `json:"allowed"`
 	RequestId  string                  `json:"request_id"`
@@ -1302,7 +1302,7 @@ type ToolApprovalCommand struct {
 }
 
 func (*ToolApprovalCommand) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result."
+	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself."
 	return schema
 }
 

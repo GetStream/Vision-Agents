@@ -83,7 +83,19 @@ func documentHandWritten(api huma.API) {
 			"createAuthorization with that return_url, and the consent goes back to the session's " +
 			"return_url, or else to the dashboard. " +
 			"Once the user finishes that login the message is sent again with status connected and " +
-			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
+			"no handoff_token, and the agent carries on by itself. The call that needed the login " +
+			"waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, " +
+			"target_user_id the caller, and an authorization of type oauth with provider (the " +
+			"connector id), provider_name, title, message, url (the launch page), handoff_token and " +
+			"expires_at. A page of the return_url's origin opens url and posts it handoff_token; a " +
+			"native app opens url#handoff_token=<handoff_token> in its web authentication sheet. " +
+			"Connected, the step is running again with authorization.status connected and no " +
+			"handoff_token, and the call runs in the same reply. A tool_approval naming its " +
+			"tool_call_id with allowed false, or the person refusing at the provider, declines the " +
+			"login (declined); a consent that ended otherwise without connecting, such as with " +
+			"another account, is failed, and one not finished by expires_at is expired. Each way the " +
+			"step is cancelled, authorization.status says how, and the call runs nothing. " +
+			"Activity states are thinking, queued, tools, writing, completed, " +
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
 			"pre_speech when the tool's connector binding sets one in its policy; " +
 			"tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.\n" +
@@ -121,7 +133,9 @@ func documentHandWritten(api huma.API) {
 			"A call to a tool declared with an `approval` waits for a person. The client reports " +
 			"their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, " +
 			"and optionally a `summary` shown when they declined), before it answers the call with " +
-			"`tool_result`.\n" +
+			"`tool_result`. A connector call waiting for the person to sign in " +
+			"(`awaiting_authorization`) is declined with `tool_approval` too, naming only its " +
+			"`tool_call_id` with `allowed` false: the router answers that call itself.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
 			"An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally " +
 			"with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.\n" +

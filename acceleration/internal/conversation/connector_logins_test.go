@@ -146,3 +146,75 @@ func (s *DisplaySuite) TestTheReplyBeingWrittenSaysWhichLoginItShows() {
 	c.Observe(agent.Responded{})
 	s.False(c.ShowsLogin("attempt-1"), "the reply is finished")
 }
+
+// signIn is a sign-in a session would have a call of employee's wait for.
+func signIn() Authorization {
+	expires := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	return Authorization{
+		Type: "oauth", Provider: "linear", ProviderName: "Linear", Title: "Connect Linear",
+		Message: "You sign in at Linear.", URL: "https://router.example/v1/agents/connectors/oauth/launch/attempt-1",
+		HandoffToken: "handoff-attempt-1", ExpiresAt: &expires,
+	}
+}
+
+// TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConnected: the step is shown whatever
+// visible_tools says, addressed to the person who asked, and goes on running once they sign in.
+func (s *DisplaySuite) TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConnected() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+
+	s.Require().True(c.AwaitAuthorization("employee", "call-1", signIn()))
+
+	parts := current(c).Parts
+	s.Require().Len(parts, 1)
+	s.Equal("awaiting_authorization", parts[0].Status)
+	s.Equal("linear__list_tools", parts[0].Name)
+	s.Equal("employee", parts[0].TargetUserID)
+	s.Equal("Using Linear", parts[0].DisplayTitle)
+	s.Equal(signIn(), *parts[0].Authorization)
+	shown := parts[0].attachment()["authorization"].(map[string]any)
+	s.Equal("https://router.example/v1/agents/connectors/oauth/launch/attempt-1", shown["url"])
+	s.Equal("handoff-attempt-1", shown["handoff_token"])
+
+	s.True(c.AuthorizationEnded("call-1", AuthorizationConnected))
+	s.False(c.AuthorizationEnded("call-1", AuthorizationDeclined), "a sign-in ends once")
+	part := current(c).Parts[0]
+	s.Equal("running", part.Status)
+	s.Equal(AuthorizationConnected, part.Authorization.Status)
+	s.Empty(part.Authorization.HandoffToken, "nobody needs the token any more")
+	c.Observe(agent.ToolRan{ID: "call-1", Result: `{"tools":[]}`})
+	s.Equal("completed", current(c).Parts[0].Status)
+}
+
+// TestADeclinedSignInCancelsTheCallsStep: the call never ran, whatever its result says.
+func (s *DisplaySuite) TestADeclinedSignInCancelsTheCallsStep() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+	s.Require().True(c.AwaitAuthorization("employee", "call-1", signIn()))
+
+	s.True(c.AuthorizationEnded("call-1", AuthorizationDeclined))
+	c.Observe(agent.ToolRan{ID: "call-1", Result: `{"status":"declined"}`})
+
+	part := current(c).Parts[0]
+	s.Equal("cancelled", part.Status)
+	s.Equal(AuthorizationDeclined, part.Authorization.Status)
+	s.Equal("Not connected", part.Summary)
+	s.NotNil(part.FinishedAt)
+}
+
+// TestASignInIsAskedOnlyOfTheConversationsOwnerForACallOfTheReply: whoever reads the step
+// first can hand the consent off, as with AskToConnect.
+func (s *DisplaySuite) TestASignInIsAskedOnlyOfTheConversationsOwnerForACallOfTheReply() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+
+	s.False(c.AwaitAuthorization("someone-else", "call-1", signIn()))
+	s.False(c.AwaitAuthorization("employee", "call-2", signIn()), "a call the reply did not make")
+	s.Empty(current(c).Parts)
+}

@@ -172,7 +172,7 @@ enum DeviceTools {
         guard !to.isEmpty, !body.isEmpty else {
             throw ToolFailure("An email needs someone to go to and a body.")
         }
-        _ = try await GmailAccount.send(to: to, subject: subject, body: body)
+        _ = try await Gmail.send(to: to, subject: subject, body: body)
         return "Sent \"\(subject)\" to \(to) from their Gmail."
     }
 

@@ -168,6 +168,31 @@ import Testing
     }
   }
 
+  @Test func aDeclinedLoginNamesOnlyTheCallItWas() async throws {
+    let server = try ApprovalServer()
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, userId: "test")),
+      tools: [])
+    await session.start()
+    defer { Task { await session.close() } }
+
+    try await session.declineLogin("call-linear")
+
+    var commands = server.commands.makeAsyncIterator()
+    let answer = try JSONDecoder().decode(
+      [String: JSONValue].self, from: try #require(try await commands.next()))
+    #expect(
+      answer == [
+        "type": .string("tool_approval"), "tool_call_id": .string("call-linear"), "allowed": .bool(false),
+      ])
+  }
+
   @Test func anUpdateRefreshesTheSessionItHolds() async throws {
     let server = try SessionServer()
     defer { server.listener.cancel() }

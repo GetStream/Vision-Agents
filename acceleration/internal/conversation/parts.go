@@ -63,10 +63,41 @@ type Part struct {
 	TargetClientID string          `json:"target_client_id,omitempty"`
 	Arguments      json.RawMessage `json:"arguments,omitempty"`
 	// Approval is the question a call that waits for a person asks them, and their answer.
-	Approval   *Approval  `json:"approval,omitempty"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Approval *Approval `json:"approval,omitempty"`
+	// Authorization is the sign-in a call waits for the person to finish, and how it ended.
+	Authorization *Authorization `json:"authorization,omitempty"`
+	StartedAt     *time.Time     `json:"started_at,omitempty"`
+	FinishedAt    *time.Time     `json:"finished_at,omitempty"`
 }
+
+// Authorization is a sign-in a call waits for: the person opens URL in a browser and signs in
+// at the provider, and the call runs once they have. It holds no credential: URL is the
+// router's launch page, and HandoffToken binds it to the first browser that hands it off,
+// which a native app does by opening URL#handoff_token=<HandoffToken>.
+type Authorization struct {
+	// Type is how they sign in: oauth, a consent at the provider.
+	Type string `json:"type"`
+	// Provider is the connector, and ProviderName what people call it.
+	Provider     string `json:"provider"`
+	ProviderName string `json:"provider_name,omitempty"`
+	Title        string `json:"title"`
+	Message      string `json:"message,omitempty"`
+	URL          string `json:"url"`
+	// HandoffToken is dropped once the sign-in is over.
+	HandoffToken string     `json:"handoff_token,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	// Status is connected, declined, expired or failed once it is over.
+	Status string `json:"status,omitempty"`
+}
+
+// How a sign-in ended (Authorization.Status). Failed is a consent the provider or the router
+// ended without connecting, such as one that came back with another account.
+const (
+	AuthorizationConnected = "connected"
+	AuthorizationDeclined  = "declined"
+	AuthorizationExpired   = "expired"
+	AuthorizationFailed    = "failed"
+)
 
 // Approval is what a call asks the person it waits for, and how they answered.
 type Approval struct {
@@ -237,6 +268,95 @@ func decided(m *Message, id string, allowed bool, summary string, now time.Time)
 	return false
 }
 
+// AwaitAuthorization has the call id of the reply being written wait for owner to sign in,
+// with found on its step, which is shown whatever the agent config shows: somebody is
+// waiting on it. It reports false when owner cannot be asked here (CanAskToConnect), or the
+// reply made no such call.
+func (c *Conversation) AwaitAuthorization(owner, id string, found Authorization) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.canAsk(owner) {
+		return false
+	}
+	m := c.data.Current
+	part := toolStep(m, id)
+	if part == nil {
+		var started *time.Time
+		name := ""
+		for _, tool := range m.Tools {
+			if tool.ID == id {
+				at := tool.StartedAt.UTC()
+				started, name = &at, tool.Name
+			}
+		}
+		if name == "" {
+			return false
+		}
+		m.Parts = append(m.Parts, Part{Type: partToolCall, V: partVersion, ID: id, Name: name, Executor: "server", StartedAt: started})
+		part = &m.Parts[len(m.Parts)-1]
+	}
+	if part.DisplayTitle == "" && found.ProviderName != "" {
+		part.DisplayTitle = "Using " + found.ProviderName
+	}
+	found.Status = ""
+	part.Status, part.TargetUserID, part.Authorization = "awaiting_authorization", owner, &found
+	m.Sequence++
+	c.save()
+	c.publish(*m)
+	return true
+}
+
+// AuthorizationEnded settles the sign-in the call id waits for, as status says: connected, the
+// call runs; declined, expired or failed, it is cancelled and never runs. It reports whether
+// the call was waiting.
+func (c *Conversation) AuthorizationEnded(id, status string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if m == nil || m.FinishedAt != nil {
+		return false
+	}
+	part := toolStep(m, id)
+	if part == nil || part.Status != "awaiting_authorization" || part.Authorization == nil {
+		return false
+	}
+	ended := *part.Authorization
+	ended.Status, ended.HandoffToken = status, ""
+	part.Authorization = &ended
+	switch status {
+	case AuthorizationConnected:
+		part.Status = "running"
+	default:
+		finished := time.Now().UTC()
+		part.Status, part.FinishedAt = "cancelled", &finished
+		if part.StartedAt != nil {
+			part.DurationMS = finished.Sub(*part.StartedAt).Milliseconds()
+		}
+		switch status {
+		case AuthorizationExpired:
+			part.Summary = "The sign-in expired"
+		case AuthorizationFailed:
+			part.Summary = "The sign-in did not go through"
+		default:
+			part.Summary = "Not connected"
+		}
+	}
+	m.Sequence++
+	c.save()
+	c.publish(*m)
+	return true
+}
+
+// toolStep is the step of the call id on m, or nil.
+func toolStep(m *Message, id string) *Part {
+	for i := range m.Parts {
+		if m.Parts[i].Type == partToolCall && m.Parts[i].ID == id {
+			return &m.Parts[i]
+		}
+	}
+	return nil
+}
+
 type toolCall struct {
 	id, name, arguments string
 	startedAt           time.Time
@@ -328,7 +448,18 @@ func messageAttachments(parts []Part, artifacts []map[string]any) []map[string]a
 			return true
 		},
 		func(p *Part) bool {
-			if p.Summary == "" || p.Status == "streaming" || p.Status == "awaiting_client" || p.Status == "awaiting_approval" {
+			// A sign-in that is over keeps its title and how it ended.
+			if p.Authorization == nil || inProgress(p.Status) || p.Authorization.Message == "" {
+				return false
+			}
+			authorization := *p.Authorization
+			authorization.Message = ""
+			p.Authorization = &authorization
+			return true
+		},
+		func(p *Part) bool {
+			if p.Summary == "" || p.Status == "streaming" || p.Status == "awaiting_client" || p.Status == "awaiting_approval" ||
+				p.Status == "awaiting_authorization" {
 				return false
 			}
 			p.Summary = ""
@@ -395,7 +526,7 @@ func dropFinished(parts *[]Part) bool {
 // person or their device.
 func inProgress(status string) bool {
 	switch status {
-	case "streaming", "running", "awaiting_client", "awaiting_approval":
+	case "streaming", "running", "awaiting_client", "awaiting_approval", "awaiting_authorization":
 		return true
 	}
 	return false

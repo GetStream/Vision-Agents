@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -760,10 +761,18 @@ func (s *Server) finishConnectorConsent(w http.ResponseWriter, r *http.Request) 
 	http.SetCookie(w, s.attemptCookie(row.ID, "", time.Time{}))
 
 	outcome := s.completeConsent(ctx, row, sealed, query)
-	// A consent a session asked for in its conversation carries on there. The attempt names
-	// the session's own login, so no other session is handed it.
-	if outcome == consentConnected && s.sessions != nil {
-		s.sessions.ConnectorConsentFinished(ctx, row.CustomerID, row.ConnectionID, row.ID)
+	// A consent a session asked for in its conversation carries on there, or ends the calls
+	// waiting for it. The attempt names the session's own login, so no other session is handed
+	// it.
+	if s.sessions != nil {
+		switch outcome {
+		case consentConnected:
+			s.sessions.ConnectorConsentFinished(ctx, row.CustomerID, row.ConnectionID, row.ID)
+		case consentDenied:
+			s.sessions.ConnectorConsentEnded(row.CustomerID, row.ConnectionID, row.ID, conversation.AuthorizationDeclined)
+		default:
+			s.sessions.ConnectorConsentEnded(row.CustomerID, row.ConnectionID, row.ID, conversation.AuthorizationFailed)
+		}
 	}
 	// Every outcome goes back to the same page: the backend's return_url, or else the dashboard.
 	returnTo := s.dashboardURL

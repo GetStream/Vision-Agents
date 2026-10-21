@@ -163,6 +163,14 @@ public final class AgentSession {
         }
     }
 
+    /// Declines the sign-in a call of one of the agent's connectors waits for: its step in the
+    /// conversation is `awaiting_authorization`. The router answers the call itself, so it runs
+    /// nothing and the agent is told the person did not connect. A call that is not waiting is
+    /// left alone.
+    public func declineLogin(_ toolCallID: String) async throws {
+        try await socket.send(.toolApproval(id: toolCallID, allowed: false))
+    }
+
     /// Ends the session and closes the socket. What it recorded and remembered is kept.
     public func close() async {
         try? await socket.send(.close)
