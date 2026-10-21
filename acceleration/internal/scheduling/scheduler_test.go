@@ -233,6 +233,85 @@ func (s *SchedulerSuite) TestAFinalFailureIsNotRetried() {
 	s.Equal(ReasonNotAnswered, *runs[0].Error)
 }
 
+// inTurn answers each delivery of task with the next of errs, the last one
+// repeating, and any other task's as delivered. attempts counts task's.
+func inTurn(task store.ScheduledTask, errs ...error) (deliver DeliverFunc, attempts func() int) {
+	var mu sync.Mutex
+	attempt := 0
+	attempts = func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return attempt
+	}
+	return func(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+		if claimed.Task.ID != task.ID {
+			return "conversation", claimed.Task.SessionID, nil
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		err := errs[min(attempt, len(errs)-1)]
+		attempt++
+		return "", "", err
+	}, attempts
+}
+
+func (s *SchedulerSuite) TestACallFoundPlacedOnARetryKeepsTheReasonTheCallFailedUnder() {
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	// A [phone, whatsapp] task: the call rang out, WhatsApp failed too, so
+	// the occurrence is retried, and the call is not placed again.
+	deliver, attempts := inTurn(task,
+		&Failure{Reason: ReasonNotAnswered, Err: errors.New("phone: the call was not answered; whatsapp: no window")},
+		&Failure{Reason: ReasonRungAlready, Err: errors.New("phone: a call was placed already; whatsapp: no window")},
+	)
+	s.started(deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond, time.Millisecond}
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Equal(ReasonNotAnswered, *runs[0].Error, "nobody answered the call, which every retry found placed")
+	s.Equal(3, attempts())
+}
+
+func (s *SchedulerSuite) TestACallFoundPlacedOnARetryIsFinalStill() {
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	deliver, attempts := inTurn(task,
+		&Failure{Reason: ReasonUnreachable, Err: errors.New("the node holding the conversation was not reached")},
+		&Failure{Reason: ReasonRungAlready, Final: true, Err: errors.New("a call was placed already")},
+	)
+	s.started(deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	s.Equal(2, attempts(), "the user is not rung again")
+	s.Equal(ReasonUnreachable, *s.runs(task)[0].Error)
+}
+
+func (s *SchedulerSuite) TestAnotherReasonOnARetryIsTheOneRecorded() {
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	deliver, _ := inTurn(task,
+		&Failure{Reason: ReasonNoNumber, Err: errors.New("no number yet")},
+		&Failure{Reason: ReasonUnreachable, Err: errors.New("no window")},
+	)
+	s.started(deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond, time.Millisecond}
+	})
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State == store.ScheduledTaskFailed
+	}, 10*time.Second, 10*time.Millisecond)
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(ReasonUnreachable, *runs[0].Error, "the last attempt says why the occurrence failed")
+}
+
 func (s *SchedulerSuite) TestAnOccurrenceTheDeliveryFoundTooLateIsMissedOnceAndNotCountedFailed() {
 	deliver := &deliverer{err: &Missed{Err: errors.New("the call is 20 minutes late")}}
 	task := s.task(time.Now().UTC().Add(-20*time.Minute).Truncate(time.Second), func(task *store.ScheduledTask) {
