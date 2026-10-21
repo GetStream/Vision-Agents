@@ -337,6 +337,48 @@ func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAF
 	s.Equal(heard, provider.heard.Load(), "a caller told of the fatal error still reached the provider")
 }
 
+func (s *SessionSuite) TestAWriteUnderWayWhenTheProviderFailsIsDropped() {
+	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
+		writing: make(chan struct{}), release: make(chan struct{})}
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	session := newSession(provider, routing.ProviderConfig{Provider: "stalled", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, nil, nil)
+	defer session.Close()
+	written := make(chan error, 1)
+	go func() { written <- session.ProcessAudio(frame(), stt.Participant{ID: "caller"}) }()
+	<-provider.writing
+
+	provider.emitter.Send(refused())
+	s.IsType(stt.Error{}, <-session.Events())
+	close(provider.release)
+
+	s.NoError(<-written, "the caller heard of the fatal error, and again for the frame on its way")
+}
+
+func (s *SessionSuite) TestAWriteUnderWayWhenTheNextModelTakesOverIsDropped() {
+	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
+		writing: make(chan struct{}), release: make(chan struct{})}
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	next := &quietSTT{emitter: stt.NewEmitter(64)}
+	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+		return next, routing.ProviderConfig{Provider: "next", Model: "live"}, nil
+	}
+	session := newSession(provider, routing.ProviderConfig{Provider: "stalled", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, reopen, nil)
+	defer session.Close()
+	written := make(chan error, 1)
+	go func() { written <- session.ProcessAudio(frame(), stt.Participant{ID: "caller"}) }()
+	<-provider.writing
+
+	provider.emitter.Send(refused())
+	s.IsType(stt.Failover{}, <-session.Events())
+	close(provider.release)
+
+	s.NoError(<-written, "the caller heard of the next model taking over, and of an error for the frame on its way")
+}
+
 func (s *SessionSuite) TestAudioAfterAnErrorTheProviderOutlivesStillFails() {
 	failure := refused()
 	failure.Fatal = false
@@ -736,6 +778,20 @@ func (p *diallingSTT) Start(ctx context.Context) error {
 	close(p.dialling)
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// stalledSTT is a provider that fails while a frame is on its way to it: its ProcessAudio
+// says it began, waits for release, then fails the way a write to a closed socket does.
+type stalledSTT struct {
+	quietSTT
+	writing chan struct{}
+	release chan struct{}
+}
+
+func (p *stalledSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	close(p.writing)
+	<-p.release
+	return errors.New("stalled: write audio: websocket: close sent")
 }
 
 func refused() stt.Error {

@@ -70,7 +70,14 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 	if s.failed.Load() {
 		return nil
 	}
-	return s.STT().ProcessAudio(pcm, participant)
+	provider := s.STT()
+	err := provider.ProcessAudio(pcm, participant)
+	if err != nil && (s.failed.Load() || provider != s.STT()) {
+		// The provider failed while this frame was on its way to it. The caller hears of
+		// that failure, or of the next model taking over, once, and not again for the frame.
+		return nil
+	}
+	return err
 }
 
 // Events returns the provider's events. The channel closes when the session closes.
