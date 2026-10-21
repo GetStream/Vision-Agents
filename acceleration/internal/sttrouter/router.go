@@ -109,7 +109,8 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		return nil, err
 	}
 	// The next candidate opens under the context the first one did, so it lasts as long
-	// as the first would have.
+	// as the first would have: the socket's lives as long as the socket
+	// (api/streamws.go, streamModality), the agent's as long as the agent (a.ctx).
 	reopen := func(refused []string) (stt.STT, routing.ProviderConfig, error) {
 		next := core
 		next.Exclude = refused
