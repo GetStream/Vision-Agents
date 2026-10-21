@@ -1849,6 +1849,30 @@ func (s *ConfigsSuite) TestTwoSandboxBindingsGivingTheSandboxOneEnvVarAreRefused
 	s.Contains(failure, "GITHUB_TOKEN")
 }
 
+// TestTwoSandboxBindingsToDifferentConnectorsGivingOneEnvVarAreRefused: the clash is on the env
+// var the sandbox holds, not on the connector, so a custom connector naming GITHUB_TOKEN clashes
+// with github.
+func (s *ConfigsSuite) TestTwoSandboxBindingsToDifferentConnectorsGivingOneEnvVarAreRefused() {
+	source, err := providers.FS.ReadFile("github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(source)
+	s.Require().NoError(err)
+	manifest.ID = "custom_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	custom := sessionGitHub("docs", true)
+	custom["connector_id"] = manifest.ID
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true), custom},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector bindings "code" and "docs" both set sandbox`)
+	s.Contains(failure, "GITHUB_TOKEN")
+}
+
 func (s *ConfigsSuite) TestTwoBindingsToOneConnectorMayHaveSandboxOnOne() {
 	created := s.createConfig(map[string]any{"name": "builder", "sandbox": "daytona",
 		"connectors": []map[string]any{sessionGitHub("code", true), sessionGitHub("docs", false)}})
