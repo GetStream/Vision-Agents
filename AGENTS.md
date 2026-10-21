@@ -136,6 +136,11 @@ To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `c
 skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
 `add-connector`. Plugins are deprecated.
 
+## Scheduled tasks
+
+To give an agent reminders and later work for its users, schedule one, or find why one never
+arrived, read the `scheduled-tasks` skill (`.claude/skills/scheduled-tasks/SKILL.md`).
+
 ## Security
 
 For a security review of the router's API or of the clusters it runs on, read the `security`
