@@ -220,12 +220,12 @@ func (s *SandboxGrantsSuite) TestARequiredBindingSavedBeforeTheSandboxBlockRefus
 	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableSandbox))
 }
 
-// boxed is the error of making a daytona session's sandbox for a sandbox binding.
-func (s *SandboxGrantsSuite) boxed() error {
+// boxed is the error of making a daytona session's sandbox of options for a sandbox binding.
+func (s *SandboxGrantsSuite) boxed(options sandbox.Config) error {
 	s.sandboxRevision()
 	id := s.connection("", "primary")
 	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
-	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
+	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, options
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
 	_, err = s.manager.box(spec, d)
@@ -235,13 +235,13 @@ func (s *SandboxGrantsSuite) boxed() error {
 func (s *SandboxGrantsSuite) TestASandboxBindingNeedsTheSecretPrefix() {
 	s.manager.options.SandboxSecretPrefix = ""
 
-	s.ErrorContains(s.boxed(), "ROUTER_CODE_SANDBOX_SECRET_PREFIX")
+	s.ErrorContains(s.boxed(sandbox.Config{}), "ROUTER_CODE_SANDBOX_SECRET_PREFIX")
 }
 
 func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
 	s.manager.options.SandboxBroker = "vault"
 
-	s.ErrorContains(s.boxed(), `there is no sandbox broker called "vault"`)
+	s.ErrorContains(s.boxed(sandbox.Config{}), `there is no sandbox broker called "vault"`)
 }
 
 // TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
@@ -281,6 +281,28 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	s.Require().NoError(err)
 	s.Equal(tokenOf("primary"), token)
 	s.NotContains(string(raw), tokenOf("primary"))
+}
+
+// TestTheProxyBrokerRefusesAConfigItCannotServe: an open network would reach the grants alone,
+// and Daytona's one CIDR allow list cannot hold a proxy named by a host name. Daytona's broker
+// takes both, and the proxy takes a network narrowed to domains, or ranges with its address.
+func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
+	open := sandbox.Config{Network: true}
+	ranges := sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}
+	s.NoError(s.boxed(open))
+	s.NoError(s.boxed(ranges))
+	s.manager.options.SandboxBroker = egress.BrokerName
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: &egress.Store{}, URL: "http://proxy.stg.example:8091", CACert: []byte("ca")}
+
+	err := s.boxed(open)
+	s.ErrorContains(err, "sandbox_options.network is true")
+	s.ErrorContains(err, "code_sandbox.broker is proxy")
+	s.ErrorContains(s.boxed(ranges), "sandbox_options.network_allow_list must hold the egress proxy's address")
+	s.NoError(s.boxed(sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org"}}))
+	s.manager.options.SandboxProxy.URL = "http://203.0.113.7:8091"
+	s.NoError(s.boxed(ranges))
+	s.NoError(s.boxed(sandbox.Config{Network: true, NetworkAllowList: []string{"10.0.0.0/8"}}),
+		"a network narrowed to ranges is not open")
 }
 
 // daytonaAPI stands in for Daytona's API: it creates sandboxes, runs code, and keeps the

@@ -200,6 +200,23 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   request and stops substituting at once.
 - Known limit: a router crash, or a Close that fails or times out, leaves the secret (a live
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
+- `ROUTER_CODE_SANDBOX_BROKER=proxy` uses the router's egress proxy (`internal/sandbox/egress`)
+  instead of Daytona Secrets. It needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` (the proxy
+  as a sandbox reaches it, `http://host:port`) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`. It needs
+  no secret prefix.
+- Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var, `HTTPS_PROXY`
+  with its own proxy credential, and the proxy's CA certificate at `/tmp/va-egress-ca.pem`
+  (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`). The proxy puts
+  the token in place of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git
+  works too.
+- Network behind the proxy: the allow list is the proxy and the config's `allowed_domains` (or its
+  `network_allow_list` and the proxy's IP address). `NO_PROXY` holds the config's own domains, so
+  they go direct; a domain that matches a grant's host is left out, so its requests still go
+  through the proxy. A config with `network: true` and no allow list is refused when the session
+  starts: every request goes to the proxy, which refuses hosts no grant names. So is a
+  `network_allow_list` when the proxy URL names a host, not an IP address.
+- Revocation through the proxy is immediate: it resolves the token on every request and keeps no
+  copy. A deleted or disconnected connection fails the next request.
 - `go test -tags daytona_live -run TestLiveSuite ./internal/sandbox/daytona` runs the attacks
   against Daytona with `DAYTONA_API_KEY` and canary values.
 

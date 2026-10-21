@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"mime"
 	"net/http"
+	"net/netip"
 	"os"
 	"path"
 	"slices"
@@ -211,12 +213,16 @@ func (s *Sandbox) params() any {
 	if s.mount.Proxy != nil {
 		proxy := s.mount.Proxy.String()
 		base.OutboundProxyUrl = &proxy
+		if direct := noProxy(s.config, s.grants); direct != "" {
+			base.EnvVars = maps.Clone(s.mount.Env)
+			base.EnvVars["NO_PROXY"], base.EnvVars["no_proxy"] = direct, direct
+		}
 	}
 	if len(domains) > 0 {
 		joined := strings.Join(domains, ",")
 		base.DomainAllowList = &joined
 	}
-	if cidrs := s.config.NetworkAllowList; len(cidrs) > 0 && s.mount.Proxy == nil {
+	if cidrs := s.ranges(); len(cidrs) > 0 {
 		joined := strings.Join(cidrs, ",")
 		base.NetworkAllowList = &joined
 	}
@@ -281,13 +287,13 @@ func (s *Sandbox) Grants() []sandbox.Grant {
 // domains are the config's allowed domains and, unless the config opens the whole network or
 // lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
 // sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
-// A sandbox behind an egress proxy reaches the proxy alone, whatever the config says, so no
-// request goes around it.
+// A sandbox behind an egress proxy reaches the proxy and the config's own domains, and its
+// grants' hosts only through the proxy.
 func (s *Sandbox) domains() []string {
-	if s.mount.Proxy != nil {
-		return []string{s.mount.Proxy.Hostname()}
-	}
 	domains := slices.Clone(s.config.AllowedDomains)
+	if s.mount.Proxy != nil && len(s.config.NetworkAllowList) == 0 {
+		return slices.Insert(domains, 0, s.mount.Proxy.Hostname())
+	}
 	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
 		return domains
 	}
@@ -301,4 +307,49 @@ func (s *Sandbox) domains() []string {
 		}
 	}
 	return domains
+}
+
+// ranges are the config's CIDR ranges and, behind an egress proxy, the proxy's address: Daytona
+// takes one allow list, so the proxy joins the one the config uses. A proxy named by a host
+// name cannot, and the session refuses that config.
+func (s *Sandbox) ranges() []string {
+	ranges := s.config.NetworkAllowList
+	if len(ranges) == 0 || s.mount.Proxy == nil {
+		return ranges
+	}
+	address, err := netip.ParseAddr(s.mount.Proxy.Hostname())
+	if err != nil {
+		return ranges
+	}
+	return append(slices.Clone(ranges), netip.PrefixFrom(address, address.BitLen()).String())
+}
+
+// noProxy is NO_PROXY for a sandbox behind an egress proxy: the config's own domains and
+// ranges, which code reaches directly, less each domain whose entry would match a grant's host,
+// since a request the proxy never sees keeps its placeholder. curl, Python requests and Go take
+// an entry as that name and every name under it, and none takes "*.", so *.pypi.org is
+// .pypi.org (https://curl.se/docs/manpage.html#ENVIRONMENT,
+// https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config).
+func noProxy(config sandbox.Config, grants []sandbox.Grant) string {
+	var direct []string
+	for _, domain := range config.AllowedDomains {
+		domain = strings.TrimPrefix(domain, "*")
+		name := strings.ToLower(strings.TrimPrefix(domain, "."))
+		if !slices.ContainsFunc(grants, func(grant sandbox.Grant) bool { return matches(name, grant.Hosts) }) {
+			direct = append(direct, domain)
+		}
+	}
+	return strings.Join(append(direct, config.NetworkAllowList...), ",")
+}
+
+// matches says whether a NO_PROXY entry for name matches a host one of hosts covers: hosts are
+// exact names, or *. and a domain, which takes the domain and every name under it.
+func matches(name string, hosts []string) bool {
+	for _, host := range hosts {
+		granted, wildcard := strings.CutPrefix(host, "*.")
+		if granted == name || strings.HasSuffix(granted, "."+name) || wildcard && strings.HasSuffix(name, "."+granted) {
+			return true
+		}
+	}
+	return false
 }

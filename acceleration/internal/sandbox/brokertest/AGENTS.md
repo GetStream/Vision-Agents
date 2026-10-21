@@ -10,8 +10,9 @@ One test function builds the suite with `New`, which returns a `Subject` for a s
 - `Held(ref)` is the credential and hosts the provider keeps under a `Mount.Secrets` value.
 - `Left()` is everything the broker has left with the provider, of every session.
 - `Refuse()` / `Recover()` make the provider refuse every request, then answer again.
+- `Live` is true for a broker whose egress asks for the token on every request (egress): a token that cannot be had just now reaches no request.
 
-`daytona/secrets_test.go` (`TestSecretsBrokerContract`) is the example: Daytona's API is an `httptest.Server`. Tests that need the provider's real wire (egress) run live, per broker (`daytona_live_test.go`).
+`daytona/secrets_test.go` (`TestSecretsBrokerContract`) is the example: Daytona's API is an `httptest.Server`; `egress/broker_test.go` (`TestProxyBrokerContract`) runs it against the egress proxy. Tests that need the provider's real wire (egress) run live, per broker (`daytona_live_test.go`).
 
 ## What it covers (attack table A1-A13 of wave 13)
 

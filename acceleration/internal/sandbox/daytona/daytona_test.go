@@ -529,3 +529,16 @@ func (s *DaytonaSuite) TestOnlySoManyFilesComeBackFromOneRun() {
 	s.Len(result.Files, sandbox.MaxFiles)
 	s.Equal(wanted[sandbox.MaxFiles:], result.Missing)
 }
+
+// TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHost: a request the egress proxy
+// never sees keeps its placeholder, so no NO_PROXY entry may match a granted host.
+func (s *DaytonaSuite) TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHost() {
+	crm := sandbox.Grant{Hosts: []string{"api.crm.example", "*.files.example"}}
+	config := sandbox.Config{AllowedDomains: []string{"api.crm.example", "crm.example", "CRM.example", "v2.api.crm.example",
+		"files.example", "eu.files.example", "*.files.example", "example", "pypi.org", "*.pythonhosted.org", ".npmjs.org",
+		"notfiles.example"}, NetworkAllowList: []string{"10.0.0.0/8"}}
+
+	s.Equal("v2.api.crm.example,pypi.org,.pythonhosted.org,.npmjs.org,notfiles.example,10.0.0.0/8", noProxy(config, []sandbox.Grant{crm}))
+	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"pypi.org"}}, nil))
+	s.Empty(noProxy(sandbox.Config{}, []sandbox.Grant{crm}))
+}
