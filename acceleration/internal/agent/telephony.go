@@ -563,7 +563,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Unlock()
 	took := time.Since(began)
 	toolCallSeconds.WithLabelValues(outcome).Observe(took.Seconds())
-	a.logger.Info("a tool call came back", "tool", requested.Call.Name, "call", requested.Call.ID,
+	a.logger.Info("a tool call came back", "tool", requested.Call.Name, "tool_call", requested.Call.ID,
 		"turn", requested.TurnID, "duration_ms", took.Milliseconds(), "outcome", outcome)
 
 	a.emitter.Send(ToolRan{
