@@ -453,6 +453,25 @@ func (s *SessionSuite) TestAWriteThatFailsWithNoRefusalReachesTheCaller() {
 	s.Equal("closed", session.Provider())
 }
 
+func (s *SessionSuite) TestASocketThatDroppedBehindUnreadEventsReachesTheCallerOnce() {
+	provider := &closedSTT{emitter: stt.NewEmitter(128)}
+	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+	s.fillBuffer(session, provider)
+	drop := stt.Error{Err: errors.New("read tcp: connection reset by peer"), Context: "read", Fatal: true}
+	provider.emitter.Send(drop)
+
+	// The drop is told as its own event, as on the base, so the write that failed behind it
+	// is not told again.
+	s.NoError(s.write(session))
+	for range cap(session.events) + 1 {
+		s.IsType(stt.Transcript{}, s.event(session))
+	}
+	s.Equal(drop, s.event(session))
+	s.Require().NoError(session.Close())
+	s.Empty(s.drain(session), "the drop was told once, and no Failover followed it")
+	s.Equal("closed", session.Provider(), "a dropped socket is not handed to the next model")
+}
+
 func (s *SessionSuite) TestAWriteThatFailsAfterTheProviderEndedReachesTheCaller() {
 	provider := &closedSTT{emitter: stt.NewEmitter(128)}
 	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
