@@ -180,21 +180,24 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
 - Before each run a new credential revision updates the secret; a connection that needs a
-  reconnect, or was deleted, deletes it. Daytona refuses a request that carries a placeholder it
+  reconnect, or was deleted, withdraws it. Daytona refuses a request that carries a placeholder it
   does not substitute (another host, the query, another session's): 502 «could not reach upstream
   host».
-- Daytona also substitutes a verbatim placeholder inside Basic auth to a granted host (live check
-  A12, staging 2026-10-21).
+- Daytona substitutes `Authorization: Basic <placeholder>` and `Basic user:<placeholder>` to a
+  granted host when the value is not Base64-encoded (live Basic-auth check, staging 2026-10-21).
+  It does not substitute a Base64-encoded Basic header (Daytona docs). So git, which sends
+  Base64 Basic, still does not work through the Daytona broker.
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
   grants, the connector limiter and the audit. That is intended.
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
   host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
   broker closes it.
-- Known limit (Daytona propagation): a secret the router withdraws (connection deleted or needs a
-  reconnect) keeps being substituted until Daytona propagates the delete. Daytona's docs say
-  «within 15 seconds» (https://www.daytona.io/docs/en/secrets.md). On staging (v0.6.103,
-  2026-10-21) requests still got 200 at +16 s and 502 at +36 s. Wave 14's proxy broker resolves
-  per request and revokes at once.
+- Known limit (Daytona lag): after the router withdraws a secret (connection deleted or needs a
+  reconnect), Daytona keeps substituting it for a while. Daytona's docs give no time for a delete;
+  an update takes effect within 15 seconds (https://www.daytona.io/docs/en/secrets.md). On
+  staging (v0.6.103, 2026-10-21) a request got 200 at 16 s and 502 at 36 s after the router
+  withdrew the secret, so the lag is between 16 and 36 s. Wave 14's proxy broker resolves per
+  request and stops substituting at once.
 - Known limit: a router crash, or a Close that fails or times out, leaves the secret (a live
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
 - `go test -tags daytona_live -run TestLiveSuite ./internal/sandbox/daytona` runs the attacks
