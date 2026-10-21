@@ -132,8 +132,9 @@ func (a scheduledPeerAnswer) failure() error {
 // task whose first occurrence has no session yet opens one on its config.
 func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
 	task := claimed.Task
+	// A hold ends after the occurrence came due: its lateness counts from then.
 	due := claimed.Run.ScheduledFor
-	if held := claimed.Run.PostponedUntil; held != nil && held.After(due) {
+	if held := claimed.Run.PostponedUntil; held != nil {
 		due = *held
 	}
 	delivery := scheduledDelivery{

@@ -351,26 +351,22 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 		Prompt: "Remind Sam to stretch.", State: ScheduledTaskRunRunning, Attempts: 1, StartedAt: &s.base,
 	}
 	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &run))
+	take := func(customer, call string) bool {
+		took, err := s.store.TakeScheduledTaskRunCall(s.ctx, customer, run.ID, call)
+		s.Require().NoError(err)
+		return took
+	}
 
-	took, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1")
-	s.Require().NoError(err)
-	s.True(took)
-	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-2")
-	s.Require().NoError(err)
-	s.False(took, "a run that placed a call places no second one")
-	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "globex", run.ID, "call-2")
-	s.Require().NoError(err)
-	s.False(took, "another customer's run is not taken")
+	s.False(take("globex", "call-0"), "another customer's run is not taken")
+	s.True(take("acme", "call-1"))
+	s.False(take("acme", "call-2"), "a run that placed a call places no second one")
 
 	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-2"))
-	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3")
-	s.Require().NoError(err)
-	s.False(took, "only the call that was taken is given back")
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "globex", run.ID, "call-1"))
+	s.False(take("acme", "call-3"), "only the call taken, on the customer's own run, is given back")
 
 	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1"))
-	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3")
-	s.Require().NoError(err)
-	s.True(took, "a call given back may be placed again")
+	s.True(take("acme", "call-3"), "a call given back may be placed again")
 
 	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-3", "not_answered"))
 	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3"))
@@ -378,7 +374,7 @@ func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
 	s.Require().NoError(err)
 	s.Require().Len(runs, 1)
 	s.Equal("call-3", runs[0].SessionID, "a finished run keeps the call it made")
-	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-4")
-	s.Require().NoError(err)
-	s.False(took, "a finished run places no call")
+
+	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "", "delivery_failed"))
+	s.False(take("acme", "call-4"), "a finished run places no call")
 }
