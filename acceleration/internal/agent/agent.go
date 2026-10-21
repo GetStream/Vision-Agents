@@ -3922,7 +3922,7 @@ type unheardReply struct {
 // dropUnheard abandons the reply to a caller's turn the same caller said more over, while
 // none of it has gone out: after that it is them talking over the agent, the controller's call.
 func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
-	voiced := a.turns.voiced(turnID)
+	sent := a.turns.sentToVoice(turnID)
 	var stale unheardReply
 	if !a.abandonReply(participant, func(speaking string) bool {
 		if speaking != turnID || a.unheard.turnID != turnID {
@@ -3938,7 +3938,7 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 	staleReplies.Inc()
 	a.logger.Info("dropped a reply the caller said more over before hearing any of it",
 		"turn", turnID, "participant", participant.ID,
-		"gap_ms", time.Since(stale.decidedAt).Milliseconds(), "sent_to_voice", voiced)
+		"gap_ms", time.Since(stale.decidedAt).Milliseconds(), "sent_to_voice", sent)
 }
 
 // interrupt abandons the reply being spoken because a participant started talking.

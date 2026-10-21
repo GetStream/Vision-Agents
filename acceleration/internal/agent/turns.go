@@ -213,8 +213,8 @@ func (t *turnTracker) ttsStarted(turnID string, at time.Time) {
 	}
 }
 
-// voiced reports whether any of a turn's reply has been sent to the voice.
-func (t *turnTracker) voiced(turnID string) bool {
+// sentToVoice reports whether any of a turn's reply has been sent to the voice.
+func (t *turnTracker) sentToVoice(turnID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	current, ok := t.open[turnID]
