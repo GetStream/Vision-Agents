@@ -5,15 +5,22 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -228,4 +235,106 @@ func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
 	s.manager.options.SandboxBroker = "proxy"
 
 	s.ErrorContains(s.boxed(), `there is no sandbox broker called "proxy"`)
+}
+
+// daytonaAPI stands in for Daytona's API: it creates sandboxes, runs code, and keeps the
+// organization's secrets by name. secrets maps the env vars of the last sandbox created to
+// the secret names they read.
+type daytonaAPI struct {
+	*httptest.Server
+	mu      sync.Mutex
+	held    map[string]string
+	secrets map[string]string
+}
+
+func (s *SandboxGrantsSuite) daytonaAPI() *daytonaAPI {
+	api := &daytonaAPI{held: map[string]string{}}
+	api.Server = httptest.NewServer(http.HandlerFunc(api.serve))
+	s.T().Cleanup(api.Close)
+	s.T().Setenv("DAYTONA_API_URL", api.URL+"/api")
+	return api
+}
+
+func (a *daytonaAPI) serve(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	id := strings.TrimPrefix(r.URL.Path, "/api/secret/")
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/secret":
+		var body struct{ Name string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.held["secret-"+body.Name] = body.Name
+		_, _ = fmt.Fprintf(w, `{"id":"secret-%s","name":%q,"placeholder":"dtn_secret_1","hosts":[],"createdAt":"2026-10-21T00:00:00Z","updatedAt":"2026-10-21T00:00:00Z"}`, body.Name, body.Name)
+	case r.Method == http.MethodDelete && id != r.URL.Path:
+		delete(a.held, id)
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox":
+		var body struct{ Secrets []map[string]string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Secrets) > 0 {
+			a.secrets = body.Secrets[0]
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"sandbox-1","state":"started","toolboxProxyUrl":"%s/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`, a.URL)
+	case r.Method == http.MethodDelete || strings.HasPrefix(r.URL.Path, "/api/socket.io"):
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		_, _ = w.Write([]byte(`{"result":"","exitCode":0}`))
+	}
+}
+
+// offered says whether Daytona still holds a secret for the env var the sandbox reads.
+func (a *daytonaAPI) offered(env string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, name := range a.held {
+		if name == a.secrets[env] {
+			return true
+		}
+	}
+	return false
+}
+
+// TestADeletedConnectionIsWithdrawnBeforeTheNextRun: a connection deleted mid-session is gone
+// for good, so the next run_code finds no credential behind the sandbox's env var.
+func (s *SandboxGrantsSuite) TestADeletedConnectionIsWithdrawnBeforeTheNextRun() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().True(api.offered("CRM_TOKEN"))
+
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, id))
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.False(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
+}
+
+// TestAConnectionThatCannotBeReadJustNowKeepsItsSecret: a store that cannot answer is no
+// reason to withdraw, as on base.
+func (s *SandboxGrantsSuite) TestAConnectionThatCannotBeReadJustNowKeepsItsSecret() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	credentials, err := pgsealed.New(closed, s.sealer)
+	s.Require().NoError(err)
+	s.manager.options.Connectors.Resolver, err = resolver.New(resolver.Config{Store: closed, Credentials: credentials, Schemes: s.registry.Schemes})
+	s.Require().NoError(err)
+
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "it keeps the one it has")
 }

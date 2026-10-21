@@ -88,7 +88,8 @@ def sync_detailed(
     """The call as it unfolded, said and measured together
 
      Each exchange with what was said in it and what it cost the caller in waiting: how long the answer
-    took to start, how much the agent spoke, and whether it was talked over.
+    took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an
+    hour; GET /v1/turns/stats keeps their percentiles.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -120,7 +121,8 @@ def sync(
     """The call as it unfolded, said and measured together
 
      Each exchange with what was said in it and what it cost the caller in waiting: how long the answer
-    took to start, how much the agent spoke, and whether it was talked over.
+    took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an
+    hour; GET /v1/turns/stats keeps their percentiles.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -147,7 +149,8 @@ async def asyncio_detailed(
     """The call as it unfolded, said and measured together
 
      Each exchange with what was said in it and what it cost the caller in waiting: how long the answer
-    took to start, how much the agent spoke, and whether it was talked over.
+    took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an
+    hour; GET /v1/turns/stats keeps their percentiles.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -177,7 +180,8 @@ async def asyncio(
     """The call as it unfolded, said and measured together
 
      Each exchange with what was said in it and what it cost the caller in waiting: how long the answer
-    took to start, how much the agent spoke, and whether it was talked over.
+    took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an
+    hour; GET /v1/turns/stats keeps their percentiles.
 
     Args:
         id (str): The resource, as returned when it was created.

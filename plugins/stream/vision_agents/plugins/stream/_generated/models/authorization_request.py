@@ -24,7 +24,9 @@ class AuthorizationRequest:
             bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address,
             since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1])
             for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749
-            section 3.1.2) and a query of key=value pairs.
+            section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in
+            reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch
+            page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.
     """
 
     return_url: str | Unset = UNSET

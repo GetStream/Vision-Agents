@@ -138,8 +138,8 @@ func (s *AgentSuite) TestARefusedTurnIsReportedAsATurnAndAsARefusal() {
 	s.joinText()
 
 	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
-	s.eventually(func() bool { return countOf[Blocked](s.reported()) == 1 },
-		"nothing was reported as refused")
+	s.eventually(func() bool { return countOf[Blocked](s.reported()) == 1 && countOf[Responded](s.reported()) == 1 },
+		"nothing was reported as refused and answered")
 
 	refused, _ := firstOf[Blocked](s.reported())
 	s.Equal("outside what the policy permits", refused.Reason)
