@@ -612,6 +612,47 @@ func (s *HarnessSuite) TestATurnThatCalledAToolIsAnsweredWithTheResult() {
 	s.Equal("call-1", sent[2].ToolCallID)
 }
 
+func (s *HarnessSuite) TestAnInterruptedToolReplyResendsTheToolResult() {
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
+	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	history = append(history,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
+	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
+	s.Equal("provider-lookup", s.fast.requests()[1].PreviousResponseID)
+	// The agent releases an interrupted reply without remembering its response.
+	s.harness.Release("tool-reply")
+	history = append(history, llm.Message{Role: llm.User, Content: "actually use tomorrow"})
+	s.answer(Turn{ID: "correction", Instructions: "be brief", History: history})
+	sent := s.fast.requests()[2]
+	s.Empty(sent.PreviousResponseID, "the old response never received the tool result")
+	s.Equal(history, sent.Input, "the replacement turn must include the call and its result")
+}
+
+func (s *HarnessSuite) TestAFinishedToolReplyCanStillBeContinued() {
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
+	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	history = append(history,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
+	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "tool-reply", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-answer"})
+	added := []llm.Message{{Role: llm.Assistant, Content: "Your booking is tomorrow."}, {Role: llm.User, Content: "thanks"}}
+	s.answer(Turn{ID: "thanks", Instructions: "be brief", History: append(history, added...)})
+	sent := s.fast.requests()[2]
+	s.Equal("provider-answer", sent.PreviousResponseID)
+	s.Equal(added, sent.Input)
+}
+
 func (s *HarnessSuite) TestWithoutASubagentNothingIsOffered() {
 	// Skills mean nothing without someone to run them, so offering them would only invite
 	// the model to write requests nobody answers.
