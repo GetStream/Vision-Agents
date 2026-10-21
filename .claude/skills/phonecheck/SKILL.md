@@ -22,15 +22,44 @@ skill asks what to test, sets it up, runs, reports and puts things back.
   `printf 'user = "%s:%s"\n' "$TWILIO_PERSON_ACCOUNT_SID" "$TWILIO_PERSON_AUTH_TOKEN" | curl -sS -K - …`
   or `printf 'header = "Authorization: Bearer %s"\n' "$TELNYX_PERSON_API_KEY" | curl -sS -K - …`.
   Pipe every reply through `jq` and keep only the fields named here.
+- **Voice URLs: classify, never print.** A vendor's voice URL or connection setting can embed a
+  password: an attached router number's Twilio voice URL holds the Stream SIP trunk's. Never
+  print or keep one you read. Keep only its class (see "Voice URLs" below).
 - **Encode numbers.** A `+` in a query must be encoded: `curl -G --data-urlencode 'PhoneNumber=+15550100002'`,
   and the same for Telnyx `filter[…]` keys. In a router path it stays as is.
 - **Ask with AskUserQuestion,** one step at a time, defaults first. Accept several answers at once.
 - **State file.** `<scratchpad>/phonecheck-state.md`. Write a line right after each change, and
-  before a change write the values needed to undo it: vendor, number, vendor id, old voice URL,
-  old method, old `connection_id`, tunnel URL, hooks added, router and tunnel process ids. A
-  section "bought this run" lists numbers the skill bought. No secrets in it. Cleanup reads it.
+  before a change write the values needed to undo it: vendor, number, vendor id, old voice URL
+  and method (person numbers only, and only as "Voice URLs" allows), old `connection_id`,
+  tunnel URL, hooks added, router and tunnel process ids. A section "bought this run" lists
+  numbers the skill bought. No secrets in it. Cleanup reads it.
 - **Never touch a number the skill did not buy.** It attaches and releases only numbers listed
   under "bought this run". An existing number is used as it is.
+
+## Voice URLs
+
+Write `<scratchpad>/voice.jq` once:
+
+```jq
+def risky: (. // "") | ascii_downcase | test("sip(:|%3a)|dial|@|%40");
+def kind: (. // "") as $u | ($u | ascii_downcase) as $l
+  | if $u == "" then "empty"
+    elif ($l | test("sip(:|%3a)")) then "attached (points at Stream SIP)"
+    elif ($l | test("twimlets\\.com/echo")) and ($u | risky | not)
+      then "test script (echo twimlet without <Dial>)"
+    else "other" end;
+```
+
+To look at a number, print only the class: `jq -L <scratchpad> 'include "voice"; … | (.voice_url | kind)'`.
+Only before changing a person number, save its old value straight into the state file, never
+to the screen. The check refuses a value with `sip:`, `<Dial>` or `@` in it:
+
+```bash
+… | jq -L <scratchpad> -r 'include "voice"; .incoming_phone_numbers[0] | if (.voice_url | risky) then error("holds SIP credentials or a <Dial>") else "twilio <n> sid=\(.sid) old_voice_url=\(.voice_url // "") old_method=\(.voice_method)" end' >> <scratchpad>/phonecheck-state.md
+```
+
+Telnyx: the same on `.data` of `GET /v2/texml_applications/<id>`. If the check fails, do not
+change that number: tell the human why and skip its runs.
 
 ## Router numbers: the router's API
 
@@ -130,12 +159,12 @@ to its database (migrations, and the router's own background work).
      `data[].cost_information.monthly_cost`).
 7. **Talk and runs.** `-talk` (default `20s`), `-runs` (default 1), `-region` label (default
    empty; ask which region the person number is set to).
-8. **Person setup.** Skill (default) or the human per README §4. Read the current values now:
-   Twilio `GET …/IncomingPhoneNumbers.json` with `PhoneNumber=<n>` (keep
-   `incoming_phone_numbers[].sid`, `.voice_url`, `.voice_method`); Telnyx
+8. **Person setup.** Skill (default) or the human per README §4. Look at the current values now,
+   classes only: Twilio `GET …/IncomingPhoneNumbers.json` with `PhoneNumber=<n>` (keep
+   `incoming_phone_numbers[].sid`, `.voice_url | kind`, `.voice_method`); Telnyx
    `GET /v2/phone_numbers` with `filter[phone_number]=<n>` (keep `data[].id`,
    `data[].connection_id`), `GET /v2/texml_applications/<person app id>` (keep
-   `data.voice_url`, `data.voice_method`), and the numbers on that app,
+   `data.voice_url | kind`, `data.voice_method`), and the numbers on that app,
    `GET /v2/phone_numbers` with `filter[connection_id]=<person app id>` (keep `data[].phone_number`).
 9. **Local only: hooks.** Run the read-only `go run ./cmd/phone hooks` and show it. Note any
    stale tunnel URL to remove.
@@ -173,7 +202,7 @@ In this order, each change into the state file:
    `sid`, `phone_number`). Telnyx `POST /v2/number_orders` with
    `{"phone_numbers":[{"phone_number":"<n>"}],"connection_id":"<person app id>"}` (keep
    `data.id`, `data.status`). Add to "bought this run".
-4. **Person setup.** The echo URL is README §4's: `https`, `Say` first, `Pause length` matching
+4. **Person setup.** First save each old value as "Voice URLs" says. The echo URL is README §4's: `https`, `Say` first, `Pause length` matching
    `-talk`. Twilio, outbound: `POST …/IncomingPhoneNumbers/<sid>.json` with `VoiceUrl`,
    `VoiceMethod=GET`. Telnyx: put the number on the person app (`PATCH /v2/phone_numbers/<id>`
    `{"connection_id":"<person app id>"}`); outbound also `PATCH /v2/texml_applications/<id>`
