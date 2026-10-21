@@ -299,7 +299,7 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 }
 
 func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
-	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "got it", "thank you", "uh yeah",
+	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "uh-huh okay", "got it", "thank you", "uh yeah",
 		"ok gotcha", "yes yes", "yep yep", "yup sure", "mhm right", "mm-hmm alright", "thanks thanks"} {
 		s.Run(assent, func() {
 			s.False(takesFloor(assent), "assent is somebody listening")
@@ -346,6 +346,21 @@ func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
 
 	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a reply already heard was dropped as unheard")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+func (s *AgentSuite) TestADropLandingAfterAnotherTurnTookTheFloorLeavesThatTurnPlaying() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	s.agent.mu.Lock()
+	s.agent.speakingTurn = "check-in"
+	s.agent.mu.Unlock()
+
+	s.agent.perform(Action{Kind: ActInterrupt, Unheard: true, Participant: nash, TurnID: two})
+
+	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+		"a drop meant for another turn interrupted the one speaking")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
 
