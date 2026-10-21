@@ -20,6 +20,9 @@ func TestAConsentConnectsOnlyTheAccountOfTheEmailTheAppSaid(t *testing.T) {
 		ownerEmailRefusal("alice@example.com", signedIn(map[string]string{"email": "bob@example.com"})))
 	require.Equal(t, "the app has not said which email its user signs in with (X-Stream-User-Email)",
 		ownerEmailRefusal(" ", signedIn(map[string]string{"email": ""})), "no email said matches nobody, not an empty one")
-	require.Equal(t, "the provider has not verified the email of the account that consented",
-		ownerEmailRefusal("alice@example.com", signedIn(map[string]string{"email": "alice@example.com", "email_verified": "false"})))
+	for _, verified := range []string{"false", "False", "0", ""} {
+		require.Equal(t, "the provider has not verified the email of the account that consented",
+			ownerEmailRefusal("alice@example.com", signedIn(map[string]string{"email": "alice@example.com", "email_verified": verified})),
+			"only \"true\" verifies: %q", verified)
+	}
 }
