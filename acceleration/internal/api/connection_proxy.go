@@ -47,7 +47,7 @@ const maxProxyBody = 1 << 20
 // signature for (auth.ServerTokenHeader, auth.ServerTokenKeyHeader, auth.HookAppHeader), are the
 // router's as well: the token acts in the customer's Stream app (docs/stream-tenancy.md).
 var routerHeaders = []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
-	auth.AppHeader, auth.CustomerHeader, auth.UserHeader, auth.ServerTokenHeader, auth.ServerTokenKeyHeader,
+	auth.AppHeader, auth.CustomerHeader, auth.UserHeader, auth.EmailHeader, auth.ServerTokenHeader, auth.ServerTokenKeyHeader,
 	auth.HookAppHeader}
 
 // plainHeaders are the caller's headers a direct call may forward and still have its error
