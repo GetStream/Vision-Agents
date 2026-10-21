@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -115,6 +116,8 @@ type Action struct {
 	Clarify string
 	// LatencyMs is what the flow controller took to rule. Zero where nothing was asked.
 	LatencyMs float64
+	// Unheard says none of the interrupted reply has gone out, and it is only abandoned so.
+	Unheard bool
 	// LineID is the caller's line a turn queued, held or answered was heard as, so a
 	// watcher can say of that line that it waits for the agent to finish.
 	LineID string
@@ -154,6 +157,8 @@ type floor struct {
 	// Asked reports that the agent's last reply asked the caller something, so a silence
 	// after it is an answer that has not come.
 	Asked bool
+	// Unheard is the caller turn being answered while none of its reply has gone out.
+	Unheard unheardReply
 }
 
 // active is when anything last happened on the call, either end of it. It is zero on a
@@ -352,7 +357,11 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 				LineID:      line,
 			})
 		}
-		actions = append(actions, c.overlap(transcript, saying, state)...)
+		if stale, ok := c.stale(transcript, saying, state); ok {
+			actions = append(actions, stale)
+		} else {
+			actions = append(actions, c.overlap(transcript, saying, state)...)
+		}
 	}
 	if superseded != "" {
 		c.mu.Lock()
@@ -448,6 +457,41 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 	}))
 }
 
+// stale abandons the reply to a caller's turn once the same caller says more before any of it
+// has gone out: it answers words they moved on from, over them. What they say next is answered
+// with those words in the history. A murmur or a lone word that is no interruption is somebody
+// waiting to be answered, and leaves it.
+func (c *converse) stale(transcript stt.Transcript, saying string, state floor) (Action, bool) {
+	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant ||
+		!takesFloor(unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))) {
+		return Action{}, false
+	}
+	return c.decide(Action{
+		Kind:        ActInterrupt,
+		Reason:      "the caller said more before hearing any of the reply, so it answers words they have moved on from",
+		Participant: transcript.Participant,
+		TurnID:      state.Unheard.turnID,
+		Text:        saying,
+		Unheard:     true,
+	}), true
+}
+
+// takesFloor reports whether words are more than a murmur: a cough, "mm", a lone non-interruption,
+// or nothing but assent ("okay okay", "uh huh", "got it"), which is somebody listening.
+func takesFloor(saying string) bool {
+	if overlapNoise(saying) {
+		return false
+	}
+	fields := strings.Fields(strings.ToLower(words(saying)))
+	if len(fields) == 1 {
+		return interruptsAlone[fields[0]]
+	}
+	return slices.ContainsFunc(fields, func(field string) bool {
+		_, murmur := murmurs[field]
+		return !murmur
+	})
+}
+
 // supersede abandons a ruling asked for about words that have since changed.
 func (c *converse) supersede(participant stt.Participant, candidateID string) Action {
 	return c.decide(Action{
@@ -486,6 +530,7 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 			})
 		}
 	}
+	ready.OverAgent = !state.Quiet
 	c.candidates[ready.ID] = ready
 	c.mu.Unlock()
 
@@ -534,7 +579,7 @@ func (c *converse) forgetOverlapLocked(candidateID string) (overlapState, bool) 
 // The actions come back in the order they must run: a turn taken from the agent is
 // interrupted before it is answered, and a turn the agent talks through is held before
 // the reply it is waiting on is cut short.
-func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
+func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action) {
 	c.mu.Lock()
 	seen, provisional := c.forgetOverlapLocked(ruling.CandidateID)
 	c.mu.Unlock()
@@ -550,6 +595,12 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		c.logger.Debug("a ruling arrived for a turn that has moved on",
 			"candidate", ruling.CandidateID)
 		return nil
+	}
+	if ready.OverAgent {
+		defer func() {
+			settledOverAgent.WithLabelValues(wordCount(ready.Said()), strconv.FormatBool(ready.Final),
+				floorOutcome(actions)).Inc()
+		}()
 	}
 
 	if ruling.Err != nil || !ruling.Valid() {
@@ -743,6 +794,29 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		c.hold(queuedCandidate{candidate: ready, clarify: clarify, heard: true, line: line})
 		return []Action{c.decide(held)}
 	}
+}
+
+// wordCount buckets a turn's words: one word is what is most often misruled over the agent.
+func wordCount(text string) string {
+	switch n := len(strings.Fields(words(text))); {
+	case n <= 1:
+		return "1"
+	case n <= 3:
+		return "2-3"
+	}
+	return "4+"
+}
+
+// floorOutcome is what came of a ruling: the first thing decided, or the shortening queued
+// ahead of, and "none" when the words moved on first.
+func floorOutcome(actions []Action) string {
+	outcome := "none"
+	for i, action := range actions {
+		if i == 0 || action.Kind == ActShorten {
+			outcome = string(action.Kind)
+		}
+	}
+	return outcome
 }
 
 // overlapRuled turns a provisional ruling — made while the caller was still talking — into
@@ -1366,11 +1440,17 @@ func overlapNoise(text string) bool {
 	if strings.Contains(t, "cough") || strings.Contains(t, "ahem") {
 		return true
 	}
-	switch t {
-	case "huh", "uh", "mm", "hm", "hmm":
-		return true
-	}
-	return false
+	return murmurs[t]
+}
+
+// murmurs are the words of someone listening rather than taking the floor. True marks the ones
+// that are noise said alone (overlapNoise); the rest are assent, which only a run of murmurs is.
+// The punctuation is gone (words), so "uh-huh" is "uhhuh".
+var murmurs = map[string]bool{
+	"huh": true, "uh": true, "mm": true, "hm": true, "hmm": true,
+	"okay": false, "ok": false, "yeah": false, "yes": false, "yep": false, "yup": false,
+	"uhhuh": false, "mhm": false, "mmhmm": false, "right": false, "sure": false, "alright": false,
+	"got": false, "it": false, "gotcha": false, "thank": false, "thanks": false, "you": false,
 }
 
 // worthReporting says whether a judgement tells a reader anything the last one did not,
