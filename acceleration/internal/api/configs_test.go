@@ -2119,6 +2119,33 @@ func (s *ConfigsSuite) TestNessyBesideSeveralOutboundToolsNamesThemAll() {
 		`the sandbox's network access can send data out with no person's approval`)
 }
 
+// TestNessyBesideAConnectorWithOneOutboundSourceAmongSeveralIsRefused: a connector sends data
+// out if any of its sources may, not only the first. Manifest.Validate accepts several sources
+// and CreateConnectorDefinition takes any manifest, so a custom connector can put a source that
+// says outbound: false before one that does not.
+func (s *ConfigsSuite) TestNessyBesideAConnectorWithOneOutboundSourceAmongSeveralIsRefused() {
+	s.useInternalApp()
+	source, err := providers.FS.ReadFile("github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(source)
+	s.Require().NoError(err)
+	manifest.ID = "custom_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	readOnly := manifest.Sources[0]
+	readOnly.Outbound = new(false)
+	manifest.Sources = []core.SourceRule{readOnly, manifest.Sources[0]}
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	custom := sessionGitHubGranting("code", "create_issue")
+	custom["connector_id"] = manifest.ID
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), custom},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" can send data out with no person's approval`)
+}
+
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
 func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 	s.useInternalApp()
