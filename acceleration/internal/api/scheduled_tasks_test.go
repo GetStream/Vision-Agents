@@ -993,6 +993,84 @@ func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
 	s.Empty(s.tasksOf(user), "the deleted conversation's tasks went with it")
 }
 
+func (s *ScheduledTasksSuite) TestDeletingAConfigPausesItsTasks() {
+	deleted, kept := s.agentWithScheduling(nil), s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	orphaned := s.createTask(user, taskRequest(deleted))
+	other := s.createTask(user, taskRequest(kept))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+deleted, nil, nil))
+
+	states := map[string]string{}
+	for _, task := range s.tasksOf(user) {
+		states[task.ID] = task.State
+	}
+	s.Equal(map[string]string{orphaned.Id: store.ScheduledTaskPaused, other.Id: store.ScheduledTaskActive}, states,
+		"a task of a deleted agent has nothing to run on, and stops counting against the user's limit")
+}
+
+func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	status, failure := user.failure(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestAConfigThatCannotBeReadIsNotReportedAsDeletedOnResume() {
+	// A task with no config id makes the config lookup fail without the config
+	// being gone: that is a failure of the lookup, not an unknown config.
+	user := s.data.createUser()
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), UserID: user.userID,
+		CallerKind: string(auth.KindServer), Title: "Stretch", Instructions: "Remind them to stretch.",
+		StartLocal: time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "Europe/Amsterdam",
+		State: store.ScheduledTaskPaused,
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+
+	var rendered ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+task.ID+"/resume", nil, &rendered))
+	s.Equal(store.ScheduledTaskActive, rendered.State)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotResumeATaskOfAConfigDeletedUnderItsSession() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"resume"}`})
+	s.say(user, opened.Id, "turn it back on")
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentCannotRescheduleAFailedTaskOfAConfigDeletedUnderItsSession() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+	failed := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	failed.State = store.ScheduledTaskFailed
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &failed))
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","in":"PT2H"}`})
+	s.say(user, opened.Id, "try it again in two hours")
+	s.Contains(s.ranResult(watching), `"error":"unknown_config"`)
+	s.Equal(store.ScheduledTaskFailed, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
 func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 	// The user agreed to the task once, not to each time it runs: the turn it
 	// fires in their own conversation is the customer's spend, and the turn

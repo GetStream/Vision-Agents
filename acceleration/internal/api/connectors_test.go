@@ -16,6 +16,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // ConnectorsSuite is about the connector catalog: the built-ins, an app's own custom MCP
@@ -81,6 +82,38 @@ func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
 	s.Equal("Enable the API", calendar.Setup.Steps[0].Title)
 	s.Equal([]ConnectorClientRegistrationMethod{"operator", "customer"}, calendar.Client.Registration)
 	s.Nil(calcom.Setup)
+}
+
+// nessy is internal (nessy.yaml): an app Stream marks internal lists and reads it with the
+// client and setup its staff need.
+func (s *ConnectorsSuite) TestAnAppMarkedInternalListsAndReadsNessy() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+
+	s.Contains(connectorIDs(s.list("").Items), "nessy")
+	nessy := s.get("nessy")
+	s.Equal([]string{"oauth2_code"}, nessy.Schemes)
+	s.Equal([]string{"mcp", "openid"}, nessy.Scopes)
+	s.Equal([]ConnectorClientRegistrationMethod{"customer"}, nessy.Client.Registration)
+	s.Equal(ConnectorClientAuthMethod("client_secret_basic"), nessy.Client.AuthMethod)
+	s.Require().NotNil(nessy.Setup)
+	s.Equal("https://nessy.getstream.io/admin", nessy.Setup.URL)
+	s.Len(nessy.Setup.Steps, 6)
+}
+
+// An app not marked internal, whether its settings say nothing or say false, lists every
+// built-in an internal app does but nessy, and reading nessy is a 404.
+func (s *ConnectorsSuite) TestAnAppNotMarkedInternalNeitherListsNorReadsNessy() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	everything := connectorIDs(s.list("").Items)
+	s.Require().Contains(everything, "nessy")
+	public := slices.DeleteFunc(slices.Clone(everything), func(id string) bool { return id == "nessy" })
+
+	for _, settings := range []store.AppSettings{{}, {InternalConnectors: new(false)}} {
+		s.useApp(s.data.createAppAdmitting(settings))
+		s.Equal(public, connectorIDs(s.list("").Items))
+		status, _ := s.serverClient.failure(http.MethodGet, "/v1/agents/connectors/nessy", nil)
+		s.Equal(http.StatusNotFound, status)
+	}
 }
 
 func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {

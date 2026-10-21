@@ -367,19 +367,37 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 	shipped, err := builtinManifests(providers.FS)
 	s.Require().NoError(err)
+	on := true
+	flagged := s.appWith(AppSettings{InternalConnectors: &on})
 
-	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
+	// acme has no app row, so it sees no internal built-in (visibleTo).
+	public := slices.DeleteFunc(slices.Clone(shipped), func(m core.Manifest) bool { return m.Internal })
+	noRow, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(listed, 23)
-	for i, id := range []string{"bigquery", "calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "instacart", "linear", "linear_app", "linq", "metabase", "notion", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "whatsapp"} {
-		s.Equal(id, listed[i].ID)
+	s.Require().Len(noRow, 23)
+	s.Equal(manifestIDs(public), definitionIDs(noRow))
+
+	// An app with the flag lists every shipped built-in, the internal ones included.
+	listed, err := s.store.ListConnectorDefinitions(s.ctx, flagged, ConnectorDefinitionFilter{})
+	s.Require().NoError(err)
+	s.Require().Len(listed, 24)
+	s.Equal(manifestIDs(shipped), definitionIDs(listed))
+	for i := range shipped {
 		s.Equal(BuiltinCustomer, listed[i].CustomerID)
 		s.Equal(shipped[i].Revision, listed[i].Revision, "stored at the revision its file names")
 		s.Equal(shipped[i].Revision, listed[i].Manifest.Revision, "the stored manifest names the revision it is stored as")
 		s.Equal(listed[i].Manifest.Name, listed[i].Name)
-		s.NotEmpty(listed[i].Category)
-		s.NotEmpty(listed[i].Description)
+		s.NotEmpty(listed[i].Category, listed[i].ID)
+		s.NotEmpty(listed[i].Description, listed[i].ID)
 	}
+}
+
+func manifestIDs(manifests []core.Manifest) []string {
+	ids := make([]string, len(manifests))
+	for i, m := range manifests {
+		ids[i] = m.ID
+	}
+	return ids
 }
 
 func (s *StoreSuite) TestSeedingAnUnchangedManifestAddsNoRevision() {
