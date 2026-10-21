@@ -296,6 +296,10 @@ func (s *Scheduler) run(claim store.ClaimedScheduledTask) {
 		})
 		return
 	}
+	if claim.WorkersLost {
+		s.logger.Error("a scheduled task's occurrence failed: it was started this many times and its worker was lost each time",
+			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "attempts", claim.Run.Attempts)
+	}
 	if claim.AlreadySettled {
 		// The occurrence was settled and only the advance was lost: settle the
 		// task from the run as it stands, without delivering again.

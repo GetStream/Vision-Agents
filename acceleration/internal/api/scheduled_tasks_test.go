@@ -2332,6 +2332,33 @@ func (s *ScheduledTasksSuite) TestPausingATaskWritesTheOccurrenceItHeldMissed() 
 	s.NotNil(page.Items[0].FinishedAt)
 }
 
+func (s *ScheduledTasksSuite) TestAnOccurrenceWhoseWorkersKeepDyingListsACodeAsItsReason() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created := s.createTask(user, taskRequest(config))
+	task := s.tasksOf(user)[0]
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task.NextRunAt = &due
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &task))
+	// Three workers took it up and died: the store's cap.
+	started := time.Now().Add(-time.Hour)
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: s.customerID(), ScheduledFor: due,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunRunning, Attempts: 3, StartedAt: &started}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &stale))
+	s.runWorker()
+
+	path := "/v1/agents/scheduled-tasks/" + created.Id
+	var page ScheduledTaskRunPage
+	s.Require().Eventually(func() bool {
+		page = ScheduledTaskRunPage{}
+		return user.do(http.MethodGet, path+"/runs", nil, &page) == http.StatusOK &&
+			len(page.Items) == 1 && page.Items[0].State == store.ScheduledTaskRunFailed
+	}, 30*time.Second, 250*time.Millisecond, "the occurrence was never failed")
+	s.Require().NotNil(page.Items[0].Error)
+	s.Equal(scheduling.ReasonFailed, *page.Items[0].Error, "a code from the closed set, the story in the logs")
+}
+
 func (s *ScheduledTasksSuite) TestListingReadsWhenEveryTaskLastRanInOneQuery() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

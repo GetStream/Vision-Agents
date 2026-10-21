@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -834,7 +835,10 @@ func (s *SchedulerSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedNotDeliver
 	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due,
 		Attempts: 3, StartedAt: &started}
 	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &stale))
-	s.started(deliver.deliver, nil)
+	logged := &logBuffer{}
+	s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.logger = slog.New(slog.NewTextHandler(logged, nil))
+	})
 
 	s.Require().Eventually(func() bool {
 		return s.read(task).State == store.ScheduledTaskFailed
@@ -845,4 +849,25 @@ func (s *SchedulerSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedNotDeliver
 	s.Require().Len(runs, 1)
 	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
 	s.Equal(3, runs[0].Attempts)
+	s.Equal(ReasonFailed, *runs[0].Error, "the reason is a code")
+	s.Contains(logged.String(), "its worker was lost each time", "the story is in the logs")
+	s.Contains(logged.String(), "run="+runs[0].ID)
+}
+
+// logBuffer is a log a worker writes while a test reads it.
+type logBuffer struct {
+	mu      sync.Mutex
+	written strings.Builder
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.written.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.written.String()
 }

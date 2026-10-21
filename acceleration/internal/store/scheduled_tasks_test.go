@@ -486,6 +486,7 @@ func (s *StoreSuite) TestAnEditKeepingTheNextRunSettlesARepeatsOccurrenceRatherT
 	s.True(again[0].AlreadySettled, "the old instructions are not delivered")
 	s.Equal(claim.Run.ID, again[0].Run.ID)
 	s.Equal(ScheduledTaskRunMissed, again[0].Run.State)
+	s.False(again[0].WorkersLost, "the run was settled by the edit, not failed by this claim")
 }
 
 func (s *StoreSuite) TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads() {
@@ -693,12 +694,13 @@ func (s *StoreSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCa
 	s.Require().NoError(err)
 	s.Require().Len(failed, 1)
 	s.True(failed[0].AlreadySettled, "the worker settles the task without delivering again")
+	s.True(failed[0].WorkersLost, "the worker says why")
 	s.Equal(ScheduledTaskRunFailed, failed[0].Run.State)
 	stored := s.run(runID)
 	s.Equal(ScheduledTaskRunFailed, stored.State)
 	s.Equal(3, stored.Attempts, "the first claim and two takeovers")
 	s.Require().NotNil(stored.Error)
-	s.Contains(*stored.Error, "worker was lost")
+	s.Equal("delivery_failed", *stored.Error, "a code a device is shown, not the story")
 	s.NotNil(stored.FinishedAt)
 	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
 	s.Require().NoError(err)
