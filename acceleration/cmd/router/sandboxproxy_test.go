@@ -88,14 +88,18 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	_ = freed.Close()
 }
 
-// TestNoProxyServesNothing: the router without one starts no listener, and stop is safe.
+// TestNoProxyServesNothing: the router without one listens on no proxy address, and stop
+// is safe.
 func TestNoProxyServesNothing(t *testing.T) {
-	served := false
-	stop, err := serveSandboxProxy(nil, freeAddress(t), func(*http.Server, net.Listener) { served = true }, slog.New(slog.DiscardHandler))
+	address := freeAddress(t)
+	stop, err := serveSandboxProxy(nil, address, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+
+	free, err := net.Listen("tcp", address)
 
 	require.NoError(t, err)
-	require.NoError(t, stop())
-	require.False(t, served)
+	_ = free.Close()
 }
 
 // freeAddress is a loopback address no one listens on.
