@@ -442,7 +442,7 @@ pick rather than a list of their own to keep:
 
 | Group                | What it is                                                                      |
 | -------------------- | ------------------------------------------------------------------------------- |
-| `llm-conversational` | Super lightweight: GPT-5.6 Luna, Gemma 4 26B-A4B and Gemma 4 31B on Cerebras, pinned to GPT-5.6 Luna while Gemma 4 26B is down |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B, Gemma 4 31B on Cerebras and GPT-5.6 Luna, pinned to Gemma 4 26B |
 | `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
 | `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
 | `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
