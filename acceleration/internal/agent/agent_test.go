@@ -3371,6 +3371,7 @@ func (s *AgentSuite) TestBargeInDropsQueuedSpeechBeforeTheVoiceInterruptReturns(
 		return strings.Contains(text.String(), "I heard you.") && strings.Contains(text.String(), "I will stop.")
 	}, "the queued caller reply was not spoken")
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the queued caller reply produced no audio")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) >= 2 }, "the replacement reply never reported starting")
 	s.Equal(1, countOf[Interrupted](s.reported()), "the old reply is interrupted once")
 	s.Equal(2, countOf[Responding](s.reported()), "the replacement reply starts once after interruption")
 }
