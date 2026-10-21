@@ -64,6 +64,17 @@ var scheduledCallLimit = 10 * time.Minute
 // the user asked for, maybe in the night, is worse than none.
 const scheduledCallGrace = 15 * time.Minute
 
+// scheduledPeerWindow is how long the node holding a task's conversation is
+// given to deliver it, the peer's delivery running under the asker's
+// deadline: long enough for the call it may place, which is the ring
+// (scheduledPhoneWindow), the task sent as the call's first turn, which may
+// wait out a reply for scheduledWindow (followUpWithin), and the call held to
+// its limit (scheduledCallLimit). The occurrence's own budget still bounds
+// it. A function, because tests shorten the ring and the limit.
+func scheduledPeerWindow() time.Duration {
+	return scheduledPhoneWindow + scheduledWindow + scheduledCallLimit
+}
+
 // errScheduledNotHere says the conversation's session is not live on this
 // node, which is the peer answer that sends the asker back to reopening.
 var errScheduledNotHere = errors.New("the session is not running on this node")
@@ -547,7 +558,7 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 	if err != nil {
 		return none, false, err
 	}
-	ask, cancel := context.WithTimeout(ctx, scheduledWindow)
+	ask, cancel := context.WithTimeout(ctx, scheduledPeerWindow())
 	answer, err := s.forwarder.Ask(ask, address, request, body)
 	cancel()
 	if err == nil && answer.GetStatus() == http.StatusOK {
