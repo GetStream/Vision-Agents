@@ -146,3 +146,9 @@ func (s *Session) observe(run *presence, event Event) {
 func isAgent(agentUserID string, p stt.Participant) bool {
 	return p.UserID == agentUserID || strings.HasPrefix(p.UserID, agentUserID+"-")
 }
+
+// CallerJoined reports whether a phone caller has been in the session's call: on a call the
+// router placed, the person rung has picked up.
+func (s *Session) CallerJoined() bool {
+	return s.callerSeen.Load()
+}

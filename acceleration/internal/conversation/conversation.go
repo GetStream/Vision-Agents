@@ -121,6 +121,9 @@ type commandRecord struct {
 	Initiator string `json:",omitempty"`
 	// ClientID is the install the command came from; a client tool call is addressed to it.
 	ClientID string `json:",omitempty"`
+	// Reply is what a follow-up's reply said when it finished, for the follow-up delivered
+	// again to carry rather than run twice (FollowUpReply).
+	Reply string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -207,6 +210,10 @@ type Conversation struct {
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
+	// resumed is when the model last began working towards what it says next: a response
+	// starting, its latest words, or a tool's result. A round of thinking that opens after it
+	// began then, which matters for a model that sends its thinking only once it is done.
+	resumed time.Time
 	// indicated is the last AI indicator sent to watchers, and lived when the last live
 	// update went out. Only run touches them.
 	indicated indication
@@ -813,6 +820,10 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 // commandsIn rebuilds the command ledger from stored messages. A person's message is stored
 // under its command ID and the reply carries that ID, so Stream already holds every command
 // a page shows. A command whose reply never reached Stream was cut off before it was stored.
+// A reply no person's message carries the ID of is a follow-up that landed: nobody wrote for
+// it, so what says it already happened is the reply itself. Its record carries no digest and
+// no initiator: the prompt is never stored, so existence is the whole of the duplicate test,
+// and no person's command may take the ID afterwards.
 func commandsIn(messages []Message) map[string]commandRecord {
 	commands := map[string]commandRecord{}
 	for _, m := range messages {
@@ -830,12 +841,24 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		}
 	}
 	for _, m := range messages {
+		if m.Role != "assistant" || m.CommandID == "" {
+			continue
+		}
 		record, ok := commands[m.CommandID]
-		if m.Role != "assistant" || !ok {
+		if !ok {
+			commands[m.CommandID] = commandRecord{
+				CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State},
+				Reply:          m.Text,
+			}
 			continue
 		}
 		record.AssistantMessageID = m.ID
 		record.State = m.State
+		// Only a follow-up, which has no message of a person's, is read back; its
+		// latest message is the one a retry after an abandoned turn answered with.
+		if record.UserMessageID == "" {
+			record.Reply = m.Text
+		}
 		commands[m.CommandID] = record
 	}
 	return commands
@@ -1375,6 +1398,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !c.acceptTurn(e.TurnID, true) {
 			return
 		}
+		c.resumed = time.Now()
 		c.state("thinking")
 		c.settleThinking(m, time.Now())
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
@@ -1388,6 +1412,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		c.state("writing")
 		c.settleThinking(m, time.Now())
+		c.resumed = time.Now()
 		m.Text += e.Text
 		m.Saved = false
 	case agent.ReasoningDelta:
@@ -1438,6 +1463,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !c.acceptTurn(e.TurnID, false) {
 			return
 		}
+		c.resumed = time.Now()
 		changed := false
 		for i := range m.Tools {
 			t := &m.Tools[i]
@@ -1676,6 +1702,11 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
+	// Only a follow-up, which has no message of a person's, is read back this way.
+	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" {
+		record.Reply = m.Text
+		c.data.Commands[m.CommandID] = record
+	}
 	c.stopParts(m, now)
 	m.FinishedAt = &now
 	m.DurationMS = now.Sub(m.StartedAt).Milliseconds()
@@ -2009,6 +2040,13 @@ func (c *Conversation) run() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := c.send(ctx, operation{Message: *m, reasoning: window, live: &snapshot}, true, visible)
 				cancel()
+				// A refused or slow live update holds back every update after it, so the reply
+				// stops moving for people watching it: say so, rather than have it look like
+				// the model paused.
+				if took := time.Since(now); err != nil || took > time.Second {
+					c.service.logger.Warn("a live Stream Chat update was refused or slow; watchers see the reply stop until the next",
+						"cid", c.data.CID, "message", m.ID, "took", took.Round(time.Millisecond), "error", err)
+				}
 				c.mu.Lock()
 				current := c.data.Current != nil && c.data.Current.ID == m.ID
 				// A settled reply's thinking is best effort, like its indicator: it is
@@ -2019,6 +2057,8 @@ func (c *Conversation) run() {
 				if err != nil {
 					c.liveFailures++
 					c.liveRetry = now.Add(liveBackoff(err, c.liveFailures, now))
+					c.service.logger.Warn("live Stream Chat updates pause after a refused one",
+						"cid", c.data.CID, "message", m.ID, "failures", c.liveFailures, "pause", c.liveRetry.Sub(now).Round(time.Millisecond))
 				} else {
 					c.liveFailures = 0
 				}
@@ -2087,7 +2127,14 @@ func (c *Conversation) sendIndicator(messageID, state string) {
 	if err != nil {
 		return
 	}
-	_, _ = client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+	// The live loop sends it, so a slow one holds back the reply's live updates until it is
+	// answered: say so, rather than have it look like the model paused.
+	started := time.Now()
+	_, err = client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+	if took := time.Since(started); err != nil || took > time.Second {
+		c.service.logger.Warn("an AI indicator was refused or slow; watchers see the reply stop until it was answered",
+			"cid", c.data.CID, "message", messageID, "type", event.Type, "took", took.Round(time.Millisecond), "error", err)
+	}
 }
 
 // aiState maps a live reply to Stream's AI indicator states: generating once the answer

@@ -8,6 +8,8 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -114,11 +116,24 @@ type Sandbox interface {
 	Close() error
 }
 
-// Tool describes running code to a model.
-func Tool() llm.Tool {
+// Granted is a sandbox whose code may call connectors' APIs through grants.
+type Granted interface {
+	Grants() []Grant
+}
+
+// Tool describes running code in box to a model, with the env vars its grants give code.
+func Tool(box Sandbox) llm.Tool {
+	description := "Run a short Python program and read back what it printed. Use it for anything you would otherwise have to work out in your head, such as arithmetic, dates or parsing, and for making files such as images. Print what you want to know. A skill's own scripts are under skills/<name>/; run one in another language through subprocess, such as subprocess.run([\"go\", \"run\", \"skills/pdf/scripts/merge.go\"])."
+	if granted, ok := box.(Granted); ok {
+		for _, grant := range granted.Grants() {
+			hosts := strings.Join(grant.Hosts, ", ")
+			description += fmt.Sprintf(" Code may call %s with $%s: send it over HTTPS as `Authorization: Bearer $%s`; "+
+				"the value is a placeholder that works only for %s, only in a request header.", hosts, grant.Env, grant.Env, hosts)
+		}
+	}
 	return llm.Tool{
 		Name:        ToolName,
-		Description: "Run a short Python program and read back what it printed. Use it for anything you would otherwise have to work out in your head, such as arithmetic, dates or parsing, and for making files such as images. Print what you want to know. A skill's own scripts are under skills/<name>/; run one in another language through subprocess, such as subprocess.run([\"go\", \"run\", \"skills/pdf/scripts/merge.go\"]).",
+		Description: description,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

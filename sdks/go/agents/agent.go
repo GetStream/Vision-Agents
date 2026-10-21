@@ -179,6 +179,10 @@ type SessionOptions struct {
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent's own configuration decided.
 	ModelOverwrites *acceleration.ModelOverwrites
+	// Timezone is the end user's IANA timezone, such as Europe/Amsterdam. It sets the
+	// zone the agent reads dates in for this conversation and, for a named user, is
+	// remembered as theirs for the scheduled tasks and sessions that follow.
+	Timezone string
 }
 
 // Create opens a conversation. It returns once the backend is holding it, so an agent on a
@@ -248,6 +252,7 @@ func (a *Agent) join(ctx context.Context, remote stream.Call, options ...Session
 		remote.Custom = chosen.Custom
 		remote.Incognito = chosen.Incognito
 		remote.ModelOverwrites = chosen.ModelOverwrites
+		remote.Timezone = chosen.Timezone
 		if chosen.AgentID != "" {
 			remote.AgentID = chosen.AgentID
 		}

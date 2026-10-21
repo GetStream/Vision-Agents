@@ -128,6 +128,13 @@ type ManagerOptions struct {
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
+	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
+	// code in a sandbox. daytona.BrokerName is the one there is.
+	SandboxBroker string
+	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
+	// environment in every credential a broker leaves with the sandbox provider. A session
+	// with a sandbox binding is refused without it.
+	SandboxSecretPrefix string
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -167,15 +174,29 @@ type Manager struct {
 	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
+	// slots caps each connection's connector calls in flight, across every session here.
+	slots callSlots
 
 	mu       sync.Mutex
 	sessions map[string]*Session
-	closed   bool
+	// kickScheduler wakes the scheduled-task worker after a scheduling tool
+	// makes or changes a task (SetSchedulerKick); nil where no worker runs.
+	kickScheduler func()
+	closed        bool
 	// closing counts the sessions taken off the map whose Close has not returned. They are
 	// still writing how they ended, so a draining router waits on them and Shutdown keeps
 	// the recorders open for them (ended).
 	closing int
 	ended   sync.WaitGroup
+}
+
+// SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
+// a task the agent makes or changes is claimed without waiting for the
+// worker's next look at the store. Sessions opened from now on use it.
+func (m *Manager) SetSchedulerKick(kick func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.kickScheduler = kick
 }
 
 // NewManager validates the options and returns a Manager. It starts nothing.
@@ -435,7 +456,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	box, err := m.box(spec)
+	box, err := m.box(spec, connectors)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -498,6 +519,25 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	if mcp != nil {
 		created.closers = append(created.closers, mcp.Close)
+	}
+	// The scheduling tools are offered beside the plugins, inside the connectors:
+	// every layer in front passes their names through to here, and a caller that
+	// declared one of the names keeps its own.
+	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
+		tools = append(tools, offered...)
+		spec.SchedulingTools = true
+		created.spec.SchedulingTools = true
+		// A session opened without a zone runs in its user's stored one, so the
+		// agent reads dates, and the prompt's clock line tells the day, in the
+		// zone its tasks will run in.
+		if spec.Timezone == "" {
+			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, spec.Caller.UserID); err == nil && zone != "" {
+				spec.Timezone, created.spec.Timezone = zone, zone
+				scheduling.spec.Timezone = zone
+			}
+		}
+		scheduling.next = runner
+		runner = scheduling
 	}
 	if own := m.userPlugins(spec, runner); own != nil {
 		tools = append(tools, plugins.UserTools(own.offered)...)
@@ -1357,15 +1397,24 @@ func (m *Manager) Shutdown() error {
 
 // box is where the session's subagent runs the code it writes, which is nowhere unless the
 // caller asked for a sandbox. Nothing is created here: the provider opens one the first
-// time code is actually run, so a session that never delegates never pays for it.
-func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
+// time code is actually run, so a session that never delegates never pays for it. Neither
+// is a credential handed to the broker before then.
+func (m *Manager) box(spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
 	if spec.Sandbox == "" {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
+	options := daytona.Options{Config: spec.SandboxOptions, Logger: m.logger}
+	if connectors != nil && len(connectors.grants) > 0 {
+		broker, err := m.broker(spec, connectors)
+		if err != nil {
+			return nil, err
+		}
+		options.Grants, options.Broker = connectors.grants, broker
+	}
+	return daytona.New(options)
 }
 
 // reading reports whether this session has anything to look things up in, which is a
@@ -1691,7 +1740,7 @@ func (m *Manager) LoginFinished(state string) {
 		return
 	}
 	text := name + " is connected now. Carry on with what I asked for before you needed it."
-	if err := held.FollowUp(context.Background(), text); err != nil {
+	if err := held.FollowUp(context.Background(), "login_"+store.NewID(), text); err != nil {
 		m.logger.Warn("could not carry on after a plugin login", "plugin", pluginID, "error", err)
 	}
 }

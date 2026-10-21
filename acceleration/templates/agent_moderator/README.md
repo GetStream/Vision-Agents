@@ -10,7 +10,8 @@ through `POST /v1/agents/runs`. The dashboard's "AI moderator" template
   how to talk about actions.
 - `simulations/` holds the reviews Nora must get right: casual against targeted profanity,
   educational quotation, repeat and overturned history, an innocent message from a banned user,
-  and an injected instruction. Run them after editing the agent
+  an injected instruction, and two Ask Nora questions across the app (who violates most, which
+  label is most often overturned). Run them after editing the agent
   (`getstream agents simulate nora`); the AI team runs them before changing this template.
 - `skills/suggest_policy.md` is for Ask Nora: from the live policy, the last 7 days of reviews
   and where Nora disagreed with the first layer, it proposes changes to labels, app context,

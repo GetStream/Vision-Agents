@@ -67,14 +67,21 @@ void main() {
   group('LiveReasoning', () {
     late LiveReasoning reasoning;
 
-    void window(String text, int offset, [String id = 'r1']) => reasoning.read(
-      stream.Message(
-        text: 'ignored',
-        extraData: {
-          'reasoning': {'id': id, 'offset': offset, 'text': text, 'length': offset + text.length},
-        },
-      ),
-    );
+    void window(String text, int offset, [String id = 'r1', String message = 'reply']) =>
+        reasoning.read(
+          stream.Message(
+            id: message,
+            text: 'ignored',
+            extraData: {
+              'reasoning': {
+                'id': id,
+                'offset': offset,
+                'text': text,
+                'length': offset + text.length,
+              },
+            },
+          ),
+        );
 
     setUp(() => reasoning = LiveReasoning());
 
@@ -82,7 +89,7 @@ void main() {
       window('The order was ', 0);
       window('delivered unopened.', 14);
 
-      expect(reasoning['r1'], 'The order was delivered unopened.');
+      expect(reasoning[(message: 'reply', step: 'r1')], 'The order was delivered unopened.');
     });
 
     test('a repeat of recent thinking adds only what is new', () {
@@ -91,7 +98,10 @@ void main() {
       window('the policy, which allows 30 days', 9);
       window('policy', 13);
 
-      expect(reasoning['r1'], 'Checking the policy, which allows 30 days');
+      expect(
+        reasoning[(message: 'reply', step: 'r1')],
+        'Checking the policy, which allows 30 days',
+      );
     });
 
     test('a missed window leaves a paragraph break rather than running on', () {
@@ -99,14 +109,14 @@ void main() {
 
       window('Much later.', 40);
 
-      expect(reasoning['r1'], 'First thought.\n\nMuch later.');
+      expect(reasoning[(message: 'reply', step: 'r1')], 'First thought.\n\nMuch later.');
     });
 
     test('somebody joining midway starts from the window they get', () {
       window('the rest of it', 300, 'r2');
 
-      expect(reasoning['r2'], 'the rest of it');
-      expect(reasoning['r1'], isNull);
+      expect(reasoning[(message: 'reply', step: 'r2')], 'the rest of it');
+      expect(reasoning[(message: 'reply', step: 'r1')], isNull);
     });
 
     test('positions count code points as the router does', () {
@@ -114,13 +124,37 @@ void main() {
 
       window(' 🌸 bloom', 4);
 
-      expect(reasoning['r1'], 'café 🌸 bloom');
+      expect(reasoning[(message: 'reply', step: 'r1')], 'café 🌸 bloom');
+    });
+
+    // Every reply numbers its steps from `r1`, so a later reply's first round is not the
+    // earlier one's, whether it thinks for less or for more.
+    test('each reply keeps the thinking of its own steps', () {
+      window('Looking up the order history and the return policy.', 0, 'r1', 'first');
+
+      window('Refund it.', 0, 'r1', 'second');
+      window(
+        'Checking which of the two orders arrived damaged, then the refund window.',
+        0,
+        'r1',
+        'third',
+      );
+
+      expect(
+        reasoning[(message: 'first', step: 'r1')],
+        'Looking up the order history and the return policy.',
+      );
+      expect(reasoning[(message: 'second', step: 'r1')], 'Refund it.');
+      expect(
+        reasoning[(message: 'third', step: 'r1')],
+        'Checking which of the two orders arrived damaged, then the refund window.',
+      );
     });
 
     test('a message with no window changes nothing', () {
-      reasoning.read(stream.Message(text: 'Hello'));
+      reasoning.read(stream.Message(id: 'reply', text: 'Hello'));
 
-      expect(reasoning['r1'], isNull);
+      expect(reasoning[(message: 'reply', step: 'r1')], isNull);
     });
   });
 }

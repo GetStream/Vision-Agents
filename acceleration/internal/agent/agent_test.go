@@ -209,6 +209,8 @@ type stubLLM struct {
 	callsOn int
 	// senders are who each request was asked in the name of, in the order asked.
 	senders []routing.Caller
+	// scheduled is whether each request was asked as a turn a scheduled task fired.
+	scheduled []bool
 
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can interrupt while Create has not come back.
@@ -252,6 +254,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.asked = append(s.asked, params)
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
+	s.scheduled = append(s.scheduled, routing.ScheduledTurn(ctx))
 	hold, completion, refuses := s.holdCreate, s.holdCompletion, s.refuses
 	s.mu.Unlock()
 
@@ -385,6 +388,13 @@ func (s *stubLLM) sentBy() []routing.Caller {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]routing.Caller(nil), s.senders...)
+}
+
+// askedScheduled is whether each request was asked as a turn a scheduled task fired.
+func (s *stubLLM) askedScheduled() []bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]bool(nil), s.scheduled...)
 }
 
 func (s *stubLLM) requests() []llm.ResponseParams {
@@ -2217,6 +2227,28 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
 }
 
+func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {
+	// A scheduled turn is the customer's spend, decided where the model is asked, so the
+	// mark has to reach it, the reply that finishes the turn included, and the next turn
+	// somebody sends is not marked.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`, "Hello."}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is 15% of 84.20", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 && !s.agent.floor().Talking },
+		"the answer coming back never finished the turn")
+
+	_, err = s.agent.RespondTo(s.ctx, "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next turn was never asked")
+	s.Equal([]bool{true, true, false}, s.model.askedScheduled())
+}
+
 func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {
 	s.joinText()
 	user := routing.Caller{UserID: "alice", IP: "203.0.113.7"}
@@ -2275,6 +2307,51 @@ func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedInTheNameOfWhoeverType
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the tool result was never answered")
 	s.Equal([]routing.Caller{user, {}, {}}, s.model.sentBy())
+}
+
+func (s *AgentSuite) TestASpokenTurnIsNotAskedAsScheduledWhenAScheduledTurnCameBeforeIt() {
+	// A spoken turn is the caller's, not the customer's scheduled spend, so the mark of the
+	// scheduled turn before it does not carry over.
+	s.join(false)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the scheduled turn was never answered")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the spoken turn was never asked")
+	s.Equal([]bool{true, false}, s.model.askedScheduled())
+}
+
+func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedAsScheduledWhenAScheduledTurnCameBeforeIt() {
+	// A spoken turn answered from a reply started early begins a turn of its own, so the
+	// tool reply that finishes it does not carry the mark of the scheduled turn before it.
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Hello."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.callsOn = 2
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the scheduled turn was never answered")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the reply should be asked for while the flow controller is still deciding")
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the tool result was never answered")
+	s.Equal([]bool{true, false, false}, s.model.askedScheduled())
 }
 
 func (s *AgentSuite) TestAReasoningEffortTheModelDoesNotTakeIsRefusedBeforeTheTurn() {
@@ -3294,6 +3371,7 @@ func (s *AgentSuite) TestBargeInDropsQueuedSpeechBeforeTheVoiceInterruptReturns(
 		return strings.Contains(text.String(), "I heard you.") && strings.Contains(text.String(), "I will stop.")
 	}, "the queued caller reply was not spoken")
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the queued caller reply produced no audio")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) >= 2 }, "the replacement reply never reported starting")
 	s.Equal(1, countOf[Interrupted](s.reported()), "the old reply is interrupted once")
 	s.Equal(2, countOf[Responding](s.reported()), "the replacement reply starts once after interruption")
 }

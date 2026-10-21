@@ -133,6 +133,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuse(err.Error())
 		return
 	}
+	s.rememberTimezone(ctx, customerID, spec)
 	owner := OwnerFrom(ctx)
 	defer func() {
 		if _, err := s.sessions.Close(created.ID(), owner); err != nil {

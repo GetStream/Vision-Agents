@@ -103,7 +103,7 @@ func (s *Store) PutConnectorOAuthClient(ctx context.Context, client *ConnectorOA
 		if _, err := lockCustomDefinitions(ctx, tx, client.CustomerID, []string{client.ConnectorID}); err != nil {
 			return err
 		}
-		definition, err := latestDefinition(ctx, tx, []string{BuiltinCustomer, client.CustomerID}, client.ConnectorID)
+		definition, err := latestDefinition(ctx, tx, visibleTo(client.CustomerID), client.ConnectorID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %s", ErrNoConnectorDefinition, client.ConnectorID)
 		}

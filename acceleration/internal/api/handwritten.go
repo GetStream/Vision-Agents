@@ -191,7 +191,10 @@ func documentHandWritten(api huma.API) {
 			"`StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute " +
 			"the work to a conversation and `tags` to bill it.\n" +
 			"Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz " +
-			"mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames " +
+			"mono by default, and returns `transcript` frames. A model that refuses the session part " +
+			"way through hands it to the next model routed for it, which is announced with " +
+			"another `started` frame naming its `provider` and `model`; what the refusing model had " +
+			"not transcribed yet is lost. Text-to-speech takes `speak` frames " +
 			"and returns binary audio with `synthesis_complete` between utterances: each audio frame " +
 			"opens with a little-endian header of a uint32 sample rate, a uint16 channel count and " +
 			"two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, " +

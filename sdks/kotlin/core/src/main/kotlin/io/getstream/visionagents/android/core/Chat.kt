@@ -102,6 +102,6 @@ public fun LiveReasoning.read(message: Message) {
     val id = window["id"] as? String ?: return
     val offset = window["offset"] as? Number ?: return
     val text = window["text"] as? String ?: return
-    add(text, offset.toInt(), id)
+    add(text, offset.toInt(), message.id, id)
 }
 

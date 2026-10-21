@@ -148,7 +148,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 		return Answer{Status: http.StatusBadRequest, Body: failure(err.Error())}
 	}
 	for _, message := range delivered {
-		fresh, err := s.store.ClaimChannelMessage(ctx, account.ID, message.ID)
+		fresh, err := s.store.ClaimChannelMessage(ctx, account.ID, message.ID, message.From)
 		if err != nil {
 			return Answer{Status: http.StatusInternalServerError, Body: failure(err.Error())}
 		}
@@ -184,6 +184,112 @@ func (s *Service) Link(ctx context.Context, customerID, configID, userID string)
 		return store.ChannelLink{}, err
 	}
 	return link, nil
+}
+
+// Notice is a message sent to one end user on a channel, first, rather than
+// as an answer: who it is for, on which agent's line, and what it says.
+type Notice struct {
+	CustomerID string
+	ConfigID   string
+	Kind       Kind
+	UserID     string
+	Text       string
+}
+
+// whatsappWindow is how long after somebody last wrote WhatsApp lets a line
+// write first. Outside it only a pre-approved template may open, which this
+// router does not send, so the write is refused and the caller falls back.
+const whatsappWindow = 24 * time.Hour
+
+// Notify sends text to one end user on a channel they already talk to the
+// agent on, over the line that agent answers on there.
+//
+// Everything that keeps an answer from going out keeps a first message from
+// going out, and for the same reasons: the gate refuses a number that opted
+// out, a sandboxed app counts the message against its day, and WhatsApp is
+// written only inside the day after the person last wrote, because outside
+// it Meta wants a template this router does not send. A refusal is an error
+// like any other, which is what a caller with another channel falls back on.
+func (s *Service) Notify(ctx context.Context, notice Notice) error {
+	if notice.Text == "" {
+		return stack.Wrap(errors.New("channels: there is nothing to send"))
+	}
+	line, thread, provider, err := s.reach(ctx, notice)
+	if err != nil {
+		return err
+	}
+	if err := provider.Send(ctx, line, thread, Reply{Text: notice.Text}); err != nil {
+		return stack.Wrap(err)
+	}
+	s.gate.Sent(ctx, notice.CustomerID)
+	return nil
+}
+
+// Reachable says whether Notify would send to the notice's user now, its text aside. A
+// caller that pays for the text, such as a turn the agent runs to write it, asks first.
+func (s *Service) Reachable(ctx context.Context, notice Notice) error {
+	_, _, _, err := s.reach(ctx, notice)
+	return err
+}
+
+// reach is the line, chat and provider a notice goes out on, or why it may not.
+func (s *Service) reach(ctx context.Context, notice Notice) (Account, string, Provider, error) {
+	if !notice.Kind.Valid() {
+		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
+	}
+	identity, err := s.store.ChannelIdentityByUser(ctx, notice.CustomerID, notice.ConfigID,
+		string(notice.Kind), notice.UserID)
+	if errors.Is(err, store.ErrUnknownChannelIdentity) {
+		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on %s", notice.UserID, notice.Kind))
+	}
+	if err != nil {
+		return Account{}, "", nil, stack.Wrap(err)
+	}
+	config, err := s.store.AgentConfig(ctx, notice.CustomerID, notice.ConfigID)
+	if err != nil {
+		return Account{}, "", nil, stack.Wrap(err)
+	}
+	number := config.Channels.Lines()[string(notice.Kind)]
+	if number == "" {
+		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: the agent answers on no %s line", notice.Kind))
+	}
+	account, err := s.store.ChannelAccount(ctx, notice.CustomerID, string(notice.Kind), number)
+	if err != nil {
+		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: the %s line %s is not connected: %w", notice.Kind, number, err))
+	}
+	line, err := Open(s.secrets, account)
+	if err != nil {
+		return Account{}, "", nil, stack.Wrap(err)
+	}
+	if err := s.gate.Allow(ctx, notice.CustomerID, string(notice.Kind), identity.Address); err != nil {
+		return Account{}, "", nil, err
+	}
+	if notice.Kind == WhatsApp {
+		last, err := s.store.LastChannelMessageAt(ctx, account.ID, identity.Address)
+		if err != nil {
+			return Account{}, "", nil, stack.Wrap(err)
+		}
+		switch {
+		case last.IsZero():
+			return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: %s has never written on WhatsApp, "+
+				"so there is no window to write first in", identity.Address))
+		case time.Since(last) > whatsappWindow:
+			return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: %s last wrote over a day ago, "+
+				"outside WhatsApp's window for writing first", identity.Address))
+		}
+	}
+	thread := identity.Address
+	if notice.Kind == IMessage {
+		thread = identity.Thread
+		if thread == "" {
+			return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: there is no iMessage chat with %s to write to", identity.Address))
+		}
+	}
+	provider, ok := For(notice.Kind, s.transport)
+	if !ok {
+		return Account{}, "", nil, stack.Wrap(fmt.Errorf("channels: no channel called %s", notice.Kind))
+	}
+	return line, thread, provider, nil
 }
 
 // Open reads back the credentials a line was stored with. The customer is bound into the
@@ -325,6 +431,14 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 	line Account, provider Provider, message Message) (store.ChannelIdentity, bool) {
 	identity, err := s.store.ChannelIdentity(ctx, account.CustomerID, config.ID, account.Kind, message.From)
 	if err == nil {
+		// Where a reply reaches this person moves with the chat they wrote in,
+		// which a proactive message later needs: it is kept as it changes.
+		if message.Thread != "" && identity.Thread != message.Thread {
+			identity.Thread = message.Thread
+			if err := s.store.SaveChannelIdentity(ctx, &identity); err != nil {
+				s.logger.Error("could not record where a channel reply goes", "channel", account.Kind, "error", err)
+			}
+		}
 		return identity, true
 	}
 	if !errors.Is(err, store.ErrUnknownChannelIdentity) {
@@ -337,6 +451,7 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 		ConfigID:   config.ID,
 		Kind:       account.Kind,
 		Address:    message.From,
+		Thread:     message.Thread,
 		UserID:     "phone:" + message.From,
 	}
 	if config.Channels.Identity == store.ChannelIdentityLink {

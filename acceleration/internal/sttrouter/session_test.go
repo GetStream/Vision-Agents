@@ -379,6 +379,198 @@ func (s *SessionSuite) TestAWriteUnderWayWhenTheNextModelTakesOverIsDropped() {
 	s.NoError(<-written, "the caller heard of the next model taking over, and of an error for the frame on its way")
 }
 
+func (s *SessionSuite) TestAWriteThatFailsBehindARefusalTheCallerHasNotReadIsDropped() {
+	provider := &closedSTT{emitter: stt.NewEmitter(128)}
+	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+	s.fillBuffer(session, provider)
+	provider.emitter.Send(refused())
+
+	s.NoError(s.write(session), "the caller heard of a write the refusing model failed, rather than of the next model taking over")
+	for range cap(session.events) + 1 {
+		s.IsType(stt.Transcript{}, s.event(session))
+	}
+	s.IsType(stt.Failover{}, s.event(session))
+}
+
+func (s *SessionSuite) TestAWriteThatFailsAsTheVendorRefusesIsDropped() {
+	provider := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
+	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+
+	s.NoError(s.write(session), "the caller heard of a write the refusing model failed, rather than of the next model taking over")
+	s.IsType(stt.Failover{}, s.event(session))
+}
+
+func (s *SessionSuite) TestAWriteTheNextModelFailsBehindTheFailoverIsDropped() {
+	provider := &closedSTT{emitter: stt.NewEmitter(128)}
+	next := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
+	session, _ := s.handingOver(provider, next, &quietSTT{emitter: stt.NewEmitter(64)})
+	// Revisions that fill the session's buffer, so the Failover waits for the caller to read
+	// them while the caller's audio already goes to the next model.
+	for range cap(session.events) {
+		provider.emitter.Send(stt.Transcript{Text: "hel", Mode: stt.ModeReplacement})
+	}
+	provider.emitter.Send(refused())
+	s.Require().Eventually(func() bool { return session.STT() == next }, 3*time.Second, time.Millisecond)
+
+	s.NoError(s.write(session), "the caller heard of a write the next model failed, rather than of the model after it taking over")
+	for range cap(session.events) {
+		s.IsType(stt.Transcript{}, s.event(session))
+	}
+	s.IsType(stt.Failover{}, s.event(session))
+	s.Equal("next-1/live", s.event(session).(stt.Failover).From, "the caller heard of the next model failing rather than of the one after it taking over")
+}
+
+func (s *SessionSuite) TestNothingTheRefusingModelSaysAfterItsRefusalIsRecorded() {
+	provider := &closedSTT{emitter: stt.NewEmitter(128)}
+	session, recorder := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+	s.fillBuffer(session, provider)
+	provider.emitter.Send(refused())
+	provider.emitter.Send(stt.Transcript{Text: "hello", Mode: stt.ModeFinal, AudioDurationMs: 20})
+
+	s.Require().NoError(s.write(session))
+	for range cap(session.events) + 1 {
+		s.event(session)
+	}
+	s.IsType(stt.Failover{}, s.event(session))
+	s.Require().NoError(session.Close())
+	recorder.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).
+		Where("customer_id = ?", s.customerID).Scan(s.ctx))
+	var recorded []string
+	for _, row := range rows {
+		recorded = append(recorded, row.Provider+" "+row.ErrorCode)
+	}
+	s.Equal([]string{"closed provider_fatal"}, recorded)
+}
+
+func (s *SessionSuite) TestAWriteThatFailsWithNoRefusalReachesTheCaller() {
+	provider := &closedSTT{emitter: stt.NewEmitter(64)}
+	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+
+	s.EqualError(s.write(session), "closed: write audio: websocket: close sent")
+	s.Equal("closed", session.Provider())
+}
+
+func (s *SessionSuite) TestASocketThatDroppedBehindUnreadEventsReachesTheCallerOnce() {
+	provider := &closedSTT{emitter: stt.NewEmitter(128)}
+	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+	s.fillBuffer(session, provider)
+	drop := stt.Error{Err: errors.New("read tcp: connection reset by peer"), Context: "read", Fatal: true}
+	provider.emitter.Send(drop)
+
+	// The drop is told as its own event, as on the base, so the write that failed behind it
+	// is not told again.
+	s.NoError(s.write(session))
+	for range cap(session.events) + 1 {
+		s.IsType(stt.Transcript{}, s.event(session))
+	}
+	s.Equal(drop, s.event(session))
+	s.Require().NoError(session.Close())
+	s.Empty(s.drain(session), "the drop was told once, and no Failover followed it")
+	s.Equal("closed", session.Provider(), "a dropped socket is not handed to the next model")
+}
+
+func (s *SessionSuite) TestAWriteThatFailsAfterTheProviderEndedReachesTheCaller() {
+	provider := &closedSTT{emitter: stt.NewEmitter(128)}
+	session, _ := s.handingOver(provider, &quietSTT{emitter: stt.NewEmitter(64)})
+	s.fillBuffer(session, provider)
+	s.Require().NoError(provider.Close())
+
+	s.EqualError(s.write(session), "closed: write audio: websocket: close sent", "while the caller still reads what it said")
+	s.Len(s.drain(session), cap(session.events)+1)
+	// Many, as a caller still talking does: each finds the session ended.
+	for range 20 {
+		s.Require().EqualError(s.write(session), "closed: write audio: websocket: close sent", "once the session's events have ended")
+	}
+}
+
+func (s *SessionSuite) TestAWriteThatFailsWhileTheNextModelStartsDoesNotWaitForIt() {
+	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
+		writing: make(chan struct{}), release: make(chan struct{})}
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	starting, started := make(chan struct{}), make(chan struct{})
+	defer close(started)
+	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+		close(starting)
+		<-started
+		return &quietSTT{emitter: stt.NewEmitter(64)}, routing.ProviderConfig{Provider: "next", Model: "live"}, nil
+	}
+	session := newSession(provider, routing.ProviderConfig{Provider: "stalled", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, reopen, nil)
+	defer session.Close()
+	written := make(chan error, 1)
+	go func() { written <- session.ProcessAudio(frame(), stt.Participant{ID: "caller"}) }()
+	<-provider.writing
+	provider.emitter.Send(refused())
+	<-starting
+
+	close(provider.release)
+	select {
+	case err := <-written:
+		s.NoError(err, "the caller hears of the refusal, or of the next model taking over")
+	case <-time.After(3 * time.Second):
+		s.Fail("a write that failed waited for the next model to start")
+	}
+}
+
+func (s *SessionSuite) TestAWriteThatFailsAsTheVendorRefusesNeverWaitsForTheNextModelsDial() {
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	// The refusal reaches forward as the write fails, so the write asks forward to read
+	// ahead either before forward starts the next model or while it does: about one run
+	// in two takes the second order.
+	for run := range 50 {
+		provider := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
+		release := make(chan struct{})
+		reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+			<-release
+			return &quietSTT{emitter: stt.NewEmitter(64)}, routing.ProviderConfig{Provider: "next", Model: "live"}, nil
+		}
+		session := newSession(provider, routing.ProviderConfig{Provider: "closed", Model: "live"},
+			routing.Owner{CustomerID: s.customerID}, recorder, reopen, nil)
+
+		// The dial is released only after the write returns, so a write waiting for it never does.
+		s.Require().NoError(s.write(session), "run %d", run)
+		close(release)
+		s.Require().IsType(stt.Failover{}, s.event(session), "run %d", run)
+		s.Require().NoError(session.Close())
+	}
+}
+
+func (s *SessionSuite) TestACallerThatHangsUpWhileTheNextModelDialsEndsTheDial() {
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	provider := &closedSTT{emitter: stt.NewEmitter(64), refusal: refused()}
+	ctx, cancel := context.WithCancel(context.Background())
+	dialling, dialEnded := make(chan struct{}), make(chan struct{})
+	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+		defer close(dialEnded)
+		close(dialling)
+		// As a vendor's handshake does: only the session's context ends it.
+		<-ctx.Done()
+		return nil, routing.ProviderConfig{}, ctx.Err()
+	}
+	session := newSession(provider, routing.ProviderConfig{Provider: "closed", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, reopen, cancel)
+	s.Require().NoError(s.write(session))
+	<-dialling
+	// The socket's read loop is the writer: back from the write, it reads the hang-up.
+	s.Require().NoError(s.write(session), "a write while the next model dials")
+
+	s.Require().NoError(session.Close())
+	select {
+	case <-dialEnded:
+	case <-time.After(3 * time.Second):
+		s.FailNow("closing the session left the next model's dial running")
+	}
+	events := s.drain(session)
+	s.Require().Len(events, 1)
+	s.IsType(stt.Error{}, events[0], "a session closed while the next model dialled ends on the refusal")
+}
+
 func (s *SessionSuite) TestAudioAfterAnErrorTheProviderOutlivesStillFails() {
 	failure := refused()
 	failure.Fatal = false
@@ -654,6 +846,56 @@ func (s *SessionSuite) failedSilently(router *Router) *Session {
 	}
 }
 
+// handingOver opens a session on provider that hands over to the next of next each time
+// a model refuses, and returns it with the recorder of its stats.
+func (s *SessionSuite) handingOver(provider stt.STT, next ...stt.STT) (*Session, *routing.Recorder) {
+	recorder := routing.NewRecorder(routing.STT, s.store, nil, slog.Default())
+	s.T().Cleanup(recorder.Close)
+	reopen := func(refused []string) (stt.STT, routing.ProviderConfig, error) {
+		if len(refused) > len(next) {
+			return nil, routing.ProviderConfig{}, errors.New("no model is left")
+		}
+		return next[len(refused)-1], routing.ProviderConfig{Provider: fmt.Sprintf("next-%d", len(refused)), Model: "live"}, nil
+	}
+	session := newSession(provider, routing.ProviderConfig{Provider: provider.Provider(), Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, reopen, nil)
+	s.T().Cleanup(func() { _ = session.Close() })
+	return session, recorder
+}
+
+// fillBuffer has provider send revisions nobody reads yet, one more than the session's
+// buffer holds, so whatever it sends next waits for the caller to read that far.
+func (s *SessionSuite) fillBuffer(session *Session, provider *closedSTT) {
+	for range cap(session.events) + 1 {
+		provider.emitter.Send(stt.Transcript{Text: "hel", Mode: stt.ModeReplacement})
+	}
+}
+
+// event is the session's next event, failing if none comes.
+func (s *SessionSuite) event(session *Session) stt.Event {
+	select {
+	case event := <-session.Events():
+		return event
+	case <-time.After(3 * time.Second):
+		s.FailNow("the session said nothing")
+		return nil
+	}
+}
+
+// write sends the session one frame and returns what it answered, failing if it never
+// does.
+func (s *SessionSuite) write(session *Session) error {
+	written := make(chan error, 1)
+	go func() { written <- session.ProcessAudio(frame(), stt.Participant{ID: "caller"}) }()
+	select {
+	case err := <-written:
+		return err
+	case <-time.After(3 * time.Second):
+		s.FailNow("the write never returned")
+		return nil
+	}
+}
+
 // speakInto sends the session one frame and returns the event it answers with.
 func (s *SessionSuite) speakInto(session *Session) stt.Event {
 	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
@@ -792,6 +1034,27 @@ func (p *stalledSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
 	close(p.writing)
 	<-p.release
 	return errors.New("stalled: write audio: websocket: close sent")
+}
+
+// closedSTT is a provider whose socket the vendor has closed: every write fails. If
+// refusal is set, the vendor's refusal arrives as the first write fails.
+type closedSTT struct {
+	emitter *stt.Emitter
+	refusal stt.Error
+}
+
+func (c *closedSTT) Start(context.Context) error { return nil }
+func (c *closedSTT) Events() <-chan stt.Event    { return c.emitter.Events() }
+func (c *closedSTT) Close() error                { c.emitter.Close(); return nil }
+func (c *closedSTT) Provider() string            { return "closed" }
+func (c *closedSTT) Model() string               { return "live" }
+
+func (c *closedSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	if c.refusal.Err != nil {
+		c.emitter.Send(c.refusal)
+		c.refusal = stt.Error{}
+	}
+	return errors.New("closed: write audio: websocket: close sent")
 }
 
 func refused() stt.Error {

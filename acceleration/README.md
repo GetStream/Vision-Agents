@@ -113,6 +113,8 @@ the other commands that read them there.
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
+| `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default and only one |
+| `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
@@ -1124,6 +1126,7 @@ inline in the request overrides it, so a config can be reused and one call still
 | `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
 | `/v1/agents/knowledge/urls`                 | Pages a knowledge base is kept filled from   |
 | `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
+| `/v1/agents/scheduled-tasks`                 | Things the agent does later for a user, once or on a repeat, and what came of each occurrence |
 
 **Skills are named rather than spelled out.** A config carries skill names, and they are
 resolved once when the session is created: the customer's own rows, or the built-in
@@ -1290,6 +1293,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
 | `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
+| `scheduled_tasks`, `scheduled_task_runs` | Thing a user is to be reminded of or done for later, and each occurrence of it |
 | `audit_log`                              | Change somebody made to the app's configuration     |
 
 Four things fall out of this that are worth stating.

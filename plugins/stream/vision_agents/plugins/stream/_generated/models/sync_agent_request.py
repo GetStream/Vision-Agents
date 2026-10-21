@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.agent_channels import AgentChannels
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
@@ -97,6 +98,8 @@ class SyncAgentRequest:
             sandbox_options (SandboxOptions | Unset): How the sandbox is built, what it may reach and how long code may run
                 in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second
                 run.
+            scheduling (AgentScheduling | Unset): Whether the agent may schedule tasks for its users, and the defaults those
+                tasks take.
             search (str | Unset):
             simulations (list[SimulationDeclaration] | Unset): The simulations the directory's simulations/*.yaml declare.
                 Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is
@@ -138,6 +141,7 @@ class SyncAgentRequest:
     role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
+    scheduling: AgentScheduling | Unset = UNSET
     search: str | Unset = UNSET
     simulations: list[SimulationDeclaration] | Unset = UNSET
     skills: list[SkillRequest] | Unset = UNSET
@@ -257,6 +261,10 @@ class SyncAgentRequest:
         if not isinstance(self.sandbox_options, Unset):
             sandbox_options = self.sandbox_options.to_dict()
 
+        scheduling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduling, Unset):
+            scheduling = self.scheduling.to_dict()
+
         search = self.search
 
         simulations: list[dict[str, Any]] | Unset = UNSET
@@ -345,6 +353,8 @@ class SyncAgentRequest:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
             field_dict["sandbox_options"] = sandbox_options
+        if scheduling is not UNSET:
+            field_dict["scheduling"] = scheduling
         if search is not UNSET:
             field_dict["search"] = search
         if simulations is not UNSET:
@@ -375,6 +385,7 @@ class SyncAgentRequest:
         from ..models.agent_channels import AgentChannels
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
@@ -543,6 +554,13 @@ class SyncAgentRequest:
         else:
             sandbox_options = SandboxOptions.from_dict(_sandbox_options)
 
+        _scheduling = d.pop("scheduling", UNSET)
+        scheduling: AgentScheduling | Unset
+        if isinstance(_scheduling, Unset):
+            scheduling = UNSET
+        else:
+            scheduling = AgentScheduling.from_dict(_scheduling)
+
         search = d.pop("search", UNSET)
 
         _simulations = d.pop("simulations", UNSET)
@@ -620,6 +638,7 @@ class SyncAgentRequest:
             role=role,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
+            scheduling=scheduling,
             search=search,
             simulations=simulations,
             skills=skills,

@@ -31,10 +31,18 @@ import (
 // each direction afterwards.
 type StreamsSuite struct {
 	RouterSuite
+	// logged is what the router logged, for the line a socket that fails over leaves.
+	logged *lockedLog
 }
 
 func TestStreamsSuite(t *testing.T) {
 	runSuite(t, new(StreamsSuite))
+}
+
+func (s *StreamsSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *StreamsSuite) SetupTest() {
@@ -667,9 +675,11 @@ func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextMo
 	redis := s.live.ShardRedis()
 	s.Require().NoError(redis.Do(s.T().Context(),
 		redis.B().Del().Key("health:stt:refusing:"+handingOverModel).Build()).Error())
+	callID := s.utils.uuid()
 	listening := s.start("/v1/stt/stream", frame{
-		"target": "refusing/" + handingOverModel,
-		"stt":    frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},
+		"target":  "refusing/" + handingOverModel,
+		"call_id": callID,
+		"stt":     frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},
 	})
 	defer listening.Close()
 	started := s.nextFrame(listening)
@@ -695,9 +705,47 @@ func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextMo
 		}
 	}()
 
+	// Before any of the next model's words: the caller is told who transcribes from now on,
+	// in the shape of the first started, and hears nothing of the refusal.
+	handedOver := s.nextFrame(listening)
+	s.Equal(frame{"type": "started", "provider": "echoing", "model": "echoing-model"}, handedOver,
+		"the refusal reached the caller rather than the model now transcribing")
 	transcript := s.nextFrame(listening)
-	s.Equal("transcript", transcript["type"], "the refusal reached the caller rather than the next model's words: %v", transcript)
+	s.Equal("transcript", transcript["type"], "%v", transcript)
 	s.Equal("echoing", transcript["provider"])
+
+	// The caller is not told why; the router's log says it once, with the vendor's words.
+	var failovers []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, " call="+callID+" ") {
+			failovers = append(failovers, line)
+		}
+	}
+	s.Require().Len(failovers, 1, "%v", failovers)
+	s.Contains(failovers[0], `level=INFO msg="the transcriber refused the session, the next model took it over" `+
+		`customer=`+s.customerID()+` call=`+callID+` from=refusing/`+handingOverModel+
+		` provider=echoing model=echoing-model error="`+termsRefusal+`"`)
+}
+
+func (s *StreamsSuite) TestASocketNoModelRefusesStartsOnce() {
+	// The model the refusing one hands over to, opened on its own.
+	listening := s.start("/v1/stt/stream", frame{"target": "echoing/echoing-model"})
+	s.Require().Equal("started", s.nextFrame(listening)["type"])
+	silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+	for range 2 {
+		s.Require().NoError(listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()))
+	}
+	for range 2 {
+		heard := s.nextFrame(listening)
+		s.Require().Equal("transcript", heard["type"], "%v", heard)
+	}
+
+	s.Require().NoError(listening.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")))
+	rest, _ := s.ending(listening)
+	for _, read := range rest {
+		s.NotEqual("started", read["type"], "a socket no model refused said it started again: %v", rest)
+	}
 }
 
 // refused opens a socket on the model that refuses the account, speaks into it and returns

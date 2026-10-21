@@ -119,6 +119,9 @@ type Call struct {
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent config decided.
 	ModelOverwrites *acceleration.ModelOverwrites
+	// Timezone is the end user's IANA timezone, such as Europe/Amsterdam, which sets
+	// the zone the agent reads dates in and is remembered as the user's.
+	Timezone string
 
 	// Tags are cost labels, carried onto every request the session makes.
 	Tags map[string]string
@@ -437,6 +440,7 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	setString(&request.AgentId, call.AgentID)
 	setString(&request.Title, call.Title)
 	setString(&request.Description, call.Description)
+	setString(&request.Timezone, call.Timezone)
 	setString(&request.ProjectId, call.ProjectID)
 	setString(&request.Agent, p.config.Agent)
 	setString(&request.ConfigId, p.config.ConfigID)

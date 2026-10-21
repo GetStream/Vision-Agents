@@ -118,6 +118,10 @@ class CreateSessionRequest:
         stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         tags (CreateSessionRequestTags | Unset): Cost labels, carried onto every request the session makes. Merged with
             the agent config's tags; where both name a key, this one wins.
+        timezone (str | Unset): The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the
+            router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name,
+            is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400
+            invalid_timezone.
         title (str | Unset): What to call the conversation, for a list a person reads, until the router names a
             persistent one for what was said. Never shown to the model: what a conversation is called is a label on it
             rather than part of it.
@@ -163,6 +167,7 @@ class CreateSessionRequest:
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
     tags: CreateSessionRequestTags | Unset = UNSET
+    timezone: str | Unset = UNSET
     title: str | Unset = UNSET
     tool_timeout_ms: int | Unset = UNSET
     tools: list[SessionTool] | Unset = UNSET
@@ -262,6 +267,8 @@ class CreateSessionRequest:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
+        timezone = self.timezone
+
         title = self.title
 
         tool_timeout_ms = self.tool_timeout_ms
@@ -348,6 +355,8 @@ class CreateSessionRequest:
             field_dict["stt"] = stt
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
         if title is not UNSET:
             field_dict["title"] = title
         if tool_timeout_ms is not UNSET:
@@ -493,6 +502,8 @@ class CreateSessionRequest:
         else:
             tags = CreateSessionRequestTags.from_dict(_tags)
 
+        timezone = d.pop("timezone", UNSET)
+
         title = d.pop("title", UNSET)
 
         tool_timeout_ms = d.pop("tool_timeout_ms", UNSET)
@@ -552,6 +563,7 @@ class CreateSessionRequest:
             sts=sts,
             stt=stt,
             tags=tags,
+            timezone=timezone,
             title=title,
             tool_timeout_ms=tool_timeout_ms,
             tools=tools,

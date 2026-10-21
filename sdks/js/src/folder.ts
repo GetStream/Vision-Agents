@@ -654,6 +654,8 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       if (lines) {
         declared.channels = lines;
       }
+    } else if (key === "scheduling") {
+      declared.scheduling = scheduling(mapping(nested, inline, key, where), where);
     } else if (key === "sandbox_options") {
       declared.sandboxOptions = sandboxOptions(indented, inline, where);
     } else {
@@ -931,6 +933,42 @@ function channels(
     }
   }
   return declared;
+}
+
+/**
+ * Reads `scheduling:`, whether the agent may schedule tasks for its users:
+ *
+ * ```yaml
+ * scheduling:
+ *   enabled: true
+ *   max_tasks_per_user: 10
+ *   default_timezone: America/New_York
+ * ```
+ */
+function scheduling(declared: Record<string, string>, where: string): Schemas["AgentScheduling"] {
+  for (const key of Object.keys(declared)) {
+    if (key !== "enabled" && key !== "max_tasks_per_user" && key !== "default_timezone") {
+      throw new ConfigurationError(`${where}: unknown scheduling setting ${JSON.stringify(key)}`);
+    }
+  }
+  const read: { -readonly [key in keyof Schemas["AgentScheduling"]]: Schemas["AgentScheduling"][key] } = {};
+  if (declared["enabled"]) {
+    if (declared["enabled"] !== "true" && declared["enabled"] !== "false") {
+      throw new ConfigurationError(`${where}: scheduling.enabled must be true or false`);
+    }
+    read.enabled = declared["enabled"] === "true";
+  }
+  if (declared["max_tasks_per_user"]) {
+    const maximum = Number(declared["max_tasks_per_user"]);
+    if (!Number.isInteger(maximum) || maximum < 1) {
+      throw new ConfigurationError(`${where}: scheduling.max_tasks_per_user must be a whole number`);
+    }
+    read.max_tasks_per_user = maximum;
+  }
+  if (declared["default_timezone"]) {
+    read.default_timezone = declared["default_timezone"];
+  }
+  return read;
 }
 
 const SANDBOX_LISTS = new Set(["setup", "allowed_domains", "network_allow_list"]);

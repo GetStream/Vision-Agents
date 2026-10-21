@@ -197,7 +197,7 @@ private fun MessageRow(message: Message, chat: AgentChat, approver: AIToolApprov
                 val step = part.reasoning
                 if (step != null) {
                     StreamingReasoning(
-                        text = version.let { chat.reasoning[step.id] } ?: step.preview.orEmpty(),
+                        text = version.let { chat.reasoning[message.id, step.id] } ?: step.preview.orEmpty(),
                         isThinking = step.isStreaming,
                         durationSeconds = step.durationSeconds,
                         summary = step.summary,

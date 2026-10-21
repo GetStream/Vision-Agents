@@ -188,6 +188,8 @@ components:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
           $ref: '#/components/schemas/SandboxOptions'
+        scheduling:
+          $ref: '#/components/schemas/AgentScheduling'
         search:
           type: string
         skills:
@@ -295,6 +297,8 @@ components:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
           $ref: '#/components/schemas/SandboxOptions'
+        scheduling:
+          $ref: '#/components/schemas/AgentScheduling'
         search:
           type: string
         skills:
@@ -394,6 +398,9 @@ components:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
           $ref: '#/components/schemas/SandboxOptions'
+        scheduling:
+          $ref: '#/components/schemas/AgentScheduling'
+          description: Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay.
         search:
           description: What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
           type: string
@@ -702,6 +709,22 @@ components:
       enum:
         - agent_moderator
       type: string
+    AgentScheduling:
+      description: Whether the agent may schedule tasks for its users, and the defaults those tasks take.
+      properties:
+        default_timezone:
+          description: The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone.
+          type: string
+        enabled:
+          description: 'Offer the agent the scheduling tools (schedule_task, list_scheduled_tasks, update_scheduled_task, cancel_scheduled_task), so a user can ask it to remind them or do something later, once or on a repeat. Off by default: it adds four tools to every turn. Left out on an update, the stored setting stays.'
+          type: boolean
+        max_tasks_per_user:
+          description: How many active scheduled tasks one user may hold. Omitted is 25.
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+      type: object
     AgentStats:
       properties:
         peak_at:
@@ -3063,6 +3086,54 @@ components:
         - config_id
         - input
       type: object
+    CreateScheduledTaskRequest:
+      properties:
+        agent:
+          description: The agent config by name, as session create names it. config_id or this, or session_id.
+          type: string
+        config_id:
+          description: The agent config by id. agent or this, or session_id.
+          type: string
+        custom:
+          additionalProperties: {}
+          description: The caller's own labels, handed back untouched.
+          type: object
+        deliver_to:
+          description: 'Where an occurrence is delivered, in order, the first that lands: conversation, sms, whatsapp, imessage or phone. The agent''s reply is written in its conversation either way; a channel carries the same words out, and phone rings the user and speaks them. Left out or empty is the conversation alone.'
+          items:
+            type: string
+          nullable: true
+          type: array
+        id:
+          description: 'The task''s id, chosen by the caller as a session id can be: up to 64 letters, digits, - and _. Left out, the router generates one. Sending one that is used answers 409.'
+          example: booking-4821-reminder
+          pattern: ^[A-Za-z0-9_-]{1,64}$
+          type: string
+        instructions:
+          description: What the agent is told when the task comes due. Read back by the owner and by the customer's backend, so put nothing in it a user must not read.
+          maxLength: 2000
+          minLength: 1
+          type: string
+        quiet_hours:
+          $ref: '#/components/schemas/ScheduledTaskQuietHours'
+          description: The part of the user's day an occurrence that comes due in is held through, until it ends, on every channel.
+        schedule:
+          $ref: '#/components/schemas/ScheduledTaskSchedule'
+          description: When it runs.
+        session_id:
+          description: The named user's own session whose conversation the follow-up lands in; its config is the task's. Left out, the first occurrence opens a session.
+          type: string
+        title:
+          description: A short name the user will recognise.
+          example: Dentist tomorrow
+          maxLength: 80
+          minLength: 1
+          type: string
+      required:
+        - title
+        - instructions
+        - schedule
+      type: object
     CreateSessionRequest:
       properties:
         agent:
@@ -3169,6 +3240,9 @@ components:
             type: string
           description: Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
           type: object
+        timezone:
+          description: The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
+          type: string
         title:
           description: 'What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.'
           type: string
@@ -3671,7 +3745,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -5700,6 +5774,227 @@ components:
       required:
         - text
       type: object
+    ScheduledTask:
+      properties:
+        config_id:
+          type: string
+        consecutive_failures:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          description: agent when the model made it in a conversation, api when a backend did.
+          enum:
+            - agent
+            - api
+          type: string
+          x-enum-varnames:
+            - ScheduledTaskCreatedByAgent
+            - ScheduledTaskCreatedByApi
+        custom:
+          additionalProperties: {}
+          type: object
+        deliver_to:
+          description: Where an occurrence is delivered, in order, the first that lands.
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+        instructions:
+          type: string
+        last_run_at:
+          description: When a run last finished, in UTC. Null when none has.
+          nullable: true
+          type: string
+        next_run_at:
+          description: The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none.
+          nullable: true
+          type: string
+        quiet_hours:
+          $ref: '#/components/schemas/ScheduledTaskQuietHours'
+          description: The part of the user's day an occurrence that comes due in is held through. Absent is no hold.
+        schedule:
+          $ref: '#/components/schemas/ScheduledTaskSchedule'
+        session_id:
+          description: The conversation the task follows up in. Empty until its first occurrence opens one.
+          type: string
+        state:
+          description: active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+          enum:
+            - active
+            - paused
+            - completed
+            - failed
+          type: string
+        title:
+          type: string
+        upcoming:
+          description: Up to the next five occurrences, RFC 3339 with the task zone's offset.
+          items:
+            type: string
+          type: array
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+      required:
+        - id
+        - user_id
+        - config_id
+        - session_id
+        - title
+        - instructions
+        - schedule
+        - deliver_to
+        - state
+        - next_run_at
+        - upcoming
+        - last_run_at
+        - consecutive_failures
+        - created_by
+        - created_at
+        - updated_at
+      type: object
+    ScheduledTaskNext:
+      properties:
+        at:
+          description: The next occurrence as the user's clock reads it, in the task's zone.
+          type: string
+        in:
+          description: 'How long from now instead, an ISO 8601 duration: PT15M.'
+          example: PT15M
+          type: string
+      type: object
+    ScheduledTaskPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ScheduledTask'
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    ScheduledTaskQuietHours:
+      properties:
+        end:
+          description: 'When the hold ends. It may read before the start: 22:00 to 07:00 holds the night.'
+          example: "07:00"
+          type: string
+        start:
+          description: When the hold begins, as the user's clock reads it. Both boundaries empty is no hold, which is also how an update clears one.
+          example: "22:00"
+          type: string
+      required:
+        - start
+        - end
+      type: object
+    ScheduledTaskRun:
+      properties:
+        attempts:
+          format: int64
+          type: integer
+        delivered_to:
+          description: 'Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.'
+          type: string
+        error:
+          description: 'Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again). The full error is in the router''s logs. Null otherwise.'
+          nullable: true
+          type: string
+        finished_at:
+          format: date-time
+          nullable: true
+          type: string
+        id:
+          type: string
+        scheduled_for:
+          description: When the occurrence was due, RFC 3339 with the task zone's offset.
+          type: string
+        session_id:
+          type: string
+        started_at:
+          format: date-time
+          nullable: true
+          type: string
+        state:
+          description: running (retries included), delivered, failed, or missed (it fell outside the grace period, or its call would have rung more than 15 minutes late).
+          enum:
+            - running
+            - delivered
+            - failed
+            - missed
+          type: string
+        task_id:
+          type: string
+        trigger:
+          description: schedule when it came due, manual when it was run by hand.
+          enum:
+            - schedule
+            - manual
+          type: string
+      required:
+        - id
+        - task_id
+        - scheduled_for
+        - trigger
+        - state
+        - delivered_to
+        - session_id
+        - attempts
+        - started_at
+        - finished_at
+        - error
+      type: object
+    ScheduledTaskRunPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ScheduledTaskRun'
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    ScheduledTaskSchedule:
+      properties:
+        at:
+          description: When it first runs, as the user's clock reads it, 2026-10-20T09:00:00; with an offset or Z it is that instant, read in the schedule's zone. Exactly one of at and in is given on a write.
+          type: string
+        description:
+          description: 'What the schedule says, in one sentence. Read-only: written by the router, and the same sentence the model reads back.'
+          example: Every weekday at 09:00 (Europe/Amsterdam)
+          type: string
+        in:
+          description: 'How long from now instead, an ISO 8601 duration: PT20M, P1D. Days are calendar days: P1D is the same time tomorrow. Resolved on write; a response never carries it.'
+          example: PT20M
+          type: string
+        repeat:
+          description: 'Omit for once. Otherwise an RRULE subset without DTSTART or UNTIL: FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;BYMONTHDAY=1.'
+          example: FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
+          type: string
+        timezone:
+          description: An IANA zone, such as Europe/Amsterdam. On create, left out resolves to the user's stored zone, then the agent's default_timezone; on update, to the task's own zone.
+          example: Europe/Amsterdam
+          type: string
+        until:
+          description: The last local date it repeats on, inclusive, 2026-12-31.
+          example: "2026-12-31"
+          type: string
+      type: object
     SearchAnswer:
       properties:
         answer:
@@ -7182,6 +7477,9 @@ components:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
           $ref: '#/components/schemas/SandboxOptions'
+        scheduling:
+          $ref: '#/components/schemas/AgentScheduling'
+          description: Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored.
         search:
           type: string
         simulations:
@@ -7883,6 +8181,31 @@ components:
         - bucket
         - interrupted_count
         - turn_count
+      type: object
+    UpdateScheduledTaskRequest:
+      properties:
+        deliver_to:
+          description: Replaces where an occurrence is delivered, in order. An empty list is the conversation alone.
+          items:
+            type: string
+          type: array
+        instructions:
+          description: 'What the agent is told when the task comes due. Server-side only: a device sending it is refused.'
+          maxLength: 2000
+          type: string
+        next:
+          $ref: '#/components/schemas/ScheduledTaskNext'
+          description: 'Moves the next occurrence only: a snooze, or a skip when it lands past the following one. It lands 15 minutes from now at the soonest, unless it lands no earlier than the current next occurrence; sooner is refused with interval_too_short.'
+        quiet_hours:
+          $ref: '#/components/schemas/ScheduledTaskQuietHours'
+          description: Replaces the part of the day an occurrence is held through. Both boundaries empty clears the hold.
+        schedule:
+          $ref: '#/components/schemas/ScheduledTaskSchedule'
+          description: 'Replaces the whole schedule, except a timezone left out of it keeps the task''s. Its first occurrence follows the rule of next: 15 minutes from now at the soonest, unless it lands no earlier than the current next occurrence.'
+        title:
+          description: A short name the user will recognise.
+          maxLength: 80
+          type: string
       type: object
     UpdateSessionRequest:
       description: What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
@@ -8798,7 +9121,7 @@ paths:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
         Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
-        Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
+        Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
         Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`.
         Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
       operationId: streamModality
@@ -12458,6 +12781,366 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: The run did not finish within its timeout
       summary: Run an agent on one input and wait for its answer
+  /v1/agents/scheduled-tasks:
+    get:
+      description: 'Newest first, cursor-paged. A device lists its own user''s tasks, including the ones its backend made in its name. A backend naming a user with X-Stream-User-Id lists that user''s; a backend naming nobody lists every task of the customer, instructions included: a customer''s whole task list is support-visible, so put nothing in instructions a user must not have read back to them. Devices see instructions too, for the same reason.'
+      operationId: listScheduledTasks
+      parameters:
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+        - description: Only tasks in this state.
+          explode: false
+          in: query
+          name: state
+          schema:
+            description: Only tasks in this state.
+            enum:
+              - active
+              - paused
+              - completed
+              - failed
+            type: string
+        - description: Only tasks on this agent config.
+          explode: false
+          in: query
+          name: config_id
+          schema:
+            description: Only tasks on this agent config.
+            type: string
+        - description: Only tasks following up in this session.
+          explode: false
+          in: query
+          name: session_id
+          schema:
+            description: Only tasks following up in this session.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskPage'
+          description: A page of scheduled tasks
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Implemented
+      summary: The scheduled tasks of the user, or of the customer
+      x-client-accessible: true
+    post:
+      description: 'Server-side only. The task belongs to the user named with X-Stream-User-Id, and without one there is nobody for it to belong to, so the create is refused. The agent is named by agent or config_id, or taken from session_id''s own config, and the follow-up lands in that session''s conversation; without a session, the first occurrence opens one. An id the caller chooses may be sent again only to be told it is taken (409), the same answer session create gives. scheduling.enabled on the config is not required: that flag only offers the tools to the model. deliver_to says where an occurrence goes, in order, and quiet_hours holds one that comes due in them until they end.'
+      operationId: createScheduledTask
+      parameters:
+        - description: 'The user the task is for, named by the backend acting for them. Required: without a named user the create is refused.'
+          in: header
+          name: X-Stream-User-Id
+          schema:
+            description: 'The user the task is for, named by the backend acting for them. Required: without a named user the create is refused.'
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduledTaskRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+          description: The task was stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The id is taken, or the user is at their active-task limit
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Implemented
+      summary: Schedule a task for a user
+  /v1/agents/scheduled-tasks/{id}:
+    delete:
+      description: 'This is cancel: the task and its runs are gone, and there is no cancelled state to clutter lists.'
+      operationId: deleteScheduledTask
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+      responses:
+        "204":
+          description: The task is gone
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Delete a scheduled task
+      x-client-accessible: true
+    get:
+      description: A task that is not the caller's to reach is answered as not there.
+      operationId: getScheduledTask
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+          description: The task
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: One scheduled task
+      x-client-accessible: true
+    patch:
+      description: A field left out is kept. A schedule given replaces the whole schedule, except a timezone left out of it keeps the task's. next moves the next occurrence only — a snooze, or a skip when it lands past the following one — and on a one-shot it is the reschedule. An end user's device may change title, schedule, next, deliver_to and quiet_hours; instructions are server-side, and a device sending them is refused with a 403.
+      operationId: updateScheduledTask
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateScheduledTaskRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+          description: The task as it now is
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Change a scheduled task
+      x-client-accessible: true
+  /v1/agents/scheduled-tasks/{id}/pause:
+    post:
+      description: Nothing comes due while a task is paused; what it slept through is never replayed.
+      operationId: pauseScheduledTask
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+          description: The task, paused
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Pause a scheduled task
+      x-client-accessible: true
+  /v1/agents/scheduled-tasks/{id}/resume:
+    post:
+      description: The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A completed task cannot be resumed (409).
+      operationId: resumeScheduledTask
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+          description: The task, running again
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The task is completed, or the user is at their active-task limit
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Resume a scheduled task
+      x-client-accessible: true
+  /v1/agents/scheduled-tasks/{id}/run:
+    post:
+      description: Server-side only. Sets one occurrence going by hand and answers with its run while it is still running; the schedule does not move. Test a task with it, or trigger one from your own system.
+      operationId: runScheduledTask
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskRun'
+          description: The run that was set going
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Implemented
+      summary: Run a scheduled task now
+  /v1/agents/scheduled-tasks/{id}/runs:
+    get:
+      description: Newest first, cursor-paged. Only occurrences that came due, or were run by hand, are recorded; snoozes and pauses write no runs.
+      operationId: listScheduledTaskRuns
+      parameters:
+        - description: The task, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The task, as returned when it was created.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskRunPage'
+          description: A page of the task's runs
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: A scheduled task's runs
+      x-client-accessible: true
   /v1/agents/sessions:
     post:
       description: |-

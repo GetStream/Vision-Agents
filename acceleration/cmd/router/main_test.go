@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
 
@@ -57,4 +58,12 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 	limiter, err = newDailyLimiter(nil, quota.Limits{MessagesPerDay: 10}, policies, logger)
 	require.NoError(t, err)
 	require.Nil(t, limiter, "a limit nothing can count caps nobody")
+}
+
+// TestAnIdleRouterHoldsTheDrainForNothing is the drain's control: a router
+// with no sessions holds nothing, with or without an idle scheduled-task
+// worker, as before the worker counted.
+func TestAnIdleRouterHoldsTheDrainForNothing(t *testing.T) {
+	require.Zero(t, running(nil, nil))
+	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil)))
 }
