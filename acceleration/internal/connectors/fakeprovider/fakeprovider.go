@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -246,7 +247,9 @@ type Server struct {
 	access        map[string]*accessToken
 	refresh       map[string]*refreshToken
 	hits          map[string]int
-	refreshes     int
+	// revoked is the kind of token each revoke named, in order (Revoked).
+	revoked   []string
+	refreshes int
 	// clientCredentialsGrants counts the client_credentials grants that reached the token
 	// endpoint.
 	clientCredentialsGrants int
@@ -448,6 +451,14 @@ func (s *Server) Hits(path string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.hits[path]
+}
+
+// Revoked is the kind of token each request to PathRevoke named, in order: "refresh_token",
+// "access_token", or "" for a token the fake did not issue.
+func (s *Server) Revoked() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.revoked)
 }
 
 // MCPHeader is the value of the header name on each request that reached the MCP endpoint,

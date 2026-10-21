@@ -42,6 +42,12 @@ type Manifest struct {
 	// internal_connectors (store.AppSettings). Left out of the JSON when false, so the JSON of
 	// every manifest stored before it stays as it was.
 	Internal bool `yaml:"internal,omitempty" json:"internal,omitempty"`
+	// Sensitive is a connector whose tools read private data. An agent config that binds one
+	// binds no tool that sends data out (sensitiveBindingsComplaint in internal/api/configs.go),
+	// since a model that reads untrusted text could be steered into sending out what it read
+	// («Nessy as a connector» on AI-1538, change 13). Left out of the JSON when false, so the
+	// JSON of every manifest stored before it stays as it was.
+	Sensitive bool `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
 	// Setup is what a person does at the provider before the first consent, as the plugin
 	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
 	// dashboard's setup page can show it over a connector (architecture doc on
@@ -74,6 +80,11 @@ type Manifest struct {
 	RateLimit RateLimitRule       `yaml:"rate_limit,omitempty" json:"rate_limit,omitzero"`
 	Sources   []SourceRule        `yaml:"sources,omitempty" json:"sources,omitempty"`
 	Hooks     map[string]HookName `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
+	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
+	// (AI-1544), and left out of the JSON when false, so the JSON of every manifest stored
+	// before it stays as it was.
+	RevokeOnDelete bool `yaml:"revoke_on_delete,omitempty" json:"revoke_on_delete,omitempty"`
 	// Channel is how the connector is an inbound channel (channel.go). A connector has
 	// sources, a channel, or both.
 	Channel *ChannelRule `yaml:"channel,omitempty" json:"channel,omitempty"`
@@ -206,6 +217,16 @@ type SourceRule struct {
 	// Tools is what the manifest says about some of the source's tools, by the name the
 	// source lists each under. A tool it does not name is offered all the same.
 	Tools []ToolRule `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// Outbound false says none of the source's tools sends data out of the conversation: the
+	// server offers only tools that read. Left out, a tool may write, and a tool that writes
+	// is taken to send data out, so it is true (SendsOut). Left out of the JSON when nil, so
+	// the JSON of every manifest stored before it stays as it was.
+	Outbound *bool `yaml:"outbound,omitempty" json:"outbound,omitempty"`
+}
+
+// SendsOut reports whether a tool of the source may send data out of the conversation.
+func (r SourceRule) SendsOut() bool {
+	return r.Outbound == nil || *r.Outbound
 }
 
 // ToolRule is what a manifest says about one tool of a source.

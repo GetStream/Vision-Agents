@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -26,8 +27,30 @@ func newSandboxProxy(settings config.CodeSandbox, redis *live.Client, connection
 		return nil, stack.Wrap(errors.New("code_sandbox.proxy_addr is set, and the sandbox egress proxy needs redis.addr " +
 			"and connectors.enabled with a database"))
 	}
-	return egress.New(egress.Options{Store: egress.NewStore(redis.Redis()), Tokens: egress.ResolverTokens(connections, schemes),
+	return egress.New(egress.Options{Store: sandboxStore(redis), Tokens: egress.ResolverTokens(connections, schemes),
 		CACert: []byte(settings.ProxyCACert), CAKey: []byte(settings.ProxyCAKey), Logger: logger})
+}
+
+// sandboxStore is where the proxy reads each sandbox's grants and the proxy broker writes
+// them: the Redis every shard shares, since a sandbox's requests may reach any router's proxy.
+func sandboxStore(redis *live.Client) *egress.Store {
+	return egress.NewStore(redis.Redis())
+}
+
+// sandboxBroker sets the session manager's code sandbox broker from settings, and what the
+// proxy broker needs of the router. Only a session with a sandbox binding reads them.
+func sandboxBroker(settings config.CodeSandbox, redis *live.Client, options *session.ManagerOptions) error {
+	options.SandboxBroker, options.SandboxSecretPrefix = settings.Broker, settings.SecretPrefix
+	if settings.Broker != config.CodeSandboxBrokerProxy {
+		return nil
+	}
+	if redis == nil {
+		return stack.Wrap(errors.New("code_sandbox.broker is proxy, and the proxy reads each " +
+			"sandbox's grants from redis: set redis.addr"))
+	}
+	options.SandboxProxy = egress.BrokerOptions{Store: sandboxStore(redis), URL: settings.ProxyPublicURL,
+		CACert: []byte(settings.ProxyCACert)}
+	return nil
 }
 
 // serveSandboxProxy has serve run proxy on addr, until stop. Without a proxy it listens on

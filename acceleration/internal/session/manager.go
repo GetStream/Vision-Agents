@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -129,8 +130,11 @@ type ManagerOptions struct {
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
 	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
-	// code in a sandbox. daytona.BrokerName is the one there is.
+	// code in a sandbox, daytona.BrokerName or egress.BrokerName.
 	SandboxBroker string
+	// SandboxProxy is the store, URL and CA certificate of egress.BrokerName's proxy; the
+	// session fills in the rest.
+	SandboxProxy egress.BrokerOptions
 	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
 	// environment in every credential a broker leaves with the sandbox provider. A session
 	// with a sandbox binding is refused without it.
@@ -201,6 +205,9 @@ func (m *Manager) SetSchedulerKick(kick func()) {
 
 // NewManager validates the options and returns a Manager. It starts nothing.
 func NewManager(options ManagerOptions) (*Manager, error) {
+	if options.SandboxBroker == egress.BrokerName && options.SandboxProxy.Store == nil {
+		return nil, errors.New("session: the proxy sandbox broker needs the store the egress proxy reads")
+	}
 	if options.LLM == nil {
 		return nil, errors.New("session: an llm router is required")
 	}

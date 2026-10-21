@@ -3,6 +3,7 @@ package daytona
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,8 +30,18 @@ type platform struct {
 	ran []map[string]any
 	// creations is the body of every request for a sandbox.
 	creations []map[string]any
-	// files is what the sandbox's file system holds, by path.
-	files map[string][]byte
+	// files is what the sandbox's file system holds, by path, and uploads each file written
+	// into it, with how many runs came before.
+	files   map[string][]byte
+	uploads []string
+	// refuseUpload answers every file written into the sandbox with a 400.
+	refuseUpload bool
+	// commands are every shell command run in the sandbox, with how many runs came before,
+	// and commandExit the exit code each gives.
+	commands    []string
+	commandExit int
+	// steps are the file uploads ("upload") and shell commands ("command") in the order they came.
+	steps []string
 	// auth is the last Authorization header seen.
 	auth string
 
@@ -106,6 +117,27 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`))
+
+	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
+		file, _, err := r.FormFile("file")
+		if err != nil || p.refuseUpload {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		data, _ := io.ReadAll(file)
+		p.files[r.URL.Query().Get("path")] = data
+		p.steps = append(p.steps, "upload")
+		p.uploads = append(p.uploads, fmt.Sprintf("%s after %d runs", r.URL.Query().Get("path"), len(p.ran)))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"file","path":"` + r.URL.Query().Get("path") + `","type":"file"}`))
+
+	case strings.HasSuffix(r.URL.Path, "/process/execute"):
+		var body struct{ Command string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		p.steps = append(p.steps, "command")
+		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"result":"","exitCode":%d}`, p.commandExit)
 
 	case strings.HasSuffix(r.URL.Path, "/files/download"):
 		data, ok := p.files[r.URL.Query().Get("path")]
@@ -511,4 +543,24 @@ func (s *DaytonaSuite) TestOnlySoManyFilesComeBackFromOneRun() {
 	s.Require().NoError(err)
 	s.Len(result.Files, sandbox.MaxFiles)
 	s.Equal(wanted[sandbox.MaxFiles:], result.Missing)
+}
+
+// TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHost: a request the egress proxy
+// never sees keeps its placeholder, so no NO_PROXY entry may match a granted host.
+func (s *DaytonaSuite) TestNoProxyLeavesOutEveryDomainWhoseEntryMatchesAGrantsHost() {
+	crm := sandbox.Grant{Hosts: []string{"api.crm.example", "*.files.example"}}
+	config := sandbox.Config{AllowedDomains: []string{"api.crm.example", "crm.example", "CRM.example", "v2.api.crm.example",
+		"files.example", "eu.files.example", "*.files.example", "example", "pypi.org", "*.pythonhosted.org", ".npmjs.org",
+		"notfiles.example"}, NetworkAllowList: []string{"10.0.0.0/8"}}
+
+	s.Equal("v2.api.crm.example,pypi.org,.pythonhosted.org,.npmjs.org,notfiles.example,10.0.0.0/8", noProxy(config, []sandbox.Grant{crm}))
+	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"pypi.org"}}, nil))
+	s.Empty(noProxy(sandbox.Config{}, []sandbox.Grant{crm}))
+	s.Equal("pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"crm.example", "pypi.org"}}, []sandbox.Grant{github, crm}),
+		"every grant counts, not the first alone")
+	s.Equal("ithub.com", noProxy(sandbox.Config{AllowedDomains: []string{"ithub.com", ".crm.example"}}, []sandbox.Grant{github, crm}),
+		"a domain matches at a dot, and a leading dot names the domain")
+	s.Equal("pypi.org,.pythonhosted.org,pypi.org", noProxy(sandbox.Config{AllowedDomains: []string{"GitHub.com.", "api.github.com:443",
+		"**.github.com", "pypi.org.", "**.pythonhosted.org", "pypi.org:443"}}, []sandbox.Grant{github}),
+		"curl and Go take a trailing dot, a port and **. as the name")
 }

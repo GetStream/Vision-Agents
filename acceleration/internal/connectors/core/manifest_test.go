@@ -83,6 +83,30 @@ func (s *ManifestSuite) TestAManifestWithoutSetupMarshalsWithoutIt() {
 	s.NotContains(string(raw), "setup")
 }
 
+// A source that says nothing may write, and a tool that writes sends data out; only
+// outbound: false says otherwise.
+func (s *ManifestSuite) TestASourceSendsDataOutUnlessItSaysOutboundFalse() {
+	endpoints := "endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n"
+	for written, sends := range map[string]bool{"": true, "    outbound: true\n": true, "    outbound: false\n": false} {
+		parsed, err := ParseManifest(minimal("sensitive: true\n" + endpoints + written))
+		s.Require().NoError(err)
+
+		s.True(parsed.Sensitive)
+		s.Equal(sends, MCPSource(parsed.Sources).SendsOut(), written)
+	}
+}
+
+// A manifest that says neither marshals as it did before the fields existed, so the seeder
+// finds a stored built-in unchanged (store.sameManifest).
+func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutThem() {
+	parsed, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed)
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "sensitive")
+	s.NotContains(string(raw), "outbound")
+}
+
 func (s *ManifestSuite) TestAManifestNamesItsEarlierBrokenRevisionsWithAReason() {
 	parsed, err := ParseManifest([]byte("id: example\nrevision: 6\nname: Example\nschemes: [oauth2_code]\n" +
 		"broken_revisions:\n  - revisions: [1, 2]\n    reason: reads the wrong path\n  - revisions: [4]\n    reason: no scopes\n"))
