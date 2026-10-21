@@ -20,9 +20,10 @@ kind of item it is; a case without one is a chat message. The context depends on
 - A chat message comes with `conversation`: the channel or thread it was posted in, with the
   case in place among the other messages.
 - A Feeds item (`stream:feeds:...`) comes with `activity`: the post, its comments and its
-  reactions, with the case in place as the activity itself or as one of its comments. Reactions
-  show how people received the post, not what it means; many likes do not clear a post, and
-  angry reactions do not condemn it.
+  reactions, with the case in place as the activity itself or as one of its comments, marked by
+  `case_id` and its text left out because it is in the case. Reactions show how people received
+  the post, not what it means; many likes do not clear a post, and angry reactions do not condemn
+  it.
 - A user profile (`stream:user`) has the profile's fields as its text, one `field: value` per
   line. Judge the profile, not what the user posted elsewhere.
 - Any other entity type is the app's own content checked on its own, such as a product review
