@@ -13,6 +13,7 @@ class ErrorType(StrEnum):
     PAYLOAD_TOO_LARGE = "payload_too_large"
     PERMISSION = "permission"
     RATE_LIMITED = "rate_limited"
+    TIMEOUT = "timeout"
     UNAVAILABLE = "unavailable"
     UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
 
