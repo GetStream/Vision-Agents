@@ -97,7 +97,7 @@ func (s *ConnectorsSuite) TestAnAppMarkedInternalListsAndReadsNessy() {
 	s.Equal(ConnectorClientAuthMethod("client_secret_basic"), nessy.Client.AuthMethod)
 	s.Require().NotNil(nessy.Setup)
 	s.Equal("https://nessy.getstream.io/admin", nessy.Setup.URL)
-	s.Len(nessy.Setup.Steps, 5)
+	s.Len(nessy.Setup.Steps, 6)
 }
 
 // An app not marked internal, whether its settings say nothing or say false, lists every
