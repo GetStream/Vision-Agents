@@ -108,7 +108,8 @@ nothing.
   what the video SDK joins — they are not the same id. The agent is shown as Stream's voice
   glow (`AIVoiceGlowView`): connecting while the call is joined, thinking while it answers, and
   moving with whoever is talking, metered from the call's audio, with what is said captioned
-  underneath.
+  underneath. The style button at the top right of the Voice tab opens a sheet showing the glow
+  and Stream's voice wave (`AIVoiceWaveView`), each moving, to pick from.
 - **`lookup_order`** is a tool the model calls that runs in `Demo.swift`. Its data never leaves
   the phone; the agent asks, and only sees the answer. Ask about order `A-1042` or `A-1043`.
   `configure` names it in `visible_tools`, which is what shows its call on the reply.
