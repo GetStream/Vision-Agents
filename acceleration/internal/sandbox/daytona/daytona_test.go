@@ -40,6 +40,8 @@ type platform struct {
 	// and commandExit the exit code each gives.
 	commands    []string
 	commandExit int
+	// steps are the file uploads ("upload") and shell commands ("command") in the order they came.
+	steps []string
 	// auth is the last Authorization header seen.
 	auth string
 
@@ -124,6 +126,7 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		data, _ := io.ReadAll(file)
 		p.files[r.URL.Query().Get("path")] = data
+		p.steps = append(p.steps, "upload")
 		p.uploads = append(p.uploads, fmt.Sprintf("%s after %d runs", r.URL.Query().Get("path"), len(p.ran)))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"name":"file","path":"` + r.URL.Query().Get("path") + `","type":"file"}`))
@@ -131,6 +134,7 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(r.URL.Path, "/process/execute"):
 		var body struct{ Command string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		p.steps = append(p.steps, "command")
 		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"result":"","exitCode":%d}`, p.commandExit)

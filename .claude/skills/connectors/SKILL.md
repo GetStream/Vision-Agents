@@ -216,7 +216,10 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - Network behind the proxy: the allow list is the proxy and the config's `allowed_domains` (or its
   `network_allow_list` and the proxy's IP address). `NO_PROXY` holds the config's own domains, so
   they go direct; a domain that matches a grant's host is left out, so its requests still go
-  through the proxy, and it is left out of the allow list too. A config with `network: true` and no
+  through the proxy, and it is left out of the allow list too. The proxy refuses (403) any name
+  no grant covers. So a config domain that a grant's host also matches (for example `github.com`
+  in the config beside a grant for `api.github.com`) is reachable neither directly nor through the
+  proxy. A config with `network: true` and no
   allow list is refused when a session with a sandbox binding starts: every request goes to the
   proxy, which refuses hosts no grant names. So is a `network_allow_list` when the proxy URL names
   a host, not an IP address.

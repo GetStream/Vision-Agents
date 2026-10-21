@@ -113,6 +113,9 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 		"/tmp/va-egress-ca.pem after 6 runs", "/tmp/va-egress-ca.pem after 8 runs"}, s.platform.uploads, "once per sandbox, before its first run")
 	s.Equal(caCert, string(s.platform.files["/tmp/va-egress-ca.pem"]))
 	s.Require().Len(s.platform.commands, len(cases))
+	for i := range cases {
+		s.Equal([]string{"upload", "command"}, s.platform.steps[2*i:2*i+2], "the CA file is written before the setup uses it")
+	}
 	for i, command := range s.platform.commands {
 		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, command, "once per sandbox, after the CA file")
 	}
