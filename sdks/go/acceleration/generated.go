@@ -2749,6 +2749,9 @@ type AgentConnectorBinding struct {
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
 
+	// Sandbox Whether code in the session's sandbox may call the connector's API with the binding's connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same env var. Omitted is false.
+	Sandbox *bool `json:"sandbox,omitempty"`
+
 	// TimeoutMs How long one tool call may take, in milliseconds. Omitted, the session's default applies.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 
