@@ -264,6 +264,10 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			// decompressing it: the transport decodes the first of two Content-Encoding lines
 			// and drops both, leaving encoded nothing to see (net/http Transport.DisableCompression).
 			pr.Out.Header.Set("Accept-Encoding", "identity")
+			// A connection reused after a host sent more than its response logs those bytes,
+			// an echo of the token, to the process's log ("Unsolicited response received on
+			// idle HTTP channel", net/http transport.go).
+			pr.Out.Close = true
 			// A range of an echo is a piece of the token no rewrite recognises.
 			pr.Out.Header.Del("Range")
 			pr.Out.Header.Del("If-Range")

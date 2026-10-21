@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"math/big"
 	"net"
@@ -949,6 +950,35 @@ func (s *ProxySuite) TestAnEncodedEchoComesBackAsThePlaceholder() {
 	}
 	for i, form := range forms {
 		s.Equal(form(s.placeholder), response.Header.Values("X-Echo")[i])
+	}
+}
+
+// TestBytesPastAResponseReachNoProcessLog is A13: a host that sends more than its
+// response, a HEAD answered with a body or a body past its Content-Length, leaves bytes
+// net/http's transport would print to the process's log on the connection's next use; the
+// router's main sends that log to its own.
+func (s *ProxySuite) TestBytesPastAResponseReachNoProcessLog() {
+	previous := log.Writer()
+	s.T().Cleanup(func() { log.SetOutput(previous) })
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		var global lockedBuffer
+		log.SetOutput(&global)
+		s.answeringRaw(func(authorization string) string {
+			echo := `{"authorization":"` + authorization + `"}`
+			if method == http.MethodHead {
+				return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n" + echo
+			}
+			return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" + echo
+		})
+
+		response, _, err := s.send(s.sandbox(s.credential), s.request(method, "https://api.github.test/echo", "Bearer "+s.placeholder, ""))
+		s.Require().NoError(err, method)
+		s.Equal(http.StatusOK, response.StatusCode, method)
+		// The transport reads an idle connection's next bytes as soon as it is idle.
+		time.Sleep(300 * time.Millisecond)
+
+		log.SetOutput(previous)
+		s.NotContains(global.String(), "gho_first-token-of-the-connection", method)
 	}
 }
 
