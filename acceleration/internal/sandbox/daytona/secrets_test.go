@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -140,70 +141,69 @@ func (s *SecretsSuite) TestASecretDaytonaWouldNotDeleteIsDeletedOnTheNextClose()
 	s.Empty(s.platform.secretNames())
 }
 
-// TestAWithdrawDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted: the grants after the
-// refused one stay held, the ones deleted do not, so the next run and Close delete only what is left.
-func (s *SecretsSuite) TestAWithdrawDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted() {
-	slack := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"},
-		Binding: "slack", Env: "SLACK_TOKEN", Hosts: []string{"slack.com"}}
-	box := s.granted("stg", sandbox.Config{}, github, slack)
-	_, err := box.Run(s.ctx, "print(1)", nil)
-	s.Require().NoError(err)
-	s.Require().Len(s.platform.secretNames(), 2)
+// TestADaytonaRefusalOnTheWayLosesNoSecret: Daytona refuses once the withdrawal or the update
+// of one of three grants, first, middle or last. The run fails; the grants before it are gone,
+// it and the ones after it stay held; the next run and Close leave nothing at Daytona.
+func (s *SecretsSuite) TestADaytonaRefusalOnTheWayLosesNoSecret() {
+	bindings := []string{"alpha", "bravo", "charlie"}
+	grants := make([]sandbox.Grant, len(bindings))
+	for i, binding := range bindings {
+		grants[i] = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-" + binding},
+			Binding: binding, Env: strings.ToUpper(binding) + "_TOKEN", Hosts: []string{binding + ".example.com"}}
+	}
+	for _, path := range []string{"withdraw", "update"} {
+		for refused := range bindings {
+			s.Run(fmt.Sprintf("%s the %s", path, bindings[refused]), func() {
+				platform := newPlatform()
+				s.T().Cleanup(platform.server.Close)
+				revision, withdrawn := 1, false
+				key, url := "key-1", platform.server.URL+"/api"
+				broker, err := NewSecrets(SecretsOptions{APIKey: key, APIURL: url, Prefix: "stg", Session: "session-1",
+					Tokens: func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
+						// A withdrawal takes every grant's credential; an update only the ones before the refused.
+						if withdrawn && (path == "withdraw" || slices.Index(bindings, grant.Binding) < refused) {
+							return sandbox.Token{}, sandbox.ErrNoCredential
+						}
+						return sandbox.Token{Value: fmt.Sprintf("gho_%d", revision), Revision: revision}, nil
+					},
+					Logger: slog.New(slog.DiscardHandler)})
+				s.Require().NoError(err)
+				box, err := New(Options{APIKey: key, APIURL: url, Grants: grants, Broker: broker})
+				s.Require().NoError(err)
+				s.T().Cleanup(func() { _ = box.Close() })
+				_, err = box.Run(s.ctx, "print(1)", nil)
+				s.Require().NoError(err)
+				s.Require().Len(platform.secretNames(), len(bindings))
 
-	s.tokenErr = sandbox.ErrNoCredential
-	s.platform.mu.Lock()
-	s.platform.refuseDelete = "slack"
-	s.platform.mu.Unlock()
-	_, err = box.Run(s.ctx, "print(1)", nil)
-	s.Require().Error(err)
+				withdrawn, revision = true, 2
+				platform.mu.Lock()
+				if path == "withdraw" {
+					platform.refuseDelete = bindings[refused]
+				} else {
+					platform.refuseUpdate = bindings[refused]
+				}
+				platform.mu.Unlock()
+				_, err = box.Run(s.ctx, "print(1)", nil)
+				s.Require().Error(err)
+				s.Len(platform.secretNames(), len(bindings)-refused, "the grants before the refused one are gone, it and the ones after it are held")
 
-	s.platform.mu.Lock()
-	s.platform.refuseDelete = ""
-	s.platform.mu.Unlock()
-	_, err = box.Run(s.ctx, "print(1)", nil)
-	s.Require().NoError(err)
-	s.Require().NoError(box.broker.Close(s.ctx))
-	s.Empty(s.platform.secretNames())
-}
-
-// TestAnUpdateDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted: a withdrawn grant is gone
-// from the held ones even when a later grant's update is refused, so the next run and Close
-// delete only what is left.
-func (s *SecretsSuite) TestAnUpdateDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted() {
-	slack := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"},
-		Binding: "slack", Env: "SLACK_TOKEN", Hosts: []string{"slack.com"}}
-	revision, withdrawn := 1, false
-	key, url := "key-1", s.platform.server.URL+"/api"
-	broker, err := NewSecrets(SecretsOptions{APIKey: key, APIURL: url, Prefix: "stg", Session: "session-1",
-		Tokens: func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
-			if grant.Binding == "github" && withdrawn {
-				return sandbox.Token{}, sandbox.ErrNoCredential
-			}
-			return sandbox.Token{Value: "gho_value", Revision: revision}, nil
-		},
-		Logger: slog.New(slog.DiscardHandler)})
-	s.Require().NoError(err)
-	box, err := New(Options{APIKey: key, APIURL: url, Grants: []sandbox.Grant{github, slack}, Broker: broker})
-	s.Require().NoError(err)
-	s.T().Cleanup(func() { _ = box.Close() })
-	_, err = box.Run(s.ctx, "print(1)", nil)
-	s.Require().NoError(err)
-	s.Require().Len(s.platform.secretNames(), 2)
-
-	withdrawn, revision = true, 2
-	s.platform.mu.Lock()
-	s.platform.refuseUpdate = "slack"
-	s.platform.mu.Unlock()
-	_, err = box.Run(s.ctx, "print(1)", nil)
-	s.Require().Error(err)
-
-	s.platform.mu.Lock()
-	s.platform.refuseUpdate = ""
-	s.platform.mu.Unlock()
-	_, err = box.Run(s.ctx, "print(1)", nil)
-	s.Require().NoError(err)
-	s.Require().NoError(box.broker.Close(s.ctx))
-	s.Empty(s.platform.secretNames())
+				platform.mu.Lock()
+				platform.refuseDelete, platform.refuseUpdate = "", ""
+				platform.mu.Unlock()
+				_, err = box.Run(s.ctx, "print(1)", nil)
+				s.Require().NoError(err)
+				if path == "update" {
+					platform.mu.Lock()
+					for _, held := range platform.secrets {
+						s.Equal("gho_2", held.Value, "the refused grant and the ones after it are updated by the next run")
+					}
+					platform.mu.Unlock()
+				}
+				s.Require().NoError(box.broker.Close(s.ctx))
+				s.Empty(platform.secretNames())
+			})
+		}
+	}
 }
 
 // TestARequiredGrantWithoutACredentialCreatesNoSandbox: the run fails before Daytona is asked
