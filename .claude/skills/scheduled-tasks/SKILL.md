@@ -31,7 +31,7 @@ sent: `scheduledPrompt`, `internal/api/scheduled_delivery.go:456`.
 
 ## Turn it on
 
-Scheduling is a block on the agent config (`AgentScheduling`, `internal/api/configs.go:2028`):
+Scheduling is a block on the agent config (`AgentScheduling`, `internal/api/configs.go:2103`):
 
 | Field | What it does | Default |
 | --- | --- | --- |
@@ -54,9 +54,10 @@ its tasks cannot be delivered into a conversation.
 
 ## Schedule one locally
 
-1. Run the router per the repo-root `AGENTS.md` (Local dev). It must read the user header:
-   `ROUTER_AUTH_MODE=proxy` (the Volt override sets it, `.claude/skills/dashboard/SKILL.md`)
-   or `api_key`. In `noauth` mode the router reads no `X-Stream-User-Id`
+1. Run the router per the repo-root `AGENTS.md` (Local dev) with `ROUTER_AUTH_MODE=proxy`
+   (the Volt override sets it, `.claude/skills/dashboard/SKILL.md`). The commands below name
+   the app with `X-Customer-Id`, which only `proxy` mode reads; in `api_key` mode send the
+   credentials of "Schedule one on staging" instead. In `noauth` mode the router reads no `X-Stream-User-Id`
    (`internal/auth/auth.go:89`), so a create is refused ("name the user the task is for
    with X-Stream-User-Id") and no session gets the tools.
 2. Make a config with scheduling on. In `proxy` mode without `proxy_declares_kind`, a request
@@ -73,7 +74,8 @@ its tasks cannot be delivered into a conversation.
    }'
    ```
 
-   An existing config takes the same block with `PATCH /v1/agents/configs/{id}`.
+   A config with that name already exists on a second run (409 `name_taken`). Use another
+   name, or give the existing config the same block with `PATCH /v1/agents/configs/{id}`.
 3. Schedule through the agent: open a session for a user, then write to it.
 
    ```bash
@@ -81,19 +83,30 @@ its tasks cannot be delivered into a conversation.
    SID=$(curl -s "$R/v1/agents/sessions" "${H[@]}" "${U[@]}" \
      -d '{"agent": "reminders", "timezone": "Europe/Amsterdam"}' | jq -r .id)
    curl -s "$R/v1/agents/sessions/$SID/respond" "${H[@]}" "${U[@]}" \
-     -d '{"text": "remind me to stretch in 20 minutes"}'
+     -d '{"text": "remind me to stretch in 20 minutes", "request_id": "remind-1"}'
+   curl -s "$R/v1/agents/sessions/$SID/commands/remind-1" "${H[@]}" "${U[@]}"   # state: thinking, then completed
    ```
+
+   A text session with a named user needs a durable command, so `respond` takes a
+   `request_id` (without it: 400 `personal conversations require a command ID`,
+   `internal/session/session.go:507`). `GET .../commands/{request_id}`
+   (`internal/api/sessions.go:1147`) answers the command's `state` (`thinking`, then
+   `completed`), not the reply text: read that in the conversation on the dashboard. The
+   model has made the task when the list in step 4 shows it.
 
    Or through REST (`createScheduledTask`, `internal/api/scheduled_tasks.go:742`). Name the
    agent with `agent`, `config_id` or `session_id`:
 
    ```bash
-   curl -s "$R/v1/agents/scheduled-tasks" "${H[@]}" "${U[@]}" -d '{
+   TASK=$(curl -s "$R/v1/agents/scheduled-tasks" "${H[@]}" "${U[@]}" -d '{
      "agent": "reminders", "title": "Stretch",
      "instructions": "Remind Alice to stretch and ask how her back is.",
      "schedule": {"at": "09:00", "repeat": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"}
-   }'
+   }' | jq -r .id)
    ```
+
+   `TASK` is the new task's id. A task the tool made: take its id from the list in step 4
+   (with one task, `jq -r '.items[0].id'` gives it).
 
    Without `session_id`, the first occurrence opens a session for the user.
 4. Watch it. Fire it now without moving the schedule, then read its runs:
@@ -102,10 +115,11 @@ its tasks cannot be delivered into a conversation.
    curl -s "$R/v1/agents/scheduled-tasks?state=active" "${H[@]}" "${U[@]}" | jq '.items[] | {id, title, next_run_at, last_run_at}'
    curl -s -X POST "$R/v1/agents/scheduled-tasks/$TASK/run" "${H[@]}" "${U[@]}"   # 202, the run
    curl -s "$R/v1/agents/scheduled-tasks/$TASK/runs" "${H[@]}" "${U[@]}" | jq '.items[] | {scheduled_for, trigger, state, delivered_to, error}'
-   docker compose logs -f router | grep -i 'scheduled task'
+   docker compose logs -f router | grep -i 'scheduled task' | grep -v 'Failed to forward'
    ```
 
-   A delivered run logs nothing; its run row says `delivered`. Open the session on the
+   The `grep -v` drops the job queue's `Failed to forward scheduled tasks` noise. A delivered
+   run logs nothing; its run row says `delivered`. Open the session on the
    dashboard to read the agent's message.
 
 ## Schedule one on staging
@@ -117,19 +131,22 @@ wants `api_key` and `stream-auth-type: jwt` for any token, and a server token is
 
 ```bash
 set -a; . ./.env; set +a          # STREAM_API_KEY, STREAM_API_SECRET; prints nothing
-b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-now=$(date +%s)
-head=$(printf '{"alg":"HS256","typ":"JWT"}' | b64)
-body=$(printf '{"server":true,"iat":%d,"exp":%d}' "$now" $((now + 3600)) | b64)
-sig=$(printf '%s.%s' "$head" "$body" | openssl dgst -sha256 -hmac "$STREAM_API_SECRET" -binary | b64)
-TOKEN="$head.$body.$sig"
+# node 22 reads the secret from its environment, so it never appears in a command line
+TOKEN=$(node -e '
+const c = require("node:crypto");
+const b = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
+const now = Math.floor(Date.now() / 1000);
+const input = b({ alg: "HS256", typ: "JWT" }) + "." + b({ server: true, iat: now, exp: now + 3600 });
+process.stdout.write(input + "." + c.createHmac("sha256", process.env.STREAM_API_SECRET).update(input).digest("base64url"));
+')
 R=https://accelerate.gcp.stream-io-api.com
 A=(-H "Authorization: Bearer $TOKEN" -H 'stream-auth-type: jwt' -H 'Content-Type: application/json' -H 'X-Stream-User-Id: alice')
 curl -s "$R/v1/agents/scheduled-tasks?api_key=$STREAM_API_KEY" "${A[@]}" | jq '.items | length'
 ```
 
 Every call from "Schedule one locally" works with `"${A[@]}"` in place of
-`"${H[@]}" "${U[@]}"` and `?api_key=$STREAM_API_KEY` on the URL. Staging logs: the `deploy`
+`"${H[@]}" "${U[@]}"` and `api_key=$STREAM_API_KEY` on the URL: after `?` when the URL has no
+query yet, after `&` when it has one (`...?state=active&api_key=$STREAM_API_KEY`). Staging logs: the `deploy`
 skill.
 
 ## Nothing arrived?
@@ -138,7 +155,7 @@ Read the task, then its runs, then the logs, in that order.
 
 | Check | How | What it means |
 | --- | --- | --- |
-| Task `state` | `GET /v1/agents/scheduled-tasks/{id}` | `paused`: a pause, or its config was deleted (`internal/api/configs.go:298`). `failed`: five failed occurrences in a row (`maxConsecutiveFailures`); resume clears it. `completed`: a one-shot ran, or the repeat has nothing left |
+| Task `state` | `GET /v1/agents/scheduled-tasks/{id}` | `paused`: a pause, or its config was deleted (`internal/api/configs.go:308`). `failed`: five failed occurrences in a row (`maxConsecutiveFailures`); resume clears it. `completed`: a one-shot ran, or the repeat has nothing left |
 | `next_run_at`, `upcoming` | same | In the task's zone. Wrong hour: the zone (below) |
 | `schedule.timezone` | same | Resolved at create from the call, the session, `users.timezone`, then `default_timezone`. A session opened with a zone moves `users.timezone` (`internal/api/session_create.go:76`) |
 | `quiet_hours` | same | An occurrence due inside them is held to their end: its run stays `running` with nothing sent. A run by hand is never held |
@@ -153,7 +170,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 
 | Code | Meaning | Retried |
 | --- | --- | --- |
-| `delivery_failed` | Any other failure, or its workers died three times | yes, unless the workers died |
+| `delivery_failed` | Any other failure, or the occurrence was claimed three times (`maxScheduledTaskRunAttempts`: the first claim, the take-up after a hold, one after a lost worker) | yes, unless it was claimed three times or a call was already placed (`scheduled_delivery.go:783`, `:857`) |
 | `timed_out` | The occurrence used its 20 min (`occurrenceBudget`) | no |
 | `schedule_unreadable` | The stored schedule no longer parses; the task is paused | no |
 | `user_on_call` | The user stayed on a call through the 10 min window | yes |
@@ -170,7 +187,7 @@ A failure is retried after 30 s, 2 min and 10 min (`DeliveryRetries`) only when 
 is not final; with several channels, it is final only when every channel's failure is.
 
 Worker log lines, as the code writes them (`grep -i 'scheduled task'` finds all but the
-last):
+last; it also finds the job queue's `Failed to forward scheduled tasks`, which is noise):
 
 | Line | Level | Where |
 | --- | --- | --- |
@@ -181,14 +198,23 @@ last):
 | `a scheduled task was too late to deliver` | info | `scheduler.go:351` |
 | `a scheduled task changed under its run; its delivery was stopped` | info | `scheduler.go:364` |
 | `a scheduled task failed to deliver` | warn | `scheduler.go:372` |
+| `could not hold a scheduled task` | error | `scheduler.go:469` |
+| `a scheduled task changed under its run; the hold was left alone` | info | `scheduler.go:471` |
 | `a scheduled task is held` (with `until`) | info | `scheduler.go:473` |
 | `could not renew a scheduled task's lease` | error | `scheduler.go:497` |
 | `could not record a scheduled task run` | error | `scheduler.go:563` |
+| `a scheduled task changed under its run; the schedule was left alone` | info | `scheduler.go:565` |
 | `could not hand a scheduled task to the node holding its session` | warn | `internal/api/scheduled_delivery.go:577` |
 | `the node holding a scheduled task's session did not take it` | warn | `scheduled_delivery.go:580` |
 | `could not deliver a peer's scheduled task` | error | `scheduled_delivery.go:623` |
+| `could not record the session a scheduled task opened` | error | `scheduled_delivery.go:690` |
+| `could not give back a scheduled task's call` | error | `scheduled_delivery.go:745` |
+| `could not record the session a scheduled task rang into` | error | `scheduled_delivery.go:786` |
+| `could not end a scheduled task's call` | error | `scheduled_delivery.go:793` |
 | `a scheduled task run by hand did not land` | error | `internal/api/scheduled_tasks.go:574` |
-| `could not pause a deleted config's scheduled tasks` | error | `internal/api/configs.go:299` |
+| `could not record a scheduled task run by hand` | error | `scheduled_tasks.go:578` |
+| `could not read when a scheduled task last ran` | error | `scheduled_tasks.go:637` |
+| `could not pause a deleted config's scheduled tasks` | error | `internal/api/configs.go:309` |
 | `not keeping the conversation in Stream Chat` | warn | `internal/session/manager.go:333` |
 
 Each line carries `task`, `run` and `customer` where it has them; the `error` field holds the

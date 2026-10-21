@@ -1,9 +1,8 @@
 # internal/scheduling
 
 Scheduled tasks: something the agent agreed to do for one end user at a wall-clock time in
-that user's zone, once or on a repeat. This package holds the two pure parts and the worker:
-schedules (`scheduling.go`, `resolve.go`, `describe.go`, `quiet.go`: parse, validate, expand,
-describe, quiet hours) and the `Scheduler` (`scheduler.go`), which claims due occurrences from
+that user's zone, once or on a repeat. This package holds two things: the schedules (`scheduling.go`, `resolve.go`, `describe.go`,
+`quiet.go`: parse, validate, expand, describe, quiet hours; pure code) and the `Scheduler` (`scheduler.go`), which claims due occurrences from
 the store and hands each to a `DeliverFunc`. It imports `store` and nothing that delivers; the
 delivery is `api.Server.DeliverScheduledTask`, handed in at `cmd/router/main.go:1265`. What the
 feature is for and what is not done: `.factory/features/scheduled-tasks.md`. How to use and
@@ -51,21 +50,22 @@ One word, one meaning, in code, docs and API alike.
 | run | The record of one occurrence that came due, or of one run by hand: `running`, `delivered`, `failed` or `missed`, with `error` a reason code. Its `prompt` is the instructions as they were at the claim | `store.ScheduledTaskRun`, table `scheduled_task_runs`, unique per (`customer_id`, `task_id`, `scheduled_for`) for `trigger = schedule` | run `scheduled_for` 2026-10-26T09:00:00+01:00, `state` `delivered`, `delivered_to` `conversation` |
 | claim, lease | A worker's hold on a task: `claim_id` fences every later write of that worker, `lease_until` says when another worker may take it. Lease 1 min, renewed every 10 s | `ClaimDueScheduledTasks`, `RenewScheduledTaskLease`, `scheduledLease`, `renewLeaseEvery` (`scheduler.go:19`, `:22`) | A pause clears `claim_id`; the next renewal finds no row and stops the delivery |
 | held | An occurrence that came due in quiet hours: the claim stays, the lease moves to the hold's end, the run stays `running` with `postponed_until` | `Postponed`, `PostponeScheduledTask`, `ScheduledTaskRun.PostponedUntil` | Due 23:30 with quiet hours 22:00–07:00: held until 07:00, delivered then |
-| missed | A run not delivered because it was too late or the task slept through it. Not a failure: the failure streak is left as it is | `ScheduledTaskRunMissed`, `Missed`, `Scheduler.missed`, `SleptThrough` | A daily task the router could not reach for 3 h: the two oldest occurrences are `missed`, the latest is delivered |
+| missed | A run not delivered because it was too late, the task slept through it, or a pause or edit settled it while it was held or in flight (S4). Not a failure: the failure streak is left as it is | `ScheduledTaskRunMissed`, `Missed`, `Scheduler.missed`, `SleptThrough` | A daily task the router could not reach for 25 h: yesterday's occurrence is `missed`, today's (59 min old) is delivered. With 3 h down, the one occurrence is 3 h old, past the 1 h grace, so it is `missed` and nothing is delivered |
 | reason | The short code a failed or missed run records; the full error goes to the logs only | `Reason*` constants (`scheduler.go:105`), `Failure.Reason` | `user_on_call`, `not_answered`, `task_paused` |
 | final | A failure another attempt would only repeat, or that would ring the user again: not retried | `Failure.Final`, `undeliveredFinally` | `not_answered`, `already_called` |
-| quiet hours | The part of the user's local day an occurrence is held through: `{start, end}` as "22:00", read in the task's zone; an end before the start wraps midnight | `QuietEnd` (`quiet.go:46`), `ScheduledTaskQuietHours` | `{"start": "22:00", "end": "07:00"}` |
+| quiet hours | The part of the user's local day an occurrence is held through: `{start, end}` as "22:00", read in the task's zone; an end that does not read after the start (earlier or equal) wraps midnight | `QuietEnd` (`quiet.go:46`), `ScheduledTaskQuietHours` | `{"start": "22:00", "end": "07:00"}` |
 | schedule, RRULE subset | `at` or `in`, an optional `repeat` (FREQ DAILY, WEEKLY, MONTHLY, YEARLY; INTERVAL; BYDAY; BYMONTHDAY; COUNT ≤ 1000) and `until`, an inclusive local date. `start_local` is stored as the wall clock with no zone | `Input`, `Schedule`, `Parse`, `FromStored`, `parseRepeat` (`scheduling.go:436`) | `at: "09:00"`, `repeat: "FREQ=MONTHLY;BYDAY=-1FR"`: last Friday of every month |
 | zone resolution | Which IANA zone a new task takes, first match wins: the call's argument, the session's, `users.timezone`, the config's `default_timezone`; none is `timezone_unknown`. `Local` is refused | `ResolveZone` (`scheduling.go:153`), `LoadZone` | Session opened with `timezone: "America/New_York"`, no argument: the task is in New York time |
-| due | When an occurrence came due, or when the hold on it ended; lateness counts from it | `scheduledDelivery.Due`, `Scheduler.missed` | Held until 07:00: a 07:05 delivery is 5 min late, not 7 h 35 min |
+| due | When an occurrence came due, or when the hold on it ended; the worker's missed check and the call grace count lateness from it. The prompt's `late=` counts from the run's `scheduled_for` instead (`scheduled_delivery.go:470`, AI-1597) | `scheduledDelivery.Due`, `Scheduler.missed` | Held until 07:00: a 07:05 delivery is 5 min late to the worker, not 7 h 35 min |
 | command id | The id the follow-up turn is sent under, so a conversation runs it once | `"st_" + run.ID` (`scheduled_delivery.go:161`); a call's turn adds `_call` | `st_01JB...` |
 
 ## Rules
 
 Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
 (`internal/scheduling/scheduler_test.go`), `StoreSuite` (`internal/store/scheduled_tasks_test.go`),
-`ScheduledTasksSuite` (`internal/api/scheduled_tasks_test.go`, `scheduled_phone_test.go`).
-All three need the integration tag (see Run the tests).
+`ScheduledTasksMigrationSuite` and `DataMoveSuite` (`internal/store`), `ScheduledTasksSuite`
+(`internal/api/scheduled_tasks_test.go`, `scheduled_phone_test.go`) and `DrainSuite`
+(`cmd/router`). All of them need the integration tag (see Run the tests).
 
 - **One occurrence, one claim, one run.** Claims run in one transaction under
   `FOR UPDATE SKIP LOCKED`, against the database's clock, and insert the run in it.
@@ -80,8 +80,9 @@ All three need the integration tag (see Run the tests).
 - **A lost claim stops the delivery.** `TestSchedulerSuite/TestPausingATaskStopsItsDeliveryInFlight`,
   `TestSchedulerSuite/TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt`.
 - **A run taken over keeps its id, so its command id.** A stale run is reclaimed under the same
-  row; after three workers died on it, it fails with `delivery_failed`
-  (`maxScheduledTaskRunAttempts`). `TestStoreSuite/TestAStaleRunIsReclaimedUnderTheSameRun`,
+  row. `maxScheduledTaskRunAttempts` (3) counts claims: the first, the take-up after a
+  quiet-hours hold, and one after a lost worker. A third claim fails the run with
+  `delivery_failed`. `TestStoreSuite/TestAStaleRunIsReclaimedUnderTheSameRun`,
   `TestStoreSuite/TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCap`.
 - **An occurrence holds a slot 20 min at most** (`occurrenceBudget`), and running out is
   `timed_out`. `TestSchedulerSuite/TestAnOccurrenceThatOutlastsItsBudgetFails`,
@@ -99,8 +100,9 @@ All three need the integration tag (see Run the tests).
   not held. `TestSchedulerSuite/TestAHeldTaskIsDeliveredWhenTheHoldEnds`,
   `TestSchedulerSuite/TestAHeldOccurrenceIsCountedFromTheHoldAndNotFromWhenItCameDue`,
   `TestScheduledTasksSuite/TestAQuietTaskIsHeldUntilItsQuietHoursEnd`.
-- **A pause or edit writes a held run `missed` (S4).** An edited active one-shot comes due
-  again as it now reads; one being delivered keeps its claim and run.
+- **A pause or edit writes a running run `missed`, held or in flight (S4).** An edited active
+  one-shot comes due again as it now reads. Only an edit that leaves a one-shot active while
+  it is delivered keeps its claim and run.
   `TestStoreSuite/TestPausingATaskWritesItsHeldOccurrenceMissed`,
   `TestScheduledTasksSuite/TestPausingATaskWritesTheOccurrenceItHeldMissed`,
   `TestStoreSuite/TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads`,
@@ -134,7 +136,8 @@ All three need the integration tag (see Run the tests).
 - **The tools go only to verified users with scheduling on, outside incognito.**
   `TestScheduledTasksSuite/TestGuestsAndAnonymousCallersAreNotOfferedTheTools`,
   `TestScheduledTasksSuite/TestAnIncognitoSessionIsNotOfferedTheTools`,
-  `TestScheduledTasksSuite/TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools`,
+  `TestScheduledTasksSuite/TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools`.
+- **A caller's own tool with a scheduling name keeps the name.**
   `TestScheduledTasksSuite/TestACallersOwnScheduleTaskKeepsTheName`.
 - **Another user's task is a 404.** `TestScheduledTasksSuite/TestTheOwnerReachesATaskItsBackendMadeAndAnotherUserDoesNot`.
 - **A scheduled turn is never on the user's day.** `TestScheduledTasksSuite/TestADueTaskIsNotCountedOnItsUsersDay`.
@@ -142,9 +145,10 @@ All three need the integration tag (see Run the tests).
   `TestScheduledTasksSuite/TestATaskThatComesDueOnACallWaitsForTheCallToEnd`,
   `TestScheduledTasksSuite/TestADueTaskIsHandedToTheNodeHoldingItsConversation`.
 - **The reply is written once; channels carry its words.**
-  `TestScheduledTasksSuite/TestARetriedOccurrenceTextsTheReplyItAlreadyHas`,
-  `TestScheduledTasksSuite/TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation`,
-  `TestScheduledTasksSuite/TestATaskForSomebodyWhoOptedOutRunsNoTurnForThem`.
+  `TestScheduledTasksSuite/TestARetriedOccurrenceTextsTheReplyItAlreadyHas`.
+- **A channel the user cannot be reached on falls back or is refused before the turn.**
+  `TestScheduledTasksSuite/TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation` (falls
+  back), `TestScheduledTasksSuite/TestATaskForSomebodyWhoOptedOutRunsNoTurnForThem` (refused).
 - **Instructions are data, not orders.** `TestInstructionsCannotCloseTheirScheduledTaskBlock`
   (`internal/api`, unit).
 - **The worker sleeps on the wake index.** `TestStoreSuite/TestTheNextWakeIsReadOffItsIndex`,
@@ -154,7 +158,7 @@ All three need the integration tag (see Run the tests).
 - **Config delete pauses, session delete deletes, data move carries.**
   `TestScheduledTasksSuite/TestDeletingAConfigPausesItsTasks`,
   `TestScheduledTasksSuite/TestDeletingASessionDeletesItsTasks`,
-  `TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns`.
+  `TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns` (`internal/store`; `internal/api` has a suite of the same name).
 
 ## Run the tests
 
@@ -171,8 +175,12 @@ The suites need Postgres and Redis (`docker compose up -d postgres redis` at the
 so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTheEnvironment`):
 
 1. Point `testing.yaml` at a database of your own whose name ends in `_test`, such as
-   `model_router_test_<slug>_test`. Never commit that edit. `StoreSuite` drops the schema of
-   the database it gets, and `SchedulerSuite` migrates and writes `ROUTER_POSTGRES_DSN` as is.
+   `model_router_test_<slug>_test`. Never commit that edit. `SchedulerSuite` migrates and writes
+   that database as is. Some suites derive a database of their own from it with
+   `testenv.Database`, which puts the suite's name before `_test`
+   (`model_router_test_<slug>_test` becomes `model_router_store_test_<slug>_test`). They create
+   it on first use. `StoreSuite` drops the schema of its own (`internal/store/store_test.go:96`),
+   never of yours.
 2. Keep `redis.addr: localhost:56379` there: `ScheduledTasksSuite` skips without both
    `ROUTER_POSTGRES_DSN` and `ROUTER_REDIS_ADDR` (`internal/api/router_suite_test.go:367`).
 3. Run one package at a time (`-p 1`), as the `parallel-agents` skill says:
@@ -181,10 +189,13 @@ so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTh
 cd acceleration
 grep dsn internal/config/testing.yaml        # your own *_test database
 go test -tags integration -p 1 -count=1 -run TestSchedulerSuite ./internal/scheduling/
-go test -tags integration -p 1 -count=1 -run 'TestStoreSuite|TestScheduledTasksMigrationSuite' ./internal/store/
+go test -tags integration -p 1 -count=1 -timeout 40m -run 'TestStoreSuite|TestScheduledTasksMigrationSuite|TestDataMoveSuite' ./internal/store/
 go test -tags integration -p 1 -count=1 -run TestScheduledTasksSuite ./internal/api/
 go test -tags integration -p 1 -count=1 -run TestDrainSuite ./cmd/router/
 ```
 
+The store command runs all of `StoreSuite`, more than 500 tests. It took about 8 minutes on a
+loaded machine, and the default `go test` timeout is 10 minutes, so it sets `-timeout 40m`.
 Narrow to one test with `-run 'TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered'`.
-Known flakes: AI-1555, AI-1566.
+Known flake: AI-1555. AI-1566 is a panic of `TestATaskTextedBySMSArrivesThere` on the first
+run against a fresh database, which step 1 gives you: run it again.
