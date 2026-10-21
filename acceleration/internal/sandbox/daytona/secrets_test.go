@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -98,6 +99,26 @@ func (s *SecretsSuite) granted(prefix string, config sandbox.Config, grants ...s
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box
+}
+
+// TestDaytonasBrokerSendsDaytonaWhatItDidBefore is the control: no per-run env and no proxy.
+// The expected bodies are a probe of base 98410fe9b.
+func (s *SecretsSuite) TestDaytonasBrokerSendsDaytonaWhatItDidBefore() {
+	box := s.granted("stg", sandbox.Config{AllowedDomains: []string{"pypi.org"}}, github)
+	s.Require().NoError(box.Write(s.ctx, "dir/f.txt", []byte("x")))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	created, err := json.Marshal(s.platform.requests())
+	s.Require().NoError(err)
+	ran, err := json.Marshal(s.platform.executed())
+	s.Require().NoError(err)
+	s.Equal(`[{"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
+		`"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}]`,
+		regexp.MustCompile(`va_stg_session-1_github_[0-9a-f]{8}`).ReplaceAllString(string(created), "SECRET"))
+	s.Equal(`[{"authorization":"Bearer key-1","code":"print(1)","language":"python","path":"/toolbox/sandbox-2/process/code-run","timeout":30}]`,
+		string(ran))
+	s.Equal([]string{"{\"command\":\"mkdir -p 'dir'\"}\n"}, s.platform.rawCommands)
 }
 
 func (s *SecretsSuite) TestTheSandboxIsCreatedWithTheSecretMadeForItsGrant() {

@@ -248,9 +248,10 @@ func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
 const proxyCA = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
 
 // TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
-// sandbox reaches the proxy alone, holds a placeholder, and the proxy finds the connection's
-// token behind it, for this session. No secret prefix is needed. A connection deleted
-// mid-session is withdrawn, in the session's log.
+// sandbox goes through the proxy to its grants' hosts and the config's allowed domains, holds a
+// placeholder, and the proxy finds the connection's token behind it, for this session, and the
+// allowed domains. No secret prefix is needed. A connection deleted mid-session is withdrawn,
+// in the session's log.
 func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
@@ -266,7 +267,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	s.sandboxRevision()
 	id := s.connection("", "primary")
 	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
-	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
+	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, sandbox.Config{AllowedDomains: []string{"PyPI.org", "Files.PythonHosted.org"}}
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
 	box, err := s.manager.box(spec, d)
@@ -276,7 +277,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	_, err = box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
-	s.Equal("proxy.stg.example", api.created["domainAllowList"])
+	s.Equal("PyPI.org,Files.PythonHosted.org,api.crm.example,*.crm.example", api.created["domainAllowList"])
 	proxy, err := url.Parse(api.created["outboundProxyUrl"].(string))
 	s.Require().NoError(err)
 	credential, _ := proxy.User.Password()
@@ -286,6 +287,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	var record egress.Record
 	s.Require().NoError(json.Unmarshal(raw, &record))
 	s.Equal(spec.ID, record.Session)
+	s.Equal([]string{"pypi.org", "files.pythonhosted.org"}, record.Allowed)
 	s.Require().Len(record.Grants, 1)
 	s.Equal(api.created["env"].(map[string]any)["CRM_TOKEN"], record.Grants[0].Placeholder)
 	token, err := egress.ResolverTokens(s.resolver, s.registry.Schemes)(s.ctx, record.Grants[0])
@@ -308,9 +310,9 @@ func (s *SandboxGrantsSuite) TestAManagerWithTheProxyBrokerNeedsItsStore() {
 	s.ErrorContains(err, "the proxy sandbox broker needs the store")
 }
 
-// TestTheProxyBrokerRefusesAConfigItCannotServe: an open network would reach the grants alone,
-// and Daytona's one CIDR allow list cannot hold a proxy named by a host name. Daytona's broker
-// takes both, and the proxy takes a network narrowed to domains, or ranges with its address.
+// TestTheProxyBrokerRefusesAConfigItCannotServe: the proxy reaches hosts by name, so an open
+// network or CIDR ranges would reach the grants alone. Daytona's broker takes both, and the
+// proxy takes a network narrowed to domains.
 func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
 	open := sandbox.Config{Network: true}
 	ranges := sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}
@@ -322,12 +324,10 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
 	err := s.boxed(open)
 	s.ErrorContains(err, "sandbox_options.network is true")
 	s.ErrorContains(err, "code_sandbox.broker is proxy")
-	s.ErrorContains(s.boxed(ranges), "sandbox_options.network_allow_list must hold the egress proxy's address")
+	s.ErrorContains(s.boxed(ranges), "sandbox_options.network_allow_list is set")
+	s.ErrorContains(s.boxed(sandbox.Config{Network: true, NetworkAllowList: []string{"10.0.0.0/8"}}), "sandbox_options.network_allow_list is set")
 	s.NoError(s.boxed(sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org"}}))
-	s.manager.options.SandboxProxy.URL = "http://203.0.113.7:8091"
-	s.NoError(s.boxed(ranges))
-	s.NoError(s.boxed(sandbox.Config{Network: true, NetworkAllowList: []string{"10.0.0.0/8"}}),
-		"a network narrowed to ranges is not open")
+	s.NoError(s.boxed(sandbox.Config{}))
 }
 
 // daytonaAPI stands in for Daytona's API: it creates sandboxes, runs code, and keeps the

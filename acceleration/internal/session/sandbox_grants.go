@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
-	"net/url"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -47,11 +45,12 @@ func (m *Manager) sandboxGrant(binding store.ConnectorBinding, connection store.
 // broker is the code_sandbox.broker setting's broker for the session's grants.
 func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, error) {
 	if m.options.SandboxBroker == egress.BrokerName {
-		if err := behindProxy(spec.SandboxOptions, m.options.SandboxProxy.URL); err != nil {
+		if err := behindProxy(spec.SandboxOptions); err != nil {
 			return nil, err
 		}
 		options := m.options.SandboxProxy
-		options.Session, options.Tokens, options.Logger = spec.ID, m.sandboxTokens(d.schemes), m.logger
+		options.Session, options.Allowed = spec.ID, spec.SandboxOptions.AllowedDomains
+		options.Tokens, options.Logger = m.sandboxTokens(d.schemes), m.logger
 		return egress.NewBroker(options)
 	}
 	if m.options.SandboxSecretPrefix == "" {
@@ -65,29 +64,21 @@ func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, er
 		Tokens: m.sandboxTokens(d.schemes), Logger: m.logger})
 }
 
-// behindProxy refuses a sandbox config the egress proxy cannot serve. HTTPS_PROXY sends every
-// request there and the proxy refuses a host no grant names, so an open network would reach
-// nothing but the grants. Daytona takes one allow list, so with CIDR ranges the proxy must be an
-// address in them.
-func behindProxy(config sandbox.Config, proxy string) error {
+// behindProxy refuses a sandbox config the egress proxy cannot serve. Every request goes there,
+// and the proxy reaches the grants' hosts and the config's allowed domains by name only, so an
+// open network or CIDR ranges would reach nothing but the grants.
+func behindProxy(config sandbox.Config) error {
 	if config.Network && len(config.AllowedDomains) == 0 && len(config.NetworkAllowList) == 0 {
 		return stack.Wrap(errors.New("session: the agent config's sandbox_options.network is true, and this router's " +
 			"code_sandbox.broker is proxy, which sends every request from the sandbox through the egress proxy, and the " +
-			"proxy reaches only connectors' hosts: list the domains code needs in sandbox_options.allowed_domains instead"))
+			"proxy reaches only connectors' hosts and sandbox_options.allowed_domains: list the domains code needs in sandbox_options.allowed_domains instead"))
 	}
-	parsed, err := url.Parse(proxy)
-	if len(config.NetworkAllowList) > 0 && (err != nil || !isAddress(parsed.Hostname())) {
-		return stack.Wrap(errors.New("session: the agent config's sandbox_options.network_allow_list must hold the " +
-			"egress proxy's address, and this router's code_sandbox.proxy_public_url names it by a host name: list " +
-			"sandbox_options.allowed_domains instead, or give the proxy's IP address"))
+	if len(config.NetworkAllowList) > 0 {
+		return stack.Wrap(errors.New("session: the agent config's sandbox_options.network_allow_list is set, and this " +
+			"router's code_sandbox.broker is proxy, which reaches hosts by name only: list the domains code needs in " +
+			"sandbox_options.allowed_domains instead"))
 	}
 	return nil
-}
-
-// isAddress says whether host is an IP address, which a CIDR range can hold.
-func isAddress(host string) bool {
-	_, err := netip.ParseAddr(host)
-	return err == nil
 }
 
 // sandboxTokens resolves a grant's credential and reads it as its scheme sends it: the token

@@ -206,23 +206,32 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   router with this broker serves the proxy too, so it also needs `ROUTER_CODE_SANDBOX_PROXY_ADDR`
   and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does not start. It needs no secret
   prefix.
-- Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var, `HTTPS_PROXY`
-  with its own proxy credential, and the proxy's CA certificate at `/tmp/va-egress-ca.pem`
-  (`NODE_EXTRA_CA_CERTS`). Before any code runs, the router writes `/tmp/va-egress-ca-bundle.pem`:
-  the image's own roots and that CA (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`), so a
-  host reached directly is still verified. An image with no system roots file runs no code. The proxy puts
-  the token in place of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git
-  works too.
-- Network behind the proxy: the allow list is the proxy and the config's `allowed_domains` (or its
-  `network_allow_list` and the proxy's IP address). `NO_PROXY` holds the config's own domains, so
-  they go direct; a domain that matches a grant's host is left out, so its requests still go
-  through the proxy, and it is left out of the allow list too. The proxy refuses (403) any name
-  no grant covers. So a config domain that a grant's host also matches (for example `github.com`
-  in the config beside a grant for `api.github.com`) is reachable neither directly nor through the
-  proxy. A config with `network: true` and no
-  allow list is refused when a session with a sandbox binding starts: every request goes to the
-  proxy, which refuses hosts no grant names. So is a `network_allow_list` when the proxy URL names
-  a host, not an IP address.
+- Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var. Daytona gets the
+  proxy URL with the sandbox's own proxy credential (`OutboundProxyUrl`). Daytona's netleash holds
+  that credential: the sandbox's `HTTPS_PROXY` names netleash, not the proxy. Netleash replaces the
+  proxy and CA env vars a sandbox is created with, but not those of one command or run of code
+  (live probes, 2026-10-21). So the router sets the CA env vars on every command and run:
+  `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` name
+  `/tmp/va-egress-ca-bundle.pem`, and `NODE_EXTRA_CA_CERTS` names the proxy's CA certificate,
+  `/tmp/va-egress-ca.pem`. Before any code runs, the router writes the bundle: netleash's
+  `ca.crt` (or the image's own roots) and that CA. An image with no roots file runs no code. The
+  proxy puts the token in place of the placeholder in `Authorization` (Bearer, `token`, or Basic),
+  so git works too.
+- Network behind the proxy: the sandbox's domain allow list is the grants' hosts and the config's
+  `allowed_domains`. Only that list makes Daytona force every connection through netleash; the
+  proxy URL alone does not. The proxy then does one of three things with a `CONNECT`:
+  - a host a grant covers: it ends TLS with its own CA and puts the token in;
+  - a host of `allowed_domains` only: it sends the bytes on as they are, with no token, and reads
+    none of them;
+  - any other host, a non-public address or a port other than 443: it refuses.
+  A host both cover is a grant's. A config with `network: true` and no `allowed_domains`, or with
+  a `network_allow_list`, is refused when a session with a sandbox grant starts: the proxy reaches hosts by name
+  only. Unverified until the staging E2E (AI-1663): that netleash sends the allowed hosts on to
+  the proxy.
+- Sandbox code has root (`sudo` with no password, live probe 2026-10-21). No control inside the
+  sandbox protects anything: code can change its env, its CA files and its routes. The controls
+  are the token, which stays in the router; Daytona's domain allow list, which forces every
+  connection through netleash (a route change as root: unverified); and the proxy's grant check.
 - A connection the proxy cannot get a token for just now (a provider outage) keeps its grant; a
   connection that needs a reconnect gives the sandbox nothing, and refuses a `required` binding.
 - Revocation through the proxy is immediate: it resolves the token on every request and keeps no

@@ -6,14 +6,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
+	"maps"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -48,47 +54,52 @@ func (s *ProxySuite) SetupTest() {
 	s.T().Cleanup(s.platform.server.Close)
 }
 
+// disconnected is a grant whose connection gives the sandbox no credential.
+var disconnected = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"},
+	Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"api.linear.app"}}
+
 // caCert is the proxy CA's certificate as the broker is given it.
 const caCert = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
 
 // proxied is a sandbox of config whose github grant the egress proxy broker at proxy holds.
-func (s *ProxySuite) proxied(config sandbox.Config, proxy string) *Sandbox {
+func (s *ProxySuite) proxied(config sandbox.Config, proxy string, more ...sandbox.Grant) *Sandbox {
 	broker, err := egress.NewBroker(egress.BrokerOptions{Store: egress.NewStore(s.redis), URL: proxy,
 		CACert: []byte(caCert), Session: "session-1",
-		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) {
+		Tokens: func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
+			if grant.Binding == disconnected.Binding {
+				return sandbox.Token{}, sandbox.ErrNoCredential
+			}
 			return sandbox.Token{Value: "gho_first", Revision: 1}, nil
 		},
 		Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
-	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Config: config, Grants: []sandbox.Grant{github},
+	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Config: config, Grants: append([]sandbox.Grant{github}, more...),
 		Broker: broker})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box
 }
 
-// TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts: the proxy joins the config's allow list,
-// HTTP(S)_PROXY names it, the config's own hosts go around it (NO_PROXY) and a grant's host
-// never does, not even when the config names it, and the sandbox trusts the proxy's CA, with
-// its own roots, before any code runs.
-func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
+// TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomains: Daytona holds the proxy URL with
+// the sandbox's credential, the allow list is the grants' hosts and the config's domains and
+// never the proxy's host, the sandbox's own env holds the placeholder alone, and every command
+// and run gets the CA env, which Daytona's netleash would replace in the sandbox's. The CA file
+// and its bundle come before any code, once per sandbox.
+func (s *ProxySuite) TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomains() {
 	const proxy = "http://proxy.stg.example:8091"
 	cases := []struct {
-		config                     sandbox.Config
-		proxy                      string
-		domains, ranges, noProxied string
+		config  sandbox.Config
+		proxy   string
+		domains string
 	}{
-		{sandbox.Config{}, proxy, "proxy.stg.example", "", ""},
-		{sandbox.Config{}, "http://203.0.113.7:8091", "203.0.113.7", "", ""},
+		{sandbox.Config{}, proxy, "api.github.com,uploads.github.com"},
+		{sandbox.Config{}, "http://203.0.113.7:8091", "api.github.com,uploads.github.com"},
 		{sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org", "api.github.com", "github.com", "*.pythonhosted.org"}}, proxy,
-			"proxy.stg.example,pypi.org,*.pythonhosted.org", "", "pypi.org,.pythonhosted.org"},
-		{sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}, "http://203.0.113.7:8091", "", "10.0.0.0/8,203.0.113.7/32",
-			"10.0.0.0/8"},
-		{sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}, "http://[2001:db8::7]:8091", "", "10.0.0.0/8,2001:db8::7/128",
-			"10.0.0.0/8"},
+			"pypi.org,api.github.com,github.com,*.pythonhosted.org,uploads.github.com"},
 	}
 	for _, c := range cases {
 		box := s.proxied(c.config, c.proxy)
+		s.Require().NoError(box.Write(s.ctx, "dir/f.txt", []byte("x")))
 		_, err := box.Run(s.ctx, "print(1)", nil)
 		s.Require().NoError(err)
 		_, err = box.Run(s.ctx, "print(2)", nil)
@@ -97,28 +108,51 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAndTheConfigsOwnHosts() {
 
 	for i, created := range s.platform.requests() {
 		c := cases[i]
-		env, _ := created["env"].(map[string]any)
-		s.Regexp(`^va_ph_[A-Z2-7]{26}$`, env["GITHUB_TOKEN"])
-		s.Regexp(`^http://sbx:[A-Z2-7]{26}@`, created["outboundProxyUrl"], i)
-		s.Equal(created["outboundProxyUrl"], env["HTTPS_PROXY"])
+		s.Equal([]string{"GITHUB_TOKEN"}, slices.Collect(maps.Keys(created["env"].(map[string]any))), i)
+		s.Regexp(`^va_ph_[A-Z2-7]{26}$`, created["env"].(map[string]any)["GITHUB_TOKEN"])
+		s.Regexp(`^http://sbx:[A-Z2-7]{26}@`+regexp.QuoteMeta(strings.TrimPrefix(c.proxy, "http://"))+`$`, created["outboundProxyUrl"], i)
 		s.Equal(c.domains, valueOr(created, "domainAllowList"), i)
-		s.Equal(c.ranges, valueOr(created, "networkAllowList"), i)
-		s.Equal(c.noProxied, valueOr(env, "NO_PROXY"), i)
-		s.Equal(c.noProxied, valueOr(env, "no_proxy"), i)
+		s.NotContains(created, "networkAllowList")
 		s.Equal(false, created["networkBlockAll"])
 		s.NotContains(created, "secrets")
 	}
 	s.Len(s.platform.requests(), len(cases))
-	s.Equal([]string{"/tmp/va-egress-ca.pem after 0 runs", "/tmp/va-egress-ca.pem after 2 runs", "/tmp/va-egress-ca.pem after 4 runs",
-		"/tmp/va-egress-ca.pem after 6 runs", "/tmp/va-egress-ca.pem after 8 runs"}, s.platform.uploads, "once per sandbox, before its first run")
+	bundle := "/tmp/va-egress-ca-bundle.pem"
+	runEnv := map[string]any{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle, "GIT_SSL_CAINFO": bundle,
+		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem"}
+	s.Len(s.platform.executed(), 2*len(cases))
+	for _, ran := range s.platform.executed() {
+		s.Equal(runEnv, ran["envs"], "every run")
+	}
+	s.Len(s.platform.rawCommands, 2*len(cases))
+	for _, raw := range s.platform.rawCommands {
+		var command struct{ Envs map[string]any }
+		s.Require().NoError(json.Unmarshal([]byte(raw), &command))
+		s.Equal(runEnv, command.Envs, "every command")
+	}
+	s.Equal([]string{"/tmp/va-egress-ca.pem after 0 runs", "dir/f.txt after 0 runs", "/tmp/va-egress-ca.pem after 2 runs",
+		"dir/f.txt after 2 runs", "/tmp/va-egress-ca.pem after 4 runs", "dir/f.txt after 4 runs"}, s.platform.uploads,
+		"once per sandbox, before its first file and run")
 	s.Equal(caCert, string(s.platform.files["/tmp/va-egress-ca.pem"]))
-	s.Require().Len(s.platform.commands, len(cases))
 	for i := range cases {
-		s.Equal([]string{"upload", "command"}, s.platform.steps[2*i:2*i+2], "the CA file is written before the setup uses it")
+		s.Equal([]string{"upload", "command", "command", "upload"}, s.platform.steps[4*i:4*i+4],
+			"the CA file is written before the setup uses it, and both before the sandbox's first file")
+		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, s.platform.commands[2*i],
+			"once per sandbox, after the CA file")
 	}
-	for i, command := range s.platform.commands {
-		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, command, "once per sandbox, after the CA file")
-	}
+}
+
+// TestAGrantTheBrokerLeavesOutIsNotInTheAllowList: its host is not reachable, and its env var is
+// not set.
+func (s *ProxySuite) TestAGrantTheBrokerLeavesOutIsNotInTheAllowList() {
+	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091", disconnected)
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal("api.github.com,uploads.github.com", valueOr(created, "domainAllowList"))
+	s.Equal([]string{"GITHUB_TOKEN"}, slices.Collect(maps.Keys(created["env"].(map[string]any))))
 }
 
 // TestASetupThatFailsRunsNoCode: a sandbox whose image has no roots to bundle the CA with runs
