@@ -365,7 +365,7 @@ func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionSaysToSaveItAgai
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
 	s.Equal(codeCredentialRejected, validation.Code)
-	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save the token or key again "+
+	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save its credentials again "+
 		"with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision", validation.Error)
 }
 
@@ -464,6 +464,103 @@ func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesAnOutdatedConnect
 	s.Equal(2, saved.DefinitionRevision)
 	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
 	s.Equal("+12025551234", saved.AccountID, "the account revision 2's identity makes")
+}
+
+// TestSavingANoneConnectionAgainMovesAnOutdatedConnection: a none connection, which no consent
+// can move, reads the connector's latest revision once its empty credentials are saved again,
+// as a bearer one does, and stays connected.
+func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesAnOutdatedConnection() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	s.builtin(none.Name, 2, "")
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": s.get(id).Revision}, &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+}
+
+// TestSavingANoneConnectionAgainMovesItOffABrokenRevision: the same for a none connection whose
+// revision a later one marked broken. The move begins a new grant, as a bearer one's does.
+func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesItOffABrokenRevision() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	before := s.connectedAt(id)
+	s.builtin(none.Name, 2, brokenFirst)
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionBroken), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": s.get(id).Revision}, &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+	after := s.connectedAt(id)
+	s.Require().NotNil(before)
+	s.Require().NotNil(after)
+	s.True(after.After(*before), "a new grant began")
+}
+
+// TestANoneConnectionOnABrokenRevisionSaysToSaveItAgain: a none connection takes no consent
+// either (begin refuses it), so the validate of one on a broken revision says to save its
+// credentials again, with the code a rejected token has, not failed with "reconnect it".
+func (s *ConnectionToolsSuite) TestANoneConnectionOnABrokenRevisionSaysToSaveItAgain() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	s.builtin(none.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save its credentials again "+
+		"with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision", validation.Error)
+}
+
+// TestANoneConnectionThatNeedsAReconnectIsToldItsCredentialsWereRejected: a none connection the
+// resolver invalidated has no consent to run, so the validate gives the code a rejected token
+// has, as a bearer one does.
+func (s *ConnectionToolsSuite) TestANoneConnectionThatNeedsAReconnectIsToldItsCredentialsWereRejected() {
+	id := s.connection(none.Name)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}
+	sent, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().NoError(s.resolver.Invalidate(context.Background(), ref, sent, core.Outcome{Kind: core.OutcomeScopeRequired}))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+}
+
+// TestAClientCredentialsConnectionKeepsItsRevisionWhenSavedAgain is the control for the move:
+// only a token, a key or a none connection moves to the latest revision on a credentials save.
+// An oauth2_client_credentials connection saved again keeps the revision it reads.
+func (s *ConnectionToolsSuite) TestAClientCredentialsConnectionKeepsItsRevisionWhenSavedAgain() {
+	connector := s.builtin(oauth2cc.Name, 1, "")
+	id := s.connectionTo(connector)
+	body := func() map[string]any {
+		return map[string]any{"expected_revision": s.get(id).Revision, "values": map[string]string{
+			oauth2cc.SuppliedClientID: s.provider.ClientID, oauth2cc.SuppliedClientSecret: s.provider.ClientSecret}}
+	}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", body(), nil))
+	s.builtin(oauth2cc.Name, 2, "")
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", body(), &saved))
+
+	s.Equal(1, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), saved.DefinitionStatus)
 }
 
 // TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt: a later revision that drops the

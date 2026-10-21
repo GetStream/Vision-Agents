@@ -662,6 +662,70 @@ func (s *StreamsSuite) ending(connection *websocket.Conn) ([]frame, error) {
 	}
 }
 
+func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextModel() {
+	// A run before this one in the process left the model unavailable (key: live.go, healthKey).
+	redis := s.live.ShardRedis()
+	s.Require().NoError(redis.Do(s.T().Context(),
+		redis.B().Del().Key("health:stt:refusing:"+handingOverModel).Build()).Error())
+	listening := s.start("/v1/stt/stream", frame{
+		"target": "refusing/" + handingOverModel,
+		"stt":    frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},
+	})
+	defer listening.Close()
+	started := s.nextFrame(listening)
+	s.Require().Equal("started", started["type"])
+	s.Require().Equal("refusing", started["provider"])
+
+	// The caller keeps talking across the switch, as one on a call would.
+	talking := make(chan struct{})
+	defer close(talking)
+	go func() {
+		silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-talking:
+				return
+			case <-ticker.C:
+				if listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()) != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Before any of the next model's words: the caller is told who transcribes from now on,
+	// in the shape of the first started, and hears nothing of the refusal.
+	handedOver := s.nextFrame(listening)
+	s.Equal(frame{"type": "started", "provider": "echoing", "model": "echoing-model"}, handedOver,
+		"the refusal reached the caller rather than the model now transcribing")
+	transcript := s.nextFrame(listening)
+	s.Equal("transcript", transcript["type"], "%v", transcript)
+	s.Equal("echoing", transcript["provider"])
+}
+
+func (s *StreamsSuite) TestASocketNoModelRefusesStartsOnce() {
+	// The model the refusing one hands over to, opened on its own.
+	listening := s.start("/v1/stt/stream", frame{"target": "echoing/echoing-model"})
+	s.Require().Equal("started", s.nextFrame(listening)["type"])
+	silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+	for range 2 {
+		s.Require().NoError(listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()))
+	}
+	for range 2 {
+		heard := s.nextFrame(listening)
+		s.Require().Equal("transcript", heard["type"], "%v", heard)
+	}
+
+	s.Require().NoError(listening.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")))
+	rest, _ := s.ending(listening)
+	for _, read := range rest {
+		s.NotEqual("started", read["type"], "a socket no model refused said it started again: %v", rest)
+	}
+}
+
 // refused opens a socket on the model that refuses the account, speaks into it and returns
 // it once the refusal has come back.
 func (s *StreamsSuite) refused() *websocket.Conn {

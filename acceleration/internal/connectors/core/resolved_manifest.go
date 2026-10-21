@@ -37,6 +37,9 @@ type ResolvedManifest struct {
 	// channel. It is the Manifest's own, not a copy, as Client and Scopes are: Reply only reads
 	// it.
 	Channel *ChannelRule
+	// Sandbox is the manifest's sandbox block, or nil when code in a sandbox cannot reach the
+	// provider. The Manifest's own, as Channel is: its readers only read it.
+	Sandbox *SandboxRule
 	// vars are the manifest's vars, which a reply template may name.
 	vars map[string]Var
 }

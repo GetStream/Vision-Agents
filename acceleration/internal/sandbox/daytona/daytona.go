@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -43,6 +44,10 @@ type Options struct {
 	Config     sandbox.Config
 	HTTPClient *http.Client
 	Logger     *slog.Logger
+	// Grants are the connections code in the sandbox may call with, through Broker, which
+	// is nil without grants.
+	Grants []sandbox.Grant
+	Broker sandbox.CredentialBroker
 }
 
 // A cancellable gate serializes creation, execution and deletion. Identity survives a
@@ -54,6 +59,10 @@ type Sandbox struct {
 	closed              atomic.Bool
 	timeout, runTimeout time.Duration
 	config              sandbox.Config
+	grants              []sandbox.Grant
+	broker              sandbox.CredentialBroker
+	// secrets are the env vars the broker's Prepare gave the sandbox being created.
+	secrets map[string]string
 }
 
 func New(o Options) (*Sandbox, error) {
@@ -79,7 +88,8 @@ func New(o Options) (*Sandbox, error) {
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout, config: o.Config}, nil
+	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout, config: o.Config,
+		grants: o.Grants, broker: o.Broker}, nil
 }
 func Configured() bool { return os.Getenv(apiKeyEnvVar) != "" }
 func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandbox.Result, error) {
@@ -94,6 +104,11 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	}
 	if err := s.started(ctx); err != nil {
 		return sandbox.Result{}, err
+	}
+	if s.broker != nil {
+		if err := s.broker.BeforeRun(ctx); err != nil {
+			return sandbox.Result{}, err
+		}
 	}
 	run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
 	defer cancel()
@@ -148,9 +163,19 @@ func (s *Sandbox) started(ctx context.Context) error {
 	}
 	if s.box == nil {
 		create, end := context.WithTimeout(ctx, s.timeout)
+		defer end()
+		if s.broker != nil {
+			mount, err := s.broker.Prepare(create, s.grants)
+			if err != nil {
+				return err
+			}
+			s.secrets = mount.Secrets
+		}
 		box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
-		end()
 		if err != nil {
+			if s.broker != nil {
+				return errors.Join(err, s.broker.Close(ctx))
+			}
 			return err
 		}
 		s.box = box
@@ -168,8 +193,10 @@ func quoted(word string) string {
 // params are what the sandbox is created from: Daytona's own Python sandbox, or an image
 // built from the config's base and setup.
 func (s *Sandbox) params() any {
-	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated()}
-	if domains := s.config.AllowedDomains; len(domains) > 0 {
+	domains := s.domains()
+	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated() && len(domains) == 0,
+		Secrets: s.secrets}
+	if len(domains) > 0 {
 		joined := strings.Join(domains, ",")
 		base.DomainAllowList = &joined
 	}
@@ -215,12 +242,42 @@ func (s *Sandbox) Close() error {
 		return ctx.Err()
 	}
 
+	// The secrets go first: a sandbox Daytona would not delete keeps no credential.
+	var released error
+	if s.broker != nil {
+		released = s.broker.Close(ctx)
+	}
 	if s.box == nil {
-		return s.client.Close(ctx)
+		return errors.Join(released, s.client.Close(ctx))
 	}
 	if err := s.box.Delete(ctx); err != nil {
-		return err
+		return errors.Join(released, err)
 	}
 	s.box = nil
-	return s.client.Close(ctx)
+	return errors.Join(released, s.client.Close(ctx))
+}
+
+// Grants are the connections code in the sandbox may call with.
+func (s *Sandbox) Grants() []sandbox.Grant {
+	return s.grants
+}
+
+// domains are the config's allowed domains and, unless the config opens the whole network or
+// lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
+// sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
+func (s *Sandbox) domains() []string {
+	domains := slices.Clone(s.config.AllowedDomains)
+	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
+		return domains
+	}
+	for _, grant := range s.grants {
+		if _, held := s.secrets[grant.Env]; held {
+			for _, host := range grant.Hosts {
+				if !slices.Contains(domains, host) {
+					domains = append(domains, host)
+				}
+			}
+		}
+	}
+	return domains
 }

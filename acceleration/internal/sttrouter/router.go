@@ -84,7 +84,7 @@ func New(options Options) (*Router, error) {
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when
-// one fails to start.
+// one fails to start, and again when one refuses the session part way through.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	request.Options = routeDefaults(request.Target, request.Options)
 	if err := r.Live(request); err != nil {
@@ -108,7 +108,19 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+	// The next candidate opens under the context the first one did, so it lasts as long
+	// as the first would have: the socket's lives as long as the socket
+	// (api/streamws.go, streamModality), the agent's as long as the agent (a.ctx). Closing
+	// the session ends it too, so a socket closed while the next candidate dials does not
+	// wait out that candidate's handshake: the socket's context ends only after the session's
+	// events do.
+	reopenCtx, cancel := context.WithCancel(ctx)
+	reopen := func(refused []string) (stt.STT, routing.ProviderConfig, error) {
+		next := core
+		next.Exclude = refused
+		return r.Select(reopenCtx, next)
+	}
+	return newSession(provider, config, core.Owner(), r.Recorder(), reopen, cancel), nil
 }
 
 // Live refuses a session pinned only to batch models before any vendor is dialled: a
