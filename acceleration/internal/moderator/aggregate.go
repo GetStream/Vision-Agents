@@ -31,6 +31,9 @@ const (
 	// its counts are partial.
 	pageSize = 100
 	maxPages = 20
+	// scanBudget stops paging a slow Stream early. The moderation tools run outside the
+	// timeout a caller's own tools get, and the model waits on every page read.
+	scanBudget = 20 * time.Second
 	// maxRows is the most entries one breakdown of moderation_summary lists.
 	maxRows = 25
 )
@@ -90,7 +93,8 @@ func (r *Runner) readWindow(ctx context.Context, args arguments) (*scan, error) 
 	if args.Days != nil {
 		days = min(max(*args.Days, 1), maxDays)
 	}
-	to := time.Now().UTC()
+	started := time.Now()
+	to := started.UTC()
 	from := to.AddDate(0, 0, -days)
 	filter := map[string]any{"created_at": map[string]any{"$gte": from.Format(time.RFC3339)}}
 	if args.EntityType != "" {
@@ -103,7 +107,7 @@ func (r *Runner) readWindow(ctx context.Context, args arguments) (*scan, error) 
 		Limit:  &limit,
 	}
 	result := &scan{Window: window{From: from, To: to, Days: days}}
-	for page := 0; page < maxPages; page++ {
+	for page := 0; page < maxPages && (page == 0 || time.Since(started) < scanBudget); page++ {
 		response, err := r.client.Moderation().QueryReviewQueue(ctx, request)
 		if err != nil {
 			return nil, stack.Wrap(err)
