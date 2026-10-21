@@ -190,6 +190,9 @@ Show ONE summary and wait for an explicit yes:
   also gets the Stream app's other call events and its new-message events); any stale hook URL
   to remove; numbers to attach; Twilio voice URLs to set; the Telnyx person app's voice URL,
   with the numbers on that app listed (it changes all of them);
+- for each person number whose voice setting is `other` (it points at some other app or
+  webhook), say plainly: while the test runs, real calls to that number reach the test script
+  instead; it is put back afterwards. Recommend a number used only for tests. Never print the URL;
 - cleanup: what goes back (hooks, voice URLs, `connection_id`s, tunnel, router), what stays (the
   bought numbers, until you say otherwise), and that release is asked per number afterwards.
 
