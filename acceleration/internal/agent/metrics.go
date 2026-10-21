@@ -95,6 +95,6 @@ var (
 	settledOverAgent = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "agent_settled_over_agent_total",
-		Help:      "Settled turns put to the flow controller while the agent was talking, by how many words, whether the transcriber marked them final, and what came of them",
+		Help:      "Settled turns put to the flow controller while the agent was talking, by how many words, whether the last revision of the words was a final, and what came of them",
 	}, []string{"words", "final", "action"})
 )
