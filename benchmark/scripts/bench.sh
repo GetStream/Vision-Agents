@@ -98,7 +98,7 @@ preflight() {
   local t wake_url="${BENCH_WAKE_URL:-$GEMMA_BASE_URL}" wake_model="${BENCH_WAKE_MODEL:-google/gemma-4-26B-A4B-it}"
   for _ in $(seq 1 120); do
     t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$wake_url/chat/completions" \
-      -H "Authorization: Bearer $BASETEN_API_KEY" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer ${GEMMA_API_KEY:-$BASETEN_API_KEY}" -H 'Content-Type: application/json' \
       -d '{"model":"'"$wake_model"'","max_tokens":1,"messages":[{"role":"user","content":"Hi"}]}')
     echo "$wake_model $t"
     case "$t" in 200\ 0.*|200\ 1.*) return 0 ;; esac

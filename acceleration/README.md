@@ -159,6 +159,7 @@ the other commands that read them there.
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
 | `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint, `https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1` |
+| `GEMMA_API_KEY`         | Optional; the bearer token for `GEMMA_BASE_URL` when it is not on Baseten. `BASETEN_API_KEY` is used when unset |
 | `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
