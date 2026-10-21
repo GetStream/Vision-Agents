@@ -149,7 +149,7 @@ private struct MessageRow: View {
                         // The step keeps only the opening of its thinking; the whole of it
                         // came with the live updates, while the reply was being written.
                         if let step = part.reasoning {
-                            StreamingReasoningView(part: step, text: reasoning[step.id])
+                            StreamingReasoningView(part: step, text: reasoning[message: message.id, step: step.id])
                         } else {
                             AIMessagePartView(part: part, approver: approver)
                         }

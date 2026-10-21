@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -257,7 +258,9 @@ func (s *RealtimeSocketSuite) TestAnAnswerCarriesTheResultAndAsksForAReply() {
 	s.Equal("function_call_output", result.Item.Type)
 	s.Equal("call_1", result.Item.CallID)
 	s.Equal(`{"forecast":"sunny"}`, result.Item.Output)
-	s.Equal(eventResponseCreate, s.nextFrame(conn).Type, "this protocol does not carry on by itself")
+	carry := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, carry.Type, "this protocol does not carry on by itself")
+	s.Equal(clientResponse, carry.EventID)
 
 	s.Require().NoError(provider.Answer("call_2", "", context.DeadlineExceeded))
 	failed := s.nextFrame(conn)
@@ -276,7 +279,9 @@ func (s *RealtimeSocketSuite) TestATypedTurnAndAPromptAskForReplies() {
 	s.Equal("user", turn.Item.Role)
 	s.Equal("input_text", turn.Item.Content[0].Type)
 	s.Equal("hello", turn.Item.Content[0].Text)
-	s.Equal(eventResponseCreate, s.nextFrame(conn).Type)
+	typed := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, typed.Type)
+	s.Equal(clientResponse, typed.EventID)
 
 	s.Require().NoError(provider.Prompt("Greet the caller."))
 	prompt := s.nextFrame(conn)
@@ -298,6 +303,7 @@ func (s *RealtimeSocketSuite) TestQwenAudioIsPromptedWithASystemMessageAndOnlyCa
 	reply := s.nextFrame(conn)
 	s.Equal(eventResponseCreate, reply.Type)
 	s.Nil(reply.Response, "Qwen-Audio's response.create takes no instructions")
+	s.Equal(clientResponse, reply.EventID)
 
 	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
 	s.serve(conn, serverEvent{
@@ -332,4 +338,367 @@ func (s *RealtimeSocketSuite) TestInstructionsChangeThroughASessionUpdate() {
 	s.Equal(eventSessionUpdate, update.Type)
 	s.Equal("realtime", update.Session.Type, "the GA session object names its type on every update")
 	s.Equal("Now be verbose.", update.Session.Instructions)
+}
+
+// refused is the server refusing a reply while another is open, as gpt-realtime-2.1 sent it
+// on 2026-10-20. A refusal of a client request names it; one of the server's own replies
+// names nothing.
+func (s *RealtimeSocketSuite) refused(conn *websocket.Conn, eventID string) {
+	named := "null"
+	if eventID != "" {
+		named = `"` + eventID + `"`
+	}
+	raw := `{"type":"error","event_id":"event_1","error":{"type":"invalid_request_error",` +
+		`"code":"conversation_already_has_active_response","message":"Conversation already has an active ` +
+		`response in progress: r1. Wait until the response is finished before creating a new one.",` +
+		`"param":null,"event_id":` + named + `}}`
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(raw)))
+}
+
+// until reads events until one passes the check, and returns every event read.
+func (s *RealtimeSocketSuite) until(provider *STS, check func(sts.Event) bool) []sts.Event {
+	var seen []sts.Event
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-provider.Events():
+			seen = append(seen, event)
+			if check(event) {
+				return seen
+			}
+		case <-deadline:
+			s.FailNow("the event never arrived", "seen: %v", seen)
+			return nil
+		}
+	}
+}
+
+// settled waits for the server's frames so far to have been read, by sending a transcript
+// and waiting for it.
+func (s *RealtimeSocketSuite) settled(provider *STS, conn *websocket.Conn) []sts.Event {
+	s.serve(conn, serverEvent{Type: eventInputCompleted, Transcript: "marker"})
+	return s.until(provider, func(event sts.Event) bool {
+		heard, ok := event.(sts.InputTranscript)
+		return ok && heard.Text == "marker"
+	})
+}
+
+// nothingAsked proves no frame went upstream: caller audio sent now is the next frame.
+func (s *RealtimeSocketSuite) nothingAsked(provider *STS, conn *websocket.Conn) {
+	s.speak(provider)
+	s.Equal(eventAudioAppend, s.nextFrame(conn).Type, "nothing was asked for")
+}
+
+func errorsIn(events []sts.Event) []sts.Error {
+	var failures []sts.Error
+	for _, event := range events {
+		if failure, ok := event.(sts.Error); ok {
+			failures = append(failures, failure)
+		}
+	}
+	return failures
+}
+
+func (s *RealtimeSocketSuite) TestACallerTurnRefusedDuringAReplyIsAnsweredAfterIt() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventSpeechStopped})
+	s.refused(conn, "")
+	events := s.settled(provider, conn)
+	s.Empty(errorsIn(events), "a turn that will be answered is not a failure")
+	s.nothingAsked(provider, conn)
+
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+	asked := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, asked.Type, "the caller's turn is asked for once the reply is done")
+	s.Nil(asked.Response, "a plain reply answers everything the caller said")
+	s.Equal(clientResponse, asked.EventID, "a refusal of this one is reported, not owed again")
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r2"}})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r2", Status: "completed"}})
+	s.settled(provider, conn)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestARefusalThatArrivesAfterTheReplyIsAnsweredAtOnce() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+	s.refused(conn, "")
+
+	s.Equal(eventResponseCreate, s.nextFrame(conn).Type)
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r2"}})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r2", Status: "completed"}})
+	s.settled(provider, conn)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestALateRefusalWhileTheCallerSpeaksAgainAsksForNothing() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+	s.serve(conn, serverEvent{Type: eventSpeechStarted})
+	s.refused(conn, "")
+	events := s.settled(provider, conn)
+
+	s.Empty(errorsIn(events), "the server answers the caller's next stop itself")
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestARefusalWhileTheCallerSpeaksAndTheReplyIsOpenAsksForNothing() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventSpeechStarted})
+	s.refused(conn, "")
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+	events := s.settled(provider, conn)
+
+	s.Empty(errorsIn(events), "the server answers the caller's next stop itself")
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestARefusedPromptWhileTheCallerSpeaksAndTheReplyIsOpenIsStillAsked() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventSpeechStarted})
+	s.Require().NoError(provider.Prompt("Say: one moment."))
+	s.refusedOurs(conn)
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+
+	asked := s.nextFrame(conn)
+	s.Require().NotNil(asked.Response, "our prompt is not the caller's turn: the server will not answer it")
+	s.Equal("Say: one moment.", asked.Response.Instructions)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestRefusalsDuringOneReplyAreAnsweredOnce() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.refused(conn, "")
+	s.refused(conn, "")
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+
+	s.Equal(eventResponseCreate, s.nextFrame(conn).Type)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestACallerWhoSpeaksAgainIsNotAnsweredForTheEarlierTurn() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.refused(conn, "")
+	s.serve(conn, serverEvent{Type: eventSpeechStarted})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+	s.settled(provider, conn)
+
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestABargeInDropsTheOwedReply() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.refused(conn, "")
+	s.settled(provider, conn)
+
+	s.Require().NoError(provider.Interrupt(0))
+	s.Equal(eventResponseCancel, s.nextFrame(conn).Type)
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "cancelled"}})
+	s.settled(provider, conn)
+
+	s.nothingAsked(provider, conn)
+}
+
+// refusedOurs serves the refusal of the reply request of ours just sent, and returns it.
+func (s *RealtimeSocketSuite) refusedOurs(conn *websocket.Conn) clientEvent {
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+	s.Contains(string(raw), `"event_id":"client_response"`, "the request is named so a refusal of it is told apart")
+	var request clientEvent
+	s.Require().NoError(json.Unmarshal(raw, &request))
+	s.Require().Equal(eventResponseCreate, request.Type)
+	s.refused(conn, request.EventID)
+	return request
+}
+
+func (s *RealtimeSocketSuite) TestARefusedPromptIsAskedForAfterTheReplyWithItsInstructions() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.Require().NoError(provider.Prompt("Say: one moment."))
+	s.refusedOurs(conn)
+	events := s.settled(provider, conn)
+	s.Empty(errorsIn(events), "a prompt that will be answered is not a failure")
+	s.nothingAsked(provider, conn)
+
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+	asked := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, asked.Type, "the prompt is asked for once the reply is done")
+	s.Require().NotNil(asked.Response)
+	s.Equal("Say: one moment.", asked.Response.Instructions, "the prompt keeps what it asked for")
+	s.Equal(clientResponse, asked.EventID)
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r2"}})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r2", Status: "completed"}})
+	s.settled(provider, conn)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestARefusedToolResultIsAskedForAfterTheReply() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.Require().NoError(provider.Answer("call_1", `{"forecast":"sunny"}`, nil))
+	s.Equal(eventItemCreate, s.nextFrame(conn).Type)
+	s.refusedOurs(conn)
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+
+	asked := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, asked.Type, "the model carries on from the result once the reply is done")
+	s.Nil(asked.Response)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestOnlyTheLastRefusedRequestOfOursIsAskedFor() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.Require().NoError(provider.Prompt("Say: first."))
+	s.refusedOurs(conn)
+	s.settled(provider, conn)
+	s.Require().NoError(provider.Prompt("Say: second."))
+	s.refusedOurs(conn)
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+
+	asked := s.nextFrame(conn)
+	s.Require().NotNil(asked.Response)
+	s.Equal("Say: second.", asked.Response.Instructions, "the last request replaces the earlier one")
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestACallerTurnRefusedAfterARefusedPromptKeepsThePrompt() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.Require().NoError(provider.Prompt("Say: one moment."))
+	s.refusedOurs(conn)
+	s.refused(conn, "")
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "completed"}})
+
+	asked := s.nextFrame(conn)
+	s.Require().NotNil(asked.Response, "one reply answers both, guided by the prompt")
+	s.Equal("Say: one moment.", asked.Response.Instructions)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestARefusedRequestOfOursWithNoReplyOpenIsAnError() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	s.Require().NoError(provider.Prompt("Say: one moment."))
+	s.refusedOurs(conn)
+	events := s.settled(provider, conn)
+
+	failures := errorsIn(events)
+	s.Require().Len(failures, 1, "with no reply to wait for, asking again would be refused again")
+	s.ErrorContains(failures[0].Err, activeResponse)
+	s.Equal("server", failures[0].Context)
+	s.nothingAsked(provider, conn)
+}
+
+func (s *RealtimeSocketSuite) TestAnOwedReplyThatCannotBeAskedForIsAnError() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	defer func() { _ = provider.Close() }()
+
+	// A write deadline in the past fails every write and leaves reads alone.
+	s.Require().NoError(provider.conn.SetWriteDeadline(time.Now().Add(-time.Second)))
+	s.refused(conn, "")
+	events := s.settled(provider, conn)
+
+	failures := errorsIn(events)
+	s.Require().Len(failures, 1)
+	s.ErrorContains(failures[0].Err, "write response.create")
+	s.Equal("response", failures[0].Context)
+	s.False(failures[0].Fatal)
+}
+
+// TestABargeInThatInterruptsTheReplyAsksForNothing is the default path, interrupt_response
+// true: the server cuts its reply off and answers the stop itself. Expected events come from
+// a run on the base, before refusals were answered.
+func (s *RealtimeSocketSuite) TestABargeInThatInterruptsTheReplyAsksForNothing() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	interrupts := true
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI, InterruptResponse: &interrupts})
+	defer func() { _ = provider.Close() }()
+	s.until(provider, func(event sts.Event) bool { _, ok := event.(sts.Connected); return ok })
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{Type: eventSpeechStarted})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{
+		ID: "r1", Status: "cancelled", StatusDetails: &statusDetails{Type: "cancelled", Reason: "turn_detected"},
+	}})
+	s.serve(conn, serverEvent{Type: eventSpeechStopped})
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r2"}})
+	s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r2", Status: "completed"}})
+	events := s.settled(provider, conn)
+
+	var kinds []string
+	for _, event := range events {
+		kinds = append(kinds, fmt.Sprintf("%T", event))
+	}
+	s.Equal([]string{
+		"sts.ResponseStarted", "sts.SpeechStarted", "sts.ResponseComplete", "sts.SpeechStopped",
+		"sts.ResponseStarted", "sts.ResponseComplete", "sts.InputTranscript",
+	}, kinds)
+	s.True(events[2].(sts.ResponseComplete).Interrupted)
+	s.False(events[5].(sts.ResponseComplete).Interrupted)
+	s.nothingAsked(provider, conn)
 }

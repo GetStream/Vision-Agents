@@ -256,7 +256,8 @@ working. What the router writes is what it renders:
 - A reasoning step stores only its opening. The whole of it comes a window at a time on the
   live updates' `reasoning` field; `LiveReasoning` reassembles it, fed from the client's
   `MessageUpdatedEvent`s (the channel's message list can fold updates together), and goes to
-  `StreamingReasoningView(part:text:)`.
+  `StreamingReasoningView(part:text:)`. Look a step up by its reply and its id: every reply
+  numbers its steps from `r1`.
 - A call that asks first is `awaiting_approval` with an `approval`: `AIToolApprovalView`, with
   an `AIToolApprover` whose `decide` is `session.decide`. On a call there is no channel; show
   `session.approvals` with `AIToolApprovalCard`.

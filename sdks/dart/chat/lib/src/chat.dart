@@ -52,12 +52,15 @@ extension SessionChat on AgentSession {
 /// The whole of it reaches people watching the reply live: each update carries the next
 /// window of the round being streamed, in the message's `reasoning` field. [read] every update
 /// into one of these, from the client's `message.updated` events rather than the channel's
-/// message list, which can fold several updates into one, and show a step by its id.
+/// message list, which can fold several updates into one, and show a step by its reply and its
+/// id, as `reasoning[(message: message.id, step: step.id)]`: every reply numbers its steps
+/// from `r1`.
 final class LiveReasoning {
-  final _steps = <String, ({String text, int end})>{};
+  final _steps = <({String message, String step}), ({String text, int end})>{};
 
-  /// The thinking of reasoning step [stepId] so far, or null before any of it arrived.
-  String? operator [](String stepId) => _steps[stepId]?.text;
+  /// The thinking of reasoning step `step` of reply `message` so far, or null before any of it
+  /// arrived.
+  String? operator [](({String message, String step}) key) => _steps[key]?.text;
 
   /// Reads the window a live update carries, if it carries one.
   void read(stream.Message message) {
@@ -66,16 +69,16 @@ final class LiveReasoning {
       'offset': final num offset,
       'text': final String text,
     }) {
-      _add(text, offset.toInt(), id);
+      _add(text, offset.toInt(), (message: message.id, step: id));
     }
   }
 
-  /// Adds what [text], which starts [offset] code points into step [id]'s thinking, has that
-  /// is not held yet. A window that repeats recent thinking, for somebody who joined midway,
-  /// overlaps what is held; one that starts past it means updates were missed, and is kept
-  /// after a paragraph break rather than run on.
-  void _add(String text, int offset, String id) {
-    final held = _steps[id] ?? (text: '', end: 0);
+  /// Adds what [text], which starts [offset] code points into the thinking of the step [key]
+  /// names, has that is not held yet. A window that repeats recent thinking, for somebody who
+  /// joined midway, overlaps what is held; one that starts past it means updates were missed,
+  /// and is kept after a paragraph break rather than run on.
+  void _add(String text, int offset, ({String message, String step}) key) {
+    final held = _steps[key] ?? (text: '', end: 0);
     final runes = text.runes;
     final end = offset + runes.length;
     if (end <= held.end) {
@@ -83,7 +86,7 @@ final class LiveReasoning {
     }
     final gap = offset > held.end && held.text.isNotEmpty ? '\n\n' : '';
     final fresh = String.fromCharCodes(runes.skip(held.end > offset ? held.end - offset : 0));
-    _steps[id] = (text: '${held.text}$gap$fresh', end: end);
+    _steps[key] = (text: '${held.text}$gap$fresh', end: end);
   }
 }
 

@@ -86,23 +86,26 @@ def sync_detailed(
     for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
     and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
-    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
-    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
-    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
-    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
-    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
-    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
-    array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name,
-    arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature.
-    Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool
-    calls include the same replay fields; incomplete responses additionally report `incomplete_reason`
-    (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool
-    replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url:
-    {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is
-    refused with an `error` frame naming the model and the modality, before anything is billed. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
+    responses still being generated, which still settle and are still billed for what they produced
+    before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -165,23 +168,26 @@ def sync(
     for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
     and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
-    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
-    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
-    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
-    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
-    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
-    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
-    array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name,
-    arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature.
-    Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool
-    calls include the same replay fields; incomplete responses additionally report `incomplete_reason`
-    (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool
-    replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url:
-    {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is
-    refused with an `error` frame naming the model and the modality, before anything is billed. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
+    responses still being generated, which still settle and are still billed for what they produced
+    before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -239,23 +245,26 @@ async def asyncio_detailed(
     for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
     and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
-    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
-    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
-    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
-    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
-    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
-    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
-    array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name,
-    arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature.
-    Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool
-    calls include the same replay fields; incomplete responses additionally report `incomplete_reason`
-    (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool
-    replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url:
-    {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is
-    refused with an `error` frame naming the model and the modality, before anything is billed. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
+    responses still being generated, which still settle and are still billed for what they produced
+    before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -316,23 +325,26 @@ async def asyncio(
     for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
     and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
-    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
-    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
-    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
-    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
-    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
-    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
-    array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name,
-    arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature.
-    Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool
-    calls include the same replay fields; incomplete responses additionally report `incomplete_reason`
-    (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool
-    replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url:
-    {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is
-    refused with an `error` frame naming the model and the modality, before anything is billed. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
+    responses still being generated, which still settle and are still billed for what they produced
+    before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
