@@ -34,17 +34,30 @@ Needed for both directions. Inbound calls are handed to the router through it. O
 it drives the `call_sites` row and releases an outbound call's trunk.
 
 For a remote router, the Stream app's call webhook must already point at it. Locally, open a
-public tunnel to the router, then point the app's hooks at it:
+public tunnel to the router, then point the app's hooks at it.
+
+A Cloudflare quick tunnel needs no account. In its own terminal:
+
+```bash
+brew install cloudflared
+cloudflared tunnel --url http://localhost:8080
+```
+
+It prints a `https://<random>.trycloudflare.com` address. That address changes every time
+the tunnel starts, so point the hooks at the new one each time:
 
 ```bash
 cd acceleration
-go run ./cmd/phone hooks -url https://your-tunnel.example.com
+go run ./cmd/phone hooks -url https://<random>.trycloudflare.com
 ```
+
+Stream refuses the update while a hook still points at a tunnel that is gone, so drop the
+old one in the same run: add `-remove https://<old>.trycloudflare.com`.
 
 When done, remove it:
 
 ```bash
-go run ./cmd/phone hooks -remove https://your-tunnel.example.com
+go run ./cmd/phone hooks -remove https://<random>.trycloudflare.com
 ```
 
 Stream sends `call.session_ended` about 30 s after the agent leaves, so the `call_sites` row
