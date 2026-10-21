@@ -19,6 +19,7 @@ import (
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -53,19 +54,26 @@ func (s *ProxySuite) SetupTest() {
 	s.T().Cleanup(s.platform.server.Close)
 }
 
+// disconnected is a grant whose connection gives the sandbox no credential.
+var disconnected = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"},
+	Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"api.linear.app"}}
+
 // caCert is the proxy CA's certificate as the broker is given it.
 const caCert = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
 
 // proxied is a sandbox of config whose github grant the egress proxy broker at proxy holds.
-func (s *ProxySuite) proxied(config sandbox.Config, proxy string) *Sandbox {
+func (s *ProxySuite) proxied(config sandbox.Config, proxy string, more ...sandbox.Grant) *Sandbox {
 	broker, err := egress.NewBroker(egress.BrokerOptions{Store: egress.NewStore(s.redis), URL: proxy,
 		CACert: []byte(caCert), Session: "session-1",
-		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) {
+		Tokens: func(_ context.Context, grant sandbox.Grant) (sandbox.Token, error) {
+			if grant.Binding == disconnected.Binding {
+				return sandbox.Token{}, sandbox.ErrNoCredential
+			}
 			return sandbox.Token{Value: "gho_first", Revision: 1}, nil
 		},
 		Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
-	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Config: config, Grants: []sandbox.Grant{github},
+	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Config: config, Grants: append([]sandbox.Grant{github}, more...),
 		Broker: broker})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
@@ -132,6 +140,19 @@ func (s *ProxySuite) TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomai
 		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, s.platform.commands[2*i],
 			"once per sandbox, after the CA file")
 	}
+}
+
+// TestAGrantTheBrokerLeavesOutIsNotInTheAllowList: its host is not reachable, and its env var is
+// not set.
+func (s *ProxySuite) TestAGrantTheBrokerLeavesOutIsNotInTheAllowList() {
+	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091", disconnected)
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal("api.github.com,uploads.github.com", valueOr(created, "domainAllowList"))
+	s.Equal([]string{"GITHUB_TOKEN"}, slices.Collect(maps.Keys(created["env"].(map[string]any))))
 }
 
 // TestASetupThatFailsRunsNoCode: a sandbox whose image has no roots to bundle the CA with runs

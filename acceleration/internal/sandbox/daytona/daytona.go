@@ -294,8 +294,8 @@ func (s *Sandbox) Grants() []sandbox.Grant {
 // lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
 // sandbox holds a secret or, behind an egress proxy, a placeholder for: a sandbox that may reach
 // nothing else still reaches its grants. Behind the proxy, Daytona's netleash refuses a CONNECT to
-// a host its allow list leaves out (live probe, 2026-10-21: 403), and reaches the proxy itself,
-// so the proxy's host is not in the list: Daytona refuses an IP address there.
+// a host its allow list leaves out (live probe, 2026-10-21: 403). That it reaches the proxy itself, so that the
+// proxy's host is not in the list, is unverified until the staging E2E (AI-1663); Daytona refuses an IP address there.
 func (s *Sandbox) domains() []string {
 	domains := slices.Clone(s.config.AllowedDomains)
 	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
