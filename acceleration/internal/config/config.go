@@ -333,6 +333,13 @@ type CodeSandbox struct {
 	// provider, since routers sharing one Daytona organization must never take or sweep each
 	// other's: stg on staging. A session with a sandbox binding is refused while it is empty.
 	SecretPrefix string `koanf:"secret_prefix"`
+	// ProxyAddr is where the router serves the sandbox egress proxy (internal/sandbox/egress),
+	// such as :8091; empty serves none.
+	ProxyAddr string `koanf:"proxy_addr"`
+	// ProxyCACert and ProxyCAKey are the PEM certificate and private key of the CA the proxy
+	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
+	ProxyCACert string `koanf:"proxy_ca_cert"`
+	ProxyCAKey  string `koanf:"proxy_ca_key"`
 }
 
 // secretPrefix is what code_sandbox.secret_prefix may hold. Secrets are named
@@ -423,6 +430,9 @@ var variables = map[string]string{
 
 	"code_sandbox.broker":        "ROUTER_CODE_SANDBOX_BROKER",
 	"code_sandbox.secret_prefix": "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
+	"code_sandbox.proxy_addr":    "ROUTER_SANDBOX_PROXY_ADDR",
+	"code_sandbox.proxy_ca_cert": "ROUTER_SANDBOX_PROXY_CA_CERT",
+	"code_sandbox.proxy_ca_key":  "ROUTER_SANDBOX_PROXY_CA_KEY",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
@@ -608,6 +618,10 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: code_sandbox.secret_prefix is lowercase letters and digits only, got %q: "+
 			"a prefix holding _ would match another router's secrets (va_stg_ and va_stg_dev_)", c.CodeSandbox.SecretPrefix)
 	}
+	if c.CodeSandbox.ProxyAddr != "" && (c.CodeSandbox.ProxyCACert == "" || c.CodeSandbox.ProxyCAKey == "") {
+		return fmt.Errorf("config: code_sandbox.proxy_addr is set, so code_sandbox.proxy_ca_cert and proxy_ca_key " +
+			"(ROUTER_SANDBOX_PROXY_CA_CERT, ROUTER_SANDBOX_PROXY_CA_KEY) must hold the CA the proxy signs with")
+	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
@@ -727,6 +741,9 @@ func (c Config) export() error {
 
 		"code_sandbox.broker":        c.CodeSandbox.Broker,
 		"code_sandbox.secret_prefix": c.CodeSandbox.SecretPrefix,
+		"code_sandbox.proxy_addr":    c.CodeSandbox.ProxyAddr,
+		"code_sandbox.proxy_ca_cert": c.CodeSandbox.ProxyCACert,
+		"code_sandbox.proxy_ca_key":  c.CodeSandbox.ProxyCAKey,
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),

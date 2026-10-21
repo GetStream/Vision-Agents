@@ -530,6 +530,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
+	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, connectors.Schemes, logger)
+	if err != nil {
+		return err
+	}
 
 	// What every request is measured against -- the key it presented, the app behind it,
 	// their policies and what they have configured -- read through Redis and the cache
@@ -1278,7 +1282,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
-	listening := make(chan error, 2)
+	listening := make(chan error, 3)
 	serve := func(httpServer *http.Server, listener net.Listener) {
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			listening <- err
@@ -1300,6 +1304,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
 		logger.Info("listening for peers", "address", peers.Addr().String(), "setting", "node.listen")
 		go serve(peerServer, peers)
+	}
+
+	if sandboxProxy != nil {
+		proxies, err := net.Listen("tcp", settings.CodeSandbox.ProxyAddr)
+		if err != nil {
+			return err
+		}
+		// Close, not a drain: a tunnel is the sandbox's to reopen.
+		proxyServer := &http.Server{Handler: sandboxProxy, ReadHeaderTimeout: readHeaderTimeout}
+		defer proxyServer.Close()
+		logger.Info("serving the sandbox egress proxy", "address", proxies.Addr().String(), "setting", "code_sandbox.proxy_addr")
+		go serve(proxyServer, proxies)
 	}
 
 	if settings.PprofAddr != "" {

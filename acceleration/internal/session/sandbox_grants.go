@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -14,11 +12,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
-
-// errNotBearer is a connection whose scheme sends no bearer token, which is the only
-// credential a sandbox is given: Daytona replaces a placeholder only where a header carries
-// it verbatim (https://www.daytona.io/docs/en/secrets.md, «Substitution scope»).
-var errNotBearer = fmt.Errorf("%w: the connection's scheme sends no bearer token", sandbox.ErrNoCredential)
 
 // sandboxGrant adds an opened binding with sandbox set to d's grants, reading the sandbox
 // block of the revision its connection was saved on. A connection saved before the connector
@@ -77,27 +70,10 @@ func (m *Manager) sandboxTokens(schemes map[string]core.Scheme) sandbox.Tokens {
 		if err != nil {
 			return sandbox.Token{}, err
 		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+strings.TrimPrefix(grant.Hosts[0], "*.")+"/", nil)
-		if err != nil {
-			return sandbox.Token{}, stack.Wrap(err)
-		}
-		var sent string
-		_, err = schemes[grant.Binding].Wrap(captured(func(r *http.Request) { sent = r.Header.Get("Authorization") }), credential).RoundTrip(request)
+		token, err := sandbox.BearerToken(ctx, schemes[grant.Binding], credential, grant.Hosts[0])
 		if err != nil {
 			return sandbox.Token{}, err
 		}
-		token, bearer := strings.CutPrefix(sent, "Bearer ")
-		if !bearer || token == "" {
-			return sandbox.Token{}, stack.Wrap(errNotBearer)
-		}
 		return sandbox.Token{Value: token, Revision: credential.Revision}, nil
 	}
-}
-
-// captured is a RoundTripper that hands see the request and sends nothing.
-type captured func(*http.Request)
-
-func (see captured) RoundTrip(r *http.Request) (*http.Response, error) {
-	see(r)
-	return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil
 }
