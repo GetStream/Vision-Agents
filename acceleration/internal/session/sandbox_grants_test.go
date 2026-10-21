@@ -244,9 +244,13 @@ func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
 	s.ErrorContains(s.boxed(sandbox.Config{}), `there is no sandbox broker called "vault"`)
 }
 
+// proxyCA is the proxy CA's certificate as the proxy broker is given it.
+const proxyCA = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
+
 // TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
 // sandbox reaches the proxy alone, holds a placeholder, and the proxy finds the connection's
-// token behind it. No secret prefix is needed.
+// token behind it, for this session. No secret prefix is needed. A connection deleted
+// mid-session is withdrawn, in the session's log.
 func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
@@ -258,10 +262,16 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	api := s.daytonaAPI()
 	s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
 	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://proxy.stg.example:8091",
-		CACert: []byte("ca")}
+		CACert: []byte(proxyCA)}
 	s.sandboxRevision()
 	id := s.connection("", "primary")
-	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
+	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
+	d, _, _, err := s.attach(spec)
+	s.Require().NoError(err)
+	box, err := s.manager.box(spec, d)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
 
 	_, err = box.Run(s.ctx, "print(1)", nil)
 
@@ -275,18 +285,25 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	s.Require().NoError(err)
 	var record egress.Record
 	s.Require().NoError(json.Unmarshal(raw, &record))
+	s.Equal(spec.ID, record.Session)
 	s.Require().Len(record.Grants, 1)
 	s.Equal(api.created["env"].(map[string]any)["CRM_TOKEN"], record.Grants[0].Placeholder)
 	token, err := egress.ResolverTokens(s.resolver, s.registry.Schemes)(s.ctx, record.Grants[0])
 	s.Require().NoError(err)
 	s.Equal(tokenOf("primary"), token)
 	s.NotContains(string(raw), tokenOf("primary"))
+
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, id))
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
 }
 
 // TestAManagerWithTheProxyBrokerNeedsItsStore: the router does not start without it, rather
 // than refuse every sandbox session.
 func (s *SandboxGrantsSuite) TestAManagerWithTheProxyBrokerNeedsItsStore() {
-	_, err := NewManager(ManagerOptions{SandboxBroker: egress.BrokerName})
+	_, err := NewManager(ManagerOptions{SandboxBroker: egress.BrokerName,
+		SandboxProxy: egress.BrokerOptions{URL: "http://proxy.stg.example:8091", CACert: []byte(proxyCA)}})
 
 	s.ErrorContains(err, "the proxy sandbox broker needs the store")
 }
@@ -300,7 +317,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
 	s.NoError(s.boxed(open))
 	s.NoError(s.boxed(ranges))
 	s.manager.options.SandboxBroker = egress.BrokerName
-	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: &egress.Store{}, URL: "http://proxy.stg.example:8091", CACert: []byte("ca")}
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: &egress.Store{}, URL: "http://proxy.stg.example:8091", CACert: []byte(proxyCA)}
 
 	err := s.boxed(open)
 	s.ErrorContains(err, "sandbox_options.network is true")
