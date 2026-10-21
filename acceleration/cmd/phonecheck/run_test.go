@@ -175,6 +175,14 @@ func (s *RunSuite) TestASessionThatFailsToCloseIsLogged() {
 	s.Len(s.linesSaying("could not close the agent's session"), 1)
 }
 
+func (s *RunSuite) TestTheWaitForCallSitesIsAnnounced() {
+	s.Require().NoError(s.run())
+
+	lines := s.linesSaying("waiting for the router's call_sites row")
+	s.Require().Len(lines, 1)
+	s.InDelta(callSitesWait.Seconds(), lines[0]["max_wait_s"], 0)
+}
+
 func (s *RunSuite) TestTeardownRunsWhenTheRunIsCancelled() {
 	s.person.stayOn = true
 	s.person.waiting = make(chan struct{})

@@ -241,6 +241,7 @@ func (c *callRun) readPlaced(ctx context.Context, sessionID string) (callPlacedR
 
 // readSites waits for the call_sites row, which the router writes once Stream says the call ended.
 func (c *callRun) readSites(ctx context.Context, sessionID string) (callSitesRow, error) {
+	c.logger.Info("waiting for the router's call_sites row", "max_wait_s", int(callSitesWait.Seconds()))
 	sites, found, err := readCallSites(ctx, c.d.router, sessionID, callSitesWait, callSitesEvery)
 	if err != nil {
 		return callSitesRow{}, fmt.Errorf("read the call's sites: %w", err)
