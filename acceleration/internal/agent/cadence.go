@@ -200,7 +200,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 			text := transcript.Text
 			if transcript.Mode == stt.ModeDelta {
 				text = held.candidate.Text + transcript.Text
-			} else if held.carried != "" && !strings.HasPrefix(words(text), words(held.carried)) {
+			} else if held.carried != "" && !strings.HasPrefix(strings.ToLower(words(text)), strings.ToLower(words(held.carried))) {
 				text = held.carried + " " + strings.TrimSpace(text)
 			}
 			if sameWords(held.candidate.Text, text) {
@@ -238,15 +238,15 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		transcript.Utterance != current.utterance
 	if newUtterance {
 		current.carried = ""
-		if current.text != "" && !revisesTranscript(current.text, text) {
-			// A new utterance that is not a revision of the words in flight, which is how a
-			// transcriber splitting "7:30" into "7:00." and "thirty" arrives. Keep both so
-			// the next answer is about everything the caller said, not only the tail.
+		if current.text != "" {
+			// The previous utterance is still unanswered. Keep it even when the new utterance
+			// starts with the same words: the new transcript may later revise those words
+			// into something different, and the earlier answer is still owed.
 			current.carried = strings.TrimSpace(current.text)
 		}
 	}
 	if current.carried != "" && mode != stt.ModeDelta &&
-		!strings.HasPrefix(words(text), words(current.carried)) {
+		!strings.HasPrefix(strings.ToLower(words(text)), strings.ToLower(words(current.carried))) {
 		text = current.carried + " " + strings.TrimSpace(text)
 	}
 
