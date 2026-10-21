@@ -92,18 +92,13 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 // before a write fails, or wait behind events the caller has not read yet, so forward is
 // first asked to read that far.
 func (s *Session) toldOf(provider stt.STT) bool {
-	told := func() bool { return s.failed.Load() || provider != s.STT() }
-	// Asked first so a write that fails while the next model dials does not wait for it.
-	if told() {
-		return true
-	}
 	read := make(chan struct{})
 	select {
 	case s.readAhead <- read:
 		<-read
 	case <-s.done:
 	}
-	return told()
+	return s.failed.Load() || provider != s.STT()
 }
 
 // Events returns the provider's events. The channel closes when the session closes.
