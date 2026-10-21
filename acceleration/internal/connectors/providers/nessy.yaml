@@ -12,7 +12,7 @@
 # https://linear.app/stream/document/nessy-as-a-connector-150504c74466, opened October 20, 2026.
 id: nessy
 # A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+revision: 2
 name: Nessy
 category: Internal tools
 description: Read Stream's customer data in Nessy as the staff member who connected.
@@ -75,6 +75,11 @@ endpoints:
   # equal to it ([n]:backend/cliauth/service.go:225-227,734-745). With the issuer pinned no protected
   # resource metadata names it, so it is written here.
   resource: https://nessy.getstream.io/mcp
+# A delete revokes the grant at endpoints.revoke (AI-1544, [design] change 12): Nessy ends the
+# named token's whole session family, found from a refresh token rotated out or not
+# (GetStream/Nessy origin/main at 7e238ffa, backend/cliauth/service.go:643-678), so the tokens the
+# router held stop working at once instead of after 24 hours idle or 7 days.
+revoke_on_delete: true
 # Authorization code with PKCE S256, required ([n]:backend/cliauth/service.go:212-214); the grants
 # are authorization_code and refresh_token ([n]:backend/cliauth/client.go:564). A client
 # credentials grant for an app acting as itself is deferred ([design], «Deferred»).

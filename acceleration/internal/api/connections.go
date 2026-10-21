@@ -503,9 +503,9 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	// Unforced, the store locks the connection and then checks for a binding in the statement
 	// that deletes. A config save locks the connections it binds while it writes, so of a
 	// bind and a delete one always waits for the other and sees it.
-	// The tokens the delete drops, named by fingerprint for the revoked row (AI-1053 F52); read
-	// before the row goes, since the delete clears them.
-	ended := s.heldFingerprints(ctx, connection)
+	// The tokens the delete drops, named by fingerprint for the revoked row (AI-1053 F52) and
+	// revoked at the provider after it; read before the row goes, since the delete clears them.
+	held := s.heldCredentials(ctx, connection)
 	if request.Force {
 		err = s.store.DeleteConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	} else {
@@ -526,26 +526,59 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	s.connectionDeleted(ctx, connection.CustomerID, store.DeletedConnection{
 		ID: connection.ID, ConnectorID: connection.ConnectorID, OwnerType: connection.OwnerType,
 		HadGrant: len(connection.CredentialsSealed) > 0,
-	}, ended)
+	}, core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, held.Credentials)})
+	s.revokeAtProvider(ctx, connection, held)
 	return nil, nil
 }
 
-// heldFingerprints is the fingerprints of the tokens a connection holds, zero when it holds
-// none or they cannot be read: a delete is never refused over a log line.
-func (s *Server) heldFingerprints(ctx context.Context, connection store.ConnectorConnection) core.CredentialChange {
+// heldCredentials is the credential state a connection holds, zero when it holds none or it
+// cannot be read: a delete is never refused over a log line or a revoke.
+func (s *Server) heldCredentials(ctx context.Context, connection store.ConnectorConnection) core.CredentialState {
 	if len(connection.CredentialsSealed) == 0 || s.credentials == nil {
-		return core.CredentialChange{}
+		return core.CredentialState{}
 	}
-	var held core.CredentialFingerprints
+	var held core.CredentialState
 	err := s.credentials.Update(ctx, core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID},
 		func(state *core.CredentialState, _ func() error) (bool, error) {
-			held = core.FingerprintsOf(s.connectors.Schemes, state.Credentials)
+			held = *state
 			return false, nil
 		})
 	if err != nil {
 		s.logger.Warn("could not read a connection's tokens before its delete", "connection", connection.ID, "error", err)
 	}
-	return core.CredentialChange{Current: held}
+	return held
+}
+
+// revokeAtProvider asks the provider to revoke the grant a just deleted connection held
+// (RFC 7009 for oauth2_code), when the manifest revision it was connected on says
+// revoke_on_delete (AI-1544). It runs after the delete, so a delete the store refuses revokes
+// nothing. The connection is gone whatever the provider answers, so a failure is logged.
+func (s *Server) revokeAtProvider(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) {
+	if err := s.revokeHeld(ctx, connection, held); err != nil {
+		s.logger.Error("could not revoke a deleted connection's grant at the provider", "connection", connection.ID,
+			"connector", connection.ConnectorID, "error", err)
+	}
+}
+
+// revokeHeld is revokeAtProvider's revoke, nil when there is nothing to revoke or the
+// manifest does not opt in.
+func (s *Server) revokeHeld(ctx context.Context, connection store.ConnectorConnection, held core.CredentialState) error {
+	if held.Credentials.Scheme == "" {
+		return nil
+	}
+	definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, held.DefinitionRevision)
+	if err != nil || !definition.Manifest.RevokeOnDelete {
+		return err
+	}
+	scheme, found := s.connectors.Schemes[connection.AuthScheme]
+	if !found {
+		return stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
+	}
+	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, held.Metadata)
+	if err != nil {
+		return err
+	}
+	return scheme.Revoke(ctx, held.Credentials, manifest)
 }
 
 // connectionDeleted lets go of what a connection the store just soft deleted still has

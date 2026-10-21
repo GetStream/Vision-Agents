@@ -612,6 +612,24 @@ func (s *ConsentSuite) TestNessyRefreshPolicyRotatesWithNoGraceAndEndsAfterTheMa
 	s.Zero(refresh.AccessTTL)
 }
 
+// A Nessy delete revokes the grant at Nessy (AI-1544), and no other built-in's: revoking on
+// delete for every connector is its own gated step (AI-1546).
+func (s *ConsentSuite) TestOnlyNessyRevokesItsGrantWhenAConnectionIsDeleted() {
+	files, err := fs.Glob(providers.FS, "*.yaml")
+	s.Require().NoError(err)
+	var revoking []string
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file)
+		s.Require().NoError(err)
+		manifest, err := core.ParseManifest(raw)
+		s.Require().NoError(err)
+		if manifest.RevokeOnDelete {
+			revoking = append(revoking, manifest.ID)
+		}
+	}
+	s.Equal([]string{"nessy"}, revoking)
+}
+
 // The storefront answers without a credential (shopify.dev Policy and FAQs, opened
 // 2026-10-13), so connecting stores nothing and sends the browser nowhere.
 func (s *ConsentSuite) TestShopifyNeedsNoLogin() {
