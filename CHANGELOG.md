@@ -658,7 +658,7 @@ Swift has `SessionOptions.returnURL` and `AgentSession.declineLogin`, and Stream
 `AIToolAuthorizationView` shows the sign-in in a web authentication sheet when the
 `AIToolApprover` has an `AIToolAuthorizer`. The Swift assistant connects Linear and Gmail this
 way, so its Gmail button is gone, and so are its backend's routes to start, read and delete the
-Gmail connection.
+Gmail connection (#1114).
 
 ### An agent config sets the guide its calls are reviewed by
 
