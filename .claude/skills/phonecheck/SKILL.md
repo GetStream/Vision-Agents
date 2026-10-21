@@ -38,7 +38,7 @@ Place nothing and change nothing yet. For a local router the customer and the li
   them. `TELNYX_PUBLIC_KEY` and `ROUTER_AUTH_KEK` only matter for a local Telnyx router: the public
   key checks the calls Telnyx sends it, and the keyring seals a Telnyx number's trunk password
   when it is attached and opens it on each call. A local Telnyx router also needs a TeXML app of
-  its own in `TELNYX_CONNECTION_ID`: `acceleration/README.md`, "Telnyx for a local router".
+  its own in `TELNYX_CONNECTION_ID`, whose voice URL points at the router.
   `STREAM_ACCELERATION_CUSTOMER_ID` is not needed when you pass `-customer`, and for a local
   router it is the wrong id unless it matches the startup line.
   `ROUTER_POSTGRES_DSN` only matters for a local router.
