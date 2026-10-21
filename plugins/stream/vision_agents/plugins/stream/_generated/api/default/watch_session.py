@@ -91,12 +91,13 @@ def sync_detailed(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -213,12 +214,13 @@ def sync(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -330,12 +332,13 @@ async def asyncio_detailed(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -450,12 +453,13 @@ async def asyncio(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
