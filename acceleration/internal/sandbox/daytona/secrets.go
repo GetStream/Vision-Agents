@@ -114,7 +114,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var kept []*secret
-	for _, held := range s.held {
+	for i, held := range s.held {
 		token, err := s.options.Tokens(ctx, held.grant)
 		if err != nil && !errors.Is(err, sandbox.ErrNoCredential) {
 			kept = append(kept, held)
@@ -125,6 +125,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 		if err != nil {
 			// Deleted, the secret's placeholder reaches the provider as itself, which it refuses.
 			if err := s.client.Secret.Delete(ctx, held.id); err != nil {
+				s.held = append(kept, s.held[i:]...)
 				return fmt.Errorf("daytona: withdraw secret %s: %w", held.name, err)
 			}
 			s.options.Logger.Warn("a connector's credential is withdrawn from the sandbox", "connector", held.grant.Binding,
@@ -138,6 +139,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 		// Daytona applies an update to every sandbox that uses the secret within 15 seconds
 		// (secrets.md above).
 		if _, err := s.client.Secret.Update(ctx, held.id, &types.UpdateSecretParams{Value: &token.Value}); err != nil {
+			s.held = append(kept, s.held[i+1:]...)
 			return fmt.Errorf("daytona: refresh secret %s: %w", held.name, err)
 		}
 		held.revision = token.Revision

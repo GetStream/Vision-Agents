@@ -140,6 +140,32 @@ func (s *SecretsSuite) TestASecretDaytonaWouldNotDeleteIsDeletedOnTheNextClose()
 	s.Empty(s.platform.secretNames())
 }
 
+// TestAWithdrawDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted: the grants after the
+// refused one stay held, the ones deleted do not, so the next run and Close delete only what is left.
+func (s *SecretsSuite) TestAWithdrawDaytonaRefusedOnceDoesNotLoseTheSecretsAlreadyDeleted() {
+	slack := sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"},
+		Binding: "slack", Env: "SLACK_TOKEN", Hosts: []string{"slack.com"}}
+	box := s.granted("stg", sandbox.Config{}, github, slack)
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().Len(s.platform.secretNames(), 2)
+
+	s.tokenErr = sandbox.ErrNoCredential
+	s.platform.mu.Lock()
+	s.platform.refuseDelete = "slack"
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().Error(err)
+
+	s.platform.mu.Lock()
+	s.platform.refuseDelete = ""
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.broker.Close(s.ctx))
+	s.Empty(s.platform.secretNames())
+}
+
 // TestARequiredGrantWithoutACredentialCreatesNoSandbox: the run fails before Daytona is asked
 // for a sandbox.
 func (s *SecretsSuite) TestARequiredGrantWithoutACredentialCreatesNoSandbox() {
