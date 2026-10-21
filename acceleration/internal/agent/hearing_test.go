@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -11,6 +12,9 @@ import (
 
 // heardLine is the message logged with what the agent heard from a participant.
 const heardLine = "what the agent heard from a participant"
+
+// unwritten is the message logged when the model wrote no line for a check-in.
+const unwritten = "could not write a line to say"
 
 // joinHeard joins with the agent's log lines kept.
 func (s *AgentSuite) joinHeard() {
@@ -85,13 +89,53 @@ func (s *AgentSuite) TestACheckInSaysTheCallerWasHeardButNotTranscribed() {
 	s.agent.checkIn(alice, idlePurpose)
 
 	line := s.heardAt("checkin", "alice")
-	s.Equal(idlePurpose, line["purpose"])
+	s.Equal(kindCheckIn, line["kind"])
 	s.Equal(float64(2), line["frames"])
 	s.Equal(float64(40), line["audio_ms"])
 	s.Equal(float64(0), line["partials"])
 	s.Equal(float64(0), line["finals"])
 	s.GreaterOrEqual(line["since_frame_ms"], float64(0))
 	s.Equal(float64(-1), line["since_words_ms"], "no words were ever heard")
+}
+
+func (s *AgentSuite) TestACheckInLogsTheKindOfLineAndNotItsPrompt() {
+	s.joinHeard()
+	s.model.composeFails = errors.New("stub: no line today")
+	alice := stt.Participant{ID: "alice"}
+	s.speakFor(alice, 1)
+	asked := []struct {
+		participant stt.Participant
+		purpose     string
+	}{
+		{alice, holdPurpose},
+		{alice, updatePurpose},
+		{alice, idlePurpose},
+		{alice, answerPurpose},
+		// Nobody heard in words: the line is logged for everyone who was heard.
+		{stt.Participant{}, updatePurpose},
+	}
+
+	for i, ask := range asked {
+		s.agent.checkIn(ask.participant, ask.purpose)
+		s.eventually(func() bool {
+			s.agent.mu.Lock()
+			defer s.agent.mu.Unlock()
+			return !s.agent.composing && len(s.logs.records(unwritten)) == i+1
+		}, "the line that could not be written was never logged")
+	}
+
+	want := []string{kindHold, kindUpdate, kindCheckIn, kindCheckIn, kindUpdate}
+	var heard, failed []string
+	for _, record := range s.logs.records(heardLine) {
+		if record["moment"] == "checkin" {
+			heard = append(heard, record["kind"].(string))
+		}
+	}
+	for _, record := range s.logs.records(unwritten) {
+		failed = append(failed, record["kind"].(string))
+	}
+	s.Equal(want, heard)
+	s.Equal(want, failed)
 }
 
 func (s *AgentSuite) TestACheckInToSomebodyNeverHeardSaysNothingArrived() {
@@ -229,7 +273,7 @@ func (s *AgentSuite) TestACheckInBeforeAnyWordsSaysWhatWasHeardFromEveryone() {
 	s.agent.checkIn(stt.Participant{}, idlePurpose)
 
 	line := s.heardAt("checkin", "alice")
-	s.Equal(idlePurpose, line["purpose"])
+	s.Equal(kindCheckIn, line["kind"])
 	s.Equal(float64(3), line["frames"])
 	s.Equal(float64(1), s.heardAt("checkin", "bob")["frames"])
 	for _, record := range s.logs.records(heardLine) {

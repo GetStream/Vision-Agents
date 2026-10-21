@@ -262,6 +262,11 @@ type Request struct {
 	// fail, so they are tried only after everything else. A voice lost part way through a
 	// call reopens with the one it lost named here, rather than with it again.
 	Failed []string
+	// Exclude names the candidates, as "provider/model", that must not serve at all. A
+	// transcription the vendor refused part way through reopens with every model that
+	// refused it named here: health would only sort them last, and is written after the
+	// reopen has already read it.
+	Exclude []string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
 	// Tools are what a modality that converses may call. They are here rather than in an
@@ -473,6 +478,9 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if err != nil {
 		return ProviderConfig{}, err
 	}
+	candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+		return slices.Contains(request.Exclude, candidate.Config.Name())
+	})
 	untried(candidates, request.Failed)
 	candidates = r.vouched(ctx, request, candidates)
 	candidates, err = r.voiced(request, candidates)

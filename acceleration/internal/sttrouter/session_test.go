@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,9 @@ type SessionSuite struct {
 	customerID string
 	refusing   string
 	working    string
+	// holdClose, if set, holds the refusing provider's Close until it is closed, as a
+	// vendor waiting for the last words does.
+	holdClose chan struct{}
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -79,18 +83,24 @@ func (s *SessionSuite) SetupTest() {
 	s.customerID = "customer-" + unique
 	s.refusing = "refusing-" + unique
 	s.working = "working-" + unique
+	s.holdClose = nil
 }
 
 // router serves a provider that settles turns and then fails with failure, and one that
-// works.
+// settles a turn for every frame.
 func (s *SessionSuite) router(turns int, failure stt.Error) *Router {
+	return s.routerWith(turns, failure, func(routing.Spec) (stt.STT, error) {
+		return &refusingSTT{emitter: stt.NewEmitter(64), turns: math.MaxInt}, nil
+	})
+}
+
+// routerWith is router with working built by the factory given.
+func (s *SessionSuite) routerWith(turns int, failure stt.Error, working func(routing.Spec) (stt.STT, error)) *Router {
 	registry := NewRegistry()
 	registry.Register(s.refusing, func(routing.Spec) (stt.STT, error) {
-		return &refusingSTT{emitter: stt.NewEmitter(64), turns: turns, failure: failure}, nil
+		return &refusingSTT{emitter: stt.NewEmitter(64), turns: turns, failure: failure, hold: s.holdClose}, nil
 	})
-	registry.Register(s.working, func(routing.Spec) (stt.STT, error) {
-		return &quietSTT{emitter: stt.NewEmitter(64)}, nil
-	})
+	registry.Register(s.working, working)
 	router, err := New(Options{
 		Config: routing.ModalityConfig{
 			Providers: []routing.ProviderConfig{
@@ -109,23 +119,184 @@ func (s *SessionSuite) router(turns int, failure stt.Error) *Router {
 // start opens a session on the first of the two that is available, the refusing one
 // when both are, as a caller who listed them in that order asked.
 func (s *SessionSuite) start(router *Router) *Session {
+	return s.startOn(router, s.refusing+"/live", s.working+"/live")
+}
+
+// startOn opens a session on the first of providers that is available.
+func (s *SessionSuite) startOn(router *Router, providers ...string) *Session {
 	session, err := router.Start(s.ctx, Request{CustomerID: s.customerID, Options: options.STT{
-		Providers: []string{s.refusing + "/live", s.working + "/live"},
+		Providers: providers,
 	}})
 	s.Require().NoError(err)
 	return session
 }
 
-// failed starts a session on the refusing provider and speaks into it until it fails.
+// failed starts a session on the refusing provider alone, so no other model takes it over,
+// and speaks into it until it fails.
 func (s *SessionSuite) failed(router *Router) *Session {
-	session := s.start(router)
+	session := s.startOn(router, s.refusing+"/live")
 	s.Require().Equal(s.refusing, session.Provider())
+	deadline := time.After(5 * time.Second)
 	for {
 		s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
-		if _, failed := (<-session.Events()).(stt.Error); failed {
-			return session
+		select {
+		case event := <-session.Events():
+			if _, failed := event.(stt.Error); failed {
+				return session
+			}
+		case <-deadline:
+			s.FailNow("the provider never failed")
+			return nil
 		}
 	}
+}
+
+func (s *SessionSuite) TestARefusedSessionIsCarriedOnByTheNextModel() {
+	router := s.router(1, refused())
+	session := s.start(router)
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	failover, ok := s.speakInto(session).(stt.Failover)
+	s.Require().True(ok, "the caller heard of the refusal rather than of the model taking over")
+	s.Equal(s.working, failover.Provider)
+	s.Equal("live", failover.Model)
+	s.Equal(s.refusing+"/live", failover.From)
+	s.EqualError(failover.Err, refusal)
+	s.Equal(s.working, session.Provider())
+	s.IsType(stt.Transcript{}, s.speakInto(session), "the next model does not hear what the caller says after the refusal")
+	s.Require().NoError(session.Close())
+	s.Empty(s.drain(session))
+	router.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).
+		Where("customer_id = ?", s.customerID).Scan(s.ctx))
+	var recorded []string
+	for _, row := range rows {
+		recorded = append(recorded, row.Provider+" "+row.ErrorCode)
+	}
+	s.ElementsMatch([]string{s.refusing + " ", s.refusing + " provider_fatal", s.working + " "}, recorded)
+}
+
+func (s *SessionSuite) TestARefusalNoOtherModelCanTakeOverEndsTheSession() {
+	router := s.router(1, refused())
+	defer router.Close()
+	session := s.startOn(router, s.refusing+"/live")
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	failure, ok := s.speakInto(session).(stt.Error)
+	s.Require().True(ok)
+	s.True(failure.Fatal)
+	s.EqualError(failure, refusal)
+	s.Require().NoError(session.Close())
+	s.Empty(s.drain(session))
+}
+
+func (s *SessionSuite) TestASocketThatDroppedIsNotHandedToTheNextModel() {
+	drop := stt.Error{Err: errors.New("websocket: close 1006 (abnormal closure)"), Context: "read", Fatal: true}
+	router := s.router(1, drop)
+	defer router.Close()
+	session := s.start(router)
+	defer session.Close()
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	s.Equal(drop, s.speakInto(session))
+	s.Equal(s.refusing, session.Provider())
+}
+
+func (s *SessionSuite) TestAnErrorTheProviderOutlivesIsNotHandedToTheNextModel() {
+	failure := refused()
+	failure.Fatal = false
+	router := s.router(1, failure)
+	defer router.Close()
+	session := s.start(router)
+	defer session.Close()
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	s.Equal(failure, s.speakInto(session))
+	s.Equal(s.refusing, session.Provider())
+}
+
+func (s *SessionSuite) TestEveryModelThatRefusedIsLeftOut() {
+	// Without health, nothing but what the session excludes keeps the first model out.
+	again := s.refusing + "-again"
+	registry := NewRegistry()
+	for _, name := range []string{s.refusing, again} {
+		registry.Register(name, func(routing.Spec) (stt.STT, error) {
+			return &refusingSTT{emitter: stt.NewEmitter(64), failure: refused()}, nil
+		})
+	}
+	registry.Register(s.working, func(routing.Spec) (stt.STT, error) {
+		return &refusingSTT{emitter: stt.NewEmitter(64), turns: math.MaxInt}, nil
+	})
+	var providers []routing.ProviderConfig
+	for _, name := range []string{s.refusing, again, s.working} {
+		providers = append(providers, routing.ProviderConfig{Provider: name, Model: "live", Languages: []string{"en"}, Realtime: true})
+	}
+	router, err := New(Options{Config: routing.ModalityConfig{Providers: providers}, Registry: registry})
+	s.Require().NoError(err)
+	defer router.Close()
+	session := s.startOn(router, s.refusing+"/live", again+"/live", s.working+"/live")
+	defer session.Close()
+
+	s.Equal(again, s.speakInto(session).(stt.Failover).Provider)
+	second := s.speakInto(session).(stt.Failover)
+	s.Equal(again+"/live", second.From)
+	s.Equal(s.working, second.Provider, "the model that refused first was asked again")
+}
+
+func (s *SessionSuite) TestASessionClosedWhileTheNextModelStartsClosesThatModel() {
+	next := &startingSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
+		starting: make(chan struct{}), release: make(chan struct{})}
+	router := s.routerWith(0, refused(), func(routing.Spec) (stt.STT, error) { return next, nil })
+	defer router.Close()
+	session := s.start(router)
+	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
+	select {
+	case <-next.starting:
+	case <-time.After(3 * time.Second):
+		s.FailNow("the next model was never started")
+	}
+
+	s.Require().NoError(session.Close())
+	close(next.release)
+
+	events := s.drain(session)
+	s.True(next.closed.Load(), "the model that finished starting after the session closed was left open")
+	s.Require().Len(events, 1)
+	s.IsType(stt.Error{}, events[0], "a session closed before another model took over ends on the refusal")
+}
+
+func (s *SessionSuite) TestTheNextModelServesWhileTheRefusingOneIsStillClosing() {
+	s.holdClose = make(chan struct{})
+	router := s.router(0, refused())
+	defer router.Close()
+	session := s.start(router)
+	defer session.Close()
+	defer close(s.holdClose)
+
+	s.IsType(stt.Failover{}, s.speakInto(session))
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+}
+
+func (s *SessionSuite) TestClosingTheSessionEndsTheNextModelsDial() {
+	next := &diallingSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)}, dialling: make(chan struct{})}
+	router := s.routerWith(0, refused(), func(routing.Spec) (stt.STT, error) { return next, nil })
+	defer router.Close()
+	// s.ctx never ends, as the socket's does not until the session's events have.
+	session := s.start(router)
+	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
+	select {
+	case <-next.dialling:
+	case <-time.After(3 * time.Second):
+		s.FailNow("the next model was never dialled")
+	}
+
+	s.Require().NoError(session.Close())
+
+	events := s.drain(session)
+	s.Require().Len(events, 1)
+	s.IsType(stt.Error{}, events[0], "a session closed while the next model dialled ends on the refusal")
 }
 
 func (s *SessionSuite) TestAudioAfterAFatalErrorIsDropped() {
@@ -142,7 +313,7 @@ func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAF
 	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
 	defer recorder.Close()
 	session := newSession(provider, routing.ProviderConfig{Provider: "counting", Model: "live"},
-		routing.Owner{CustomerID: s.customerID}, recorder)
+		routing.Owner{CustomerID: s.customerID}, recorder, nil, nil)
 	defer session.Close()
 	// Revisions nobody reads fill the session's buffer, so the fatal error is held until the
 	// caller reads that far.
@@ -164,6 +335,48 @@ func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAF
 	heard := provider.heard.Load()
 	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
 	s.Equal(heard, provider.heard.Load(), "a caller told of the fatal error still reached the provider")
+}
+
+func (s *SessionSuite) TestAWriteUnderWayWhenTheProviderFailsIsDropped() {
+	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
+		writing: make(chan struct{}), release: make(chan struct{})}
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	session := newSession(provider, routing.ProviderConfig{Provider: "stalled", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, nil, nil)
+	defer session.Close()
+	written := make(chan error, 1)
+	go func() { written <- session.ProcessAudio(frame(), stt.Participant{ID: "caller"}) }()
+	<-provider.writing
+
+	provider.emitter.Send(refused())
+	s.IsType(stt.Error{}, <-session.Events())
+	close(provider.release)
+
+	s.NoError(<-written, "the caller heard of the fatal error, and again for the frame on its way")
+}
+
+func (s *SessionSuite) TestAWriteUnderWayWhenTheNextModelTakesOverIsDropped() {
+	provider := &stalledSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)},
+		writing: make(chan struct{}), release: make(chan struct{})}
+	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
+	defer recorder.Close()
+	next := &quietSTT{emitter: stt.NewEmitter(64)}
+	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) {
+		return next, routing.ProviderConfig{Provider: "next", Model: "live"}, nil
+	}
+	session := newSession(provider, routing.ProviderConfig{Provider: "stalled", Model: "live"},
+		routing.Owner{CustomerID: s.customerID}, recorder, reopen, nil)
+	defer session.Close()
+	written := make(chan error, 1)
+	go func() { written <- session.ProcessAudio(frame(), stt.Participant{ID: "caller"}) }()
+	<-provider.writing
+
+	provider.emitter.Send(refused())
+	s.IsType(stt.Failover{}, <-session.Events())
+	close(provider.release)
+
+	s.NoError(<-written, "the caller heard of the next model taking over, and of an error for the frame on its way")
 }
 
 func (s *SessionSuite) TestAudioAfterAnErrorTheProviderOutlivesStillFails() {
@@ -422,10 +635,10 @@ func (s *SessionSuite) museRouter(hangUp func(*websocket.Conn)) *Router {
 	return router
 }
 
-// failedSilently starts a session on the refusing provider and waits, sending nothing,
-// until it fails.
+// failedSilently starts a session on the refusing provider alone and waits, sending
+// nothing, until it fails.
 func (s *SessionSuite) failedSilently(router *Router) *Session {
-	session := s.start(router)
+	session := s.startOn(router, s.refusing+"/live")
 	s.Require().Equal(s.refusing, session.Provider())
 	deadline := time.After(5 * time.Second)
 	for {
@@ -436,6 +649,36 @@ func (s *SessionSuite) failedSilently(router *Router) *Session {
 			}
 		case <-deadline:
 			s.FailNow("the provider never reported the socket closing")
+			return nil
+		}
+	}
+}
+
+// speakInto sends the session one frame and returns the event it answers with.
+func (s *SessionSuite) speakInto(session *Session) stt.Event {
+	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
+	select {
+	case event := <-session.Events():
+		return event
+	case <-time.After(3 * time.Second):
+		s.FailNow("the session answered nothing")
+		return nil
+	}
+}
+
+// drain returns what a closed session still had to say, failing if its events never end.
+func (s *SessionSuite) drain(session *Session) []stt.Event {
+	var events []stt.Event
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case event, open := <-session.Events():
+			if !open {
+				return events
+			}
+			events = append(events, event)
+		case <-deadline:
+			s.FailNow("the session's events never ended")
 			return nil
 		}
 	}
@@ -458,13 +701,21 @@ type refusingSTT struct {
 	turns   int
 	failure stt.Error
 	heard   int
+	hold    chan struct{}
 }
 
 func (r *refusingSTT) Start(context.Context) error { return nil }
 func (r *refusingSTT) Events() <-chan stt.Event    { return r.emitter.Events() }
-func (r *refusingSTT) Close() error                { r.emitter.Close(); return nil }
 func (r *refusingSTT) Provider() string            { return "refusing" }
 func (r *refusingSTT) Model() string               { return "live" }
+
+func (r *refusingSTT) Close() error {
+	if r.hold != nil {
+		<-r.hold
+	}
+	r.emitter.Close()
+	return nil
+}
 
 func (r *refusingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
 	r.heard++
@@ -495,6 +746,52 @@ func (c *countingSTT) Model() string               { return "live" }
 func (c *countingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
 	c.heard.Add(1)
 	return nil
+}
+
+// startingSTT is a model still dialling: its Start says it began, then waits for release.
+type startingSTT struct {
+	quietSTT
+	starting chan struct{}
+	release  chan struct{}
+	closed   atomic.Bool
+}
+
+func (p *startingSTT) Start(context.Context) error {
+	close(p.starting)
+	<-p.release
+	return nil
+}
+
+func (p *startingSTT) Close() error {
+	p.closed.Store(true)
+	return p.quietSTT.Close()
+}
+
+// diallingSTT is a model whose dial lasts as long as the context it was started under, as
+// a vendor's handshake bound to that context does.
+type diallingSTT struct {
+	quietSTT
+	dialling chan struct{}
+}
+
+func (p *diallingSTT) Start(ctx context.Context) error {
+	close(p.dialling)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// stalledSTT is a provider that fails while a frame is on its way to it: its ProcessAudio
+// says it began, waits for release, then fails the way a write to a closed socket does.
+type stalledSTT struct {
+	quietSTT
+	writing chan struct{}
+	release chan struct{}
+}
+
+func (p *stalledSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	close(p.writing)
+	<-p.release
+	return errors.New("stalled: write audio: websocket: close sent")
 }
 
 func refused() stt.Error {

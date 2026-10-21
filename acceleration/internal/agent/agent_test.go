@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -699,6 +700,9 @@ type AgentSuite struct {
 	model       *stubLLM
 	flow        *stubLLM
 	ears        *stubSTT
+	// backup, if set, is a second transcription model, after ears, that takes over a
+	// session ears refuses.
+	backup *stubSTT
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
@@ -774,6 +778,7 @@ func TestAgentSuite(t *testing.T) {
 
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.callID = ""
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil
@@ -796,6 +801,7 @@ func (s *AgentSuite) SetupTest() {
 	s.performing = ""
 	s.voiceName = ""
 	s.logs = nil
+	s.backup = nil
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -925,8 +931,15 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		}
 		return s.ears, nil
 	})
+	transcribing := stubConfig()
+	if s.backup != nil {
+		transcribing.Providers = append(transcribing.Providers, routing.ProviderConfig{
+			Provider: "backup", Model: "backup-model", Languages: []string{"en"}, Realtime: true,
+		})
+		transcription.Register("backup", func(routing.Spec) (stt.STT, error) { return s.backup, nil })
+	}
 	transcriber, err := sttrouter.New(sttrouter.Options{
-		Config: stubConfig(), Registry: transcription, Logger: logger,
+		Config: transcribing, Registry: transcription, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
@@ -2590,6 +2603,39 @@ func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
 		s.speak(participant)
 		return s.opened.Load() == 2
 	}, "the dead transcriber was kept, so nothing this participant says is heard again")
+}
+
+func (s *AgentSuite) TestATranscriberTheVendorRefusesIsTakenOverByTheNextModel() {
+	s.backup = newStubSTT()
+	s.logs = &logLines{}
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "nobody started listening")
+	finals := testutil.ToFloat64(sttFinals.WithLabelValues("backup"))
+
+	// What ElevenLabs sends an account that has not accepted its terms (probed 2026-10-19).
+	s.ears.emitter.Send(stt.Error{
+		Provider: "stub", Model: "stub-model", Context: "unaccepted_terms", Fatal: true,
+		Err: errors.New("You have not accepted the terms required to use this feature."),
+	})
+	s.eventually(func() bool {
+		return len(s.logs.records("the transcriber refused the session, the next model took it over")) == 1
+	}, "the agent said nothing of the next model taking over")
+	s.backup.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Text: "book a table"})
+
+	s.eventually(func() bool {
+		return testutil.ToFloat64(sttFinals.WithLabelValues("backup")) == finals+1
+	}, "the next model's words were not heard")
+	line := s.logs.records("the transcriber refused the session, the next model took it over")[0]
+	s.Equal("stub/stub-model", line["from"])
+	s.Equal("backup", line["provider"])
+	s.EqualValues(1, s.opened.Load(), "the session was dropped and reopened rather than carried on")
+	for _, event := range s.events.seen() {
+		if failure, ok := event.(Error); ok {
+			s.NotEqual("stt", failure.Context, "a refusal the next model took over reached the caller")
+		}
+	}
 }
 
 func (s *AgentSuite) TestAnAgentPinnedToABatchTranscriberIsRefusedOnceWhenItJoins() {

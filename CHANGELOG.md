@@ -648,7 +648,7 @@ carry `session` and `call`. What is spoken is unchanged (AI-1550).
 
 `voice turn timing` names what started the turn (`kind`: `caller`, `tool`, `chase`) and, for a
 turn the agent started on its own, the caller turn it follows (`parent`). Each tool call the
-model makes logs one INFO line when it comes back, with its tool, call, turn, `duration_ms` and
+model makes logs one INFO line when it comes back, with its tool, `tool_call`, turn, `duration_ms` and
 `outcome` (`ok`, `error`, `still-running`, `cancelled`, `refused` for a call the router turned back itself, before the tool ran), and is counted in
 `router_agent_tool_call_seconds` (label `outcome`). An utterance's start and end, a line the
 agent chose to say (a hold line, an update, a check-in) and a chase for a call a reply owed are
@@ -2340,6 +2340,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A live transcription the vendor refuses part way through, such as ElevenLabs's `unaccepted_terms`, goes on with the next model the session could use (the next in its `stt.providers`, or its target's next candidate), and with none that refused it. The session ended with one `error` and the agent's next audio could reopen it on the model that had just refused it. What the caller had said of the turn still open when the vendor refused is lost; what they say from then on is heard by the next model. `/v1/stt/stream` sends no `error` frame for a refusal another model takes over and goes on with its transcripts. With no other model left, the session ends with the one `error` it ended with before. A socket that drops, and an error the vendor goes on after, end the session or are passed on as before (AI-1587).
+- `a tool call came back` names the tool call under `tool_call`; it logged it as a second `call` key, beside the session's `call`. A check-in's `what the agent heard from a participant` line and its `could not write a line to say` warning log `purpose` as `hold`, `update` or `checkin` instead of the whole prompt the line was written from (AI-1585, AI-1586).
 - An OpenAI Realtime agent with `interrupt_response: false` answers a caller whose turn ends while it is still speaking. The server refused its own reply with `conversation_already_has_active_response`, which the agent logged as an error, and the caller's question was never answered. The agent now asks for that reply once the one in flight is done, and does the same for a refused prompt, text or tool result; a caller who speaks again or barges in gets the server's answer to their next turn instead (AI-1548).
 - A phone session ends on its own: 10 seconds after the last person leaves the call, and when a phone call is never answered (90 seconds for an outbound call, 30 seconds for an inbound one). The agent stops talking and leaves rather than finishing its sentence to an empty call. The Python SDK now tells the router a session is a phone call, as the Go SDK does, so a Python agent on a phone call can also transfer the caller to a person. Sessions that are not phone calls are unchanged.
 
