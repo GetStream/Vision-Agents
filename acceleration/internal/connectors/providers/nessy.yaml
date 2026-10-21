@@ -116,7 +116,9 @@ refresh:
   refresh_ttl: 24h
   rotating: true
 rate_limit:
-  # 120 calls a minute per user ([n]:docs/mcp.md:101).
+  # 120 calls a minute per user ([n]:docs/mcp.md:101). A managed client is also held to 600 calls
+  # a minute across all its users (NES-499: [n]:docs/mcp.md:102), which this per-user limit does
+  # not model.
   per: user
 sources:
   - kind: mcp
