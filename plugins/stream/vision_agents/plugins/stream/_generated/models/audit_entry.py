@@ -42,7 +42,8 @@ class AuditEntry:
                 client: it reached the API directly, which is all that can be said about it.
             actor_id (str | Unset): Who made it, as their client named them. Absent for a change nobody signed, such as a
                 process syncing on startup.
-            actor_name (str | Unset): Their name, as their client named them. Never an email address: the router keeps none.
+            actor_name (str | Unset): Their name, as their client named them. Never an email address: the only one the
+                router keeps is the one a backend says its user signs in with, X-Stream-User-Email, which no audit entry names.
             agent_id (str | Unset): The agent the change was to or under. Absent for a resource that belongs to no agent,
                 such as a router.
             request_id (str | Unset): The X-Request-Id of the request that made it.

@@ -562,6 +562,8 @@ func (s *ConsentSuite) TestNessyConnectsWithTheAppsClientAtItsPinnedIssuer() {
 	s.Equal(srv.UserID, account.AccountID, "the id_token's sub")
 	s.Equal(map[string]string{"sub": srv.UserID, "email": srv.Email()}, account.Metadata)
 	s.True(manifest.OwnerEmail)
+	s.Contains(manifest.Capture, core.CaptureRule{Name: "email_verified", From: core.FromIDToken, Path: "$.email_verified", Optional: true},
+		"read if Nessy ever sends it, so false refuses the consent")
 	s.Require().Len(wire.sent, 1, "one code exchange")
 	basic := http.Request{Header: http.Header{"Authorization": {wire.sent[0].authorization}}}
 	id, secret, ok := basic.BasicAuth()

@@ -785,7 +785,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Start a consent
-         * @description Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+         * @description Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from a page of return_url's origin, or of the dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to return_url, or else to the dashboard, with connection_id and status (connected, denied, failed or account_mismatch) added to its query. A native app whose return_url is its own scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4374,7 +4374,7 @@ export type components = {
             readonly action: components["schemas"]["AuditAction"];
             /** @description Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup. */
             readonly actor_id?: string;
-            /** @description Their name, as their client named them. Never an email address: the router keeps none. */
+            /** @description Their name, as their client named them. Never an email address: the only one the router keeps is the one a backend says its user signs in with, X-Stream-User-Email, which no audit entry names. */
             readonly actor_name?: string;
             /** @description The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router. */
             readonly agent_id?: string;

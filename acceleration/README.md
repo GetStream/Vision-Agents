@@ -265,6 +265,12 @@ What it buys is that the session the backend opens belongs to that user, so the 
 device can reach it afterwards. It costs nothing: the caller is still server-side, still
 reaches everything, and is still charged no daily limit.
 
+Beside it, a backend may say the email that user signs in with, in `X-Stream-User-Email`. The
+router keeps the latest one per user and reads it from a server-side caller only, since a
+device that could set it could claim another person's address. A connector whose manifest sets
+`owner_email` (nessy) refuses a user-owned connection's first consent, storing nothing, unless
+the provider's `id_token` names that email (AI-1543).
+
 ### Who a session belongs to
 
 Sessions are the one thing a device opens, so they are the one thing that needs a boundary
