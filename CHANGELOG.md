@@ -126,6 +126,15 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The Dart SDK has no views of its own
+
+`vision_agents_ui` is gone, as the Swift and Kotlin SDKs' views went before it. A conversation is
+shown with Stream Chat's AI components (`stream_chat_flutter_ai`) instead, and
+`examples/voice_agents/flutter_demo` shows how: `AIConversationView` over the session's channel,
+each reply's steps and live reasoning, tool approvals answered with `session.decide`, and the
+voice glow on a call. `LiveValueBuilder` and `LiveValueNotifier` went with it; a `StreamBuilder`
+over a `LiveValue`'s `stream` does the same, since the stream starts with the current value.
+
 ### The call a tool function is handed is named toolCallContext
 
 The `ToolCall` a tool function is handed is named `toolCallContext` (`tool_call_context` in Python, Ruby and Rust) in every SDK's signatures, examples and docs, rather than `call`, which read as the phone or video call. Only code that passed it by name changes: PHP's `Tools::call(..., toolCallContext: ...)` and Python's `calling(tool_call_context=...)`.

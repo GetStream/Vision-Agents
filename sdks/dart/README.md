@@ -1,17 +1,18 @@
 # Dart SDKs
 
-Four packages for talking to an agent from a Dart or Flutter app. The core and chat are pure
-Dart, so the same conversation runs in a Flutter app, a CLI or a server-side Dart process; ui and
-rtc are Flutter.
+Three packages for talking to an agent from a Dart or Flutter app. The core and chat are pure
+Dart, so the same conversation runs in a Flutter app, a CLI or a server-side Dart process; rtc is
+Flutter. The views are Stream Chat's AI components (`stream_chat_flutter_ai`), which an app adds
+itself, as the Swift SDK leaves them to `StreamChatAI`;
+[`flutter_demo`](../../examples/voice_agents/flutter_demo) is where that composition lives.
 
 | Package | pub name | Depends on | What it is |
 | --- | --- | --- | --- |
 | `core/` | `vision_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
 | `chat/` | `vision_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
-| `ui/` | `vision_agents_ui` | `core`, `stream_chat_flutter_core` 10.4.0 | Flutter widgets over that state, and a conversation kept in Stream Chat |
 | `rtc/` | `vision_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
 
-They are four packages rather than one pub workspace. A workspace resolves as one, so a
+They are three packages rather than one pub workspace. A workspace resolves as one, so a
 Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. The others
 depend on `vision_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
 at `../core` in this repository.
@@ -60,18 +61,14 @@ agents.useVideo(yourVideoClient);
 ```
 
 State is a `LiveValue`: the current value, and a stream that starts with it. Nothing here
-depends on a state-management package; `LiveValueBuilder` and `LiveValueNotifier` in
-`vision_agents_ui` adapt it to widgets and `Listenable`.
+depends on a state-management package; a `StreamBuilder` over `value.stream` is all a widget
+needs, since the stream starts with the current value.
 
-With `vision_agents_ui` a whole conversation is one widget:
-
-```dart
-ConversationView(session: chat)
-```
-
-`TranscriptView`, `Composer` and `AgentStatusView` are public and work on their own, so a host
-that wants a different arrangement takes them apart rather than fighting `ConversationView`.
-`AgentVideoView` and `VoiceCallView` are the same for a call.
+A conversation kept in Stream Chat is shown with Stream Chat's AI components:
+`AIConversationView` over the channel's messages, `AIMessagePart.parseAll` for each reply's steps,
+`LiveReasoning` for the whole of its thinking and an `AIToolApprover` that answers with
+`session.decide`. A call is shown with `AIVoiceGlowView` or `AIVoiceWaveView`, and `AgentVideoView`
+and `VoiceCallView` in `vision_agents_rtc` render its video.
 
 ### A tool that runs on the device
 
@@ -202,10 +199,10 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
 
 `chat` the same way, from `sdks/dart/chat`.
 
-The Flutter packages in Cirrus Labs' Flutter image:
+The Flutter package in Cirrus Labs' Flutter image:
 
 ```bash
-for pkg in ui rtc; do
+for pkg in rtc; do
   docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
     -w /repo/sdks/dart/$pkg ghcr.io/cirruslabs/flutter:3.44.0 \
     sh -c 'flutter pub get && flutter analyze && flutter test'
