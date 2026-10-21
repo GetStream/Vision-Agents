@@ -514,9 +514,12 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsNotUsedForWhatADroppedRep
 
 	s.says(nash, "wait no three")
 
+	// The reply started early may reach the model after the one written in its place, so
+	// the one with the note is looked for among every request, not taken to be the last.
 	s.eventually(func() bool {
-		requests := s.model.requests()
-		return strings.Contains(requests[len(requests)-1].Instructions, missedNote("two"))
+		return slices.ContainsFunc(s.model.requests(), func(asked llm.ResponseParams) bool {
+			return strings.Contains(asked.Instructions, missedNote("two"))
+		})
 	}, "the turn was answered by a reply written without what it owes")
 }
 
