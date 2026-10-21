@@ -272,7 +272,9 @@ func (a *daytonaAPI) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox":
 		var body struct{ Secrets []map[string]string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		a.secrets = body.Secrets[0]
+		if len(body.Secrets) > 0 {
+			a.secrets = body.Secrets[0]
+		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = fmt.Fprintf(w, `{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"sandbox-1","state":"started","toolboxProxyUrl":"%s/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`, a.URL)
 	case r.Method == http.MethodDelete || strings.HasPrefix(r.URL.Path, "/api/socket.io"):
