@@ -2,6 +2,15 @@
 
 ## Breaking Changes
 
+### The Dart SDK has no views of its own
+
+`vision_agents_ui` is gone, as the Swift and Kotlin SDKs' views went before it. A conversation is
+shown with Stream Chat's AI components (`stream_chat_flutter_ai`) instead, and
+`examples/voice_agents/flutter_demo` shows how: `AIConversationView` over the session's channel,
+each reply's steps and live reasoning, tool approvals answered with `session.decide`, and the
+voice glow on a call. `LiveValueBuilder` and `LiveValueNotifier` went with it; a `StreamBuilder`
+over a `LiveValue`'s `stream` does the same, since the stream starts with the current value.
+
 ### Voice is started and stopped on a session, on a call named after it
 
 A session is one conversation, and voice is something it turns on and off. Every session
