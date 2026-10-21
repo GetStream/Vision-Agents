@@ -323,3 +323,16 @@ func (s *AgentSuite) TestTwoWordsOfAssentLeaveTheReplyToTheController() {
 	s.Zero(countOf[Interrupted](s.reported()))
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
+
+func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	s.heardSomeOf(two)
+
+	s.agent.perform(Action{Kind: ActInterrupt, Unheard: true, Participant: nash, TurnID: two})
+
+	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+		"a reply already heard was dropped as unheard")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
