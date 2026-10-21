@@ -46,6 +46,8 @@ const (
 	// authenticate is the challenge a 407 must carry (RFC 9110 section 15.5.8), for the
 	// Basic credential a proxy URL's userinfo sends (RFC 7617).
 	authenticate = `Basic realm="sandbox egress"`
+	// httpsPort is the one port a tunnel may open: HTTPS's (RFC 9110 section 4.2.2).
+	httpsPort = "443"
 )
 
 // Options configure a Proxy.
@@ -94,9 +96,9 @@ func New(options Options) (*Proxy, error) {
 		transport: transport, logger: options.Logger}, nil
 }
 
-// ServeHTTP opens a tunnel to a host the sandbox's grants cover, and nothing else: a
-// request that is not CONNECT, a sandbox without a valid proxy credential, an IP literal
-// or a host outside its grants is refused.
+// ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants cover, and nothing
+// else: a request that is not CONNECT, a sandbox without a valid proxy credential, an IP
+// literal, a host outside its grants or another port is refused.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
 		w.Header().Set("Allow", http.MethodConnect)
@@ -128,6 +130,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress: the sandbox has no grant for this host", http.StatusForbidden)
 		return
 	}
+	// A grant is for a host's HTTPS API; another port is another service on it.
+	if port != httpsPort {
+		p.logger.Warn("the sandbox egress proxy refused a port", "session", record.Session, "host", host, "port", port)
+		http.Error(w, "egress: only port 443 is proxied", http.StatusForbidden)
+		return
+	}
 	conn, buffered, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		http.Error(w, "egress: the connection cannot be taken over", http.StatusInternalServerError)
@@ -138,12 +146,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
-	p.tunnel(&readFirst{Conn: conn, first: bytes.NewReader(early)}, tunnel{credential: credential, host: host, port: port})
+	p.tunnel(&readFirst{Conn: conn, first: bytes.NewReader(early)}, tunnel{credential: credential, host: host})
 }
 
-// tunnel is one CONNECT: the sandbox's credential and the host and port it asked for.
+// tunnel is one CONNECT: the sandbox's credential and the host it asked for.
 type tunnel struct {
-	credential, host, port string
+	credential, host string
 }
 
 // tunnel serves conn as host with a certificate the CA signs, and sends each request in it
@@ -252,12 +260,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	}
 }
 
-// toHost sends pr to the tunnel's host and port, whatever its URL says.
+// toHost sends pr to port 443 of the tunnel's host, whatever its URL says.
 func (p *Proxy) toHost(pr *httputil.ProxyRequest, t tunnel) {
 	pr.Out.URL.Scheme, pr.Out.URL.Host, pr.Out.Host = "https", t.host, ""
-	if t.port != "443" {
-		pr.Out.URL.Host = net.JoinHostPort(t.host, t.port)
-	}
 }
 
 // placed is the grant covering host whose placeholder value carries, and how it carries it.

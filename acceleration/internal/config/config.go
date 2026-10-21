@@ -430,9 +430,9 @@ var variables = map[string]string{
 
 	"code_sandbox.broker":        "ROUTER_CODE_SANDBOX_BROKER",
 	"code_sandbox.secret_prefix": "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
-	"code_sandbox.proxy_addr":    "ROUTER_SANDBOX_PROXY_ADDR",
-	"code_sandbox.proxy_ca_cert": "ROUTER_SANDBOX_PROXY_CA_CERT",
-	"code_sandbox.proxy_ca_key":  "ROUTER_SANDBOX_PROXY_CA_KEY",
+	"code_sandbox.proxy_addr":    "ROUTER_CODE_SANDBOX_PROXY_ADDR",
+	"code_sandbox.proxy_ca_cert": "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
+	"code_sandbox.proxy_ca_key":  "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
@@ -620,7 +620,7 @@ func (c Config) validate() error {
 	}
 	if c.CodeSandbox.ProxyAddr != "" && (c.CodeSandbox.ProxyCACert == "" || c.CodeSandbox.ProxyCAKey == "") {
 		return fmt.Errorf("config: code_sandbox.proxy_addr is set, so code_sandbox.proxy_ca_cert and proxy_ca_key " +
-			"(ROUTER_SANDBOX_PROXY_CA_CERT, ROUTER_SANDBOX_PROXY_CA_KEY) must hold the CA the proxy signs with")
+			"(ROUTER_CODE_SANDBOX_PROXY_CA_CERT, ROUTER_CODE_SANDBOX_PROXY_CA_KEY) must hold the CA the proxy signs with")
 	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)

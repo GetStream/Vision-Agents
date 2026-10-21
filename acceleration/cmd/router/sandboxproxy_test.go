@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 )
 
@@ -28,6 +29,8 @@ func TestAProxyAddressWithoutRedisOrConnectorsDoesNotStart(t *testing.T) {
 
 	_, err := newSandboxProxy(settings, nil, nil, nil, slog.New(slog.DiscardHandler))
 
+	require.ErrorContains(t, err, "redis.addr")
+	_, err = newSandboxProxy(settings, nil, &resolver.Resolver{}, nil, slog.New(slog.DiscardHandler))
 	require.ErrorContains(t, err, "redis.addr")
 
 	address := os.Getenv("ROUTER_REDIS_ADDR")

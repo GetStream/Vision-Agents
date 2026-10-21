@@ -4,6 +4,7 @@ package egress_test
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"testing"
 
@@ -53,7 +54,8 @@ func (s *ResolverTokensSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.credentials, err = pgsealed.New(db, sealer)
 	s.Require().NoError(err)
-	s.registry = core.Registry{Schemes: map[string]core.Scheme{bearer.Name: bearer.New(), none.Name: none.New()}}
+	s.registry = core.Registry{Schemes: map[string]core.Scheme{bearer.Name: bearer.New(), none.Name: none.New(),
+		"empty_bearer": sends{Scheme: bearer.New(), authorization: "Bearer "}, "basic": sends{Scheme: bearer.New(), authorization: "Basic eDp5"}}}
 	connections, err := resolver.New(resolver.Config{Store: db, Credentials: s.credentials, Schemes: s.registry.Schemes})
 	s.Require().NoError(err)
 	s.tokens = egress.ResolverTokens(connections, s.registry.Schemes)
@@ -123,7 +125,31 @@ func (s *ResolverTokensSuite) TestASchemeThatIsNotRegisteredOrSendsNoBearerGives
 	unsent := s.grant
 	unsent.Scheme = none.Name
 	_, notBearer := s.tokens(s.ctx, unsent)
+	for _, name := range []string{"empty_bearer", "basic"} {
+		other := s.grant
+		other.Scheme = name
+		_, err := s.tokens(s.ctx, other)
+		s.ErrorIs(err, sandbox.ErrNotBearer, name)
+	}
 
 	s.ErrorIs(unregistered, sandbox.ErrNoCredential)
 	s.ErrorIs(notBearer, sandbox.ErrNotBearer)
 }
+
+// sends is a scheme whose requests carry authorization as their Authorization.
+type sends struct {
+	core.Scheme
+	authorization string
+}
+
+func (s sends) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return roundTrip(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", s.authorization)
+		return base.RoundTrip(r)
+	})
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
