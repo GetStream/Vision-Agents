@@ -30,6 +30,20 @@ func newSandboxProxy(settings config.CodeSandbox, redis *live.Client, connection
 		CACert: []byte(settings.ProxyCACert), CAKey: []byte(settings.ProxyCAKey), Logger: logger})
 }
 
+// sandboxBroker is what the proxy broker code_sandbox.broker may ask for needs from the
+// router, zero for another broker. It keeps each sandbox's grants where the proxy reads them.
+func sandboxBroker(settings config.CodeSandbox, redis *live.Client) (egress.BrokerOptions, error) {
+	if settings.Broker != config.CodeSandboxBrokerProxy {
+		return egress.BrokerOptions{}, nil
+	}
+	if redis == nil {
+		return egress.BrokerOptions{}, stack.Wrap(errors.New("code_sandbox.broker is proxy, and the proxy reads each " +
+			"sandbox's grants from redis: set redis.addr"))
+	}
+	return egress.BrokerOptions{Store: egress.NewStore(redis.Redis()), URL: settings.ProxyPublicURL,
+		CACert: []byte(settings.ProxyCACert)}, nil
+}
+
 // serveSandboxProxy has serve run proxy on addr, until stop. Without a proxy it listens on
 // nothing.
 func serveSandboxProxy(proxy *egress.Proxy, addr string, serve func(*http.Server, net.Listener),

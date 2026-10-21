@@ -210,9 +210,31 @@ func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnle
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg"}, config.CodeSandbox)
 
-	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "vault")
 	_, _, err = Load("")
-	s.ErrorContains(err, "code_sandbox.broker")
+	s.ErrorContains(err, "code_sandbox.broker is daytona or proxy")
+}
+
+// TestTheProxyBrokerNeedsTheProxysURLAndCA: a sandbox must reach the proxy and trust it, and
+// its own credential is the URL's user.
+func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	for _, address := range []string{"", "https://proxy.stg.example:8091", "http://sbx:secret@proxy.stg.example:8091", "http://:8091",
+		"proxy.stg.example:8091"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
+		_, _, err := Load("")
+		s.ErrorContains(err, "code_sandbox.proxy_public_url", address)
+	}
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "http://proxy.stg.example:8091")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(CodeSandbox{Broker: "proxy", ProxyPublicURL: "http://proxy.stg.example:8091", ProxyCACert: "cert"}, config.CodeSandbox)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "")
+	_, _, err = Load("")
+	s.ErrorContains(err, "proxy_ca_cert")
 }
 
 // TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA: no address serves no proxy, and

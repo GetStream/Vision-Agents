@@ -1608,6 +1608,10 @@ func buildSessions(
 	if base != nil {
 		reading = base
 	}
+	sandboxProxy, err := sandboxBroker(settings.CodeSandbox, liveClient)
+	if err != nil {
+		return nil, err
+	}
 
 	return session.NewManager(session.ManagerOptions{
 		LLM:        streams.LLM,
@@ -1639,6 +1643,7 @@ func buildSessions(
 		// Read only by a session with a sandbox binding.
 		SandboxBroker:       settings.CodeSandbox.Broker,
 		SandboxSecretPrefix: settings.CodeSandbox.SecretPrefix,
+		SandboxProxy:        sandboxProxy,
 	})
 }
 

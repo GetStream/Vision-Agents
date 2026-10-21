@@ -5,26 +5,33 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -88,7 +95,7 @@ func (s *SandboxGrantsSuite) TestASandboxBindingGivesTheSandboxItsEnvVarAndHosts
 	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
 
 	s.Equal([]sandbox.Grant{{Connection: core.ConnectionRef{CustomerID: s.customerID, ConnectionID: id}, Binding: "crm",
-		Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
+		Scheme: bearer.Name, Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
 	s.Contains(harness.SandboxTool(box).Description, "`Authorization: Bearer $CRM_TOKEN`")
 }
 
@@ -232,9 +239,48 @@ func (s *SandboxGrantsSuite) TestASandboxBindingNeedsTheSecretPrefix() {
 }
 
 func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
-	s.manager.options.SandboxBroker = "proxy"
+	s.manager.options.SandboxBroker = "vault"
 
-	s.ErrorContains(s.boxed(), `there is no sandbox broker called "proxy"`)
+	s.ErrorContains(s.boxed(), `there is no sandbox broker called "vault"`)
+}
+
+// TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
+// sandbox reaches the proxy alone, holds a placeholder, and the proxy finds the connection's
+// token behind it. No secret prefix is needed.
+func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(redis.Close)
+	api := s.daytonaAPI()
+	s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://proxy.stg.example:8091",
+		CACert: []byte("ca")}
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("proxy.stg.example", api.created["domainAllowList"])
+	proxy, err := url.Parse(api.created["outboundProxyUrl"].(string))
+	s.Require().NoError(err)
+	credential, _ := proxy.User.Password()
+	sum := sha256.Sum256([]byte(credential))
+	raw, err := redis.Do(s.ctx, redis.B().Get().Key("sandbox:egress:"+hex.EncodeToString(sum[:])).Build()).AsBytes()
+	s.Require().NoError(err)
+	var record egress.Record
+	s.Require().NoError(json.Unmarshal(raw, &record))
+	s.Require().Len(record.Grants, 1)
+	s.Equal(api.created["env"].(map[string]any)["CRM_TOKEN"], record.Grants[0].Placeholder)
+	token, err := egress.ResolverTokens(s.resolver, s.registry.Schemes)(s.ctx, record.Grants[0])
+	s.Require().NoError(err)
+	s.Equal(tokenOf("primary"), token)
+	s.NotContains(string(raw), tokenOf("primary"))
 }
 
 // daytonaAPI stands in for Daytona's API: it creates sandboxes, runs code, and keeps the
@@ -245,6 +291,8 @@ type daytonaAPI struct {
 	mu      sync.Mutex
 	held    map[string]string
 	secrets map[string]string
+	// created is the last request for a sandbox.
+	created map[string]any
 }
 
 func (s *SandboxGrantsSuite) daytonaAPI() *daytonaAPI {
@@ -271,12 +319,16 @@ func (a *daytonaAPI) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox":
 		var body struct{ Secrets []map[string]string }
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		_ = json.Unmarshal(raw, &a.created)
 		if len(body.Secrets) > 0 {
 			a.secrets = body.Secrets[0]
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = fmt.Fprintf(w, `{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"sandbox-1","state":"started","toolboxProxyUrl":"%s/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`, a.URL)
+	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
+		_, _ = fmt.Fprintf(w, `{"name":"file","path":%q,"type":"file"}`, r.URL.Query().Get("path"))
 	case r.Method == http.MethodDelete || strings.HasPrefix(r.URL.Path, "/api/socket.io"):
 		w.WriteHeader(http.StatusNoContent)
 	default:

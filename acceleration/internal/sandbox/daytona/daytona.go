@@ -61,8 +61,10 @@ type Sandbox struct {
 	config              sandbox.Config
 	grants              []sandbox.Grant
 	broker              sandbox.CredentialBroker
-	// secrets are the env vars the broker's Prepare gave the sandbox being created.
-	secrets map[string]string
+	// mount is what the broker's Prepare gave the sandbox being created, and files the ones
+	// of its files not yet written into it.
+	mount sandbox.Mount
+	files map[string][]byte
 }
 
 func New(o Options) (*Sandbox, error) {
@@ -169,7 +171,7 @@ func (s *Sandbox) started(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			s.secrets = mount.Secrets
+			s.mount, s.files = mount, mount.Files
 		}
 		box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
 		if err != nil {
@@ -182,7 +184,17 @@ func (s *Sandbox) started(ctx context.Context) error {
 	}
 	ready, end := context.WithTimeout(ctx, s.timeout)
 	defer end()
-	return s.box.WaitForStart(ready, s.timeout)
+	if err := s.box.WaitForStart(ready, s.timeout); err != nil {
+		return err
+	}
+	// A file that could not be written is written on the next run, before any code.
+	for name, data := range s.files {
+		if err := s.box.FileSystem.UploadFile(ready, data, name); err != nil {
+			return stack.Wrap(err)
+		}
+		delete(s.files, name)
+	}
+	return nil
 }
 
 // quoted is a path as one shell word.
@@ -195,12 +207,16 @@ func quoted(word string) string {
 func (s *Sandbox) params() any {
 	domains := s.domains()
 	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated() && len(domains) == 0,
-		Secrets: s.secrets}
+		Secrets: s.mount.Secrets, EnvVars: s.mount.Env}
+	if s.mount.Proxy != nil {
+		proxy := s.mount.Proxy.String()
+		base.OutboundProxyUrl = &proxy
+	}
 	if len(domains) > 0 {
 		joined := strings.Join(domains, ",")
 		base.DomainAllowList = &joined
 	}
-	if cidrs := s.config.NetworkAllowList; len(cidrs) > 0 {
+	if cidrs := s.config.NetworkAllowList; len(cidrs) > 0 && s.mount.Proxy == nil {
 		joined := strings.Join(cidrs, ",")
 		base.NetworkAllowList = &joined
 	}
@@ -265,13 +281,18 @@ func (s *Sandbox) Grants() []sandbox.Grant {
 // domains are the config's allowed domains and, unless the config opens the whole network or
 // lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
 // sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
+// A sandbox behind an egress proxy reaches the proxy alone, whatever the config says, so no
+// request goes around it.
 func (s *Sandbox) domains() []string {
+	if s.mount.Proxy != nil {
+		return []string{s.mount.Proxy.Hostname()}
+	}
 	domains := slices.Clone(s.config.AllowedDomains)
 	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
 		return domains
 	}
 	for _, grant := range s.grants {
-		if _, held := s.secrets[grant.Env]; held {
+		if _, held := s.mount.Secrets[grant.Env]; held {
 			for _, host := range grant.Hosts {
 				if !slices.Contains(domains, host) {
 					domains = append(domains, host)

@@ -3,6 +3,7 @@ package daytona
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,8 +30,12 @@ type platform struct {
 	ran []map[string]any
 	// creations is the body of every request for a sandbox.
 	creations []map[string]any
-	// files is what the sandbox's file system holds, by path.
-	files map[string][]byte
+	// files is what the sandbox's file system holds, by path, and uploads each file written
+	// into it, with how many runs came before.
+	files   map[string][]byte
+	uploads []string
+	// refuseUpload answers every file written into the sandbox with a 400.
+	refuseUpload bool
 	// auth is the last Authorization header seen.
 	auth string
 
@@ -106,6 +111,18 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`))
+
+	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
+		file, _, err := r.FormFile("file")
+		if err != nil || p.refuseUpload {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		data, _ := io.ReadAll(file)
+		p.files[r.URL.Query().Get("path")] = data
+		p.uploads = append(p.uploads, fmt.Sprintf("%s after %d runs", r.URL.Query().Get("path"), len(p.ran)))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"file","path":"` + r.URL.Query().Get("path") + `","type":"file"}`))
 
 	case strings.HasSuffix(r.URL.Path, "/files/download"):
 		data, ok := p.files[r.URL.Query().Get("path")]

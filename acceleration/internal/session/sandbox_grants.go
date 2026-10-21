@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -32,7 +33,7 @@ func (m *Manager) sandboxGrant(binding store.ConnectorBinding, connection store.
 	}
 	d.grants = append(d.grants, sandbox.Grant{
 		Connection: core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID},
-		Binding:    binding.Name, Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Required: binding.Required,
+		Binding:    binding.Name, Scheme: connection.AuthScheme, Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Required: binding.Required,
 	})
 	if d.schemes == nil {
 		d.schemes = map[string]core.Scheme{}
@@ -43,6 +44,11 @@ func (m *Manager) sandboxGrant(binding store.ConnectorBinding, connection store.
 
 // broker is the code_sandbox.broker setting's broker for the session's grants.
 func (m *Manager) broker(spec Spec, d *dispatcher) (sandbox.CredentialBroker, error) {
+	if m.options.SandboxBroker == egress.BrokerName {
+		options := m.options.SandboxProxy
+		options.Session, options.Tokens, options.Logger = spec.ID, m.sandboxTokens(d.schemes), m.logger
+		return egress.NewBroker(options)
+	}
 	if m.options.SandboxSecretPrefix == "" {
 		return nil, stack.Wrap(errors.New("session: a connector binding sets sandbox, and this router has no " +
 			"code_sandbox.secret_prefix (ROUTER_CODE_SANDBOX_SECRET_PREFIX) to name its secrets with"))

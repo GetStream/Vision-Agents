@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 )
 
 // TestARouterWithoutAProxyAddressServesNoProxy is the control: unset, as on every router
@@ -125,4 +126,36 @@ func newCA(t *testing.T) (string, string) {
 	require.NoError(t, err)
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
 		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+}
+
+// TestTheDaytonaBrokerAsksNothingOfTheProxy is the control: the default broker, as on base,
+// needs no Redis and gets no proxy.
+func TestTheDaytonaBrokerAsksNothingOfTheProxy(t *testing.T) {
+	options, err := sandboxBroker(config.Defaults().CodeSandbox, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, egress.BrokerOptions{}, options)
+}
+
+// TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy: the grants it writes are the ones the
+// proxy reads.
+func TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy(t *testing.T) {
+	settings := config.Defaults().CodeSandbox
+	settings.Broker, settings.ProxyPublicURL, settings.ProxyCACert = config.CodeSandboxBrokerProxy, "http://proxy.stg.example:8091", "cert"
+
+	_, err := sandboxBroker(settings, nil)
+	require.ErrorContains(t, err, "redis.addr")
+
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		t.Skip("ROUTER_REDIS_ADDR not set")
+	}
+	redis, err := live.New(live.Options{Address: address})
+	require.NoError(t, err)
+	t.Cleanup(redis.Close)
+	options, err := sandboxBroker(settings, redis)
+	require.NoError(t, err)
+	require.NotNil(t, options.Store)
+	require.Equal(t, "http://proxy.stg.example:8091", options.URL)
+	require.Equal(t, []byte("cert"), options.CACert)
 }

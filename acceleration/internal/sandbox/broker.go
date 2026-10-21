@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strconv"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -15,6 +16,8 @@ type Grant struct {
 	Connection core.ConnectionRef
 	// Binding is the agent config's binding the grant comes from.
 	Binding string
+	// Scheme is the connection's auth scheme, which reads its token from its credential.
+	Scheme string
 	// Env is the env var code in the sandbox reads the placeholder from, such as GITHUB_TOKEN.
 	Env string
 	// Hosts are the only hosts a request may carry the credential to: exact hosts, or *. and
@@ -53,6 +56,14 @@ type Mount struct {
 	// Secrets maps an env var to the name the sandbox provider keeps the credential under,
 	// as Daytona's SandboxBaseParams.Secrets takes it.
 	Secrets map[string]string
+	// Env are env vars the sandbox is created with as they are, such as a placeholder the
+	// broker's egress knows.
+	Env map[string]string
+	// Proxy, when set, is the egress every request from the sandbox goes through, and the
+	// only host the sandbox may reach.
+	Proxy *url.URL
+	// Files are written into the sandbox, by absolute path, before code runs in it.
+	Files map[string][]byte
 }
 
 // CredentialBroker lets code in a sandbox call a connector's API with a connection's
