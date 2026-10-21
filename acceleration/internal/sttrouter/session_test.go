@@ -279,6 +279,26 @@ func (s *SessionSuite) TestTheNextModelServesWhileTheRefusingOneIsStillClosing()
 	s.IsType(stt.Transcript{}, s.speakInto(session))
 }
 
+func (s *SessionSuite) TestClosingTheSessionEndsTheNextModelsDial() {
+	next := &diallingSTT{quietSTT: quietSTT{emitter: stt.NewEmitter(64)}, dialling: make(chan struct{})}
+	router := s.routerWith(0, refused(), func(routing.Spec) (stt.STT, error) { return next, nil })
+	defer router.Close()
+	// s.ctx never ends, as the socket's does not until the session's events have.
+	session := s.start(router)
+	s.Require().NoError(session.ProcessAudio(frame(), stt.Participant{ID: "caller"}))
+	select {
+	case <-next.dialling:
+	case <-time.After(3 * time.Second):
+		s.FailNow("the next model was never dialled")
+	}
+
+	s.Require().NoError(session.Close())
+
+	events := s.drain(session)
+	s.Require().Len(events, 1)
+	s.IsType(stt.Error{}, events[0], "a session closed while the next model dialled ends on the refusal")
+}
+
 func (s *SessionSuite) TestAudioAfterAFatalErrorIsDropped() {
 	session := s.failed(s.router(2, refused()))
 
@@ -293,7 +313,7 @@ func (s *SessionSuite) TestAudioStopsReachingTheProviderBeforeTheCallerHearsOfAF
 	recorder := routing.NewRecorder(routing.STT, nil, nil, slog.Default())
 	defer recorder.Close()
 	session := newSession(provider, routing.ProviderConfig{Provider: "counting", Model: "live"},
-		routing.Owner{CustomerID: s.customerID}, recorder, nil)
+		routing.Owner{CustomerID: s.customerID}, recorder, nil, nil)
 	defer session.Close()
 	// Revisions nobody reads fill the session's buffer, so the fatal error is held until the
 	// caller reads that far.
@@ -703,6 +723,19 @@ func (p *startingSTT) Start(context.Context) error {
 func (p *startingSTT) Close() error {
 	p.closed.Store(true)
 	return p.quietSTT.Close()
+}
+
+// diallingSTT is a model whose dial lasts as long as the context it was started under, as
+// a vendor's handshake bound to that context does.
+type diallingSTT struct {
+	quietSTT
+	dialling chan struct{}
+}
+
+func (p *diallingSTT) Start(ctx context.Context) error {
+	close(p.dialling)
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func refused() stt.Error {

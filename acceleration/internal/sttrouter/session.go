@@ -1,6 +1,7 @@
 package sttrouter
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,9 @@ type Session struct {
 	// reopen starts the next candidate, none of those named in refused. Nil leaves a
 	// refusal the end of the session.
 	reopen func(refused []string) (stt.STT, routing.ProviderConfig, error)
+	// cancel ends the context reopen starts the next candidate under. Nil when there is no
+	// such context.
+	cancel context.CancelFunc
 
 	events chan stt.Event
 	// failed is set once the provider reports a fatal error. The caller has been told, and
@@ -45,6 +49,7 @@ func newSession(
 	owner routing.Owner,
 	recorder *routing.Recorder,
 	reopen func(refused []string) (stt.STT, routing.ProviderConfig, error),
+	cancel context.CancelFunc,
 ) *Session {
 	session := &Session{
 		provider: provider,
@@ -52,6 +57,7 @@ func newSession(
 		owner:    owner,
 		recorder: recorder,
 		reopen:   reopen,
+		cancel:   cancel,
 		events:   make(chan stt.Event, 64),
 	}
 	go session.forward()
@@ -91,7 +97,8 @@ func (s *Session) STT() stt.STT {
 	return s.provider
 }
 
-// Close ends the session. The event channel closes once the provider's events are drained.
+// Close ends the session, and the start of a next candidate still under way. The event
+// channel closes once the provider's events are drained.
 func (s *Session) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
@@ -100,6 +107,11 @@ func (s *Session) Close() error {
 		provider := s.provider
 		s.mu.Unlock()
 		err = provider.Close()
+		// After the provider has closed: a provider started under this context may hold its
+		// socket by it, and closing may still wait on the vendor for the last words.
+		if s.cancel != nil {
+			s.cancel()
+		}
 	})
 	return err
 }
