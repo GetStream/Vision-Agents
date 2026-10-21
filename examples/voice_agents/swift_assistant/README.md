@@ -73,7 +73,7 @@ your own account, and the agent answers with the list. Later conversations use t
 no sign-in.
 
 Not now ends the call without it, and the agent says so. A sign-in refused at Linear, or one not
-finished within ten minutes, ends it the same way.
+finished within ten minutes, ends it the same way, and stopping the reply ends it too.
 
 The credentials stay sealed in the router, and the app never sees them. Every connector signs in
 this way, Gmail included. The router writes the sign-in on the call's `ai_tool_call` step

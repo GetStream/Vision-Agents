@@ -648,8 +648,14 @@ call runs in the same reply, on their account.
 A `tool_approval` that names only the `tool_call_id`, with `allowed` false, declines the sign-in.
 A consent refused at the provider, one that came back with another account, and one not
 finished in ten minutes end the call too, and `authorization.status` says which (`declined`,
-`failed` or `expired`). The agent is told either way. The `connector_authorization` attachment
-is still written for the clients that render it.
+`failed` or `expired`). The agent is told either way. Stopping the reply ends the call too, with
+nothing run. The `connector_authorization` attachment is still written for the clients that
+render it.
+
+The reply stays open while the call waits, and a new message is refused meanwhile, as during
+any reply. A client that renders neither the step nor the card should let the person stop it.
+A client that read `authorization_required` from the call's `tool_ran` now gets that frame
+only once the sign-in ends.
 
 This also fixes the chat that carried on after a login. Its follow-up made the same call again,
 and the agent answered it with the earlier "not connected" rather than running it.

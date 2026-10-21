@@ -347,6 +347,20 @@ func (c *Conversation) AuthorizationEnded(id, status string) bool {
 	return true
 }
 
+// AwaitsAuthorization reports whether the step of the call id in the reply being written still
+// waits for a sign-in. It stops once the reply ends, interrupted or not, which ends its steps
+// (stopParts).
+func (c *Conversation) AwaitsAuthorization(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if m == nil || m.FinishedAt != nil {
+		return false
+	}
+	part := toolStep(m, id)
+	return part != nil && part.Status == "awaiting_authorization"
+}
+
 // toolStep is the step of the call id on m, or nil.
 func toolStep(m *Message, id string) *Part {
 	for i := range m.Parts {

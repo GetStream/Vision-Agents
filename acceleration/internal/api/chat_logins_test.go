@@ -491,6 +491,31 @@ identity: [team_id, user_id]
 	s.Equal(1, s.connectionsOf(s.client, connector))
 }
 
+// The person stops the reply while its call waits for the login, with the bare interrupt the
+// SDKs' stop buttons send. The call ends with the turn, and nothing reaches the provider.
+func (s *ChatLoginsSuite) TestAStoppedReplyEndsTheCallWaitingForTheLogin() {
+	connector, grant := s.connector()
+	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	before := s.provider.Hits(fakeprovider.PathMCP)
+	s.ask(opened.Id)
+	call := s.waitingCallOn(events)
+
+	s.Require().NoError(events.WriteJSON(map[string]any{"type": "interrupt"}))
+
+	var ran map[string]any
+	s.Require().NoError(events.SetReadDeadline(time.Now().Add(settleFor)))
+	for ran == nil {
+		var frame map[string]any
+		s.Require().NoError(events.ReadJSON(&frame))
+		if frame["type"] == "tool_ran" && frame["tool_call_id"] == call {
+			ran = frame
+		}
+	}
+	s.Contains(ran["result"], "stopped waiting for its login")
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider")
+}
+
 // The person answers the step with "Not now", a tool_approval that does not allow it. The call
 // ends at once, the model is told they declined, and nothing reaches the provider.
 func (s *ChatLoginsSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {

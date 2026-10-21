@@ -42,11 +42,12 @@ type ConnectorLoginSuite struct {
 	// begins is how many consents the router began, and requested what each was asked for.
 	begins    int
 	requested []ConsentRequest
-	// steps are the sign-ins the conversation showed on calls' steps, and ended how each
-	// one's ended, by call id (held).
-	mu    sync.Mutex
-	steps map[string]persistent.Authorization
-	ended map[string]string
+	// steps are the sign-ins the conversation showed on calls' steps, ended how each one's
+	// ended, and stopped the calls whose reply was stopped, by call id (held).
+	mu      sync.Mutex
+	steps   map[string]persistent.Authorization
+	ended   map[string]string
+	stopped map[string]bool
 }
 
 func TestConnectorLoginSuite(t *testing.T) {
@@ -56,7 +57,7 @@ func TestConnectorLoginSuite(t *testing.T) {
 func (s *ConnectorLoginSuite) SetupTest() {
 	s.connectorFixture.SetupTest()
 	s.begun, s.shown, s.begins, s.requested = Consent{}, nil, 0, nil
-	s.steps, s.ended = map[string]persistent.Authorization{}, map[string]string{}
+	s.steps, s.ended, s.stopped = map[string]persistent.Authorization{}, map[string]string{}, map[string]bool{}
 }
 
 // TestWithoutConsentsABindingWithNoSelectionIsLeftOutAsBefore: a deployment with connectors
@@ -825,8 +826,8 @@ func (s *ConnectorLoginSuite) TestALoginFinishedOnAnotherRouterIsPickedUpWhileTh
 	s.False(handedBack, "a hand-back that arrives after is not run again")
 }
 
-// An interruption, or the session closing, ends the call rather than leave it waiting out the
-// consent.
+// An interruption, or the session closing, ends the turn's context, and the call with it rather
+// than leave it waiting out the consent.
 func (s *ConnectorLoginSuite) TestATurnThatEndsStopsTheWait() {
 	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM",
 		ExpiresAt: time.Now().Add(10 * time.Minute)}
@@ -843,9 +844,38 @@ func (s *ConnectorLoginSuite) TestATurnThatEndsStopsTheWait() {
 	s.Empty(s.endedOf("call-1"), "the reply that ended settles its own steps")
 }
 
+// The reply ended before the person connected, but its call kept running, as an interruption
+// that lets tools finish leaves them (agent.stopTools). The call stops waiting with nothing
+// run, and connecting later for another request does not run this one: it is not handed the
+// login, so the chat carries on as after any login.
+func (s *ConnectorLoginSuite) TestAStoppedReplysCallNeverRunsOnALaterLogin() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM", ExpiresAt: time.Now().Add(10 * time.Minute)}
+	d := s.held()
+
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().Eventually(func() bool { return s.stepOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	s.mu.Lock()
+	s.stopped["call-1"] = true
+	s.mu.Unlock()
+	s.connect(mine, "primary")
+	_, finished, handed := d.loginFinished(s.ctx, "attempt-alice", mine)
+	got := s.answerOf(answer)
+
+	s.True(finished, "the binding opens for the calls that come next")
+	s.Zero(handed)
+	s.Require().NoError(got.err)
+	s.Contains(got.said, `"status":"stopped"`)
+	s.Never(func() bool {
+		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, mine, 0, nil)
+		return err != nil || len(rows) > 0
+	}, 300*time.Millisecond, 50*time.Millisecond, "the stopped request never reached the provider")
+}
+
 // held is a dispatcher for alice's crm binding whose conversation shows the consent on the
 // steps of its calls, which then wait for her. s.steps records what each step was shown, and
-// s.ended how each one's sign-in ended.
+// s.ended how each one's sign-in ended. A step waits until it ends, or s.stopped marks its
+// reply stopped.
 func (s *ConnectorLoginSuite) held() *dispatcher {
 	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
 	s.Require().NoError(err)
@@ -860,6 +890,13 @@ func (s *ConnectorLoginSuite) held() *dispatcher {
 		defer s.mu.Unlock()
 		s.ended[callID] = status
 		return true
+	}
+	d.logins.waits = func(callID string) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_, shown := s.steps[callID]
+		_, over := s.ended[callID]
+		return shown && !over && !s.stopped[callID]
 	}
 	return d
 }

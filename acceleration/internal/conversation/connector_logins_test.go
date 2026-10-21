@@ -178,8 +178,10 @@ func (s *DisplaySuite) TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConn
 	s.Equal("https://router.example/v1/agents/connectors/oauth/launch/attempt-1", shown["url"])
 	s.Equal("handoff-attempt-1", shown["handoff_token"])
 
+	s.True(c.AwaitsAuthorization("call-1"))
 	s.True(c.AuthorizationEnded("call-1", AuthorizationConnected))
 	s.False(c.AuthorizationEnded("call-1", AuthorizationDeclined), "a sign-in ends once")
+	s.False(c.AwaitsAuthorization("call-1"), "connected, it runs")
 	part := current(c).Parts[0]
 	s.Equal("running", part.Status)
 	s.Equal(AuthorizationConnected, part.Authorization.Status)
@@ -204,6 +206,21 @@ func (s *DisplaySuite) TestADeclinedSignInCancelsTheCallsStep() {
 	s.Equal(AuthorizationDeclined, part.Authorization.Status)
 	s.Equal("Not connected", part.Summary)
 	s.NotNil(part.FinishedAt)
+}
+
+// A reply that ends, stopped by the person, ends the steps still going, so nothing waits for
+// the sign-in any more.
+func (s *DisplaySuite) TestASignInStopsWaitingWhenItsReplyEnds() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+	s.Require().True(c.AwaitAuthorization("employee", "call-1", signIn()))
+
+	c.Cancel()
+
+	s.False(c.AwaitsAuthorization("call-1"))
+	s.Equal("cancelled", current(c).Parts[0].Status)
 }
 
 // Whoever reads the step first can hand the consent off, so only the conversation's owner is

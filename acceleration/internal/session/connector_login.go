@@ -90,10 +90,12 @@ type logins struct {
 	connected func(authorizationID string) bool
 	// await shows a consent on the step of the call that needs it, which then waits for the
 	// person (conversation.AwaitAuthorization), and ended settles that step
-	// (conversation.AuthorizationEnded). Without await the call answers at once that the
-	// person was shown a button.
+	// (conversation.AuthorizationEnded). waits reports whether the step still waits, which it
+	// stops doing when its reply ends (conversation.AwaitsAuthorization). Without await the
+	// call answers at once that the person was shown a button.
 	await func(owner, callID string, found persistent.Authorization) bool
 	ended func(callID, status string) bool
+	waits func(callID string) bool
 	// open is Manager.openBinding, which opens a binding once its connection is usable.
 	open func(ctx context.Context, spec Spec, binding store.ConnectorBinding, selection string, d *dispatcher) (string, error)
 	// implied is Manager.impliedSelection: the caller's one connected connection, which a login
@@ -208,7 +210,7 @@ func (d *dispatcher) askIn(conv *persistent.Conversation, chose func(name, conne
 	if d.logins != nil && conv != nil {
 		d.logins.ask, d.logins.canAsk = conv.AskToConnect, conv.CanAskToConnect
 		d.logins.shows, d.logins.connected = conv.ShowsLogin, conv.ConnectorConnected
-		d.logins.await, d.logins.ended = conv.AwaitAuthorization, conv.AuthorizationEnded
+		d.logins.await, d.logins.ended, d.logins.waits = conv.AwaitAuthorization, conv.AuthorizationEnded, conv.AwaitsAuthorization
 		d.logins.chose = chose
 	}
 }
@@ -318,8 +320,8 @@ func (d *dispatcher) openConnected(ctx context.Context, l *login) bool {
 
 // waitForLogin holds the call until the person answers the consent on its step. Once they
 // connect, it carries on with the binding the login opened, and when the consent is declined,
-// expires or fails, the model is told so. A turn that ends first, interrupted or closed, ends
-// the call.
+// expires or fails, the model is told so. A turn interrupted first, or the session closing,
+// ends the call with nothing run, and so does its reply ending while the call goes on.
 func (d *dispatcher) waitForLogin(ctx context.Context, l *login, callID string, answer <-chan string, expires time.Time) (*dispatcher, string, error) {
 	defer func() {
 		l.mu.Lock()
@@ -335,10 +337,16 @@ func (d *dispatcher) waitForLogin(ctx context.Context, l *login, callID string, 
 		case <-ctx.Done():
 			return nil, "", stack.Wrap(fmt.Errorf("session: %s stopped waiting for its login: %w", l.binding.Name, ctx.Err()))
 		case status := <-answer:
+			if status == persistent.AuthorizationConnected && !d.stillAsks(callID) {
+				return nil, loginStopped(l.name), nil
+			}
 			return d.loginEnded(l, callID, status)
 		case <-expiry.C:
 			return d.loginEnded(l, callID, persistent.AuthorizationExpired)
 		case <-poll.C:
+			if !d.stillAsks(callID) {
+				return nil, loginStopped(l.name), nil
+			}
 			l.mu.Lock()
 			opened := l.opened != nil || d.openConnected(ctx, l)
 			l.mu.Unlock()
@@ -347,6 +355,13 @@ func (d *dispatcher) waitForLogin(ctx context.Context, l *login, callID string, 
 			}
 		}
 	}
+}
+
+// stillAsks reports whether the step of the call still waits for the person. A reply can end
+// and leave its calls running, as an interruption that lets tools finish does (agent.stopTools),
+// and one waiting for a login would then run the stopped request once they connect for another.
+func (d *dispatcher) stillAsks(callID string) bool {
+	return d.logins.waits == nil || d.logins.waits(callID)
 }
 
 // loginEnded settles the step of a call that waited for its login as status says, and is what
@@ -542,6 +557,19 @@ func loginFailed(name string) string {
 	return string(raw)
 }
 
+// loginStopped is what the model reads of a call whose reply was stopped before the person
+// connected name.
+func loginStopped(name string) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{
+		Status:  "stopped",
+		Message: fmt.Sprintf("The reply was stopped before the user connected %s, so nothing was done with it.", name),
+	})
+	return string(raw)
+}
+
 // authorizationRequired is the status a waiting binding's tools answer with until the person
 // logs in, the word a user plugin's do (plugins.AuthorizationRequired).
 const authorizationRequired = "authorization_required"
@@ -610,9 +638,11 @@ func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connect
 		}
 		opened := d.openLogin(ctx, l, connectionID)
 		handed := 0
-		for _, call := range l.held {
-			if !opened {
-				break
+		for id, call := range l.held {
+			// One whose reply ended ends on its own, and the chat carries on as after any
+			// login.
+			if !opened || !d.stillAsks(id) {
+				continue
 			}
 			select {
 			case call.answer <- persistent.AuthorizationConnected:

@@ -230,8 +230,12 @@ time it calls one for somebody who has not connected their calendar, the reply c
  "authorization_id": "...", "connection_id": "..."}
 ```
 
-A chat client renders it as a button. This example prints the URL, waits for you to
-connect, and asks again. A login belongs to one person on one agent and is never used for anybody
+A chat client renders it as a button, and the call that needed it waits on its own
+`ai_tool_call` step until the person has connected, then carries on in the same reply. This
+example prints no link for it: the Python SDK reads only a plugin's login. Connect the calendar
+for the person on the dashboard first, under Library › Connectors › Connections, and the
+session opens on it with no sign-in. Asked before that, the call waits until the sign-in
+expires, ten minutes later. A login belongs to one person on one agent and is never used for anybody
 else, so the router has to know who that person is: `api_key` mode with the app's key and
 secret naming them, or `proxy` mode. A `noauth` router treats every caller as the app's own
 backend, and an anonymous caller goes by a name nobody checked, so neither is offered the
