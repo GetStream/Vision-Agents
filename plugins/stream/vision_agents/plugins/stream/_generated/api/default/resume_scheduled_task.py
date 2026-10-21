@@ -88,7 +88,8 @@ def sync_detailed(
     """Resume a scheduled task
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
-    failures is forgiven. A completed task cannot be resumed (409).
+    failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
+    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.
@@ -120,7 +121,8 @@ def sync(
     """Resume a scheduled task
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
-    failures is forgiven. A completed task cannot be resumed (409).
+    failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
+    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.
@@ -147,7 +149,8 @@ async def asyncio_detailed(
     """Resume a scheduled task
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
-    failures is forgiven. A completed task cannot be resumed (409).
+    failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
+    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.
@@ -177,7 +180,8 @@ async def asyncio(
     """Resume a scheduled task
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
-    failures is forgiven. A completed task cannot be resumed (409).
+    failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
+    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.

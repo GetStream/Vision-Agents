@@ -24,14 +24,15 @@ class ScheduledTaskRun:
         error (None | str): Why it failed, as a short code, when it did: delivery_failed, timed_out,
             schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number,
             no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so
-            the user is not rung again). The full error is in the router's logs. Null otherwise.
+            the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full
+            error is in the router's logs. Null otherwise.
         finished_at (datetime.datetime | None):
         id (str):
         scheduled_for (str): When the occurrence was due, RFC 3339 with the task zone's offset.
         session_id (str):
         started_at (datetime.datetime | None):
         state (ScheduledTaskRunState): running (retries included), delivered, failed, or missed (it fell outside the
-            grace period, or its call would have rung more than 15 minutes late).
+            grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
         task_id (str):
         trigger (ScheduledTaskRunTrigger): schedule when it came due, manual when it was run by hand.
     """
