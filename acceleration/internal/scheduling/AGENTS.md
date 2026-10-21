@@ -189,13 +189,15 @@ so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTh
 cd acceleration
 grep dsn internal/config/testing.yaml        # your own *_test database
 go test -tags integration -p 1 -count=1 -run TestSchedulerSuite ./internal/scheduling/
-go test -tags integration -p 1 -count=1 -timeout 40m -run 'TestStoreSuite|TestScheduledTasksMigrationSuite|TestDataMoveSuite' ./internal/store/
+go test -tags integration -p 1 -count=1 -timeout 40m -run 'TestStoreSuite|TestScheduledTasksMigrationSuite' ./internal/store/
+go test -tags integration -p 1 -count=1 -run 'TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns' ./internal/store/
 go test -tags integration -p 1 -count=1 -run TestScheduledTasksSuite ./internal/api/
 go test -tags integration -p 1 -count=1 -run TestDrainSuite ./cmd/router/
 ```
 
-The store command runs all of `StoreSuite`, more than 500 tests. It took about 8 minutes on a
+The store command runs all of `StoreSuite`, more than 500 tests. It took 8 to 14 minutes on a
 loaded machine, and the default `go test` timeout is 10 minutes, so it sets `-timeout 40m`.
 Narrow to one test with `-run 'TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered'`.
 Known flake: AI-1555. AI-1566 is a panic of `TestATaskTextedBySMSArrivesThere` on the first
-run against a fresh database, which step 1 gives you: run it again.
+run against a fresh database, which step 1 gives you. It did not happen on a fresh database
+on 2026-10-21; if it does, run the test again.
