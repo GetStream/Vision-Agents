@@ -656,6 +656,10 @@ logged at INFO, without what is said. `router_agent_open_utterances` (label `pro
 for each chunk published, how many of the agent's utterances were open. What is spoken is
 unchanged (AI-1551).
 
+### The router logs what it heard from each caller, and counts inbound audio
+
+When a caller's turn settles, when the agent checks in on a silence, and when the call ends, the agent logs `what the agent heard from a participant` at INFO, one line per participant (`moment`: `turn`, `checkin`, `end`): the audio chunks received from the call (`frames`, `audio_ms`), counted from the start of the call and not per turn, the transcripts with words in them (`partials`, `finals`), and how long ago the last of each came (`since_frame_ms`, `since_words_ms`, `-1` for never). No transcript text. Two lines tell a caller who went quiet (no frames) from a transcriber that stopped answering (frames, no words). `router_agent_inbound_audio_frames_total` (no labels), `router_agent_stt_partials_total` and `router_agent_stt_finals_total` (label `provider`) count the same for Prometheus. What is heard and answered is unchanged (AI-1553).
+
 ### An agent config has a `role`, and the app's moderator agent is found by it
 
 `AgentConfig` takes an optional `role`, whose one value is `agent_moderator`: the app's Nora, the
