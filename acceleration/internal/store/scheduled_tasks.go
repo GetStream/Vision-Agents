@@ -678,6 +678,44 @@ func (s *Store) FinishManualScheduledTaskRun(ctx context.Context, runID, state, 
 	return nil
 }
 
+// TakeScheduledTaskRunCall records on a running run the session of the call
+// about to be placed for it, and reports false when the run already has one:
+// an earlier attempt, or a worker that stopped, placed a call for this
+// occurrence, so the user is not rung again.
+func (s *Store) TakeScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) (bool, error) {
+	result, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("session_id = ?", sessionID).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id = ''").
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: take scheduled task run call: %w", err))
+	}
+	return affected > 0, nil
+}
+
+// ReleaseScheduledTaskRunCall gives back a call TakeScheduledTaskRunCall
+// took and could not place, so a later attempt may ring.
+func (s *Store) ReleaseScheduledTaskRunCall(ctx context.Context, customerID, runID, sessionID string) error {
+	_, err := s.db.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("session_id = ''").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", runID).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Where("session_id = ?", sessionID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: release scheduled task run call: %w", err))
+	}
+	return nil
+}
+
 // ScheduledTaskRuns returns a page of a task's runs, newest first.
 func (s *Store) ScheduledTaskRuns(ctx context.Context, customerID, taskID string, limit int, after *ScheduledTaskPosition) ([]ScheduledTaskRun, error) {
 	if customerID == "" || taskID == "" {

@@ -1761,6 +1761,7 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
 	s.Require().NotNil(runs[0].Error)
 	s.Equal(scheduling.ReasonFailed, *runs[0].Error, "a device is told a short reason, not the vendor's words")
+	s.Empty(runs[0].SessionID, "the call that could not be placed was given back")
 	s.Equal(1, s.taskReloaded(task).ConsecutiveFailures)
 }
 
@@ -1868,16 +1869,18 @@ func (s *ScheduledTasksSuite) TestACallNobodyPicksUpIsNotAnswered() {
 	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
 	s.Require().True(live)
 
-	err := s.router.holdCall(context.Background(), found)
+	err := s.router.holdCall(context.Background(), found, scheduledDelivery{})
 	s.Equal(scheduling.ReasonNotAnswered, scheduling.ReasonOf(err), "the ring ran out: %v", err)
+	s.True(s.failure(err).Final, "the user is not rung again")
 
 	scheduledPhoneWindow = time.Minute
 	held := make(chan error, 1)
-	go func() { held <- s.router.holdCall(context.Background(), found) }()
+	go func() { held <- s.router.holdCall(context.Background(), found, scheduledDelivery{}) }()
 	s.Require().Equal(http.StatusNoContent, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
 	select {
 	case err := <-held:
 		s.Equal(scheduling.ReasonNotAnswered, scheduling.ReasonOf(err), "the call ended unanswered: %v", err)
+		s.True(s.failure(err).Final, "the user is not rung again")
 	case <-time.After(30 * time.Second):
 		s.Fail("the call that ended was still held")
 	}

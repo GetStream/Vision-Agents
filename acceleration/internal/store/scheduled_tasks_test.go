@@ -343,3 +343,42 @@ func (s *StoreSuite) TestAUserTimezoneIsStoredAndMoved() {
 		Where("customer_id = ?", "acme").Where("id = ?", "sam").Scan(s.ctx))
 	s.Equal("authenticated", user.Kind, "moving a zone never rewrites what the credential proved")
 }
+
+func (s *StoreSuite) TestARunTakesOneCallUntilItIsGivenBack() {
+	s.task("one", nil)
+	run := ScheduledTaskRun{
+		TaskID: "one", CustomerID: "acme", ScheduledFor: s.base, Trigger: ScheduledTaskTriggerManual,
+		Prompt: "Remind Sam to stretch.", State: ScheduledTaskRunRunning, Attempts: 1, StartedAt: &s.base,
+	}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &run))
+
+	took, err := s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1")
+	s.Require().NoError(err)
+	s.True(took)
+	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-2")
+	s.Require().NoError(err)
+	s.False(took, "a run that placed a call places no second one")
+	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "globex", run.ID, "call-2")
+	s.Require().NoError(err)
+	s.False(took, "another customer's run is not taken")
+
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-2"))
+	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3")
+	s.Require().NoError(err)
+	s.False(took, "only the call that was taken is given back")
+
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-1"))
+	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3")
+	s.Require().NoError(err)
+	s.True(took, "a call given back may be placed again")
+
+	s.Require().NoError(s.store.FinishManualScheduledTaskRun(s.ctx, run.ID, ScheduledTaskRunFailed, "", "call-3", "not_answered"))
+	s.Require().NoError(s.store.ReleaseScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-3"))
+	runs, err := s.store.ScheduledTaskRuns(s.ctx, "acme", "one", 25, nil)
+	s.Require().NoError(err)
+	s.Require().Len(runs, 1)
+	s.Equal("call-3", runs[0].SessionID, "a finished run keeps the call it made")
+	took, err = s.store.TakeScheduledTaskRunCall(s.ctx, "acme", run.ID, "call-4")
+	s.Require().NoError(err)
+	s.False(took, "a finished run places no call")
+}

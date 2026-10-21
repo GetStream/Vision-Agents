@@ -113,6 +113,7 @@ const (
 	ReasonNoNumber    = "no_phone_number"
 	ReasonNoLine      = "no_agent_number"
 	ReasonNotAnswered = "not_answered"
+	ReasonRungAlready = "already_called"
 )
 
 // ReasonOf is the code a failed attempt is recorded under.
