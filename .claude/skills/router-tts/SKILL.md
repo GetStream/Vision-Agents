@@ -248,7 +248,8 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   `mp3_44100_128`. `opus_*` and any other name is refused when the recorder is built. One
   request takes at most 2,000 UTF-16 code units, so a longer text fails the job naming the
   limit, as a `routing.ErrRequest` (`Recordings.Record` writes no `record_failed` stat for it,
-  as with a refused format, since a pinned live model's health is every customer's): the
+  as with a refused format, since a model's health is every customer's, and moves on to the
+  next candidate where there is one): the
   router does not cut it up, because mp3 and wav files cannot be joined byte for byte. `tl`
   is sent as `fil` (Inworld refuses `tl`, probed 2026-10-20), and `temperature` as 1.1, as
   the live socket sends it. Speed (`speakingRate`) is not sent, so no Inworld entry declares
@@ -258,8 +259,19 @@ ElevenLabs, Cartesia and Inworld, each only with a key here. Listings are cached
   shortcut or priority list made only of vendors that stream, the request is a 400 that names
   them and the models that record. One recorder among the candidates is enough: `tts-quality`
   is served by ElevenLabs, or by Cartesia when ElevenLabs cannot be built, because `Select`
-  passes over a candidate with no factory without counting it against the model. It does not
-  move to Cartesia when ElevenLabs fails during the recording: `Record` asks one recorder once.
+  passes over a candidate with no factory without counting it against the model.
+- `Recordings.Record` fails over during the recording too. It routes with `routing.Router.Walk`,
+  which is `Select` with the provider handed to a callback: one resolution of the request, with
+  `Select`'s filters (voice, policy, terms, data policy), ranking and overwrite rule applied once,
+  and each started candidate handed to `Record` in that order. A candidate `Select` rules out is
+  never asked, and once a vendor's model refused its overwrite block no other vendor is. Classes: a vendor failure (any error from
+  `Record`: a non-200, a transport error, a timeout, a body it cannot read) writes
+  `record_failed` and moves on; a refusal (`routing.ErrRequest` from a build, or
+  `inworld.ErrTextTooLong`) moves on without a stat; a cancelled or expired context stops.
+  Empty text is refused before any candidate (`tts.Recording.Validate`). If none records it, the
+  error names each candidate's (cut to `maxTriedError`, 300 bytes) and keeps `ErrRequest` when
+  one refused, as `Select` does. A walk whose only error is the one recorder's (a pinned model,
+  or one candidate left by the filters) fails as it did before the walk: that error, that model. The inline path's 90 s is shared by every candidate.
   A voice asked only in a streaming vendor's overwrites is still refused once routed
   (`Router.voiced`), as a failed job.
 - `GET /v1/tts/routes` and `/v1/tts/routes/{target}` say per candidate whether a recording can

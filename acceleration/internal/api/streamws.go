@@ -999,6 +999,14 @@ func sttFrame(event stt.Event) (frame, bool) {
 			"context": typed.Context,
 			"fatal":   typed.Fatal,
 		}, true
+	case stt.Failover:
+		// The next model took the socket over: the caller is told which one transcribes
+		// now the way it was told the first, and the refusal itself is not passed on.
+		return frame{
+			"type":     "started",
+			"provider": typed.Provider,
+			"model":    typed.Model,
+		}, true
 	default:
 		return nil, false
 	}

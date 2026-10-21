@@ -270,3 +270,95 @@ func (s *GeminiSocketSuite) TestTheSessionResumesWithItsHandleWhenTheServerHangs
 	s.Equal("h-1", resumed.SessionResumption.Handle, "the new connection has to pick the conversation up where it was")
 	s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.Connected); return ok })
 }
+
+// sendAudio streams ms of silence and returns the wall times around it, which bracket when
+// the provider took the audio as sent.
+func (s *GeminiSocketSuite) sendAudio(provider *STS, conn *websocket.Conn, ms int) (time.Time, time.Time) {
+	before := time.Now()
+	pcm := sts.PcmData{Samples: make([]int16, sts.InputSampleRate*ms/1000), SampleRate: sts.InputSampleRate, Channels: 1}
+	s.Require().NoError(provider.ProcessAudio(pcm, sts.Participant{ID: "alice"}))
+	after := time.Now()
+	s.NotNil(s.nextFrame(conn).RealtimeInput)
+	return before, after
+}
+
+// answer has the server hear words, end the caller's speech at offset in the same frame as
+// the reply's audio, and finish the turn. It returns the stop and the settled reply.
+func (s *GeminiSocketSuite) answer(provider *STS, conn *websocket.Conn, activity *voiceActivity) (sts.SpeechStopped, sts.ResponseComplete) {
+	s.serve(conn, serverMessage{ServerContent: &serverContent{InputTranscription: &transcription{Text: "hello"}}})
+	reply := spoke(2400)
+	reply.VoiceActivity = activity
+	s.serve(conn, reply)
+	s.serve(conn, turnComplete())
+	stopped := s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.SpeechStopped); return ok })
+	complete := s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.ResponseComplete); return ok })
+	return stopped.(sts.SpeechStopped), complete.(sts.ResponseComplete)
+}
+
+func (s *GeminiSocketSuite) TestTheCallerStoppedWhereTheDetectorSaysTheirSpeechEnded() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{InputTranscript: true})
+	defer func() { _ = provider.Close() }()
+
+	s.sendAudio(provider, conn, 1000)
+	before, after := s.sendAudio(provider, conn, 1000)
+	time.Sleep(50 * time.Millisecond)
+	stopped, complete := s.answer(provider, conn, &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "1.700s"})
+
+	// 2 s were sent and the speech ended 0.3 s before the last of it went.
+	s.False(stopped.At.Before(before.Add(-300*time.Millisecond)), "stop %v, last audio sent from %v", stopped.At, before)
+	s.False(stopped.At.After(after.Add(-300*time.Millisecond)), "stop %v, last audio sent by %v", stopped.At, after)
+	s.GreaterOrEqual(complete.TimeToFirstByteMs, 350.0, "the wait is timed from the detector's end of speech, not the words")
+}
+
+func (s *GeminiSocketSuite) TestAnEndOfSpeechPastWhatWasSentLeavesTheLastWordHeard() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{InputTranscript: true})
+	defer func() { _ = provider.Close() }()
+
+	_, after := s.sendAudio(provider, conn, 500)
+	stopped, _ := s.answer(provider, conn, &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "600.000s"})
+	s.True(stopped.At.After(after), "an offset counted from another connection is not placed on this one")
+	s.False(stopped.At.After(time.Now()), "nor in the future")
+}
+
+func (s *GeminiSocketSuite) TestAStartDropsAnEndOfSpeechTheTurnBeforeLeftUnused() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{InputTranscript: true})
+	defer func() { _ = provider.Close() }()
+
+	s.sendAudio(provider, conn, 1000)
+	s.answer(provider, conn, nil)
+	// The end of the first turn's speech arrives after its reply settled.
+	s.serve(conn, serverMessage{VoiceActivity: &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "0.500s"}})
+	s.serve(conn, serverMessage{VoiceActivity: &voiceActivity{Type: "ACTIVITY_START", AudioOffset: "0.900s"}})
+	_, after := s.sendAudio(provider, conn, 100)
+	stopped, _ := s.answer(provider, conn, nil)
+	s.True(stopped.At.After(after), "the next turn is timed from its own words, not the stale end")
+}
+
+func (s *GeminiSocketSuite) TestAResumedConnectionCountsItsAudioAfresh() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{InputTranscript: true})
+	defer func() { _ = provider.Close() }()
+	<-fake.setups
+
+	s.sendAudio(provider, conn, 2000)
+	s.serve(conn, serverMessage{SessionResumptionUpdate: &resumptionUpdate{NewHandle: "h-1", Resumable: true}})
+	s.Require().NoError(conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "session timeout"), time.Now().Add(time.Second)))
+	conn.Close()
+	s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.Disconnected); return ok })
+	resumed := s.nextConn(fake)
+	<-fake.setups
+	s.nextEvent(provider, func(event sts.Event) bool { _, ok := event.(sts.Connected); return ok })
+
+	before, after := s.sendAudio(provider, resumed, 500)
+	stopped, _ := s.answer(provider, resumed, &voiceActivity{Type: "ACTIVITY_END", AudioOffset: "0.300s"})
+	s.False(stopped.At.Before(before.Add(-200*time.Millisecond)), "the offset is placed on this connection's audio only")
+	s.False(stopped.At.After(after.Add(-200 * time.Millisecond)))
+}

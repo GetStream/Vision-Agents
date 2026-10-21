@@ -26,6 +26,13 @@ func (s *AudioSuite) TestDurationMsCountsFramesNotSamples() {
 	s.InDelta(500.0, stereo.DurationMs(), 0.001)
 }
 
+func (s *AudioSuite) TestAudioIsAudibleFromTheThresholdInEitherDirection() {
+	s.False(Audible(nil))
+	s.False(Audible([]int16{0, 127, -127}))
+	s.True(Audible([]int16{0, 128}))
+	s.True(Audible([]int16{-128, 0}))
+}
+
 func (s *AudioSuite) TestDurationMsIsZeroWhenUnset() {
 	s.Zero(PcmData{}.DurationMs())
 }

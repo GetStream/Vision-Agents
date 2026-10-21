@@ -146,6 +146,7 @@ from .connector_event_destination_request import ConnectorEventDestinationReques
 from .connector_event_destination_secret import ConnectorEventDestinationSecret
 from .connector_event_forward import ConnectorEventForward
 from .connector_input import ConnectorInput
+from .connector_sandbox import ConnectorSandbox
 from .connector_o_auth_client import ConnectorOAuthClient
 from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
 from .connector_o_auth_client_request import ConnectorOAuthClientRequest
@@ -596,6 +597,7 @@ __all__ = (
     "ConnectorEventDestinationSecret",
     "ConnectorEventForward",
     "ConnectorInput",
+    "ConnectorSandbox",
     "ConnectorOAuthClient",
     "ConnectorOAuthClientAuthMethod",
     "ConnectorOAuthClientRequest",

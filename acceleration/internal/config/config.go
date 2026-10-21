@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -79,6 +80,9 @@ type Config struct {
 	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
 	// means no profiling endpoint.
 	PprofAddr string `koanf:"pprof_addr"`
+	// MetricsAddr serves Prometheus metrics at /metrics on its own listener, never the
+	// public one. Empty means no metrics endpoint.
+	MetricsAddr string `koanf:"metrics_addr"`
 	// Shard names the part of a deployment this router is in, when its calls are kept apart
 	// from what every part shares (see Postgres.ShardDSN and Redis.Shard). Empty is a
 	// deployment of one part.
@@ -96,8 +100,10 @@ type Config struct {
 	Runs       Runs       `koanf:"runs"`
 	Episodes   Episodes   `koanf:"episodes"`
 	Sandbox    Sandbox    `koanf:"sandbox"`
-	Models     Models     `koanf:"models"`
-	Telnyx     Telnyx     `koanf:"telnyx"`
+	// CodeSandbox is the sandbox code runs in, not the 10DLC Sandbox above.
+	CodeSandbox CodeSandbox `koanf:"code_sandbox"`
+	Models      Models      `koanf:"models"`
+	Telnyx      Telnyx      `koanf:"telnyx"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -317,6 +323,27 @@ type Sandbox struct {
 	AudioMinutesPerDay int64 `koanf:"audio_minutes_per_day"`
 }
 
+// CodeSandbox is how code the model wrote reaches a connection's API from its sandbox
+// (internal/sandbox) without holding the connection's credential.
+type CodeSandbox struct {
+	// Broker holds the credential for code there: daytona, Daytona Secrets, is the one there
+	// is.
+	Broker string `koanf:"broker"`
+	// SecretPrefix names this router's environment in every secret it leaves with the
+	// provider, since routers sharing one Daytona organization must never take or sweep each
+	// other's: stg on staging. A session with a sandbox binding is refused while it is empty.
+	SecretPrefix string `koanf:"secret_prefix"`
+}
+
+// secretPrefix is what code_sandbox.secret_prefix may hold. Secrets are named
+// va_<prefix>_<session>_..., so a prefix with an underscore in it would make one router's
+// sweep of va_stg_ match the secrets of another named stg_dev.
+var secretPrefix = regexp.MustCompile(`^[a-z0-9]+$`)
+
+// CodeSandboxBrokerDaytona is the code_sandbox.broker value for Daytona Secrets
+// (daytona.BrokerName).
+const CodeSandboxBrokerDaytona = "daytona"
+
 // Telnyx is the account Telnyx numbers are bought on and the TeXML application they answer
 // on. The Telnyx provider still reads its own variables, which export writes back.
 type Telnyx struct {
@@ -341,6 +368,7 @@ var variables = map[string]string{
 	"voices_bucket_url":  "ROUTER_VOICES_BUCKET_URL",
 	"mock_providers":     "ROUTER_MOCK_PROVIDERS",
 	"pprof_addr":         "ROUTER_PPROF_ADDR",
+	"metrics_addr":       "ROUTER_METRICS_ADDR",
 	"shard":              "ROUTER_SHARD",
 	"postgres.dsn":       "ROUTER_POSTGRES_DSN",
 	"postgres.shard_dsn": "ROUTER_POSTGRES_SHARD_DSN",
@@ -393,6 +421,9 @@ var variables = map[string]string{
 	"sandbox.messages_per_day":      "ROUTER_SANDBOX_MESSAGES_PER_DAY",
 	"sandbox.audio_minutes_per_day": "ROUTER_SANDBOX_AUDIO_MINUTES_PER_DAY",
 
+	"code_sandbox.broker":        "ROUTER_CODE_SANDBOX_BROKER",
+	"code_sandbox.secret_prefix": "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
+
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
 	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
@@ -419,8 +450,9 @@ func Defaults() Config {
 		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
-		Episodes: Episodes{IdleAfter: time.Hour},
-		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
+		Episodes:    Episodes{IdleAfter: time.Hour},
+		Sandbox:     Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
+		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
 		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
 		// second for any given API call». slack_bot and github are the built-ins with an
@@ -569,6 +601,13 @@ func (c Config) validate() error {
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
 	}
+	if c.CodeSandbox.Broker != CodeSandboxBrokerDaytona {
+		return fmt.Errorf("config: code_sandbox.broker is %s, got %q", CodeSandboxBrokerDaytona, c.CodeSandbox.Broker)
+	}
+	if c.CodeSandbox.SecretPrefix != "" && !secretPrefix.MatchString(c.CodeSandbox.SecretPrefix) {
+		return fmt.Errorf("config: code_sandbox.secret_prefix is lowercase letters and digits only, got %q: "+
+			"a prefix holding _ would match another router's secrets (va_stg_ and va_stg_dev_)", c.CodeSandbox.SecretPrefix)
+	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
@@ -643,6 +682,7 @@ func (c Config) export() error {
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"pprof_addr":                    c.PprofAddr,
+		"metrics_addr":                  c.MetricsAddr,
 		"shard":                         c.Shard,
 		"postgres.dsn":                  c.Postgres.DSN,
 		"postgres.shard_dsn":            c.Postgres.ShardDSN,
@@ -684,6 +724,9 @@ func (c Config) export() error {
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
+
+		"code_sandbox.broker":        c.CodeSandbox.Broker,
+		"code_sandbox.secret_prefix": c.CodeSandbox.SecretPrefix,
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),

@@ -15,6 +15,9 @@
 #   [restauth] https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api
 #   [versions] https://docs.github.com/en/rest/about-the-rest-api/api-versions
 #   [paging]  https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
+# Opened October 20, 2026:
+#   [assets]  https://docs.github.com/en/rest/releases/assets
+#   [secrets] https://www.daytona.io/docs/en/secrets.md
 # And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
 #   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
 #         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
@@ -33,8 +36,9 @@ id: github
 # client.policy to client.registration. 3 adds bearer (AI-990). 4 (AI-1308) adds
 # endpoints.api_base, so a backend can call GitHub's REST API through the connection proxy.
 # 5 (AI-1309) adds the X-MCP-Toolsets header on the mcp source, so GitHub offers its Actions
-# tools beside the default ones.
-revision: 5
+# tools beside the default ones. 6 adds sandbox, so code in a session's sandbox can call
+# GitHub's REST API with the connection's token.
+revision: 6
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -145,3 +149,20 @@ sources:
     # «default,actions» 53, the 49 and the 4.
     headers:
       X-MCP-Toolsets: default,actions
+# Code in a session's sandbox reads a placeholder from GITHUB_TOKEN, and the sandbox's egress
+# puts the connection's token in its place only in a request to these hosts ([secrets]). It is
+# the env var name GitHub's own tools read the token from (gh: «GH_TOKEN, GITHUB_TOKEN»,
+# https://cli.github.com/manual/gh_help_environment, opened October 20, 2026). A placeholder is
+# replaced only in a request header and only when the header carries it verbatim ([secrets]),
+# so code sends it as «Authorization: Bearer», which every scheme's token takes ([rest] and
+# api_base above). A header that carries it Base64-encoded, as Basic auth does, is not matched
+# ([secrets], «Transformed placeholders»), so github.com, where git sends one, is left out.
+sandbox:
+  env: GITHUB_TOKEN
+  hosts:
+    # [rest]: the REST API's base URL is https://api.github.com.
+    - api.github.com
+    # [assets], «Upload a release asset»: «Use the upload_url returned in the response of the
+    # Create a release endpoint», and its example request is
+    # https://uploads.github.com/repos/OWNER/REPO/releases/RELEASE_ID/assets?name=example.zip.
+    - uploads.github.com
