@@ -67,6 +67,16 @@ func echoes(token, placeholder string) []string {
 	return pairs
 }
 
+// wholeInBase64 are the pairs for an Authorization value sent and its placeholder's, in
+// base64.
+func wholeInBase64(sent, placeholder string) []string {
+	var pairs []string
+	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		pairs = append(pairs, encoding.EncodeToString([]byte(sent)), encoding.EncodeToString([]byte(placeholder)))
+	}
+	return pairs
+}
+
 func inBase64(encoding *base64.Encoding) func(string) string {
 	return func(s string) string { return encoding.EncodeToString([]byte(s)) }
 }

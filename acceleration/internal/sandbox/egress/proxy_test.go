@@ -953,6 +953,39 @@ func (s *ProxySuite) TestAnEncodedEchoComesBackAsThePlaceholder() {
 	}
 }
 
+// TestABase64EchoOfTheWholeAuthorizationComesBackAsThePlaceholder is A5: base64 of
+// "Bearer <token>" holds the token at another alignment than the token's own base64.
+func (s *ProxySuite) TestABase64EchoOfTheWholeAuthorizationComesBackAsThePlaceholder() {
+	const token = "gho/first+tok!en&x<y"
+	s.connect(token)
+	forms := []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding}
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		for _, form := range forms {
+			w.Header().Add("X-Echo", form.EncodeToString([]byte(r.Header.Get("Authorization"))))
+		}
+		for _, form := range forms {
+			_, _ = io.WriteString(w, form.EncodeToString([]byte(r.Header.Get("Authorization")))+"\n")
+		}
+	})
+
+	for _, authorization := range []string{"Bearer " + s.placeholder, basic("x-access-token", s.placeholder)} {
+		response, body := s.get(authorization)
+
+		s.Equal(http.StatusOK, response.StatusCode, authorization)
+		echoed := append(strings.Fields(body), response.Header.Values("X-Echo")...)
+		s.Len(echoed, 2*len(forms), authorization)
+		// A form of the token the same as another's comes back as that other's placeholder.
+		for _, echo := range echoed {
+			for _, form := range forms {
+				decoded, _ := form.DecodeString(echo)
+				s.NotContains(string(decoded), token, authorization)
+				s.NotContains(string(decoded), basic("x-access-token", token), authorization)
+			}
+		}
+		s.Equal(base64.StdEncoding.EncodeToString([]byte(authorization)), echoed[0], authorization)
+	}
+}
+
 // TestBytesPastAResponseReachNoProcessLog is A13: a host that sends more than its
 // response, a HEAD answered with a body or a body past its Content-Length, leaves bytes
 // net/http's transport would print to the process's log on the connection's next use; the

@@ -257,6 +257,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		if form.basic {
 			pairs = append(pairs, form.credential(token), form.credential(grant.Placeholder))
 		}
+		// An echo of the whole Authorization value in base64 holds the token at another
+		// alignment than the token's own base64.
+		pairs = append(pairs, wholeInBase64(form.scheme+" "+form.credential(token), form.scheme+" "+form.credential(grant.Placeholder))...)
 		forward.Rewrite = func(pr *httputil.ProxyRequest) {
 			p.toHost(pr, t)
 			pr.Out.Header.Set("Authorization", form.scheme+" "+form.credential(token))
