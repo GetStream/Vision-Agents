@@ -2,16 +2,23 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/netip"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
 )
 
 type Config struct {
@@ -54,8 +61,46 @@ func runCommand(args []string) error {
 		return fmt.Errorf("unknown command %q; %s", args[0], usage)
 	}
 	providers := map[string]provider{}
-	_, _, err := parseRun(dir, args[1:], providers)
-	return err
+	cfg, p, err := parseRun(dir, args[1:], providers)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	d, err := newDeps(ctx, cfg, p)
+	if err != nil {
+		return err
+	}
+	for range cfg.Runs {
+		if err := runCall(ctx, cfg, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newDeps(ctx context.Context, cfg Config, p person.Person) (deps, error) {
+	logger := newLogger(cfg.LogFormat, os.Stderr)
+	client := &http.Client{Timeout: 30 * time.Second}
+	r, err := newSDKRouter(ctx, cfg.Router, cfg.Customer, logger)
+	if err != nil {
+		return deps{}, err
+	}
+	locator, err := locate.NewLocator(ctx, client)
+	if err != nil {
+		logger.Warn("some cloud ranges could not be loaded; their addresses are placed by network name", "error", err)
+	}
+	return deps{
+		router:   r,
+		person:   p,
+		locator:  locator,
+		resolver: sipResolver{base: "https://dns.google/resolve", client: client},
+		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		},
+		logger: logger,
+	}, nil
 }
 
 // parseRun reads the flags after the subcommand. The provider is picked first, so its own

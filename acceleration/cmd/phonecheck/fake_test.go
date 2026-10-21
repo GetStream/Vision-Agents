@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"slices"
+	"sync"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 
@@ -16,18 +18,41 @@ const (
 	otherNumber  = "+15550100003"
 )
 
-// steps is what the fakes were asked to do, in order.
-type steps []string
+// steps is what the fakes were asked to do, in order. The person and the session wait side
+// by side, so it is locked.
+type steps struct {
+	mu   sync.Mutex
+	list []string
+}
+
+func (s *steps) add(step string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.list = append(s.list, step)
+}
+
+func (s *steps) all() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.list)
+}
+
+// calls leaves out the router reads.
+func (s *steps) calls() []string {
+	var out []string
+	for _, step := range s.all() {
+		switch step {
+		case "healthy", "numbers", "logs_available", "log_rows", "log_row":
+			continue
+		}
+		out = append(out, step)
+	}
+	return out
+}
 
 // placedACall reports whether anything but a read happened.
-func (s steps) placedACall() bool {
-	for _, step := range s {
-		switch step {
-		case "start call", "listen", "dial", "wait":
-			return true
-		}
-	}
-	return false
+func (s *steps) placedACall() bool {
+	return len(s.calls()) > 0
 }
 
 // fakeRouter answers from fields; a nil error is an answer.
@@ -41,25 +66,28 @@ type fakeRouter struct {
 	rowLists [][]acceleration.AgentLog
 	listed   int
 	rows     map[string]acceleration.AgentLog
+	session  *fakeSession // what StartCall starts and the listener answers with
+	startErr error
+	listener *fakeListener
 }
 
 func (r *fakeRouter) Healthy(context.Context) error {
-	*r.steps = append(*r.steps, "healthy")
+	r.steps.add("healthy")
 	return r.healthErr
 }
 
 func (r *fakeRouter) Numbers(context.Context) ([]acceleration.PhoneNumber, error) {
-	*r.steps = append(*r.steps, "numbers")
+	r.steps.add("numbers")
 	return r.numbers, r.numbersErr
 }
 
 func (r *fakeRouter) LogsAvailable(context.Context) error {
-	*r.steps = append(*r.steps, "logs available")
+	r.steps.add("logs_available")
 	return r.logsErr
 }
 
 func (r *fakeRouter) LogRows(context.Context, string) ([]acceleration.AgentLog, error) {
-	*r.steps = append(*r.steps, "log rows")
+	r.steps.add("log_rows")
 	if len(r.rowLists) == 0 {
 		return nil, nil
 	}
@@ -69,7 +97,7 @@ func (r *fakeRouter) LogRows(context.Context, string) ([]acceleration.AgentLog, 
 }
 
 func (r *fakeRouter) LogRow(_ context.Context, id string) (acceleration.AgentLog, error) {
-	*r.steps = append(*r.steps, "log row")
+	r.steps.add("log_row")
 	row, ok := r.rows[id]
 	if !ok {
 		return acceleration.AgentLog{}, errors.New("no log row")
@@ -78,19 +106,72 @@ func (r *fakeRouter) LogRow(_ context.Context, id string) (acceleration.AgentLog
 }
 
 func (r *fakeRouter) StartCall(context.Context, string, string) (agentSession, error) {
-	*r.steps = append(*r.steps, "start call")
-	return nil, errors.New("not in these tests")
+	r.steps.add("start_call")
+	if r.startErr != nil {
+		return nil, r.startErr
+	}
+	return r.session, nil
 }
 
 func (r *fakeRouter) Listen(context.Context, string) (listener, error) {
-	*r.steps = append(*r.steps, "listen")
-	return nil, errors.New("not in these tests")
+	r.steps.add("listen")
+	if r.listener == nil {
+		return nil, errors.New("no listener")
+	}
+	return r.listener, nil
+}
+
+// fakeListener answers with its session, or, when neverArrives, waits for ctx to end.
+type fakeListener struct {
+	steps        *steps
+	session      *fakeSession
+	neverArrives bool
+}
+
+func (l *fakeListener) Answer(ctx context.Context) (agentSession, error) {
+	if l.neverArrives {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	l.steps.add("agent_answer")
+	return l.session, nil
+}
+
+func (l *fakeListener) Stop() { l.steps.add("stop") }
+
+// fakeSession ends once the person's call has, as the router ends a phone session.
+type fakeSession struct {
+	steps       *steps
+	id          string
+	personEnded <-chan struct{}
+}
+
+func (s *fakeSession) ID() string { return s.id }
+
+func (s *fakeSession) Wait(ctx context.Context) error {
+	select {
+	case <-s.personEnded:
+		s.steps.add("session_wait")
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *fakeSession) Close(context.Context) error {
+	s.steps.add("close")
+	return nil
 }
 
 // fakePerson is a provider named "fake" with one flag of its own.
 type fakePerson struct {
-	steps  *steps
-	region string
+	steps     *steps
+	region    string
+	calls     []person.Call // what Dial and Wait were given
+	ended     chan struct{} // closed when Wait returns; nil is fine
+	waiting   chan struct{} // closed when Wait starts; nil is fine
+	stayOn    bool          // Wait lasts until ctx ends
+	hangupErr error
 }
 
 func (p *fakePerson) Name() string { return "fake" }
@@ -99,19 +180,31 @@ func (p *fakePerson) Flags(fs *flag.FlagSet) {
 	fs.StringVar(&p.region, "fake-region", "", "where the fake vendor places calls")
 }
 
-func (p *fakePerson) Dial(context.Context, person.Call) error {
-	*p.steps = append(*p.steps, "dial")
+func (p *fakePerson) Dial(_ context.Context, call person.Call) error {
+	p.steps.add("dial")
+	p.calls = append(p.calls, call)
 	return nil
 }
 
-func (p *fakePerson) Wait(context.Context, person.Call) error {
-	*p.steps = append(*p.steps, "wait")
+func (p *fakePerson) Wait(ctx context.Context, call person.Call) error {
+	p.calls = append(p.calls, call)
+	if p.waiting != nil {
+		close(p.waiting)
+	}
+	if p.stayOn {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	p.steps.add("person_wait")
+	if p.ended != nil {
+		close(p.ended)
+	}
 	return nil
 }
 
 func (p *fakePerson) Hangup(context.Context) error {
-	*p.steps = append(*p.steps, "hangup")
-	return nil
+	p.steps.add("hangup")
+	return p.hangupErr
 }
 
 // attached is a number the router has wired to Stream.

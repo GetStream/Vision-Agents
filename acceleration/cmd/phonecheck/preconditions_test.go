@@ -30,7 +30,7 @@ func routerWith(numbers ...acceleration.PhoneNumber) *fakeRouter {
 func refused(t *testing.T, r *fakeRouter, err error, want string) {
 	t.Helper()
 	require.ErrorContains(t, err, want)
-	assert.False(t, r.steps.placedACall(), "steps: %v", *r.steps)
+	assert.False(t, r.steps.placedACall(), "steps: %v", r.steps.all())
 }
 
 func TestAnUnreachableLocalRouterSaysToStartItFirst(t *testing.T) {

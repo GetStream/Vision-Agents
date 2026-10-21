@@ -13,15 +13,15 @@ import (
 
 type LogRowsSuite struct {
 	suite.Suite
-	steps  steps
+	steps  *steps
 	router *fakeRouter
 }
 
 func TestLogRowsSuite(t *testing.T) { suite.Run(t, new(LogRowsSuite)) }
 
 func (s *LogRowsSuite) SetupTest() {
-	s.steps = nil
-	s.router = &fakeRouter{steps: &s.steps, rows: map[string]acceleration.AgentLog{}}
+	s.steps = &steps{}
+	s.router = &fakeRouter{steps: s.steps, rows: map[string]acceleration.AgentLog{}}
 }
 
 // addRows puts rows in the router's list (without details) and as whole rows by id.
