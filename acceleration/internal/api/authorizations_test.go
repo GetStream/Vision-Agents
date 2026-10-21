@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -647,6 +648,110 @@ func (s *AuthorizationsSuite) TestAReconnectForAnotherAccountKeepsTheOldGrantAnd
 	s.Equal(accountSwitchError, stored.LastError)
 }
 
+// TestAnOwnersOwnConsentConnectsWhereTheManifestChecksTheEmail is AI-1543's Done when, first
+// half: the owner's backend said their email, and the account that consents has it.
+func (s *AuthorizationsSuite) TestAnOwnersOwnConsentConnectsWhereTheManifestChecksTheEmail() {
+	alice := s.data.createUser()
+	id := s.ownersConnection(s.ownerChecked("owner_email: true\n"), alice, strings.ToUpper(s.provider.Email()))
+
+	s.Equal(s.landing(id, consentConnected), s.finishAs(alice, id))
+	stored, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectionConnected, stored.Status)
+	s.NotEmpty(stored.CredentialsSealed)
+	s.Equal(s.provider.Email(), stored.Metadata["email"])
+}
+
+// TestAnotherPersonFinishingAnOwnersConsentIsRefusedAndStoresNothing is AI-1543's Done when,
+// second half: Alice's link works in any browser, and Bob, the fake's user, signs in at the
+// provider there. The fake's account stays put (no SwitchAccount), since it outlives the test.
+func (s *AuthorizationsSuite) TestAnotherPersonFinishingAnOwnersConsentIsRefusedAndStoresNothing() {
+	alice := s.data.createUser()
+	id := s.ownersConnection(s.ownerChecked("owner_email: true\n"), alice, "alice@fake.example")
+
+	s.Equal(s.landing(id, consentAccountMismatch), s.finishAs(alice, id))
+	s.assertNothingStored(id)
+	s.Contains(s.logged.String(), "the account that consented is not the one the app's user signs in with")
+}
+
+func (s *AuthorizationsSuite) TestAConsentIsRefusedWhenTheAppSaidNoEmailForTheOwner() {
+	alice := s.data.createUser()
+	id := s.ownersConnection(s.ownerChecked("owner_email: true\n"), alice, "")
+
+	s.Equal(s.landing(id, consentAccountMismatch), s.finishAs(alice, id))
+	s.assertNothingStored(id)
+	s.Contains(s.logged.String(), "the app has not said which email its user signs in with (X-Stream-User-Email)")
+}
+
+// TestAChatConsentIsCheckedAgainstTheSameEmail: a consent a session's tool call begins for its
+// caller (ConnectorConsents) finishes at the same callback, against the email the backend said.
+func (s *AuthorizationsSuite) TestAChatConsentIsCheckedAgainstTheSameEmail() {
+	alice := s.data.createUser()
+	connector := s.ownerChecked("owner_email: true\n")
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(alice).withEmail("alice@fake.example").do(http.MethodGet,
+		"/v1/agents/connections?owner_type=user", nil, nil))
+
+	consent, err := ConnectorConsents(s.store, s.connectors, s.sealer, s.publicURL)(context.Background(),
+		session.ConsentRequest{CustomerID: s.customerID(), ConnectorID: connector, UserID: alice.userID})
+	s.Require().NoError(err)
+	b := s.browser()
+	finished := b.finish(s.consent(b.handOff(Authorization{ID: consent.AuthorizationID, LaunchURL: consent.LaunchURL, HandoffToken: consent.HandoffToken})))
+
+	s.Equal(s.landing(consent.ConnectionID, consentAccountMismatch), finished.Header.Get("Location"))
+	s.assertNothingStored(consent.ConnectionID)
+}
+
+// TestAReconnectIsCheckedByItsAccountNotTheEmail: the email is checked on the first consent
+// only. Once the connection has an account, a reconnect must come back with that account
+// (TestAReconnectForAnotherAccountKeepsTheOldGrantAndSaysSo), whatever email is said since.
+func (s *AuthorizationsSuite) TestAReconnectIsCheckedByItsAccountNotTheEmail() {
+	alice := s.data.createUser()
+	id := s.ownersConnection(s.ownerChecked("owner_email: true\n"), alice, s.provider.Email())
+	s.Require().Equal(s.landing(id, consentConnected), s.finishAs(alice, id))
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(alice).withEmail("alice.new@fake.example").do(http.MethodGet,
+		"/v1/agents/connections?owner_type=user", nil, nil))
+
+	s.Equal(s.landing(id, consentConnected), s.finishAs(alice, id))
+}
+
+// TestAnAppOwnedConnectionIsNotCheckedAgainstAnyonesEmail: an app's own connection has no
+// owner to compare with, so owner_email leaves its consent as it was.
+func (s *AuthorizationsSuite) TestAnAppOwnedConnectionIsNotCheckedAgainstAnyonesEmail() {
+	s.provider.Use(fakeprovider.OpenID)
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
+		appOwned(s.ownerChecked("owner_email: true\n")), &created))
+
+	s.connect(created.ID)
+}
+
+// TestAConnectorThatDoesNotCheckTheEmailConnectsAnyAccount is the control: without
+// owner_email, a user-owned connection's first consent connects whoever signs in, with no
+// email said. Its expected answer is base's (a103c19ab), probed on the base build.
+func (s *AuthorizationsSuite) TestAConnectorThatDoesNotCheckTheEmailConnectsAnyAccount() {
+	alice := s.data.createUser()
+	id := s.ownersConnection(s.connector(""), alice, "")
+
+	s.Equal(s.landing(id, consentConnected), s.finishAs(alice, id))
+}
+
+func (s *AuthorizationsSuite) TestOnlyTheBackendSaysTheEmailItsUserSignsInWith() {
+	alice := s.data.createUser()
+	device := *alice
+	device.header = alice.header.Clone()
+	device.header.Set(auth.EmailHeader, "alice@fake.example")
+	device.querySessions(SessionQuery{})
+	s.Equal("", s.userEmail(alice), "an end user's device says nothing")
+
+	backend := s.serverClient.actingFor(alice)
+	s.Require().Equal(http.StatusOK, backend.withEmail(" alice@fake.example ").do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+	s.Equal("alice@fake.example", s.userEmail(alice))
+	s.Require().Equal(http.StatusOK, backend.withEmail("alice@other.example").do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+	s.Equal("alice@other.example", s.userEmail(alice), "the latest")
+	s.Require().Equal(http.StatusOK, backend.do(http.MethodGet, "/v1/agents/connections?owner_type=user", nil, nil))
+	s.Equal("alice@other.example", s.userEmail(alice), "a request saying none keeps it")
+}
+
 // TestAPendingConnectionMadeBeforeAFixConnectsOnTheFixedRevision is Slack's revisions 4 and 5
 // (AI-816): a connection made on a revision whose capture rule reads a path the provider does
 // not send stays pending; its next consent runs on the revision that reads the right one, and
@@ -1270,6 +1375,97 @@ func (s *AuthorizationsSuite) slackAtFake() string {
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), parsed)
 	s.Require().NoError(err)
 	return id
+}
+
+// ownerChecked stores a connector of the test's app at the fake that reads who consented from
+// the id_token (fakeprovider.OpenID), as nessy.yaml does, with extra appended, and turns the
+// fake's id_token on.
+func (s *AuthorizationsSuite) ownerChecked(extra string) string {
+	s.provider.Use(fakeprovider.OpenID)
+	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest, err := core.ParseManifest([]byte(`
+id: ` + id + `
+revision: 1
+name: Fake
+endpoints:
+  authorize: ` + s.provider.URL + fakeprovider.PathAuthorize + `
+  token: ` + s.provider.URL + fakeprovider.PathToken + `
+  mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
+schemes: [oauth2_code]
+client:
+  registration: [operator]
+  auth_method: client_secret_post
+  env: FAKE
+scopes:
+  list: [mcp, openid]
+capture:
+  - name: sub
+    from: id_token
+    path: $.sub
+  - name: email
+    from: id_token
+    path: $.email
+  - name: email_verified
+    from: id_token
+    path: $.email_verified
+    optional: true
+identity: [sub]
+sources:
+  - kind: mcp
+    endpoint: mcp
+` + extra))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// ownersConnection is owner's connection to connector, made by the app's backend acting for
+// them, which says email is the one they sign in with unless it is empty.
+func (s *AuthorizationsSuite) ownersConnection(connector string, owner *testClient, email string) string {
+	backend := s.serverClient.actingFor(owner)
+	if email != "" {
+		backend = backend.withEmail(email)
+	}
+	var created Connection
+	s.Require().Equal(http.StatusCreated, backend.do(http.MethodPost, "/v1/agents/connections", userOwned(connector, owner), &created))
+	return created.ID
+}
+
+// finishAs is owner's backend starting a consent for their connection, and whoever is signed
+// in at the provider finishing it in a browser: where the callback sent the browser.
+func (s *AuthorizationsSuite) finishAs(owner *testClient, id string) string {
+	var started Authorization
+	s.Require().Equal(http.StatusCreated, s.serverClient.actingFor(owner).do(http.MethodPost,
+		"/v1/agents/connections/"+id+"/authorizations", nil, &started))
+	b := s.browser()
+	return b.finish(s.consent(b.handOff(started))).Header.Get("Location")
+}
+
+// assertNothingStored is a connection a consent left as it was made: pending, with no
+// credentials, no account and no grant.
+func (s *AuthorizationsSuite) assertNothingStored(id string) {
+	stored, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectionPending, stored.Status)
+	s.Empty(stored.CredentialsSealed)
+	s.Empty(stored.AccountID)
+	s.Empty(stored.Metadata)
+	s.Empty(s.connectorAudit(id))
+}
+
+func (s *AuthorizationsSuite) userEmail(user *testClient) string {
+	email, err := s.store.UserEmail(context.Background(), s.customerID(), user.userID)
+	s.Require().NoError(err)
+	return email
+}
+
+// withEmail is c saying the user it acts for signs in with email (auth.EmailHeader).
+func (c *testClient) withEmail(email string) *testClient {
+	named := *c
+	named.header = c.header.Clone()
+	named.header.Set(auth.EmailHeader, email)
+	return &named
 }
 
 // start is the app's backend starting a consent.

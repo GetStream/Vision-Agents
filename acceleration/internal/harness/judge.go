@@ -244,5 +244,6 @@ func (f *flow) runJudge(asked *candidate) {
 		Disposition: answer.Disposition,
 		Floor:       answer.Floor,
 		TookMs:      took,
+		Ruler:       Primary,
 	})
 }

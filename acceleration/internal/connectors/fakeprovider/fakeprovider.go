@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -193,6 +194,12 @@ const (
 	// (core/testdata/recorded/salesforce.token.json). That the client credentials response
 	// carries it too is unverified.
 	IdentityURL Personality = "identity_url"
+	// OpenID adds an id_token to a code exchange whose consent asked for the openid scope, as
+	// Nessy does (origin/main at 7e238ffa, docs/mcp.md:115-123): HS256, 10 minutes, with iss
+	// the server, sub the user who consented, aud the client, exp, iat and email, their
+	// address (Email). Never on a refresh. Signed with a key of the fake's own, which a client
+	// that took the token from the token endpoint does not check (OIDC Core 3.1.3.7, item 6).
+	OpenID Personality = "openid"
 	// SlackChannel plays Slack as an inbound channel (channel.go): Deliver posts an Events API
 	// event signed as Slack signs it (docs.slack.dev/authentication/verifying-requests-from-slack),
 	// and PathChatPostMessage takes a reply with a bot token InstallBot issued, answering as
@@ -246,7 +253,9 @@ type Server struct {
 	access        map[string]*accessToken
 	refresh       map[string]*refreshToken
 	hits          map[string]int
-	refreshes     int
+	// revoked is the kind of token each revoke named, in order (Revoked).
+	revoked   []string
+	refreshes int
 	// clientCredentialsGrants counts the client_credentials grants that reached the token
 	// endpoint.
 	clientCredentialsGrants int
@@ -436,6 +445,18 @@ func (s *Server) SwitchAccount() string {
 	return s.account
 }
 
+// Email is the address of the user the next consent is by, which OpenID puts in the
+// id_token: synthetic, and another one after SwitchAccount.
+func (s *Server) Email() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return emailOf(s.account)
+}
+
+func emailOf(account string) string {
+	return strings.ToLower(account) + "@fake.example"
+}
+
 // Advance moves the server's clock, so expiry and grace windows pass without sleeping.
 func (s *Server) Advance(d time.Duration) {
 	s.mu.Lock()
@@ -448,6 +469,14 @@ func (s *Server) Hits(path string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.hits[path]
+}
+
+// Revoked is the kind of token each request to PathRevoke named, in order: "refresh_token",
+// "access_token", or "" for a token the fake did not issue.
+func (s *Server) Revoked() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.revoked)
 }
 
 // MCPHeader is the value of the header name on each request that reached the MCP endpoint,

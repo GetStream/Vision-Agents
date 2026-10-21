@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -42,6 +44,12 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
 }
 
+func (s *SpecSuite) TestAConfigsReviewInstructionsAreWhatItsCallsAreReviewedBy() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", ReviewInstructions: "Score the upsell."})
+
+	s.Equal("Score the upsell.", spec.ReviewInstructions)
+}
+
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingVariation})
 
@@ -53,6 +61,65 @@ func (s *SpecSuite) TestAConfigsExactGreetingIsSaidAsWritten() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingExact})
 
 	s.False(spec.VaryGreeting)
+}
+
+func (s *SpecSuite) TestAConfigsSchedulingBecomesTheSessions() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme",
+		Scheduling: store.AgentScheduling{Enabled: true, MaxTasksPerUser: 5, DefaultTimezone: "Europe/Amsterdam"}})
+
+	s.Equal(store.AgentScheduling{Enabled: true, MaxTasksPerUser: 5, DefaultTimezone: "Europe/Amsterdam"}, spec.Scheduling)
+}
+
+func (s *SpecSuite) TestThePromptSaysWhatDayItIsWhenSchedulingToolsAreOffered() {
+	spec := s.spec(nil)
+	spec.Timezone = "Europe/Amsterdam"
+	spec.SchedulingTools = true
+
+	s.Contains(spec.prompt(), "Today is ")
+	s.Contains(spec.prompt(), "for the user (Europe/Amsterdam).")
+}
+
+func (s *SpecSuite) TestThePromptKeepsTheDayToItselfOtherwise() {
+	spec := s.spec(nil)
+	spec.Timezone = "Europe/Amsterdam"
+
+	s.NotContains(spec.prompt(), "Today is ")
+}
+
+func (s *SpecSuite) TestThePromptSaysNoDayWithoutAZone() {
+	spec := s.spec(nil)
+	spec.SchedulingTools = true
+
+	s.NotContains(spec.prompt(), "Today is ")
+}
+
+// The values below were read off prompt() and clockLine() at cbd35d7cf, before the clock
+// line moved: a session without the clock line is told exactly what it was told then.
+func (s *SpecSuite) TestThePromptOfAnAgentWithoutTheClockLineIsUnchanged() {
+	spec := Spec{Navigating: true, Instructions: "Be brief.", ServerInstructions: "Keep links whole."}
+	want := agent.NavigatingInstructions + "\n\nBe brief.\n\nKeep links whole."
+
+	s.Equal(want, spec.prompt())
+	spec.SchedulingTools = true
+	s.Equal(want, spec.prompt(), "no zone, so no clock line")
+}
+
+func (s *SpecSuite) TestTheClockLineComesAfterTheInstructionsSoTheyStayTheCachedPrefix() {
+	spec := Spec{Instructions: "Be brief.", ServerInstructions: "Keep links whole.", Timezone: "Europe/Amsterdam"}
+	instructions := spec.prompt()
+	spec.SchedulingTools = true
+
+	prompt := spec.prompt()
+	s.Equal("Be brief.\n\nKeep links whole.", instructions)
+	s.True(strings.HasPrefix(prompt, instructions+"\n\nToday is "), prompt)
+	s.True(strings.HasSuffix(prompt, " for the user (Europe/Amsterdam)."), prompt)
+}
+
+func (s *SpecSuite) TestTheClockLineReadsTheUsersDay() {
+	spec := Spec{Timezone: "Europe/Amsterdam"}
+
+	s.Equal("Today is Wednesday, 21 October 2026 for the user (Europe/Amsterdam).",
+		spec.clockLine(time.Date(2026, 10, 20, 23, 30, 0, 0, time.UTC)))
 }
 
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {

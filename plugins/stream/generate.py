@@ -70,7 +70,7 @@ def main() -> int:
         [
             "uvx",
             "--from",
-            "openapi-python-client",
+            "openapi-python-client==0.29.1",
             "openapi-python-client",
             "generate",
             "--path",

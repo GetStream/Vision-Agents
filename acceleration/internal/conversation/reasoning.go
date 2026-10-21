@@ -57,7 +57,11 @@ type liveReasoning struct {
 	total       int
 	sent        int
 	first, last time.Time
-	keyed       time.Time
+	// began is when the model began working towards this round, if known. A model that sends
+	// its thinking only once it is done sends it all at once, so the round's own windows say
+	// it took no time.
+	began time.Time
+	keyed time.Time
 }
 
 // add records a piece of thinking.
@@ -79,6 +83,16 @@ func (r *liveReasoning) add(text string, now time.Time) {
 		r.start += utf8.RuneCountInString(r.buf[:cut])
 		r.buf = r.buf[cut:]
 	}
+}
+
+// duration is how long the round has thought: from when the model began working towards it,
+// or else from its first thinking, to its latest.
+func (r *liveReasoning) duration() time.Duration {
+	start := r.first
+	if !r.began.IsZero() && r.began.Before(start) {
+		start = r.began
+	}
+	return r.last.Sub(start)
 }
 
 // pending reports thinking watchers have not been sent.

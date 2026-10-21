@@ -621,23 +621,30 @@ func (s *Session) chose(name, connectionID string) {
 }
 
 // FollowUp answers text the way RespondCommand does with no message of the end user's
-// shown for it: the model is told text, and the conversation shows only the reply.
-func (s *Session) FollowUp(ctx context.Context, text string) error {
+// shown for it: the model is told text, and the conversation shows only the reply. The
+// id is the caller's own, so a follow-up delivered twice is started once: when the
+// conversation already holds it, nothing more is done.
+func (s *Session) FollowUp(ctx context.Context, id, text string) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
 		return stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
-	receipt, err := s.persisted.BeginFollowUp(text)
+	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
 		return stack.Wrap(err)
+	}
+	if receipt.Duplicate {
+		return nil
 	}
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
 	turnID, err := s.current().RespondTo(ctx, text, nil, options.LLM{})
 	if err != nil {
-		s.persisted.Cancel()
+		// No turn started, so a caller retrying the same id must start one, not be told
+		// it is already there.
+		s.persisted.AbandonFollowUp(receipt.CommandID)
 		return stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
@@ -645,6 +652,15 @@ func (s *Session) FollowUp(ctx context.Context, text string) error {
 		s.openTurn(turnID, text)
 	}
 	return nil
+}
+
+// FollowUpReply is how the reply to the follow-up under id stands: its state and, once it
+// has finished, what it said. known is false when the conversation holds no such follow-up.
+func (s *Session) FollowUpReply(id string) (state, text string, known bool) {
+	if s.persisted == nil {
+		return "", "", false
+	}
+	return s.persisted.FollowUpReply(id)
 }
 
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering
@@ -1372,6 +1388,12 @@ func (s *Session) record(event Event) {
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}
+	case agent.Said:
+		// A line said as written, such as the greeting, is a response of its own: the
+		// caller's answer to it reads as nothing without it.
+		s.openTurn(typed.TurnID, "")
+		s.item(typed.TurnID, store.ItemAnswer, typed.Text, "", nil)
+		s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 	case agent.Interrupted:
 		// What the agent had already said still counts, which is why an interrupted turn is
 		// cancelled rather than failed: the caller stopped it, nothing went wrong.
@@ -1548,6 +1570,8 @@ func (s *Session) remember(event Event) {
 		}
 		line = spoken{text: typed.Prompt}
 	case agent.Responded:
+		line = spoken{agent: true, text: typed.Text}
+	case agent.Said:
 		line = spoken{agent: true, text: typed.Text}
 	default:
 		return

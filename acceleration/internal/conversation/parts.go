@@ -151,7 +151,7 @@ func (c *Conversation) thought(m *Message, text string, now time.Time) bool {
 		id := "r" + strconv.Itoa(rounds+1)
 		started := now.UTC()
 		m.Parts = append(m.Parts, Part{Type: partReasoning, V: partVersion, ID: id, Status: "streaming", StartedAt: &started})
-		c.reasoning = liveReasoning{id: id}
+		c.reasoning = liveReasoning{id: id, began: c.resumed}
 		opened = true
 	}
 	c.reasoning.add(text, now)
@@ -170,7 +170,7 @@ func (c *Conversation) settleThinking(m *Message, now time.Time) bool {
 	if c.reasoning.id == part.ID && c.reasoning.total > 0 {
 		part.Summary = summaryOf(c.reasoning.head)
 		part.Preview = openingOf(c.reasoning.head, c.reasoning.total)
-		part.DurationMS = c.reasoning.last.Sub(c.reasoning.first).Milliseconds()
+		part.DurationMS = c.reasoning.duration().Milliseconds()
 	}
 	finished := now.UTC()
 	part.FinishedAt = &finished
@@ -422,7 +422,7 @@ type liveSnapshot struct {
 }
 
 func (r *liveReasoning) snapshot() liveSnapshot {
-	return liveSnapshot{id: r.id, preview: tailRunes(r.buf, maxLivePreview), durationMS: r.last.Sub(r.first).Milliseconds()}
+	return liveSnapshot{id: r.id, preview: tailRunes(r.buf, maxLivePreview), durationMS: r.duration().Milliseconds()}
 }
 
 // messageAttachments renders a reply's steps and artifacts within Stream's limits. The

@@ -95,6 +95,27 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhetherItsToolsAreOfferedProgressive
 	s.True(value(again.Config.Tools.Progressive), "a directory that says nothing leaves what is stored")
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresItsScheduling() {
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "scheduling": map[string]any{
+		"enabled": true, "max_tasks_per_user": 5, "default_timezone": "Europe/Amsterdam",
+	}})
+	s.True(value(result.Config.Scheduling.Enabled))
+	s.Equal(5, value(result.Config.Scheduling.MaxTasksPerUser))
+	s.Equal("Europe/Amsterdam", value(result.Config.Scheduling.DefaultTimezone))
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	s.True(value(again.Config.Scheduling.Enabled), "a directory that says nothing leaves what is stored")
+	s.Equal("Europe/Amsterdam", value(again.Config.Scheduling.DefaultTimezone))
+}
+
+func (s *SyncSuite) TestASyncNamingAnUnknownDefaultTimezoneIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "concierge", "hash": "v1",
+			"scheduling": map[string]any{"default_timezone": "Nowhere/Special"}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "scheduling.default_timezone")
+}
+
 func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
 	result := s.sync(map[string]any{
 		"name": "artist", "hash": "v1", "sandbox": "daytona",
@@ -801,6 +822,21 @@ func (s *SyncSuite) TestASyncedSandboxBindingToAConnectorWithoutASandboxBlockIsR
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `connector "slack" offers no access from a sandbox`)
 	s.Empty(s.configsNamed("builder"))
+}
+
+// A sync stores a config as a save does, so it too refuses nessy beside an outbound tool.
+func (s *SyncSuite) TestASyncedNessyBesideAnMCPServerIsRefusedAndStoresNothing() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "athena", "hash": "v1", "connectors": []map[string]any{sessionNessy("customers")},
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and MCP server "tablejourney" can send data out`)
+	s.Empty(s.configsNamed("athena"))
 }
 
 func (s *SyncSuite) TestASyncedSandboxBindingWithoutASandboxIsRefusedAndStoresNothing() {

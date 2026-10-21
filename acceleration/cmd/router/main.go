@@ -73,6 +73,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -529,6 +530,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
+	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, connectors.Schemes, logger)
+	if err != nil {
+		return err
+	}
 
 	// What every request is measured against -- the key it presented, the app behind it,
 	// their policies and what they have configured -- read through Redis and the cache
@@ -1251,6 +1256,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Every router runs the scheduled-task worker: whichever of them claims
+	// an occurrence delivers it, in the conversation its task belongs to. It
+	// claims until the stop signal ends ctx; the drain then waits for the
+	// occurrences it is delivering, as for the sessions.
+	var scheduler *scheduling.Scheduler
+	if pgStore != nil && sessions != nil {
+		scheduler = scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
+		// Before Start: a session the first delivery opens takes the kick then.
+		server.SetSchedulerKick(scheduler.Kick)
+		scheduler.Start(ctx)
+		defer scheduler.Close()
+	}
 	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
 	// pinned to, read once, within the one attempt's time the deployment's own check gets.
 	go func() {
@@ -1265,7 +1282,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
-	listening := make(chan error, 2)
+	listening := make(chan error, 3)
 	serve := func(httpServer *http.Server, listener net.Listener) {
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			listening <- err
@@ -1289,6 +1306,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
+	stopSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, serve, logger)
+	if err != nil {
+		return err
+	}
+	defer stopSandboxProxy()
+
 	if settings.PprofAddr != "" {
 		go servePprof(settings.PprofAddr, logger)
 	}
@@ -1304,7 +1327,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:    httpServer,
 			peers:     peerServer,
 			drainWork: server.Drain,
-			held:      func() int { return running(sessions) },
+			held:      func() int { return running(sessions, scheduler) },
 			telephony: telephony,
 			drain:     settings.Shutdown.Drain,
 			logger:    logger,
@@ -1333,7 +1356,8 @@ type stopping struct {
 	peers  *http.Server
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
-	// held is how many sessions the process is still running.
+	// held is how many sessions and scheduled deliveries the process is
+	// still running.
 	held      func() int
 	telephony *phone.Service
 	drain     time.Duration
@@ -1384,10 +1408,10 @@ func stopServing(s stopping) error {
 		case <-ticker.C:
 			continue
 		case <-again:
-			s.logger.Info("told again to stop, ending the sessions still running", "sessions", held)
+			s.logger.Info("told again to stop, ending the sessions still running", "held", held)
 		case <-timeout.C:
 			s.logger.Warn("the drain ran out, ending the sessions still running",
-				"sessions", held, "drain", s.drain, "setting", "shutdown.drain")
+				"held", held, "drain", s.drain, "setting", "shutdown.drain")
 		}
 		break
 	}
@@ -1398,12 +1422,17 @@ func stopServing(s stopping) error {
 	return shutdown(peerCtx, s.peers, "peers", grace, s.logger)
 }
 
-// running is how many sessions a router holds; one without sessions holds none.
-func running(sessions *session.Manager) int {
-	if sessions == nil {
-		return 0
+// running is how many sessions and scheduled deliveries a router holds; one
+// without sessions or a scheduled-task worker holds none of them.
+func running(sessions *session.Manager, scheduler *scheduling.Scheduler) int {
+	held := 0
+	if sessions != nil {
+		held += sessions.Len()
 	}
-	return sessions.Len()
+	if scheduler != nil {
+		held += scheduler.Running()
+	}
+	return held
 }
 
 // servePprof serves the runtime profiles on an address of their own, with lock contention
@@ -1580,7 +1609,7 @@ func buildSessions(
 		reading = base
 	}
 
-	return session.NewManager(session.ManagerOptions{
+	options := session.ManagerOptions{
 		LLM:        streams.LLM,
 		STT:        streams.STT,
 		TTS:        streams.TTS,
@@ -1607,10 +1636,11 @@ func buildSessions(
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
-		// Read only by a session with a sandbox binding.
-		SandboxBroker:       settings.CodeSandbox.Broker,
-		SandboxSecretPrefix: settings.CodeSandbox.SecretPrefix,
-	})
+	}
+	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
+		return nil, err
+	}
+	return session.NewManager(options)
 }
 
 // buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled

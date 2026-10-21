@@ -53,6 +53,7 @@ type SyncAgentRequest struct {
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
 	Tools          *AgentTools        `json:"tools,omitempty" doc:"How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored."`
+	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -261,7 +262,15 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, invalidRequest(message)
@@ -540,6 +549,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 		config.MCPServers = mcpServersOf(body.McpServers)
 	}
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
+	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)
 	}

@@ -14,6 +14,7 @@ import (
 type AgentConfigPatch struct {
 	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
 	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty"`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Stt                *string                  `json:"stt,omitempty"`
 	Tts                *string                  `json:"tts,omitempty"`
@@ -40,6 +41,7 @@ type AgentConfigPatch struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
 	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -168,6 +170,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.Greeting, config.GreetingMode = greetingOf(patch.Greeting)
 	}
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
+	config.ReviewInstructions = reviewOf(config.ReviewInstructions, patch.Review)
 	config.Skills = override(config.Skills, patch.Skills)
 	if patch.Plugins != nil {
 		config.Plugins = pluginEntriesOf(*patch.Plugins)
@@ -201,6 +204,10 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	applyDispatch(&config, patch.Dispatch)
 	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
+	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)
@@ -238,6 +245,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, invalidRequest(message)

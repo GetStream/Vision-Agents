@@ -14,6 +14,7 @@ import VisionAgentsCore
 /// the agent waits for the answer.
 struct VoiceView: View {
     let agent: String
+    let style: VoiceStyle
 
     @State private var voice: VoiceSession?
     @State private var failure: String?
@@ -21,7 +22,7 @@ struct VoiceView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            AgentPresence(voice: voice, isStarting: isStarting)
+            AgentPresence(voice: voice, style: style, isStarting: isStarting)
 
             if let voice {
                 if let request = voice.session.approvals.first {
@@ -86,6 +87,7 @@ struct VoiceView: View {
 /// Its own view so that the levels, read thirty times a second, redraw only this.
 private struct AgentPresence: View {
     let voice: VoiceSession?
+    let style: VoiceStyle
     let isStarting: Bool
 
     /// The colors the glow takes while the person is talking. The agent's are the
@@ -117,7 +119,8 @@ private struct AgentPresence: View {
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            AIVoiceGlowView(
+            VoiceStyleView(
+                style: style,
                 state: state,
                 colors: heard?.speaker == .person ? Self.personColors : nil,
                 audioLevel: heard?.level)
@@ -257,6 +260,91 @@ private struct ApprovalCard: View {
                     state = AIToolApprovalState(failed: true)
                 }
             }
+        }
+    }
+}
+
+/// How the agent is shown on a call: Stream's voice glow, an orb, or its voice wave.
+enum VoiceStyle: CaseIterable, Identifiable {
+    case orb, wave
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .orb: "Orb"
+        case .wave: "Wave"
+        }
+    }
+}
+
+/// The agent drawn in `style`.
+private struct VoiceStyleView: View {
+    let style: VoiceStyle
+    let state: AIVoiceAgentState
+    var colors: [Color]?
+    var audioLevel: Double?
+
+    var body: some View {
+        switch style {
+        case .orb: AIVoiceGlowView(state: state, colors: colors, audioLevel: audioLevel)
+        case .wave: AIVoiceWaveView(state: state, colors: colors, audioLevel: audioLevel)
+        }
+    }
+}
+
+/// Settings for the Voice tab, at the top right: the orb and the wave, each moving as it would
+/// on a call, to pick how the agent is shown.
+struct VoiceStyleSheet: View {
+    @Binding var style: VoiceStyle
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Voice style")
+                .font(.title2)
+            HStack(spacing: 16) {
+                ForEach(VoiceStyle.allCases) { option in
+                    Button {
+                        style = option
+                        dismiss()
+                    } label: {
+                        VStack(spacing: 8) {
+                            VoiceStyleView(style: option, state: .speaking)
+                                .aspectRatio(1, contentMode: .fit)
+                            Label(option.label, systemImage: "checkmark.circle.fill")
+                                .labelStyle(StyleLabel(isSelected: option == style))
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity)
+                        .background(.background, in: .rect(cornerRadius: 12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(
+                                    option == style ? Color.accentColor : Color.secondary.opacity(0.3),
+                                    lineWidth: option == style ? 2 : 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(option == style ? .isSelected : [])
+                }
+            }
+        }
+        .padding(24)
+    }
+}
+
+/// A check before the selected style's name, and only its name otherwise.
+private struct StyleLabel: LabelStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            if isSelected {
+                configuration.icon.foregroundStyle(Color.accentColor)
+            }
+            configuration.title
         }
     }
 }

@@ -417,7 +417,9 @@ class VisionAgentsTest {
 
         val response = agents.sessions.responses("s1").create("What changed?", listOf(ImageSource("data:image/png;base64,AAAA")))
 
-        assertEquals("""{"text":"What changed?","images":[{"url":"data:image/png;base64,AAAA"}]}""", router.requests.single().body)
+        val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
+        assertEquals(setOf("text", "images", "request_id"), body.keys)
+        assertEquals("""[{"url":"data:image/png;base64,AAAA"}]""", body["images"].toString())
         assertEquals(AgentResponse.Status.Running, response.status)
         assertEquals("r1", response.id)
     }

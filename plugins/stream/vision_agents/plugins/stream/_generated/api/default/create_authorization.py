@@ -98,10 +98,15 @@ def sync_detailed(
     dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
     browser then goes to the provider and comes back to the router, which stores the grant and sends the
     browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
-    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
-    with another provider account keeps the old grant. The consent runs on the connector's latest
-    revision, and the connection reads that revision once the consent connects it. Who may start it is
-    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    failed or account_mismatch) added to its query. A native app whose return_url is its own scheme
+    opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the
+    callback hands the sheet back to the app. The body is optional. A reconnect that comes back with
+    another provider account keeps the old grant. A connector that checks its owner's email, such as
+    nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the
+    provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The
+    consent runs on the connector's latest revision, and the connection reads that revision once the
+    consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where
+    the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -142,10 +147,15 @@ def sync(
     dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
     browser then goes to the provider and comes back to the router, which stores the grant and sends the
     browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
-    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
-    with another provider account keeps the old grant. The consent runs on the connector's latest
-    revision, and the connection reads that revision once the consent connects it. Who may start it is
-    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    failed or account_mismatch) added to its query. A native app whose return_url is its own scheme
+    opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the
+    callback hands the sheet back to the app. The body is optional. A reconnect that comes back with
+    another provider account keeps the old grant. A connector that checks its owner's email, such as
+    nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the
+    provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The
+    consent runs on the connector's latest revision, and the connection reads that revision once the
+    consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where
+    the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -181,10 +191,15 @@ async def asyncio_detailed(
     dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
     browser then goes to the provider and comes back to the router, which stores the grant and sends the
     browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
-    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
-    with another provider account keeps the old grant. The consent runs on the connector's latest
-    revision, and the connection reads that revision once the consent connects it. Who may start it is
-    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    failed or account_mismatch) added to its query. A native app whose return_url is its own scheme
+    opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the
+    callback hands the sheet back to the app. The body is optional. A reconnect that comes back with
+    another provider account keeps the old grant. A connector that checks its owner's email, such as
+    nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the
+    provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The
+    consent runs on the connector's latest revision, and the connection reads that revision once the
+    consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where
+    the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -223,10 +238,15 @@ async def asyncio(
     dashboard's when there is no return_url, and post it handoff_token when it says it is ready; the
     browser then goes to the provider and comes back to the router, which stores the grant and sends the
     browser to return_url, or else to the dashboard, with connection_id and status (connected, denied,
-    failed or account_mismatch) added to its query. The body is optional. A reconnect that comes back
-    with another provider account keeps the old grant. The consent runs on the connector's latest
-    revision, and the connection reads that revision once the consent connects it. Who may start it is
-    who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+    failed or account_mismatch) added to its query. A native app whose return_url is its own scheme
+    opens launch_url#handoff_token=<handoff_token> in its web authentication sheet instead, and the
+    callback hands the sheet back to the app. The body is optional. A reconnect that comes back with
+    another provider account keeps the old grant. A connector that checks its owner's email, such as
+    nessy, ends a user-owned connection's first consent as account_mismatch, storing nothing, unless the
+    provider account's email is the one the backend last sent for that user in X-Stream-User-Email. The
+    consent runs on the connector's latest revision, and the connection reads that revision once the
+    consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where
+    the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

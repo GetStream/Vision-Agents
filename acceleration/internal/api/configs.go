@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -124,6 +125,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	config.MCPServers = servers
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -131,6 +135,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, invalidRequest(message)
@@ -233,6 +242,13 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
+	config.ReviewInstructions = reviewOf(existing.ReviewInstructions, request.Body.Review)
+	// Field by field, as the doc says of an update: a block naming only the limit keeps
+	// enabled and the zone.
+	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -245,6 +261,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, invalidRequest(message)
@@ -282,6 +303,12 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
+	}
+	// A deleted config's tasks have no agent left to run on: paused, they stop failing
+	// every occurrence and counting against their users' limit, and stay readable.
+	if err := s.store.PauseScheduledTasksForConfig(ctx, customerID, request.Id); err != nil {
+		s.logger.Error("could not pause a deleted config's scheduled tasks",
+			"config", request.Id, "error", err)
 	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditAgentConfig, ResourceID: existing.ID, ResourceName: existing.Name,
@@ -745,6 +772,71 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 		envs[rule.Env] = binding.Name
 	}
 	return "", true, nil
+}
+
+// sensitiveBindingsComplaint refuses a config that binds a sensitive connector, one whose
+// manifest says its tools read private data, together with a tool that sends data out: a
+// model that reads untrusted text could be steered into sending out what it read («Nessy as
+// a connector» on AI-1538, change 13). These send data out:
+//   - a binding whose connector has a source that does not say outbound: false, as one of its
+//     tools may write, and a binding with sandbox set, whose code calls the connector's whole API;
+//   - an MCP server or a plugin, whose tools no manifest describes, unless the plugin reaches
+//     its read-only endpoint;
+//   - a sandbox that may reach the network.
+//
+// None of them can ask a person's approval of a call: only a tool a session declares carries
+// one (SessionToolApproval). It reads the config as it is about to be stored.
+func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
+	var sensitive *store.ConnectorBinding
+	var outbound []string
+	for i, binding := range config.Connectors {
+		definition, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorID)
+		// A forced connector delete leaves its bindings behind (store.refuseUndefined), and
+		// a binding to a connector with no definition opens nothing.
+		if errors.Is(err, store.ErrNoConnectorDefinition) {
+			continue
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if definition.Manifest.Sensitive {
+			sensitive = &config.Connectors[i]
+		}
+		if bindingSendsOut(binding, definition.Manifest) {
+			outbound = append(outbound, fmt.Sprintf("connector binding %q", binding.Name))
+		}
+	}
+	if sensitive == nil {
+		return "", true, nil
+	}
+	for _, server := range config.MCPServers {
+		outbound = append(outbound, fmt.Sprintf("MCP server %q", server.Name))
+	}
+	for _, entry := range config.Plugins {
+		if !entry.Readonly {
+			outbound = append(outbound, fmt.Sprintf("plugin %q", entry.Name))
+		}
+	}
+	if config.Sandbox != "" && !config.SandboxOptions.Isolated() {
+		outbound = append(outbound, "the sandbox's network access")
+	}
+	if len(outbound) == 0 {
+		return "", true, nil
+	}
+	return fmt.Sprintf("connector binding %q binds %q, whose tools read private data, and %s can send data out "+
+		"with no person's approval: take them out of this config", sensitive.Name, sensitive.ConnectorID,
+		strings.Join(outbound, ", ")), false, nil
+}
+
+// bindingSendsOut reports whether a binding offers a tool that may send data out: one of a
+// source that does not say outbound: false, or the connector's API to sandbox code. A
+// connector with no source offers no tool, and neither does a binding that grants none.
+func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) bool {
+	if binding.Sandbox {
+		return true
+	}
+	granted := len(binding.Tools) > 0 || binding.ToolPatterns != nil
+	return granted && slices.ContainsFunc(manifest.Sources, core.SourceRule.SendsOut)
 }
 
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
@@ -1590,6 +1682,8 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
 	}
+	config.Scheduling = schedulingOf(request.Scheduling)
+	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
 }
 
@@ -1656,6 +1750,9 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = greetingFrom(config.Greeting, config.GreetingMode)
 	rendered.Guardrail = optional(config.Guardrail)
+	if config.ReviewInstructions != "" {
+		rendered.Review = &AgentReview{Instructions: optional(config.ReviewInstructions)}
+	}
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)
 	if config.Sandbox != "" {
 		box := Sandbox(config.Sandbox)
@@ -1672,6 +1769,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
 	rendered.Tools = &AgentTools{Progressive: &progressive}
+	rendered.Scheduling = renderedScheduling(config.Scheduling)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1935,7 +2033,9 @@ type AgentConfigRequest struct {
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
@@ -1971,7 +2071,9 @@ type AgentConfig struct {
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
 	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty" doc:"Absent when calls are reviewed by Stream's default guide."`
 	Tools              *AgentTools              `json:"tools,omitempty"`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
@@ -2002,6 +2104,98 @@ type AgentTools struct {
 func (*AgentTools) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How an agent is offered its plugin, MCP server and connector tools."
 	return schema
+}
+
+// AgentReview is how a finished call under an agent is reviewed.
+type AgentReview struct {
+	Instructions *string `json:"instructions,omitempty" doc:"What the model reviewing a finished call judges it by, in place of Stream's default guide: what to summarise and how to score the call from 1 to 5. A score outside 1 to 5 is not kept. The reviewer is always told to answer with JSON holding a summary, a score and notes, so leave the answer's format out. Empty is the default guide. On an update or a patch, left out keeps the stored instructions and an empty string removes them."`
+}
+
+func (*AgentReview) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How a finished call under an agent is reviewed."
+	return schema
+}
+
+// reviewOf is the review instructions a request leaves stored: the request's, or stored
+// when it says nothing about them.
+func reviewOf(stored string, review *AgentReview) string {
+	if review == nil {
+		return stored
+	}
+	return override(stored, review.Instructions)
+}
+
+// AgentScheduling is an agent's scheduled-task settings.
+type AgentScheduling struct {
+	Enabled         *bool   `json:"enabled,omitempty" doc:"Offer the agent the scheduling tools (schedule_task, list_scheduled_tasks, update_scheduled_task, cancel_scheduled_task), so a user can ask it to remind them or do something later, once or on a repeat. Off by default: it adds four tools to every turn. Left out on an update, the stored setting stays."`
+	MaxTasksPerUser *int    `json:"max_tasks_per_user,omitempty" minimum:"1" maximum:"100" doc:"How many active scheduled tasks one user may hold. Omitted is 25."`
+	DefaultTimezone *string `json:"default_timezone,omitempty" doc:"The IANA zone a scheduled task takes when neither the user nor their session has ever named one, such as America/New_York. A zone nobody knows is refused with a 400 invalid_timezone."`
+}
+
+func (*AgentScheduling) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Whether the agent may schedule tasks for its users, and the defaults those tasks take."
+	return schema
+}
+
+// schedulingOf turns wire scheduling settings into the stored ones.
+func schedulingOf(scheduling *AgentScheduling) store.AgentScheduling {
+	if scheduling == nil {
+		return store.AgentScheduling{}
+	}
+	return store.AgentScheduling{
+		Enabled:         value(scheduling.Enabled),
+		MaxTasksPerUser: value(scheduling.MaxTasksPerUser),
+		DefaultTimezone: strings.TrimSpace(value(scheduling.DefaultTimezone)),
+	}
+}
+
+// schedulingOr writes the fields a caller sent over the stored settings, for a
+// patch or a sync: a field left out keeps what is stored.
+func schedulingOr(stored store.AgentScheduling, scheduling *AgentScheduling) store.AgentScheduling {
+	if scheduling == nil {
+		return stored
+	}
+	if scheduling.Enabled != nil {
+		stored.Enabled = *scheduling.Enabled
+	}
+	if scheduling.MaxTasksPerUser != nil {
+		stored.MaxTasksPerUser = *scheduling.MaxTasksPerUser
+	}
+	if scheduling.DefaultTimezone != nil {
+		stored.DefaultTimezone = strings.TrimSpace(*scheduling.DefaultTimezone)
+	}
+	return stored
+}
+
+// renderedScheduling renders stored settings for the wire, and nothing for a config that
+// never set any. A limit never set is left out rather than rendered as 0, which
+// max_tasks_per_user's minimum refuses: a client saving back what it read (the dashboard
+// does) would be refused.
+func renderedScheduling(stored store.AgentScheduling) *AgentScheduling {
+	if stored == (store.AgentScheduling{}) {
+		return nil
+	}
+	enabled := stored.Enabled
+	rendered := &AgentScheduling{Enabled: &enabled}
+	if stored.MaxTasksPerUser > 0 {
+		rendered.MaxTasksPerUser = &stored.MaxTasksPerUser
+	}
+	if stored.DefaultTimezone != "" {
+		rendered.DefaultTimezone = &stored.DefaultTimezone
+	}
+	return rendered
+}
+
+// schedulingComplaint refuses a scheduling block naming a zone nobody knows.
+func schedulingComplaint(config store.AgentConfig) (string, bool) {
+	zone := config.Scheduling.DefaultTimezone
+	if zone == "" {
+		return "", true
+	}
+	if _, err := scheduling.LoadZone(zone); err != nil {
+		return "scheduling.default_timezone: " + err.Error(), false
+	}
+	return "", true
 }
 
 // progressiveOf is whether tools are offered progressively once tools is written over

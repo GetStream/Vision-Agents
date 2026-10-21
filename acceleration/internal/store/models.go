@@ -352,6 +352,9 @@ type AgentConfig struct {
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`
+	// ReviewInstructions is what the model reviewing a finished call judges it by, in place
+	// of the default scoring guide. Empty, which most configs are, is the default.
+	ReviewInstructions string `bun:"review_instructions,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
@@ -376,6 +379,9 @@ type AgentConfig struct {
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
+	// Scheduling is whether the agent may schedule tasks for its users, and the
+	// defaults those tasks take. The zero value is off.
+	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -741,7 +747,11 @@ type ChannelIdentity struct {
 	Kind       string `bun:"kind,notnull"`
 	// Address is the number that writes, in E.164, or a chat handle where there is no number.
 	Address string `bun:"address,notnull"`
-	UserID  string `bun:"user_id,notnull"`
+	// Thread is where a message is sent to reach this person again: the chat, for
+	// iMessage, whose replies go to a conversation rather than to a person. Empty
+	// where a reply goes to the address itself, as on WhatsApp and SMS.
+	Thread string `bun:"thread,notnull"`
+	UserID string `bun:"user_id,notnull"`
 	// ConversationID carries on what was said last time. Empty until the first turn settles.
 	ConversationID string    `bun:"conversation_id,notnull"`
 	CreatedAt      time.Time `bun:"created_at,notnull"`
@@ -778,6 +788,19 @@ type AgentChannels struct {
 	IMessage *ChannelLine `json:"imessage,omitempty"`
 	// Identity is how a sender becomes an end user: phone or link. Empty is phone.
 	Identity string `json:"identity,omitempty"`
+}
+
+// AgentScheduling is an agent config's scheduled-task settings, stored in
+// agent_configs.scheduling.
+type AgentScheduling struct {
+	// Enabled offers the scheduling tools to the agent's sessions. Off unless a
+	// config turns it on: it adds four tools to every turn.
+	Enabled bool `json:"enabled,omitempty"`
+	// MaxTasksPerUser caps one user's active tasks. Zero is the default of 25.
+	MaxTasksPerUser int `json:"max_tasks_per_user,omitempty"`
+	// DefaultTimezone is the zone a task takes when neither the user nor their
+	// session has ever named one.
+	DefaultTimezone string `json:"default_timezone,omitempty"`
 }
 
 // Lines are the channels named, by kind.
@@ -1457,6 +1480,10 @@ type AppSettings struct {
 	// out on the way.
 	AllowAnonymous *bool `json:"allow_anonymous,omitempty"`
 	AllowGuest     *bool `json:"allow_guest,omitempty"`
+	// InternalConnectors is whether the app sees the connectors whose manifest says internal
+	// (visibleTo in connectors.go). Stream sets it on its own apps; no operation writes
+	// settings, so an app cannot set it on itself. Nil is no.
+	InternalConnectors *bool `json:"internal_connectors,omitempty"`
 }
 
 // AnonymousAllowed reports whether the app takes callers who presented no token.
@@ -1750,10 +1777,17 @@ type User struct {
 	ID string `bun:"id,pk"`
 	// Kind is what the credential proved them to be, UserKindGuest or
 	// UserKindAuthenticated. Only a guest may be claimed.
-	Kind      string         `bun:"kind,notnull"`
-	Name      string         `bun:"name,notnull"`
+	Kind string `bun:"kind,notnull"`
+	Name string `bun:"name,notnull"`
+	// Timezone is the IANA zone the user was last explicitly known to be in,
+	// which a scheduled task resolves to when nothing nearer names one. Empty
+	// when nobody has ever said.
+	Timezone  string         `bun:"timezone"`
 	Custom    map[string]any `bun:"custom,type:jsonb,nullzero"`
 	CreatedAt time.Time      `bun:"created_at,notnull"`
+	// Email is the address the app's backend last said this user signs in with
+	// (auth.EmailHeader), empty while it has said none. Only a server-side caller can say it.
+	Email string `bun:"email,nullzero"`
 	// ClaimedBy is the real user this guest turned out to be, empty while they are still a
 	// guest. A guest is claimed once: a second claim naming somebody else would move one
 	// person's conversations onto another's account.

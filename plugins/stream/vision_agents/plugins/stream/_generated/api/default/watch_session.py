@@ -91,12 +91,13 @@ def sync_detailed(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -145,9 +146,10 @@ def sync_detailed(
     also includes tool_call_id, and files when the tool was run_code, as on task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
-    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
-    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
-    After restart an interrupted command is reported, not rerun.
+    sessions require this ID. A retry with the same text and images returns the existing IDs without
+    invoking the model again; reuse with different content emits an error. Its images are data URIs, at
+    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
+    interrupted command is reported, not rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
@@ -224,12 +226,13 @@ def sync(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -278,9 +281,10 @@ def sync(
     also includes tool_call_id, and files when the tool was run_code, as on task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
-    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
-    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
-    After restart an interrupted command is reported, not rerun.
+    sessions require this ID. A retry with the same text and images returns the existing IDs without
+    invoking the model again; reuse with different content emits an error. Its images are data URIs, at
+    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
+    interrupted command is reported, not rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
@@ -352,12 +356,13 @@ async def asyncio_detailed(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -406,9 +411,10 @@ async def asyncio_detailed(
     also includes tool_call_id, and files when the tool was run_code, as on task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
-    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
-    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
-    After restart an interrupted command is reported, not rerun.
+    sessions require this ID. A retry with the same text and images returns the existing IDs without
+    invoking the model again; reuse with different content emits an error. Its images are data URIs, at
+    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
+    interrupted command is reported, not rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
@@ -483,12 +489,13 @@ async def asyncio(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
-    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
-    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
-    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
-    and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a
+    line the agent says as written rather than asking the model, such as its greeting, with the purpose
+    it has), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code
+    handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel
+    and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+    `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -537,9 +544,10 @@ async def asyncio(
     also includes tool_call_id, and files when the tool was run_code, as on task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
-    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
-    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
-    After restart an interrupted command is reported, not rerun.
+    sessions require this ID. A retry with the same text and images returns the existing IDs without
+    invoking the model again; reuse with different content emits an error. Its images are data URIs, at
+    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
+    interrupted command is reported, not rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without

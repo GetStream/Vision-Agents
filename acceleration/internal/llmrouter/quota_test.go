@@ -167,6 +167,28 @@ func (s *LLMQuotaSuite) TestASessionABackendOpenedForAUserIsNeverRefused() {
 	s.NoError(err, "what the backend spent was not charged to the user's own day")
 }
 
+func (s *LLMQuotaSuite) TestAScheduledTurnIsTheCustomersSpend() {
+	// A turn a scheduled task fired is refused nothing and spends nothing of
+	// the user's day: they agreed to the task once, not to each time it runs.
+	session, provider := s.session(1, 0, s.caller)
+	scheduled := routing.WithScheduledTurn(s.ctx)
+
+	stream, err := session.Create(scheduled, llm.ResponseParams{ID: "s1", Input: prompt()})
+	s.Require().NoError(err, "a scheduled turn is not refused by the user's day")
+	s.answer(provider, stream, 0, 10, 5)
+
+	stream, err = session.Create(s.ctx, llm.ResponseParams{ID: "u1", Input: prompt()})
+	s.Require().NoError(err, "the scheduled turn spent none of the user's day")
+	s.answer(provider, stream, 1, 10, 5)
+
+	_, err = session.Create(s.ctx, llm.ResponseParams{ID: "u2", Input: prompt()})
+	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's own turn spent the day")
+
+	stream, err = session.Create(scheduled, llm.ResponseParams{ID: "s2", Input: prompt()})
+	s.Require().NoError(err, "a scheduled turn is answered even once the day is spent")
+	s.answer(provider, stream, 2, 10, 5)
+}
+
 func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
 	mocked, mocker := s.sessionAs(mock.ProviderName, 1, 0, s.caller)
 	counted, counter := s.session(1, 0, s.caller)

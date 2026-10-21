@@ -191,10 +191,13 @@ type Settings struct {
 	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
 	// connected on the router, which is where the provider's credentials live.
 	Channels *ChannelsSettings `yaml:"channels"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
-	Dispatch *DispatchSettings `yaml:"dispatch"`
+	// Scheduling is whether the agent may schedule tasks for its users: reminders
+	// and check-ins it creates in conversation and carries out when they come due.
+	Scheduling *SchedulingSettings `yaml:"scheduling"`
+	Keyterms   []string            `yaml:"keyterms"`
+	Tags       map[string]string   `yaml:"tags"`
+	Video      *VideoSettings      `yaml:"video"`
+	Dispatch   *DispatchSettings   `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -345,6 +348,19 @@ type ChannelsSettings struct {
 	// an end user of its own; link answers only a number somebody tied to an end user with
 	// a code.
 	Identity string `yaml:"identity"`
+}
+
+// SchedulingSettings is an agent's scheduled tasks: whether its users may ask
+// it to do things later, and the bounds on that.
+type SchedulingSettings struct {
+	// Enabled offers the scheduling tools to the agent. Off unless turned on:
+	// it adds four tools to every turn.
+	Enabled *bool `yaml:"enabled"`
+	// MaxTasksPerUser caps one user's active tasks. Omitted is 25.
+	MaxTasksPerUser *int `yaml:"max_tasks_per_user"`
+	// DefaultTimezone is the IANA zone a task takes when neither the user nor
+	// their session has ever named one.
+	DefaultTimezone string `yaml:"default_timezone"`
 }
 
 // ChannelSettings is one line the agent is reachable on.

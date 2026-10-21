@@ -96,6 +96,8 @@ var dataTables = []dataTable{
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
 	{name: "users", customer: "customer_id"},
+	{name: "scheduled_tasks", customer: "customer_id"},
+	{name: "scheduled_task_runs", customer: "customer_id"},
 	{name: "calls", customer: "customer_id", shard: true},
 	{name: "call_bridges", customer: "customer_id", shard: true},
 	{name: "recordings", customer: "customer_id", shard: true},

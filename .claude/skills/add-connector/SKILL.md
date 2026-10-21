@@ -52,6 +52,8 @@ Start from the closest existing file:
    `revision: 1`. Fill `name`, `category`, `description`, `endpoints`, `schemes`, `client`
    (`registration`: `operator`, `customer`, `managed`, `dcr`, `cimd`), `scopes`, `refresh`,
    `rate_limit` and `sources`. Add a `channel` block only if the provider sends messages.
+   Set `sensitive: true` if the connector reads private data, and `outbound: false` on a
+   source whose tools only read (`providers/AGENTS.md`); left out, a tool counts as writing.
    A source's `headers` are fixed request headers sent on every request, such as GitHub's
    `X-MCP-Toolsets` (`github.yaml`); a header the credential, the connection or MCP writes
    is refused.

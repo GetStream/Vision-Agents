@@ -499,9 +499,9 @@ func (s *DisplaySuite) TestAFollowUpShowsOnlyTheReply() {
 	c.Observe(agent.Responded{})
 	saved(s.T(), c)
 
-	followed, err := c.BeginFollowUp("Slack is connected now. Carry on.")
+	followed, err := c.BeginFollowUp("follow-up-one", "Slack is connected now. Carry on.")
 	s.Require().NoError(err)
-	_, err = c.BeginFollowUp("Slack is connected now. Carry on.")
+	_, err = c.BeginFollowUp("follow-up-two", "Slack is connected now. Carry on.")
 	s.Error(err, "one reply runs at a time")
 	c.Observe(agent.Responded{})
 	saved(s.T(), c)

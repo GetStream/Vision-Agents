@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from ..models.agent_config_tags import AgentConfigTags
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.agent_review import AgentReview
+    from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
     from ..models.greeting import Greeting
     from ..models.left_out_connector import LeftOutConnector
@@ -68,6 +70,7 @@ class AgentConfig:
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
         plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
+        review (AgentReview | Unset): How a finished call under an agent is reviewed.
         role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
             app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a
             second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an
@@ -78,6 +81,8 @@ class AgentConfig:
         sandbox_options (SandboxOptions | Unset): How the sandbox is built, what it may reach and how long code may run
             in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second
             run.
+        scheduling (AgentScheduling | Unset): Whether the agent may schedule tasks for its users, and the defaults those
+            tasks take.
         search (str | Unset):
         skills (list[str] | Unset):
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
@@ -116,9 +121,11 @@ class AgentConfig:
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    review: AgentReview | Unset = UNSET
     role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
+    scheduling: AgentScheduling | Unset = UNSET
     search: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     sts: str | Unset = UNSET
@@ -215,6 +222,10 @@ class AgentConfig:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
 
+        review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review, Unset):
+            review = self.review.to_dict()
+
         role: str | Unset = UNSET
         if not isinstance(self.role, Unset):
             role = self.role.value
@@ -226,6 +237,10 @@ class AgentConfig:
         sandbox_options: dict[str, Any] | Unset = UNSET
         if not isinstance(self.sandbox_options, Unset):
             sandbox_options = self.sandbox_options.to_dict()
+
+        scheduling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduling, Unset):
+            scheduling = self.scheduling.to_dict()
 
         search = self.search
 
@@ -302,12 +317,16 @@ class AgentConfig:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if review is not UNSET:
+            field_dict["review"] = review
         if role is not UNSET:
             field_dict["role"] = role
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
             field_dict["sandbox_options"] = sandbox_options
+        if scheduling is not UNSET:
+            field_dict["scheduling"] = scheduling
         if search is not UNSET:
             field_dict["search"] = search
         if skills is not UNSET:
@@ -341,6 +360,8 @@ class AgentConfig:
         from ..models.agent_config_tags import AgentConfigTags
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.agent_review import AgentReview
+        from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting
         from ..models.left_out_connector import LeftOutConnector
@@ -462,6 +483,13 @@ class AgentConfig:
 
                 plugins.append(plugins_item)
 
+        _review = d.pop("review", UNSET)
+        review: AgentReview | Unset
+        if isinstance(_review, Unset):
+            review = UNSET
+        else:
+            review = AgentReview.from_dict(_review)
+
         _role = d.pop("role", UNSET)
         role: AgentRole | Unset
         if isinstance(_role, Unset):
@@ -482,6 +510,13 @@ class AgentConfig:
             sandbox_options = UNSET
         else:
             sandbox_options = SandboxOptions.from_dict(_sandbox_options)
+
+        _scheduling = d.pop("scheduling", UNSET)
+        scheduling: AgentScheduling | Unset
+        if isinstance(_scheduling, Unset):
+            scheduling = UNSET
+        else:
+            scheduling = AgentScheduling.from_dict(_scheduling)
 
         search = d.pop("search", UNSET)
 
@@ -543,9 +578,11 @@ class AgentConfig:
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,
             plugins=plugins,
+            review=review,
             role=role,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
+            scheduling=scheduling,
             search=search,
             skills=skills,
             sts=sts,

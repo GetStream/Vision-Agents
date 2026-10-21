@@ -104,7 +104,7 @@ func (s *Store) ConnectorDefinition(ctx context.Context, customerID, id string, 
 func connectorDefinition(ctx context.Context, db bun.IDB, customerID, id string, revision int) (ConnectorDefinition, error) {
 	var definition ConnectorDefinition
 	err := db.NewSelect().Model(&definition).
-		Where("customer_id IN (?, ?)", BuiltinCustomer, customerID).
+		Apply(visibleTo(customerID)).
 		Where("id = ?", id).
 		Where("revision = ?", revision).
 		Limit(1).
@@ -123,7 +123,7 @@ func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id st
 	if customerID == "" || id == "" {
 		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
-	definition, err := latestDefinition(ctx, s.db, []string{BuiltinCustomer, customerID}, id)
+	definition, err := latestDefinition(ctx, s.db, visibleTo(customerID), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 	}
@@ -139,7 +139,7 @@ func (s *Store) LatestBuiltinConnectorDefinition(ctx context.Context, id string)
 	if id == "" {
 		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a connector id is required"))
 	}
-	definition, err := latestDefinition(ctx, s.db, []string{BuiltinCustomer}, id)
+	definition, err := latestDefinition(ctx, s.db, ownedBy(BuiltinCustomer), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 	}
@@ -193,7 +193,7 @@ func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string,
 	// matched cannot stand in for a newer one that does not.
 	latest := s.db.NewSelect().Model((*ConnectorDefinition)(nil)).
 		DistinctOn("customer_id, id").
-		Where("customer_id IN (?, ?)", BuiltinCustomer, customerID).
+		Apply(visibleTo(customerID)).
 		Order("customer_id", "id", "revision DESC")
 	if after := filter.Cursor; after != nil {
 		// customer_id <> '' is false for a built-in, so it sorts first, as customer_id does.
@@ -233,7 +233,7 @@ func (s *Store) saveRevision(ctx context.Context, customerID string, manifest co
 			return err
 		}
 
-		latest, err := latestDefinition(ctx, tx, []string{customerID}, manifest.ID)
+		latest, err := latestDefinition(ctx, tx, ownedBy(customerID), manifest.ID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			manifest.Revision = 1
@@ -418,7 +418,7 @@ func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID stri
 	}
 	err := s.db.NewSelect().Model((*ConnectorDefinition)(nil)).
 		Column("id").ColumnExpr("max(revision) AS revision").
-		Where("customer_id IN (?, ?)", BuiltinCustomer, customerID).
+		Apply(visibleTo(customerID)).
 		Where("id IN (?)", bun.In(ids)).
 		Group("id").
 		Scan(ctx, &latest)
@@ -615,16 +615,35 @@ func lockCustomDefinitions(ctx context.Context, tx bun.Tx, customerID string, id
 	return slices.DeleteFunc(custom, func(id string) bool { return slices.Contains(live, id) }), nil
 }
 
-// latestDefinition is the newest revision of id under any of customers.
-func latestDefinition(ctx context.Context, db bun.IDB, customers []string, id string) (ConnectorDefinition, error) {
+// latestDefinition is the newest revision of id among the definitions scope keeps.
+func latestDefinition(ctx context.Context, db bun.IDB, scope func(*bun.SelectQuery) *bun.SelectQuery, id string) (ConnectorDefinition, error) {
 	var definition ConnectorDefinition
 	err := db.NewSelect().Model(&definition).
-		Where("customer_id IN (?)", bun.In(customers)).
+		Apply(scope).
 		Where("id = ?", id).
 		Order("revision DESC").
 		Limit(1).
 		Scan(ctx)
 	return definition, stack.Wrap(err)
+}
+
+// visibleTo keeps the definitions an app sees: the built-ins and its own, less the internal
+// ones unless the app's settings say internal_connectors. customer_id is the app's id, so the
+// flag is read in the same query. The JSON is compared as jsonb, so a setting that is not a
+// boolean hides the internal definitions rather than failing every read.
+func visibleTo(customerID string) func(*bun.SelectQuery) *bun.SelectQuery {
+	return func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("cd.customer_id IN (?, ?)", BuiltinCustomer, customerID).
+			Where("(cd.manifest->'internal' IS DISTINCT FROM 'true'::jsonb OR EXISTS ("+
+				"SELECT 1 FROM apps AS ap WHERE ap.id = ? AND ap.settings->'internal_connectors' = 'true'::jsonb))", customerID)
+	}
+}
+
+// ownedBy keeps one customer's definitions, or the built-ins for BuiltinCustomer.
+func ownedBy(customerID string) func(*bun.SelectQuery) *bun.SelectQuery {
+	return func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("cd.customer_id = ?", customerID)
+	}
 }
 
 // builtinManifests parses every *.yaml in fsys as a built-in manifest. Each must be valid,

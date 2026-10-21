@@ -318,14 +318,14 @@ func (h *Harness) resume(instructions string, input []llm.Message) ([]llm.Messag
 	}
 
 	previous := h.stored
-	h.stored.instructions = instructions
-	h.stored.sent = input
+	// The new input belongs to the response being requested. If it is interrupted
+	// before Remember, the old response cannot stand in for having read that input.
+	h.stored = stored{instructions: instructions, sent: input}
 
 	if previous.responseID == "" ||
 		previous.identity != h.options.Model.Provider()+"/"+h.options.Model.Model() ||
 		previous.instructions != instructions ||
 		!appendsTo(previous.sent, input) {
-		h.stored.responseID = ""
 		return input, ""
 	}
 	return input[len(previous.sent):], previous.responseID

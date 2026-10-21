@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -129,8 +130,11 @@ type ManagerOptions struct {
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
 	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
-	// code in a sandbox. daytona.BrokerName is the one there is.
+	// code in a sandbox, daytona.BrokerName or egress.BrokerName.
 	SandboxBroker string
+	// SandboxProxy is the store, URL and CA certificate of egress.BrokerName's proxy; the
+	// session fills in the rest.
+	SandboxProxy egress.BrokerOptions
 	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
 	// environment in every credential a broker leaves with the sandbox provider. A session
 	// with a sandbox binding is refused without it.
@@ -174,10 +178,15 @@ type Manager struct {
 	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
+	// slots caps each connection's connector calls in flight, across every session here.
+	slots callSlots
 
 	mu       sync.Mutex
 	sessions map[string]*Session
-	closed   bool
+	// kickScheduler wakes the scheduled-task worker after a scheduling tool
+	// makes or changes a task (SetSchedulerKick); nil where no worker runs.
+	kickScheduler func()
+	closed        bool
 	// closing counts the sessions taken off the map whose Close has not returned. They are
 	// still writing how they ended, so a draining router waits on them and Shutdown keeps
 	// the recorders open for them (ended).
@@ -185,8 +194,20 @@ type Manager struct {
 	ended   sync.WaitGroup
 }
 
+// SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
+// a task the agent makes or changes is claimed without waiting for the
+// worker's next look at the store. Sessions opened from now on use it.
+func (m *Manager) SetSchedulerKick(kick func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.kickScheduler = kick
+}
+
 // NewManager validates the options and returns a Manager. It starts nothing.
 func NewManager(options ManagerOptions) (*Manager, error) {
+	if options.SandboxBroker == egress.BrokerName && options.SandboxProxy.Store == nil {
+		return nil, errors.New("session: the proxy sandbox broker needs the store the egress proxy reads")
+	}
 	if options.LLM == nil {
 		return nil, errors.New("session: an llm router is required")
 	}
@@ -506,6 +527,25 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if mcp != nil {
 		created.closers = append(created.closers, mcp.Close)
 	}
+	// The scheduling tools are offered beside the plugins, inside the connectors:
+	// every layer in front passes their names through to here, and a caller that
+	// declared one of the names keeps its own.
+	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
+		tools = append(tools, offered...)
+		spec.SchedulingTools = true
+		created.spec.SchedulingTools = true
+		// A session opened without a zone runs in its user's stored one, so the
+		// agent reads dates, and the prompt's clock line tells the day, in the
+		// zone its tasks will run in.
+		if spec.Timezone == "" {
+			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, spec.Caller.UserID); err == nil && zone != "" {
+				spec.Timezone, created.spec.Timezone = zone, zone
+				scheduling.spec.Timezone = zone
+			}
+		}
+		scheduling.next = runner
+		runner = scheduling
+	}
 	if own := m.userPlugins(spec, runner); own != nil {
 		tools = append(tools, plugins.UserTools(own.offered)...)
 		runner = own
@@ -735,7 +775,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
 			if !spec.NoReview {
-				m.reviews.Review(row(created), spec.reviewTarget(), created.conversation())
+				m.reviews.Review(row(created), spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
 			}
 		})
 		m.calls.Started(row(created))
@@ -1707,7 +1747,7 @@ func (m *Manager) LoginFinished(state string) {
 		return
 	}
 	text := name + " is connected now. Carry on with what I asked for before you needed it."
-	if err := held.FollowUp(context.Background(), text); err != nil {
+	if err := held.FollowUp(context.Background(), "login_"+store.NewID(), text); err != nil {
 		m.logger.Warn("could not carry on after a plugin login", "plugin", pluginID, "error", err)
 	}
 }

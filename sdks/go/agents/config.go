@@ -336,6 +336,20 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.Channels = &declared
 	}
+	if settings.Scheduling != nil {
+		declared := acceleration.AgentScheduling{
+			Enabled:         settings.Scheduling.Enabled,
+			DefaultTimezone: &settings.Scheduling.DefaultTimezone,
+		}
+		if settings.Scheduling.MaxTasksPerUser != nil {
+			maximum := int64(*settings.Scheduling.MaxTasksPerUser)
+			declared.MaxTasksPerUser = &maximum
+		}
+		if settings.Scheduling.DefaultTimezone == "" {
+			declared.DefaultTimezone = nil
+		}
+		body.Scheduling = &declared
+	}
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}

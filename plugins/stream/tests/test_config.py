@@ -708,6 +708,37 @@ class TestSyncAgent:
             "identity": "link",
         }
 
+    async def test_the_scheduling_the_agent_declares_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nscheduling:\n"
+            "  enabled: true\n"
+            "  max_tasks_per_user: 10\n"
+            "  default_timezone: America/New_York\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["scheduling"] == {
+            "enabled": True,
+            "max_tasks_per_user": 10,
+            "default_timezone": "America/New_York",
+        }
+
+    async def test_a_file_naming_no_scheduling_sends_none(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\nllm: llm-fast\n")
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert "scheduling" not in router.configs[result.config.id]
+
     async def test_a_file_naming_no_channels_sends_none(
         self, router: Router, support_dir
     ):

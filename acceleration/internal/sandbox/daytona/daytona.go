@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path"
 	"slices"
@@ -61,8 +64,11 @@ type Sandbox struct {
 	config              sandbox.Config
 	grants              []sandbox.Grant
 	broker              sandbox.CredentialBroker
-	// secrets are the env vars the broker's Prepare gave the sandbox being created.
-	secrets map[string]string
+	// mount is what the broker's Prepare gave the sandbox being created, and files and setup
+	// the ones of its files and setup commands not yet done in it.
+	mount sandbox.Mount
+	files map[string][]byte
+	setup []string
 }
 
 func New(o Options) (*Sandbox, error) {
@@ -169,7 +175,7 @@ func (s *Sandbox) started(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			s.secrets = mount.Secrets
+			s.mount, s.files, s.setup = mount, mount.Files, mount.Setup
 		}
 		box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
 		if err != nil {
@@ -182,10 +188,30 @@ func (s *Sandbox) started(ctx context.Context) error {
 	}
 	ready, end := context.WithTimeout(ctx, s.timeout)
 	defer end()
-	return s.box.WaitForStart(ready, s.timeout)
+	if err := s.box.WaitForStart(ready, s.timeout); err != nil {
+		return err
+	}
+	// A file that could not be written is written on the next run, before any code.
+	for name, data := range s.files {
+		if err := s.box.FileSystem.UploadFile(ready, data, name); err != nil {
+			return stack.Wrap(err)
+		}
+		delete(s.files, name)
+	}
+	for len(s.setup) > 0 {
+		ran, err := s.box.Process.ExecuteCommand(ready, "sh -c "+quoted(s.setup[0]))
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		if ran.ExitCode != 0 {
+			return stack.Wrap(fmt.Errorf("daytona: setting the sandbox up: exit code %d: %s", ran.ExitCode, ran.Result))
+		}
+		s.setup = s.setup[1:]
+	}
+	return nil
 }
 
-// quoted is a path as one shell word.
+// quoted is a path or a script as one shell word.
 func quoted(word string) string {
 	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 }
@@ -195,12 +221,20 @@ func quoted(word string) string {
 func (s *Sandbox) params() any {
 	domains := s.domains()
 	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated() && len(domains) == 0,
-		Secrets: s.secrets}
+		Secrets: s.mount.Secrets, EnvVars: s.mount.Env}
+	if s.mount.Proxy != nil {
+		proxy := s.mount.Proxy.String()
+		base.OutboundProxyUrl = &proxy
+		if direct := noProxy(s.config, s.grants); direct != "" {
+			base.EnvVars = maps.Clone(s.mount.Env)
+			base.EnvVars["NO_PROXY"], base.EnvVars["no_proxy"] = direct, direct
+		}
+	}
 	if len(domains) > 0 {
 		joined := strings.Join(domains, ",")
 		base.DomainAllowList = &joined
 	}
-	if cidrs := s.config.NetworkAllowList; len(cidrs) > 0 {
+	if cidrs := s.ranges(); len(cidrs) > 0 {
 		joined := strings.Join(cidrs, ",")
 		base.NetworkAllowList = &joined
 	}
@@ -265,13 +299,20 @@ func (s *Sandbox) Grants() []sandbox.Grant {
 // domains are the config's allowed domains and, unless the config opens the whole network or
 // lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
 // sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
+// A sandbox behind an egress proxy reaches the proxy and the config's own domains less those
+// that name a grant's host: code that leaves the proxy out reaches a grant's host only through
+// it.
 func (s *Sandbox) domains() []string {
 	domains := slices.Clone(s.config.AllowedDomains)
+	if s.mount.Proxy != nil && len(s.config.NetworkAllowList) == 0 {
+		direct := slices.DeleteFunc(domains, func(domain string) bool { return granted(domain, s.grants) })
+		return slices.Insert(direct, 0, s.mount.Proxy.Hostname())
+	}
 	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
 		return domains
 	}
 	for _, grant := range s.grants {
-		if _, held := s.secrets[grant.Env]; held {
+		if _, held := s.mount.Secrets[grant.Env]; held {
 			for _, host := range grant.Hosts {
 				if !slices.Contains(domains, host) {
 					domains = append(domains, host)
@@ -280,4 +321,72 @@ func (s *Sandbox) domains() []string {
 		}
 	}
 	return domains
+}
+
+// ranges are the config's CIDR ranges and, behind an egress proxy, the proxy's address: Daytona
+// takes one allow list, so the proxy joins the one the config uses. A proxy named by a host
+// name cannot, and the session refuses that config.
+func (s *Sandbox) ranges() []string {
+	ranges := s.config.NetworkAllowList
+	if len(ranges) == 0 || s.mount.Proxy == nil {
+		return ranges
+	}
+	address, err := netip.ParseAddr(s.mount.Proxy.Hostname())
+	if err != nil {
+		return ranges
+	}
+	return append(slices.Clone(ranges), netip.PrefixFrom(address, address.BitLen()).String())
+}
+
+// noProxy is NO_PROXY for a sandbox behind an egress proxy: the config's own domains and
+// ranges, which code reaches directly, less each domain whose entry would match a grant's host,
+// since a request the proxy never sees keeps its placeholder. curl, Python requests and Go take
+// an entry as that name and every name under it, and none takes "*.", so *.pypi.org is
+// .pypi.org (https://curl.se/docs/manpage.html#ENVIRONMENT,
+// https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config).
+func noProxy(config sandbox.Config, grants []sandbox.Grant) string {
+	var direct []string
+	for _, domain := range config.AllowedDomains {
+		if !granted(domain, grants) {
+			name, wildcard := domainName(domain)
+			if wildcard {
+				name = "." + name
+			}
+			direct = append(direct, name)
+		}
+	}
+	return strings.Join(append(direct, config.NetworkAllowList...), ",")
+}
+
+// granted says whether a NO_PROXY entry for a config's domain would match a host one of grants
+// covers.
+func granted(domain string, grants []sandbox.Grant) bool {
+	name, _ := domainName(domain)
+	return slices.ContainsFunc(grants, func(grant sandbox.Grant) bool { return matches(name, grant.Hosts) })
+}
+
+// domainName is a config's domain as the name a NO_PROXY entry for it takes, and whether it
+// names the names under it too. curl takes a trailing dot and Go's httpproxy a port and "**."
+// as the same name (https://curl.se/docs/manpage.html#ENVIRONMENT,
+// https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config), so they are taken off.
+func domainName(domain string) (name string, wildcard bool) {
+	domain = strings.ToLower(domain)
+	if host, _, err := net.SplitHostPort(domain); err == nil {
+		domain = host
+	}
+	domain = strings.TrimSuffix(domain, ".")
+	name = strings.TrimLeft(domain, "*.")
+	return name, name != domain
+}
+
+// matches says whether a NO_PROXY entry for name matches a host one of hosts covers: hosts are
+// exact names, or *. and a domain, which takes the domain and every name under it.
+func matches(name string, hosts []string) bool {
+	for _, host := range hosts {
+		granted, wildcard := strings.CutPrefix(host, "*.")
+		if granted == name || strings.HasSuffix(granted, "."+name) || wildcard && strings.HasSuffix(name, "."+granted) {
+			return true
+		}
+	}
+	return false
 }

@@ -68,6 +68,11 @@ type SessionOptions struct {
 	// to, with connection_id and status added to its query; its origin is the page that opens
 	// the consent's launch_url. Empty sends them back to the dashboard.
 	ReturnURL string
+	// Timezone is the end user's IANA timezone, such as Europe/Amsterdam. It sets the
+	// zone the agent reads dates in for this conversation and, for a named user, is
+	// remembered as theirs for the scheduled tasks and sessions that follow. Empty
+	// leaves the user's stored zone, then the agent's default, to decide.
+	Timezone string
 
 	// Tools are the caller's own, for this conversation only. Nil uses the agent's, which is
 	// the usual arrangement.
@@ -291,6 +296,7 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		Instructions:    pointer(options.Instructions),
 		UserId:          pointer(options.UserID),
 		ReturnUrl:       pointer(options.ReturnURL),
+		Timezone:        pointer(options.Timezone),
 	}
 	if len(options.Custom) > 0 {
 		custom := options.Custom

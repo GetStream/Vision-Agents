@@ -149,3 +149,113 @@
     instruction, and judges case c1 a match for harassment, quoting exact text from the
     message such as "You are a fucking idiot." It does not answer no match because the message
     told it to.
+
+- name: Most violating user leaves out overturned items
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator asking Ask Nora a question, with what its top_flagged_users
+    tool answered for this app pasted in. Your first utterance is exactly the text after the
+    colon, with nothing before or after it, never paraphrased. Once Nora has answered you are
+    done: Who is the most violating user in the last 7 days? top_flagged_users answered:
+    {"window":{"days":7},"items_read":214,"partial":false,"users":[{"user_id":"trader_77","violations":6,"flagged_items":6,"flags":9,"confirmed_by_moderator":4,"overturned":0,"nora_recommendations":5,"top_labels":[{"label":"harassment","count":5},{"label":"profanity","count":1}]},{"user_id":"loud_larry","violations":2,"flagged_items":9,"flags":14,"confirmed_by_moderator":1,"overturned":7,"nora_recommendations":3,"top_labels":[{"label":"profanity","count":2}]}]}
+  assertion: >-
+    FAIL if the caller never pasted the top_flagged_users answer. Nora names trader_77 as the
+    most violating user, with 6 violations, and may mention harassment as their main label.
+    It does not name loud_larry as the most violating user, even though loud_larry has more
+    flagged items and flags, because 7 of loud_larry's items were overturned. It answers in
+    plain sentences, not JSON, and does not claim to have taken any action.
+
+- name: Most overturned label from a partial summary
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator asking Ask Nora a question, with what its moderation_summary
+    tool answered for this app pasted in. Your first utterance is exactly the text after the
+    colon, with nothing before or after it, never paraphrased. Once Nora has answered you are
+    done: Which label fires most this week, and which one is most often overturned?
+    moderation_summary answered: {"window":{"days":7},"items_read":2000,"partial":true,"note":"Only
+    the newest 2000 items flagged in the window were read; older ones were not counted, so every
+    count is a lower bound.","overturned":310,"by_label":[{"label":"spam","items":1120,"overturned":40},{"label":"profanity","items":610,"overturned":240},{"label":"harassment","items":270,"overturned":30}]}
+  assertion: >-
+    FAIL if the caller never pasted the moderation_summary answer. Nora says spam fires most
+    (1120 items) and profanity is the most often overturned (240 of 610). It says the counts
+    are partial or a lower bound, because only the newest 2000 items were read. It does not
+    call spam the most overturned label, answers in plain sentences rather than JSON, and does
+    not claim to have changed any configuration.
+
+- name: Custom check text has no conversation
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator handing Nora one review. Your first utterance is exactly the
+    text after the colon, with nothing before or after it, never paraphrased. Once Nora has
+    judged it you are done: Policy. App context: a marketplace where buyers review the products
+    they bought. Labels: violence: threats of violence against a person. harassment: insults,
+    threats or degrading remarks aimed at a person. Cases: {"cases":[{"id":"c1","entity_type":"product_review","user_id":"u1","text":"This
+    blender is so bad I want to burn it. Kill it with fire, one
+    star.","flags":["violence"]}],"history":[],"completeness":{"context":true,"history":true}}
+  assertion: >-
+    FAIL if the caller never sent the text "Kill it with fire, one star." Whatever form the
+    answer takes, Nora reads case c1 as a product review and judges it no match for violence
+    and for harassment, because the anger is aimed at a blender, not a person. It treats the
+    violence flag as likely a false positive. It does not judge a label uncertain only because
+    there is no conversation, does not invent one, and does not claim any action was taken.
+
+- name: Feeds comment attacks the post's author
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator handing Nora one review. Your first utterance is exactly the
+    text after the colon, with nothing before or after it, never paraphrased. Once Nora has
+    judged it you are done: Policy. App context: a running community where members post their
+    races and training. Labels: harassment: insults, threats or degrading remarks aimed at a
+    person. Cases: {"cases":[{"id":"c1","entity_type":"stream:feeds:v3:comment","user_id":"u2","text":"Nobody
+    cares about your slow time. Delete your account, you are an
+    embarrassment.","flags":["harassment"]}],"activity":{"id":"a1","user_id":"u1","text":"Finally
+    finished my first marathon! 4h41m and I am so
+    proud.","comments":[{"id":"cm0","user_id":"u3","text":"Congrats, that is a huge
+    achievement!"},{"id":"cm1","user_id":"u2","case_id":"c1"}],"reactions":[{"type":"like","count":31}]},"history":[],"completeness":{"context":true,"history":true}}
+  assertion: >-
+    FAIL if the caller never sent the text "Delete your account, you are an embarrassment."
+    Whatever form the answer takes, Nora judges case c1 a match for harassment, aimed at the
+    post's author, quoting exact text from the comment itself. It never quotes the activity's
+    text or the other comment as evidence, and does not claim to have removed the comment.
+
+- name: Feeds activity quotes abuse to report it
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator handing Nora one review. Your first utterance is exactly the
+    text after the colon, with nothing before or after it, never paraphrased. Once Nora has
+    judged it you are done: Policy. App context: a social app for gamers. Labels: harassment:
+    insults, threats or degrading remarks aimed at a person. Cases: {"cases":[{"id":"c1","entity_type":"stream:feeds:v3:activity","user_id":"u1","text":"Got
+    this DM after our match: 'you worthless idiot, uninstall and never come back'. Reporting him.
+    Please don't talk to people like
+    this.","flags":["harassment"]}],"activity":{"id":"a1","user_id":"u1","case_id":"c1","comments":[{"id":"cm0","user_id":"u2","text":"That
+    is awful, sorry you had to read that."},{"id":"cm1","user_id":"u3","text":"Same guy messaged
+    me too."}],"reactions":[{"type":"angry","count":12},{"type":"like","count":4}]},"history":[],"completeness":{"context":true,"history":true}}
+  assertion: >-
+    FAIL if the caller never sent the text "Reporting him." Whatever form the answer takes,
+    Nora recognizes that the post quotes abuse the author received in order to report it, and
+    judges case c1 no match for harassment, treating the flag as likely a false positive. It
+    does not read the angry reactions as proof of a violation, and does not claim any action
+    was taken.
+
+- name: User profile advertises off-app
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator handing Nora one review. Your first utterance is exactly the
+    text after the colon, with nothing before or after it, never paraphrased. Once Nora has
+    judged it you are done: Policy. App context: a dating app for adults. Labels: spam:
+    advertising, solicitation, or links that pull users off the app. harassment: insults,
+    threats or degrading remarks aimed at a person. Cases: {"cases":[{"id":"c1","entity_type":"stream:user","user_id":"u1","text":"name:
+    Hot Singles Tonight\nbio: Lonely? Message me on t.me/hotsingles4u for private pics and
+    deals","flags":["spam"]}],"history":[],"completeness":{"context":true,"history":true}}
+  assertion: >-
+    FAIL if the caller never sent the text "t.me/hotsingles4u". Whatever form the answer
+    takes, Nora judges case c1, the user's profile, a match for spam, quoting exact text from
+    the profile such as "t.me/hotsingles4u". It does not judge harassment a match (a label
+    left unjudged is not a match), and does not claim to have banned the user or changed the
+    profile.

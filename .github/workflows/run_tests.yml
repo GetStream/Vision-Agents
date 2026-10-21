@@ -54,6 +54,13 @@ jobs:
       # Validate extras are defined in pyproject.toml
       - name: Validate extra dependencies in "sdks/python/pyproject.toml"
         run: uv run dev.py validate-extras
+      # The generated client is committed; a spec change without a regen fails here. Status, not
+      # `git diff`, so a new generated file that is untracked fails too.
+      - name: Check the stream plugin's generated client is in step with the spec
+        run: |
+          uv run plugins/stream/generate.py
+          changed=$(git status --porcelain -- plugins/stream/vision_agents/plugins/stream/_generated)
+          if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
       # Run mypy. A cache key is written once and never updated, so each push to main or
       # accelerate saves its own, and every other run starts from the newest one.
       - name: Restore mypy cache

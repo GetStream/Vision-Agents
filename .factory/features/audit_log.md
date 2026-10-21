@@ -65,7 +65,8 @@ credential decides whether the write happens, and the header decides what the ro
 about who asked for it. A caller willing to forge a name is a caller who could have made
 the change anonymously instead, which is a worse outcome for them, not a better one.
 
-The name is a person's name. The router stores no email addresses, and the dashboard sends
+The name is a person's name. The only email address the router stores is the one a backend
+says its user signs in with (`X-Stream-User-Email`, AI-1543), which no entry names; the dashboard sends
 `first_name last_name` rather than the address it has.
 
 ### Writing an entry

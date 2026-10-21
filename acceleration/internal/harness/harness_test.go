@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -52,6 +53,9 @@ type stubLLM struct {
 	order   []string
 	// capabilities is what the model says it accepts, which is nothing unless a test says.
 	capabilities llm.Capabilities
+	// writtenBy, if set, is the provider and model a response says wrote it, as one a request
+	// was hedged or failed over to does.
+	writtenBy [2]string
 }
 
 func newStubLLM() *stubLLM {
@@ -63,7 +67,7 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold := s.holdCreate
+	hold, provider, model := s.holdCreate, cmp.Or(s.writtenBy[0], s.Provider()), cmp.Or(s.writtenBy[1], s.Model())
 	s.mu.Unlock()
 
 	if hold != nil {
@@ -76,8 +80,8 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,
-		Provider:   s.Provider(),
-		Model:      s.Model(),
+		Provider:   provider,
+		Model:      model,
 	})
 
 	s.mu.Lock()
@@ -606,6 +610,47 @@ func (s *HarnessSuite) TestATurnThatCalledAToolIsAnsweredWithTheResult() {
 	s.Equal("call-1", sent[1].ToolCalls[0].ID)
 	s.Equal(llm.ToolResult, sent[2].Role)
 	s.Equal("call-1", sent[2].ToolCallID)
+}
+
+func (s *HarnessSuite) TestAnInterruptedToolReplyResendsTheToolResult() {
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
+	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	history = append(history,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
+	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
+	s.Equal("provider-lookup", s.fast.requests()[1].PreviousResponseID)
+	// The agent releases an interrupted reply without remembering its response.
+	s.harness.Release("tool-reply")
+	history = append(history, llm.Message{Role: llm.User, Content: "actually use tomorrow"})
+	s.answer(Turn{ID: "correction", Instructions: "be brief", History: history})
+	sent := s.fast.requests()[2]
+	s.Empty(sent.PreviousResponseID, "the old response never received the tool result")
+	s.Equal(history, sent.Input, "the replacement turn must include the call and its result")
+}
+
+func (s *HarnessSuite) TestAFinishedToolReplyCanStillBeContinued() {
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
+	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	history = append(history,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
+	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "tool-reply", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-answer"})
+	added := []llm.Message{{Role: llm.Assistant, Content: "Your booking is tomorrow."}, {Role: llm.User, Content: "thanks"}}
+	s.answer(Turn{ID: "thanks", Instructions: "be brief", History: append(history, added...)})
+	sent := s.fast.requests()[2]
+	s.Equal("provider-answer", sent.PreviousResponseID)
+	s.Equal(added, sent.Input)
 }
 
 func (s *HarnessSuite) TestWithoutASubagentNothingIsOffered() {

@@ -5,19 +5,33 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -81,7 +95,7 @@ func (s *SandboxGrantsSuite) TestASandboxBindingGivesTheSandboxItsEnvVarAndHosts
 	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
 
 	s.Equal([]sandbox.Grant{{Connection: core.ConnectionRef{CustomerID: s.customerID, ConnectionID: id}, Binding: "crm",
-		Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
+		Scheme: bearer.Name, Env: "CRM_TOKEN", Hosts: []string{"api.crm.example", "*.crm.example"}}}, box.(sandbox.Granted).Grants())
 	s.Contains(harness.SandboxTool(box).Description, "`Authorization: Bearer $CRM_TOKEN`")
 }
 
@@ -206,12 +220,12 @@ func (s *SandboxGrantsSuite) TestARequiredBindingSavedBeforeTheSandboxBlockRefus
 	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableSandbox))
 }
 
-// boxed is the error of making a daytona session's sandbox for a sandbox binding.
-func (s *SandboxGrantsSuite) boxed() error {
+// boxed is the error of making a daytona session's sandbox of options for a sandbox binding.
+func (s *SandboxGrantsSuite) boxed(options sandbox.Config) error {
 	s.sandboxRevision()
 	id := s.connection("", "primary")
 	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
-	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
+	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, options
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
 	_, err = s.manager.box(spec, d)
@@ -221,11 +235,205 @@ func (s *SandboxGrantsSuite) boxed() error {
 func (s *SandboxGrantsSuite) TestASandboxBindingNeedsTheSecretPrefix() {
 	s.manager.options.SandboxSecretPrefix = ""
 
-	s.ErrorContains(s.boxed(), "ROUTER_CODE_SANDBOX_SECRET_PREFIX")
+	s.ErrorContains(s.boxed(sandbox.Config{}), "ROUTER_CODE_SANDBOX_SECRET_PREFIX")
 }
 
 func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
-	s.manager.options.SandboxBroker = "proxy"
+	s.manager.options.SandboxBroker = "vault"
 
-	s.ErrorContains(s.boxed(), `there is no sandbox broker called "proxy"`)
+	s.ErrorContains(s.boxed(sandbox.Config{}), `there is no sandbox broker called "vault"`)
+}
+
+// proxyCA is the proxy CA's certificate as the proxy broker is given it.
+const proxyCA = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
+
+// TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
+// sandbox reaches the proxy alone, holds a placeholder, and the proxy finds the connection's
+// token behind it, for this session. No secret prefix is needed. A connection deleted
+// mid-session is withdrawn, in the session's log.
+func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(redis.Close)
+	api := s.daytonaAPI()
+	s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://proxy.stg.example:8091",
+		CACert: []byte(proxyCA)}
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
+	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
+	d, _, _, err := s.attach(spec)
+	s.Require().NoError(err)
+	box, err := s.manager.box(spec, d)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("proxy.stg.example", api.created["domainAllowList"])
+	proxy, err := url.Parse(api.created["outboundProxyUrl"].(string))
+	s.Require().NoError(err)
+	credential, _ := proxy.User.Password()
+	sum := sha256.Sum256([]byte(credential))
+	raw, err := redis.Do(s.ctx, redis.B().Get().Key("sandbox:egress:"+hex.EncodeToString(sum[:])).Build()).AsBytes()
+	s.Require().NoError(err)
+	var record egress.Record
+	s.Require().NoError(json.Unmarshal(raw, &record))
+	s.Equal(spec.ID, record.Session)
+	s.Require().Len(record.Grants, 1)
+	s.Equal(api.created["env"].(map[string]any)["CRM_TOKEN"], record.Grants[0].Placeholder)
+	token, err := egress.ResolverTokens(s.resolver, s.registry.Schemes)(s.ctx, record.Grants[0])
+	s.Require().NoError(err)
+	s.Equal(tokenOf("primary"), token)
+	s.NotContains(string(raw), tokenOf("primary"))
+
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, id))
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
+}
+
+// TestAManagerWithTheProxyBrokerNeedsItsStore: the router does not start without it, rather
+// than refuse every sandbox session.
+func (s *SandboxGrantsSuite) TestAManagerWithTheProxyBrokerNeedsItsStore() {
+	_, err := NewManager(ManagerOptions{SandboxBroker: egress.BrokerName,
+		SandboxProxy: egress.BrokerOptions{URL: "http://proxy.stg.example:8091", CACert: []byte(proxyCA)}})
+
+	s.ErrorContains(err, "the proxy sandbox broker needs the store")
+}
+
+// TestTheProxyBrokerRefusesAConfigItCannotServe: an open network would reach the grants alone,
+// and Daytona's one CIDR allow list cannot hold a proxy named by a host name. Daytona's broker
+// takes both, and the proxy takes a network narrowed to domains, or ranges with its address.
+func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
+	open := sandbox.Config{Network: true}
+	ranges := sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8"}}
+	s.NoError(s.boxed(open))
+	s.NoError(s.boxed(ranges))
+	s.manager.options.SandboxBroker = egress.BrokerName
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: &egress.Store{}, URL: "http://proxy.stg.example:8091", CACert: []byte(proxyCA)}
+
+	err := s.boxed(open)
+	s.ErrorContains(err, "sandbox_options.network is true")
+	s.ErrorContains(err, "code_sandbox.broker is proxy")
+	s.ErrorContains(s.boxed(ranges), "sandbox_options.network_allow_list must hold the egress proxy's address")
+	s.NoError(s.boxed(sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org"}}))
+	s.manager.options.SandboxProxy.URL = "http://203.0.113.7:8091"
+	s.NoError(s.boxed(ranges))
+	s.NoError(s.boxed(sandbox.Config{Network: true, NetworkAllowList: []string{"10.0.0.0/8"}}),
+		"a network narrowed to ranges is not open")
+}
+
+// daytonaAPI stands in for Daytona's API: it creates sandboxes, runs code, and keeps the
+// organization's secrets by name. secrets maps the env vars of the last sandbox created to
+// the secret names they read.
+type daytonaAPI struct {
+	*httptest.Server
+	mu      sync.Mutex
+	held    map[string]string
+	secrets map[string]string
+	// created is the last request for a sandbox.
+	created map[string]any
+}
+
+func (s *SandboxGrantsSuite) daytonaAPI() *daytonaAPI {
+	api := &daytonaAPI{held: map[string]string{}}
+	api.Server = httptest.NewServer(http.HandlerFunc(api.serve))
+	s.T().Cleanup(api.Close)
+	s.T().Setenv("DAYTONA_API_URL", api.URL+"/api")
+	return api
+}
+
+func (a *daytonaAPI) serve(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	id := strings.TrimPrefix(r.URL.Path, "/api/secret/")
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/secret":
+		var body struct{ Name string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.held["secret-"+body.Name] = body.Name
+		_, _ = fmt.Fprintf(w, `{"id":"secret-%s","name":%q,"placeholder":"dtn_secret_1","hosts":[],"createdAt":"2026-10-21T00:00:00Z","updatedAt":"2026-10-21T00:00:00Z"}`, body.Name, body.Name)
+	case r.Method == http.MethodDelete && id != r.URL.Path:
+		delete(a.held, id)
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox":
+		var body struct{ Secrets []map[string]string }
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		_ = json.Unmarshal(raw, &a.created)
+		if len(body.Secrets) > 0 {
+			a.secrets = body.Secrets[0]
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"sandbox-1","state":"started","toolboxProxyUrl":"%s/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`, a.URL)
+	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
+		_, _ = fmt.Fprintf(w, `{"name":"file","path":%q,"type":"file"}`, r.URL.Query().Get("path"))
+	case r.Method == http.MethodDelete || strings.HasPrefix(r.URL.Path, "/api/socket.io"):
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		_, _ = w.Write([]byte(`{"result":"","exitCode":0}`))
+	}
+}
+
+// offered says whether Daytona still holds a secret for the env var the sandbox reads.
+func (a *daytonaAPI) offered(env string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, name := range a.held {
+		if name == a.secrets[env] {
+			return true
+		}
+	}
+	return false
+}
+
+// TestADeletedConnectionIsWithdrawnBeforeTheNextRun: a connection deleted mid-session is gone
+// for good, so the next run_code finds no credential behind the sandbox's env var.
+func (s *SandboxGrantsSuite) TestADeletedConnectionIsWithdrawnBeforeTheNextRun() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().True(api.offered("CRM_TOKEN"))
+
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, id))
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.False(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
+}
+
+// TestAConnectionThatCannotBeReadJustNowKeepsItsSecret: a store that cannot answer is no
+// reason to withdraw, as on base.
+func (s *SandboxGrantsSuite) TestAConnectionThatCannotBeReadJustNowKeepsItsSecret() {
+	api := s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	credentials, err := pgsealed.New(closed, s.sealer)
+	s.Require().NoError(err)
+	s.manager.options.Connectors.Resolver, err = resolver.New(resolver.Config{Store: closed, Credentials: credentials, Schemes: s.registry.Schemes})
+	s.Require().NoError(err)
+
+	_, err = box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(api.offered("CRM_TOKEN"))
+	s.Contains(s.logs.String(), "it keeps the one it has")
 }

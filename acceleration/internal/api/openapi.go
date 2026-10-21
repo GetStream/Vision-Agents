@@ -74,7 +74,10 @@ var securitySchemes = map[string]*huma.SecurityScheme{
 			"so a token is what stops one person reading another's conversation. A backend, " +
 			"which names no user in its token, says which of its users it is acting for in " +
 			"X-Stream-User-Id instead; that header is unsigned and needs to be, since a caller " +
-			"holding the secret could mint a token for anyone.",
+			"holding the secret could mint a token for anyone. Beside it, X-Stream-User-Email says " +
+			"the email that user signs in with, which the router keeps, the latest one per user, " +
+			"for a connector that checks who consents (nessy). It is read from a server-side caller " +
+			"only: an end user's device cannot set it.",
 	},
 	"AuthType": {
 		Type: "apiKey",
@@ -290,6 +293,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerRouterconfigs(api)
 	s.registerVoices(api)
 	s.registerCustomModels(api)
+	s.registerScheduledTasks(api)
 	s.registerKnowledge(api)
 	s.registerKnowledgeurls(api)
 	s.registerPhone(api)

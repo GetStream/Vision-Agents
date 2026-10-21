@@ -49,10 +49,16 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun DemoApp() {
     var tab by rememberSaveable { mutableStateOf(Tab.Chat) }
+    var visual by rememberSaveable { mutableStateOf(VoiceVisual.Orb) }
     val hasKey = Demo.streamApiKey.isNotEmpty()
     val network = rememberLocalNetwork()
     Scaffold(
-        topBar = { CenterAlignedTopAppBar(title = { Text("Larkspur support") }) },
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("Larkspur support") },
+                actions = { if (hasKey && tab == Tab.Voice) VoiceVisualPicker(visual, onPick = { visual = it }) },
+            )
+        },
         bottomBar = {
             if (hasKey) {
                 NavigationBar {
@@ -81,7 +87,7 @@ fun DemoApp() {
             )
             // Each keeps its conversation while the other is shown: a call carries on under Chat.
             tab == Tab.Chat -> ChatScreen(content)
-            else -> VoiceScreen(content)
+            else -> VoiceScreen(visual, content)
         }
     }
 }

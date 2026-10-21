@@ -447,23 +447,32 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Hearing:
-		return frame{
+		return withLine(frame{
 			"type":        "hearing",
 			"participant": participantOf(typed.Participant),
 			"text":        typed.Text,
 			"language":    typed.Language,
-		}, true
+		}, typed.LineID), true
 
 	case agent.Heard:
-		return frame{
+		return withLine(frame{
 			"type":        "heard",
 			"participant": participantOf(typed.Participant),
 			"text":        typed.Text,
 			"language":    typed.Language,
-		}, true
+		}, typed.LineID), true
+
+	case agent.Said:
+		// A frame of its own rather than a responded: a client waiting on the model's answer
+		// is not handed the greeting as one.
+		return withPurpose(frame{
+			"type":    "said",
+			"turn_id": typed.TurnID,
+			"text":    typed.Text,
+		}, typed.Purpose), true
 
 	case agent.Decided:
-		return frame{
+		return withLine(frame{
 			"type":        "decision",
 			"at":          typed.At,
 			"kind":        typed.Kind,
@@ -472,7 +481,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"participant": participantOf(typed.Participant),
 			"said":        typed.Text,
 			"latency_ms":  typed.LatencyMs,
-		}, true
+		}, typed.LineID), true
 
 	case agent.Responding:
 		return frame{
@@ -486,13 +495,13 @@ func frameOf(event session.Event) (frame, bool) {
 		return frame{"type": "response_delta", "turn_id": typed.TurnID, "text": typed.Text}, true
 
 	case agent.Responded:
-		return frame{
+		return withPurpose(frame{
 			"pending_work":           typed.PendingWork,
 			"type":                   "responded",
 			"turn_id":                typed.TurnID,
 			"text":                   typed.Text,
 			"time_to_first_token_ms": typed.TimeToFirstTokenMs,
-		}, true
+		}, typed.Purpose), true
 
 	case agent.Blocked:
 		return frame{
@@ -694,6 +703,25 @@ func frameOf(event session.Event) (frame, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// withPurpose says why the agent said a line unasked, for a line that has a reason.
+func withPurpose(rendered frame, purpose string) frame {
+	if purpose != "" {
+		rendered["purpose"] = purpose
+	}
+	return rendered
+}
+
+// withLine names the transcript line a frame is about, which is the id the stored transcript
+// gives it, so a watcher can match the words it is shown live to the line stored later
+// without comparing the words. Frames about no line, or from a source that keeps none,
+// leave it out.
+func withLine(rendered frame, line string) frame {
+	if line != "" {
+		rendered["line_id"] = line
+	}
+	return rendered
 }
 
 func participantOf(participant stt.Participant) frame {

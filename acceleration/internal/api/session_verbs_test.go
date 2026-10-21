@@ -263,6 +263,27 @@ func (s *SessionVerbsSuite) TestAReopenedChatIsSummarisedWhole() {
 	s.Contains(s.summary(opened.Id), "4417", "of all of it, not only what was said since it reopened")
 }
 
+func (s *SessionVerbsSuite) TestAChatIsReviewedByItsAgentsReviewInstructions() {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "reviewed-" + s.utils.uuid(), Mode: "text",
+		LLM: "summarising/summarising-model", ReviewInstructions: "Score how well the agent sold the upgrade."}
+	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
+	request := textSession(nil)
+	request.Llm = nil
+	request.ConfigId = &config.ID
+	opened := s.serverClient.createSession(request)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "Is the upgrade worth it?"}, nil))
+	s.serverClient.stopSession(opened.Id)
+
+	var call Call
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id, nil, &call) == http.StatusOK &&
+			call.ReviewNotes != nil
+	}, 2*settleFor, 10*time.Millisecond, "the chat is reviewed when it ends")
+	s.Equal("Score how well the agent sold the upgrade.\n\n"+
+		`Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`, *call.ReviewNotes)
+}
+
 // summary is what the reviewer made of a call so far.
 func (s *SessionVerbsSuite) summary(id string) string {
 	var call Call
