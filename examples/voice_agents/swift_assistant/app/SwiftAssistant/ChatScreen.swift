@@ -11,20 +11,25 @@ import VisionAgentsCore
 struct ChatScreen: View {
     /// The conversation to carry on, or nil for a new one.
     let sessionID: String?
-    /// Says which session a new conversation became, once it has one.
+    /// Says which session a new conversation became, once it is first written or talked to.
     let onStarted: (String) -> Void
 
     @Environment(GmailAccount.self) private var gmail
     @State private var chat: AgentChat?
     @State private var failure: String?
     /// What the person just asked, shown at once with its photos until Stream's copy of their
-    /// message arrives: opening a conversation, uploading its photos and writing the message
-    /// take seconds together.
+    /// message arrives and takes its place: opening a conversation, uploading its photos and
+    /// writing the message take seconds together.
     @State private var asking: Asked?
-    /// The photos sent from this screen, by the message Stream keeps them on, so they are
-    /// shown from the phone rather than after a download from Stream's CDN.
-    @State private var sentPhotos: [String: [UIImage]] = [:]
     @State private var isVoiceShown = false
+    /// The session being opened, so asking while it opens waits for it rather than opening a
+    /// second one.
+    @State private var opening: Task<AgentChat?, Never>?
+    /// Whether the list has been told about this new conversation.
+    @State private var isAnnounced = false
+    /// A new conversation's session, opened while the person wrote their first message and not
+    /// used yet. Leaving without using it deletes it, so it is not left in the list.
+    @State private var unused: String?
     @StateObject private var composer = AIComposerViewModel()
 
     private static let starters = [
@@ -38,35 +43,30 @@ struct ChatScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if let chat {
-                        ForEach(chat.messages, id: \.id) { message in
-                            MessageRow(
-                                message: message, photos: sentPhotos[message.id] ?? [],
-                                reasoning: chat.reasoning, approver: approver(for: chat.session))
-                        }
+            // The person's messages in bubbles, the agent's as their steps and then their answer.
+            // What the person asks shows at once, and Stream's copy takes its place, photos and
+            // all, which keeps them from loading again. Each question goes to the top as it is
+            // asked, and its reply writes itself out below it without moving what is on screen.
+            // While the agent thinks, the list shows its thinking, which the reply's first step
+            // takes over once it arrives.
+            AIConversationView(
+                messages: chat?.listMessages ?? [],
+                pendingMessage: asking.map { asked in
+                    AIPendingMessage(id: asked.id, text: asked.text, attachments: asked.photos.map { .image($0) })
+                },
+                isThinking: activity == .thinking,
+                approver: chat.map { approver(for: $0.session) },
+                loadOlderMessages: chat?.hasOlderMessages == true ? { await chat?.loadOlderMessages() } : nil,
+                viewFactory: MessageViews(chat: chat),
+                footer: {
+                    if case .working(let text) = activity {
+                        AITypingIndicatorView(text: text)
                     }
-                    if let asking {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            SentPhotos(photos: asking.photos)
-                            PersonBubble(text: asking.text)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    if let indicator {
-                        AITypingIndicatorView(text: indicator)
-                    }
-                }
-                .padding()
-            }
-            .defaultScrollAnchor(.bottom)
-            .scrollDismissesKeyboard(.interactively)
-            .overlay {
-                if isWelcoming {
+                },
+                emptyContent: {
                     Welcome()
-                }
-            }
+                })
+                .scrollDismissesKeyboard(.interactively)
 
             if isWelcoming {
                 SuggestionsView(suggestions: Self.starters) { send($0) }
@@ -94,15 +94,9 @@ struct ChatScreen: View {
             }
         }
         .onChange(of: chat?.messages.count ?? 0) {
-            // The person's first message after the ones there were when they asked is Stream's
-            // copy of the question, which takes its place.
-            guard let asked = asking,
-                let arrived = chat?.messages.filter({ !$0.isAgentReply }).dropFirst(asked.after).first
-            else { return }
-            if !asked.photos.isEmpty {
-                sentPhotos[arrived.id] = asked.photos
+            if let asked = asking, copy(of: asked) != nil {
+                asking = nil
             }
-            asking = nil
         }
         .onChange(of: chat?.isAnswering ?? false, initial: true) { _, answering in
             composer.isGenerating = answering
@@ -127,11 +121,33 @@ struct ChatScreen: View {
             guard sessionID != nil else { return }
             await open()
         }
+        .onChange(of: composer.text) { _, text in
+            // Opening a session takes seconds, so a new conversation's opens as its first
+            // message is written rather than once it is sent.
+            guard sessionID == nil, chat == nil, opening == nil, !text.isEmpty else { return }
+            Task {
+                if let chat = await open(), !isAnnounced {
+                    unused = chat.session.id
+                }
+            }
+        }
         .onDisappear {
             let closing = chat
+            let abandoned = unused
             chat = nil
-            Task { await closing?.close() }
+            Task {
+                await closing?.close()
+                if let abandoned {
+                    try? await Assistant.sessions.delete(abandoned)
+                }
+            }
         }
+    }
+
+    /// Stream's copy of a question on its way, once it has arrived: the person's first message
+    /// after the ones there were when they asked.
+    private func copy(of asked: Asked) -> ChatMessage? {
+        chat?.messages.filter { !$0.isAgentReply }.dropFirst(asked.after).first
     }
 
     private var isEmpty: Bool {
@@ -142,21 +158,23 @@ struct ChatScreen: View {
         isEmpty && asking == nil
     }
 
-    /// What the agent is doing, shown under the last message. A question on its way shows
-    /// "Thinking" before the session says anything.
-    private var indicator: String? {
-        chat?.indicator ?? (asking != nil ? "Thinking" : nil)
+    /// What the agent is doing, shown under the last message. A question on its way is
+    /// thought about before the session says anything.
+    private var activity: AgentChat.Activity? {
+        chat?.activity ?? (asking != nil ? .thinking : nil)
     }
 
     private func send(_ message: MessageData) {
-        asking = Asked(
+        let asked = Asked(
             text: message.text, photos: Photos.thumbnails(for: message.attachments),
             after: chat?.messages.count(where: { !$0.isAgentReply }) ?? 0)
+        asking = asked
         Task {
             guard let chat = await open() else {
                 asking = nil
                 return
             }
+            markUsed(chat)
             chat.ask(
                 message.text, photos: message.attachments,
                 thinkHarder: message.chatOption?.id == Self.thinkHarder)
@@ -166,15 +184,35 @@ struct ChatScreen: View {
     /// Switches to voice mode on this conversation, starting a session for a new one.
     private func talk() {
         Task {
-            guard await open() != nil else { return }
+            guard let chat = await open() else { return }
+            markUsed(chat)
             isVoiceShown = true
         }
+    }
+
+    /// Tells the list about a new conversation once it is used, written or talked to.
+    private func markUsed(_ chat: AgentChat) {
+        unused = nil
+        guard sessionID == nil, !isAnnounced else { return }
+        isAnnounced = true
+        onStarted(chat.session.id)
     }
 
     /// The conversation's chat, starting a session for a new one.
     @discardableResult
     private func open() async -> AgentChat? {
         if let chat { return chat }
+        if let opening { return await opening.value }
+        let task = Task { await start() }
+        opening = task
+        let opened = await task.value
+        opening = nil
+        return opened
+    }
+
+    /// Carries on the conversation's session, or starts one for a new conversation, and opens
+    /// its channel.
+    private func start() async -> AgentChat? {
         failure = nil
         do {
             let session: AgentSession
@@ -185,7 +223,6 @@ struct ChatScreen: View {
                 options.llm = Assistant.chatModel
                 options.tools = Assistant.tools
                 session = try await Assistant.agents.chat(options)
-                onStarted(session.id)
             }
             let opened = try await AgentChat.open(session)
             chat = opened
@@ -214,6 +251,41 @@ private struct Asked {
     /// How many of the person's messages the conversation held when it was asked: the next
     /// one is this question.
     let after: Int
+    /// Its row in the list, which Stream's copy of it takes over.
+    let id = UUID().uuidString
+}
+
+/// Stream's message views, with what the person can do under each finished reply: copy it,
+/// share it, and rate it. Asking for a reply again needs the router to replace one, which it
+/// does not yet.
+private final class MessageViews: AIConversationViewFactory {
+    let chat: AgentChat?
+
+    init(chat: AgentChat?) {
+        self.chat = chat
+    }
+
+    @ViewBuilder
+    func makeReplyActionsView(options: AIReplyActionsViewOptions) -> some View {
+        if let chat, let reply = options.message as? AgentMessage {
+            ReplyActions(chat: chat, reply: reply)
+        }
+    }
+}
+
+/// The buttons under a reply. The rating is read here, from the chat, so the thumbs change as
+/// soon as it does: the list keeps a reply's row while the reply stays the same.
+private struct ReplyActions: View {
+    let chat: AgentChat
+    let reply: AgentMessage
+
+    var body: some View {
+        AIReplyActionsView(
+            text: reply.text,
+            actions: AIReplyActions(
+                rating: chat.ratings[reply.id],
+                onRate: { rating in chat.rate(reply.message, rating) }))
+    }
 }
 
 /// The composer with the way into voice mode beside the message box.

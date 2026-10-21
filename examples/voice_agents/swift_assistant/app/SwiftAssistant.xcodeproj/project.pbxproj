@@ -12,7 +12,6 @@
 		B2000103 /* ConversationList.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000003 /* ConversationList.swift */; };
 		B2000104 /* ChatScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000004 /* ChatScreen.swift */; };
 		B2000105 /* AgentChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000005 /* AgentChat.swift */; };
-		B2000106 /* MessageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000006 /* MessageRow.swift */; };
 		B2000107 /* VoiceMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000007 /* VoiceMode.swift */; };
 		B2000108 /* VoiceMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000008 /* VoiceMeter.swift */; };
 		B2000109 /* Captions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000009 /* Captions.swift */; };
@@ -34,7 +33,6 @@
 		B2000003 /* ConversationList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationList.swift; sourceTree = "<group>"; };
 		B2000004 /* ChatScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScreen.swift; sourceTree = "<group>"; };
 		B2000005 /* AgentChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChat.swift; sourceTree = "<group>"; };
-		B2000006 /* MessageRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRow.swift; sourceTree = "<group>"; };
 		B2000007 /* VoiceMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMode.swift; sourceTree = "<group>"; };
 		B2000008 /* VoiceMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMeter.swift; sourceTree = "<group>"; };
 		B2000009 /* Captions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Captions.swift; sourceTree = "<group>"; };
@@ -80,7 +78,6 @@
 				B200000C /* Conversations.swift */,
 				B2000004 /* ChatScreen.swift */,
 				B2000005 /* AgentChat.swift */,
-				B2000006 /* MessageRow.swift */,
 				B200000D /* Photos.swift */,
 				B2000007 /* VoiceMode.swift */,
 				B2000008 /* VoiceMeter.swift */,
@@ -186,7 +183,6 @@
 				B2000103 /* ConversationList.swift in Sources */,
 				B2000104 /* ChatScreen.swift in Sources */,
 				B2000105 /* AgentChat.swift in Sources */,
-				B2000106 /* MessageRow.swift in Sources */,
 				B2000107 /* VoiceMode.swift in Sources */,
 				B2000108 /* VoiceMeter.swift in Sources */,
 				B2000109 /* Captions.swift in Sources */,
@@ -327,7 +323,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
 			requirement = {
-				branch = develop;
+				branch = "add/ai-conversation-view";
 				kind = branch;
 			};
 		};
