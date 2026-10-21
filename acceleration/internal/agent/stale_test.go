@@ -336,3 +336,19 @@ func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
 		"a reply already heard was dropped as unheard")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
+
+func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverAfterItReachedTheVoiceIsDropped() {
+	s.logs = &logLines{}
+	s.join(true)
+	s.voice.silent = true
+	two := s.answering("two")
+	s.model.writes(two, "Which two do you mean?")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+
+	s.mutters(nash, "wait no")
+
+	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
+	logged := s.logs.records("dropped a reply the caller said more over before hearing any of it")
+	s.Require().Len(logged, 1)
+	s.Equal(true, logged[0]["sent_to_voice"])
+}
