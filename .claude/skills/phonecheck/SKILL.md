@@ -12,18 +12,18 @@ skill asks what to test, sets it up, runs, reports and puts things back.
 ## Rules for every step
 
 - **Shell.** The user's shell is fish. Run every snippet as `bash -c '…'`. Shell variables do not
-  last between tool calls: write literal values (env file path, customer id, numbers, ids) into
-  each command.
+  last between tool calls: write literal values (env file path, router address, customer id,
+  numbers, ids) into each command.
 - **Env.** No code here loads a `.env`. Ask for its path (default: the repository root's
   `.env`) and load it in every command: `bash -c 'set -a; . <env file>; set +a; <command>'`.
-  `phone` commands run from `acceleration/`.
+  `go run` commands run from `acceleration/`.
 - **Never print secrets.** Check env by name only. Keep credentials out of process args: pass
   them to curl on stdin with `-K -`, for example
   `printf 'user = "%s:%s"\n' "$TWILIO_PERSON_ACCOUNT_SID" "$TWILIO_PERSON_AUTH_TOKEN" | curl -sS -K - …`
   or `printf 'header = "Authorization: Bearer %s"\n' "$TELNYX_PERSON_API_KEY" | curl -sS -K - …`.
   Pipe every reply through `jq` and keep only the fields named here.
 - **Encode numbers.** A `+` in a query must be encoded: `curl -G --data-urlencode 'PhoneNumber=+15550100002'`,
-  and the same for Telnyx `filter[…]` keys.
+  and the same for Telnyx `filter[…]` keys. In a router path it stays as is.
 - **Ask with AskUserQuestion,** one step at a time, defaults first. Accept several answers at once.
 - **State file.** `<scratchpad>/phonecheck-state.md`. Write a line right after each change, and
   before a change write the values needed to undo it: vendor, number, vendor id, old voice URL,
@@ -32,84 +32,114 @@ skill asks what to test, sets it up, runs, reports and puts things back.
 - **Never touch a number the skill did not buy.** It attaches and releases only numbers listed
   under "bought this run". An existing number is used as it is.
 
+## Router numbers: the router's API
+
+Every router number step goes through the router's HTTP API, the way a customer does it. Never
+the `phone` CLI for numbers. Write `<scratchpad>/router-auth.py` once:
+
+```python
+import base64, hashlib, hmac, json, os, sys, time
+
+if len(sys.argv) > 1:  # local router in noauth: the header names the customer
+    print(f'header = "X-Customer-Id: {sys.argv[1]}"')
+    sys.exit()
+b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+now = int(time.time())
+head = b64(b'{"alg":"HS256","typ":"JWT"}')
+claims = b64(json.dumps({"server": True, "iat": now, "exp": now + 600}).encode())
+key = os.environ["STREAM_API_SECRET"].encode()
+sig = b64(hmac.new(key, f"{head}.{claims}".encode(), hashlib.sha256).digest())
+print(f'header = "api_key: {os.environ["STREAM_API_KEY"]}"')
+print('header = "Stream-Auth-Type: jwt"')
+print(f'header = "Authorization: Bearer {head}.{claims}.{sig}"')
+```
+
+It prints curl config, so nothing secret is in an arg. Local: pass the customer id. Remote
+(Stream's hosted router, behind its proxy): no argument; it signs a 10-minute server token with
+`STREAM_API_SECRET`, and the customer is the app `STREAM_API_KEY` belongs to. Every call, with
+`<auth>` the customer id or nothing:
+
+```bash
+bash -c 'set -a; . <env file>; set +a; python3 -I <scratchpad>/router-auth.py <auth> | curl -sS --fail-with-body -K - http://localhost:8080/v1/phone/numbers | jq "if (.error? // null) then .error | {code, message} else [.[] | {e164, vendor, stream_trunk_id}] end"'
+```
+
+| Step | Request | Keep |
+|---|---|---|
+| list | `GET /v1/phone/numbers` | `[].e164`, `.vendor`, `.stream_trunk_id` (present = attached) |
+| search | `GET /v1/phone/numbers/available?vendor=<twilio\|telnyx>&country=US&features=voice&limit=3` | `.numbers[].e164`, `.vendor`, `.monthly_cost_micros`; `.skipped` |
+| buy | `POST /v1/phone/numbers` with `-H 'Content-Type: application/json' -d '{"vendor":"<v>","e164":"<n>","country":"US","tags":{"purpose":"phonecheck"}}'` | `.e164`, `.vendor`, `.monthly_cost_micros` |
+| attach | `-X POST /v1/phone/numbers/<n>/attach` with `-H 'Content-Type: application/json' -d '{}'` | `.trunk_id`, `.sip_uri` |
+| release | `-X DELETE /v1/phone/numbers/<n>` with `-o /dev/null -w '%{http_code}\n'`, no `jq` | `204` |
+
+`monthly_cost_micros` is millionths of a dollar. An error is `{"error":{…}}`: keep
+`.error.code`, `.error.message`, as above.
+
 ## 1. Ask and look
 
-Nothing here costs money or changes a vendor or Stream account. Starting a local router and
-`phone list` do write to the database (migrations, and the router's own background work).
+Nothing here costs money or changes a vendor or Stream account. Starting a local router writes
+to its database (migrations, and the router's own background work).
 
 1. **Router.** Local (default) or remote. *Remote:* ask the URL. phonecheck checks it answers and
    keeps logs, and refuses it otherwise. It must already receive the Stream app's call webhook.
-2. **Database.** Before the router starts and before any `phone` command, show only the host of
-   `ROUTER_POSTGRES_DSN`:
+2. **Env names** (only the chosen vendors' matter):
 
    ```bash
-   bash -c 'set -a; . <env file>; set +a; python3 -I -c "import os,urllib.parse as u; print(u.urlsplit(os.environ[\"ROUTER_POSTGRES_DSN\"]).hostname)"'
+   bash -c 'set -a; . <env file>; set +a; for k in STREAM_API_KEY STREAM_API_SECRET ROUTER_POSTGRES_DSN ROUTER_AUTH_KEK TWILIO_PERSON_ACCOUNT_SID TWILIO_PERSON_AUTH_TOKEN TELNYX_PERSON_API_KEY TELNYX_PERSON_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_CONNECTION_ID TELNYX_PUBLIC_KEY; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done'
    ```
 
-   (A `key=value` DSN prints `None`; then show only its `host=` value.) If the host is not
-   `localhost` or `127.0.0.1`, get a yes first. For a remote router, `phone` only sees its
-   numbers if this DSN and the Stream keys are that router's; otherwise numbers are the human's.
-3. **Env names** (only the chosen vendors' matter):
-
-   ```bash
-   bash -c 'set -a; . <env file>; set +a; for k in STREAM_API_KEY STREAM_API_SECRET ROUTER_POSTGRES_DSN TWILIO_PERSON_ACCOUNT_SID TWILIO_PERSON_AUTH_TOKEN TELNYX_PERSON_API_KEY TELNYX_PERSON_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_CONNECTION_ID TELNYX_PUBLIC_KEY ROUTER_AUTH_KEK; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done'
-   ```
-
-   The `*_PERSON_*` account may be the router's (`TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID`
+   Remote needs only the Stream keys and the person's. Local also needs `ROUTER_POSTGRES_DSN`
+   (the `call_sites` row), the router's vendor keys, and `ROUTER_AUTH_KEK` to attach a Telnyx
+   number. The `*_PERSON_*` account may be the router's (`TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID`
    in `.env`, after the router's lines). See README §3.
-4. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something
+3. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something
    does, show it and ask. Starting it runs migrations, binds :8080 and may start background
    work that writes rows or calls models; ask a yes. From `acceleration/`, start
-   `go run ./cmd/router` in the background, output to a file; write its process id to the state
-   file. Wait for `listening`. If it never comes, show the last lines of the file and stop. Note
-   the Stream app id from `stream_app=<id>` in `stream: the deployment acts in its own Stream app`,
-   if that line appears. It is the app, not the customer.
-5. **Customer.** Never assumed. List numbers for `.env`'s `STREAM_ACCELERATION_CUSTOMER_ID`
-   (`go run ./cmd/phone list -customer <id>`; it defaults to `demo`, so always pass it). If the
-   app id is known and differs, list for it too: the local dashboard buys numbers under the app
-   id. Show both lists and ask which customer to use (default: the one holding the numbers the
-   human named; for a remote router, ask). Use that literal id in every `phone` and phonecheck
-   command.
-6. **What to test.** One combination, "pick one at random", or "all" = person vendor (Twilio,
+   `ROUTER_AUTH_MODE=noauth go run ./cmd/router` in the background, output to a file; write its
+   process id to the state file. Wait for `listening`. If it never comes, show the last lines of
+   the file and stop. Note the Stream app id from `stream_app=<id>` in
+   `stream: the deployment acts in its own Stream app`, if that line appears.
+4. **Customer.** Never assumed. *Local:* list numbers for `.env`'s
+   `STREAM_ACCELERATION_CUSTOMER_ID`. If the app id is known and differs, list for it too: the
+   local dashboard buys numbers under the app id. Show both lists and ask which customer to use
+   (default: the one holding the numbers the human named). *Remote:* list; the key decides the
+   customer, so ask the human for that app id. Use the literal id in every request and
+   phonecheck command.
+5. **What to test.** One combination, "pick one at random", or "all" = person vendor (Twilio,
    Telnyx) × router number vendor (Twilio, Telnyx, `sip_trunk`) × direction (inbound, outbound),
    minus what the rules forbid:
    - Inbound (person calls the router number): the router number must be attached, and no other
      number of the customer may be. No other dispatch worker of the customer may be connected;
      ask. phonecheck refuses a `sip_trunk` number.
-   - Inbound on a Telnyx router number the skill buys: `phone attach` cannot attach it. The
-     `phone` CLI builds its service without a keyring, and Telnyx numbers need one
-     (`ErrNoSealer`), whatever `ROUTER_AUTH_KEK` says. The human attaches it another way (for
-     example the router's `POST /v1/phone/numbers/{e164}/attach`) or that row is skipped.
    - Outbound (the router number calls the person): use an unattached router number. A call
      placed from an attached number fails while the number's own trunk holds it.
    - A number the skill buys can do outbound first, then be attached for inbound. There is no
-     `phone detach`: a second bought number for inbound needs the first one released mid-run.
-     That release goes in the Approve summary.
-   - `sip_trunk` numbers are registered through the router's API, not `phone`. Use an existing one.
-7. **Numbers.** Existing (default) or buy new, per side.
-   - Existing router numbers: from the chosen customer's list (step 5). An existing number used
+     detach: a second bought number for inbound needs the first one released mid-run. That
+     release goes in the Approve summary.
+   - `sip_trunk` numbers are not bought here. Use an existing one.
+6. **Numbers.** Existing (default) or buy new, per side.
+   - Existing router numbers: from the chosen customer's list (step 4). An existing number used
      for inbound must already be attached and be the only attached one; used for outbound it
      must be unattached. If not, show it and stop. Never attach or release it.
    - The person number must not be in that list.
-   - New router number: `go run ./cmd/phone search -vendor <twilio|telnyx> -country US -limit 3`
-     (`NUMBER`, `PER MONTH`).
+   - New router number: search (see the table).
    - New person number: Twilio
      `GET https://api.twilio.com/2010-04-01/Accounts/<sid>/AvailablePhoneNumbers/US/Local.json`
      with `VoiceEnabled=true&PageSize=1` (keep `available_phone_numbers[].phone_number`); Telnyx
      `GET https://api.telnyx.com/v2/available_phone_numbers` with `filter[country_code]=US`,
      `filter[features][]=voice`, `filter[limit]=1` (keep `data[].phone_number`,
      `data[].cost_information.monthly_cost`).
-8. **Talk and runs.** `-talk` (default `20s`), `-runs` (default 1), `-region` label (default
+7. **Talk and runs.** `-talk` (default `20s`), `-runs` (default 1), `-region` label (default
    empty; ask which region the person number is set to).
-9. **Person setup.** Skill (default) or the human per README §4. Read the current values now:
+8. **Person setup.** Skill (default) or the human per README §4. Read the current values now:
    Twilio `GET …/IncomingPhoneNumbers.json` with `PhoneNumber=<n>` (keep
    `incoming_phone_numbers[].sid`, `.voice_url`, `.voice_method`); Telnyx
    `GET /v2/phone_numbers` with `filter[phone_number]=<n>` (keep `data[].id`,
    `data[].connection_id`), `GET /v2/texml_applications/<person app id>` (keep
    `data.voice_url`, `data.voice_method`), and the numbers on that app,
    `GET /v2/phone_numbers` with `filter[connection_id]=<person app id>` (keep `data[].phone_number`).
-10. **Local only: hooks.** Run the read-only `go run ./cmd/phone hooks` and show it. Note any stale tunnel URL to remove.
-11. **Keep or release** the bought numbers: not asked now. Asked per number at cleanup.
+9. **Local only: hooks.** Run the read-only `go run ./cmd/phone hooks` and show it. Note any
+   stale tunnel URL to remove.
+10. **Keep or release** the bought numbers: not asked now. Asked per number at cleanup.
 
 ## Approve
 
@@ -117,7 +147,7 @@ Show ONE summary and wait for an explicit yes:
 
 - the calls, in order: each combination × runs, each about `-talk` plus 30 to 40 s, a few cents each;
 - numbers to buy, vendor and monthly cost, and any mid-run release of a just-bought number;
-- the customer id every command uses;
+- the router address and the customer id every request uses;
 - account changes: hooks pointed at a tunnel URL (app-wide: while it is up the local router
   also gets the Stream app's other call events and its new-message events); any stale hook URL
   to remove; numbers to attach; Twilio voice URLs to set; the Telnyx person app's voice URL,
@@ -137,9 +167,8 @@ In this order, each change into the state file:
    (`-remove <stale URL>` only if approved; `-app <id>` only for a router in app mode). A local
    Telnyx router's own TeXML app (`TELNYX_CONNECTION_ID`) needs its voice URL on the tunnel; the
    human sets that.
-2. **Router numbers.** `go run ./cmd/phone buy -vendor <v> -number <n> -country US -customer <customer> -tag purpose=phonecheck`;
-   add to "bought this run". For inbound, after its outbound runs:
-   `go run ./cmd/phone attach -number <n> -customer <customer>` (Twilio only, see 1.6).
+2. **Router numbers.** Buy (see the table); add to "bought this run". For inbound, after its
+   outbound runs: attach.
 3. **Person numbers.** Twilio `POST …/IncomingPhoneNumbers.json` with `PhoneNumber=<n>` (keep
    `sid`, `phone_number`). Telnyx `POST /v2/number_orders` with
    `{"phone_numbers":[{"phone_number":"<n>"}],"connection_id":"<person app id>"}` (keep
@@ -152,8 +181,8 @@ In this order, each change into the state file:
 
 ## Run
 
-Re-run `go run ./cmd/phone list -customer <customer>` and check the rules in 1.6. If another
-attached number blocks an inbound run, stop and tell the human. Then, per combination:
+List the customer's numbers again and check the rules in 1.5. If another attached number
+blocks an inbound run, stop and tell the human. Then, per combination:
 
 ```bash
 bash -c 'set -a; . <env file>; set +a; cd acceleration/cmd/phonecheck && go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east -log-format json'
@@ -181,13 +210,13 @@ it lists, in reverse:
 1. Put back each voice URL, method and Telnyx `connection_id`.
 2. `go run ./cmd/phone hooks -remove <tunnel URL>`; check with `go run ./cmd/phone hooks` that it
    is gone.
-3. Stop the tunnel, then the router.
-4. For each number under "bought this run", ask separately (number, vendor, attached or not):
+3. For each number under "bought this run", ask separately (number, vendor, attached or not):
    release or keep. Releasing is irreversible and stops the monthly charge. Router number:
-   `go run ./cmd/phone release -number <n> -customer <customer>` (also unwires an attached one).
+   release (see the table; it also unwires an attached one), while the router still runs.
    Person number: Twilio `DELETE …/IncomingPhoneNumbers/<sid>.json`, Telnyx
-   `DELETE /v2/phone_numbers/<id>`. Say what is kept and what stays attached: an attached number
-   blocks inbound tests on other numbers.
+   `DELETE /v2/phone_numbers/<id>`. Say what is kept and what stays attached: an attached
+   number blocks inbound tests on other numbers.
+4. Stop the tunnel, then the router.
 
 If a run was killed hard, a call may still be up and the state file says what is left to undo;
 tell the human its path.

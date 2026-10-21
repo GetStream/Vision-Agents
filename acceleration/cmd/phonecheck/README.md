@@ -136,6 +136,13 @@ When you are done, put the number back as you found it.
 
 ## 5. Run
 
+`-agent-number` is a number the customer holds on the router. Use the router's API, as a
+customer would: `GET /v1/phone/numbers` lists them, `GET /v1/phone/numbers/available` and
+`POST /v1/phone/numbers` find and buy one, `POST /v1/phone/numbers/{e164}/attach` attaches it
+for inbound, and `DELETE /v1/phone/numbers/{e164}` releases it. A local router in
+`auth.mode: noauth` takes the customer in `X-Customer-Id`. Attaching a Telnyx number needs
+`ROUTER_AUTH_KEK` on the router.
+
 From `acceleration/cmd/phonecheck`:
 
 ```bash
