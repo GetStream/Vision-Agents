@@ -1388,6 +1388,12 @@ func (s *Session) record(event Event) {
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}
+	case agent.Said:
+		// A line said as written, such as the greeting, is a response of its own: the
+		// caller's answer to it reads as nothing without it.
+		s.openTurn(typed.TurnID, "")
+		s.item(typed.TurnID, store.ItemAnswer, typed.Text, "", nil)
+		s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 	case agent.Interrupted:
 		// What the agent had already said still counts, which is why an interrupted turn is
 		// cancelled rather than failed: the caller stopped it, nothing went wrong.
@@ -1564,6 +1570,8 @@ func (s *Session) remember(event Event) {
 		}
 		line = spoken{text: typed.Prompt}
 	case agent.Responded:
+		line = spoken{agent: true, text: typed.Text}
+	case agent.Said:
 		line = spoken{agent: true, text: typed.Text}
 	default:
 		return
