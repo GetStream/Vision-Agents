@@ -456,10 +456,20 @@ func (s *StoreSuite) TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItN
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })
 	claim := s.held("one", time.Now().Add(8*time.Hour))
-	// A run made by hand for the same time is not the occurrence's delivery.
+	// Not this occurrence's delivery under way: a run made by hand for the
+	// same time, and the deliveries of another task and of another
+	// customer's task under the same id.
 	s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, &ScheduledTaskRun{
 		TaskID: "one", CustomerID: "acme", ScheduledFor: due, Trigger: ScheduledTaskTriggerManual,
 	}))
+	s.task("two", func(task *ScheduledTask) { task.NextRunAt = &due })
+	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &ScheduledTask{
+		ID: "one", CustomerID: "globex", UserID: "sam", Title: "Theirs", Instructions: "Again.",
+		StartLocal: s.base, Timezone: "UTC", State: ScheduledTaskActive, NextRunAt: &due,
+	}, 0))
+	others, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(others, 2)
 
 	task, err := s.store.ScheduledTask(s.ctx, "acme", "one")
 	s.Require().NoError(err)
