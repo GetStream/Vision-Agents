@@ -891,11 +891,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
+	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
+		// Nil with connectors off: no secrets to seal an attempt with.
+		Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL),
+		Limiter:  connectorLimiter}
+	// A nil *resolver.Resolver in the interface would not be a nil interface.
+	if connectorResolver != nil {
+		sessionConnectors.Resolver = connectorResolver
+	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		session.Connectors{Registry: connectors, Transports: connectorTransports,
-			// Nil with connectors off: no secrets to seal an attempt with.
-			Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL),
-			Limiter:  connectorLimiter}, logger)
+		sessionConnectors, logger)
 	if err != nil {
 		return err
 	}
@@ -1602,6 +1607,9 @@ func buildSessions(
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
+		// Read only by a session with a sandbox binding.
+		SandboxBroker:       settings.CodeSandbox.Broker,
+		SandboxSecretPrefix: settings.CodeSandbox.SecretPrefix,
 	})
 }
 

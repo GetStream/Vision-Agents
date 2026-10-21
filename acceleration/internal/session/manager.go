@@ -128,6 +128,13 @@ type ManagerOptions struct {
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
 	Connectors Connectors
+	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
+	// code in a sandbox. daytona.BrokerName is the one there is.
+	SandboxBroker string
+	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
+	// environment in every credential a broker leaves with the sandbox provider. A session
+	// with a sandbox binding is refused without it.
+	SandboxSecretPrefix string
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -435,7 +442,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	box, err := m.box(spec)
+	box, err := m.box(spec, connectors)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -1357,15 +1364,24 @@ func (m *Manager) Shutdown() error {
 
 // box is where the session's subagent runs the code it writes, which is nowhere unless the
 // caller asked for a sandbox. Nothing is created here: the provider opens one the first
-// time code is actually run, so a session that never delegates never pays for it.
-func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
+// time code is actually run, so a session that never delegates never pays for it. Neither
+// is a credential handed to the broker before then.
+func (m *Manager) box(spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
 	if spec.Sandbox == "" {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
 		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
+	options := daytona.Options{Config: spec.SandboxOptions, Logger: m.logger}
+	if connectors != nil && len(connectors.grants) > 0 {
+		broker, err := m.broker(spec, connectors)
+		if err != nil {
+			return nil, err
+		}
+		options.Grants, options.Broker = connectors.grants, broker
+	}
+	return daytona.New(options)
 }
 
 // reading reports whether this session has anything to look things up in, which is a

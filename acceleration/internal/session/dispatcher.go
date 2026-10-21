@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -59,6 +60,10 @@ type dispatcher struct {
 	// logger is the session's (Manager.logger): a call that failed or was refused says so on
 	// it (record).
 	logger *slog.Logger
+	// grants are the sandbox bindings opened, for the session's sandbox (sandbox_grants.go),
+	// and schemes their connections' schemes by binding name.
+	grants  []sandbox.Grant
+	schemes map[string]core.Scheme
 }
 
 // route is what one offered name was opened for.

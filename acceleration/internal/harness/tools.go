@@ -90,10 +90,10 @@ func (t Tools) Requests() []llm.Tool {
 	return rendered
 }
 
-// SandboxTool is run_code as the model holding a written conversation is offered it, when
-// there is no subagent to hand code to.
-func SandboxTool() Tool {
-	tool := sandbox.Tool()
+// SandboxTool is run_code in box as the model holding a written conversation is offered it,
+// when there is no subagent to hand code to.
+func SandboxTool(box sandbox.Sandbox) Tool {
+	tool := sandbox.Tool(box)
 	return Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters}
 }
 
