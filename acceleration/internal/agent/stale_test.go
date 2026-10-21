@@ -2,10 +2,13 @@ package agent
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -214,4 +217,64 @@ func (s *AgentSuite) TestFlowRulingsAreCountedByWhoseAnswerWasUsed() {
 	s.Equal(1.0, testutil.ToFloat64(flowDecisions.WithLabelValues("failed", "none"))-failed)
 	samples, _ := histogramOf("router_agent_flow_decision_seconds", "ruler", "primary")
 	s.Equal(timed+1, samples)
+}
+
+func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBindingAsksForIt() {
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Cancels: true} }
+	s.join(true)
+	s.voice.silent = true
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	dropped := testutil.ToFloat64(staleReplies)
+	s.speak(nash)
+	s.says(nash, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(3 * time.Second):
+		s.FailNow("tool did not start")
+	}
+
+	s.mutters(nash, "hello?")
+
+	select {
+	case <-runner.stopped:
+	case <-time.After(3 * time.Second):
+		s.FailNow("the binding asked for its call to be cancelled and it kept running")
+	}
+	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped, "the reply was dropped, not talked over")
+	s.False(slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) }),
+		"a cancelled call was answered as still running")
+}
+
+func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardAnswersARunningToolStillRunning() {
+	s.ownsTools("")
+	s.join(true)
+	s.voice.silent = true
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	dropped := testutil.ToFloat64(staleReplies)
+	s.speak(nash)
+	s.says(nash, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(3 * time.Second):
+		s.FailNow("tool did not start")
+	}
+
+	s.mutters(nash, "hello?")
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+	}, "the call the dropped reply made was not answered")
+	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped, "the reply was dropped, not talked over")
+	select {
+	case <-runner.stopped:
+		s.FailNow("saying more cancelled what the caller had asked for")
+	default:
+	}
 }

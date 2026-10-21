@@ -3932,6 +3932,8 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 	}) {
 		return
 	}
+	// The caller took the floor as surely as by talking over the reply, so its tools stop the same way.
+	a.stopTools()
 	staleReplies.Inc()
 	a.logger.Info("dropped a reply the caller said more over before hearing any of it",
 		"turn", turnID, "participant", participant.ID,
