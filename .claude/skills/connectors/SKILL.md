@@ -171,11 +171,11 @@ connector's API. Code reads a placeholder (`dtn_secret_…`) from the env var th
 over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token there
 (https://www.daytona.io/docs/en/secrets.md); code never reads the token.
 
-- The router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging; lowercase letters and
+- With the Daytona broker, the router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging; lowercase letters and
   digits only, so one router's sweep never matches another's); without it a session
   with such a binding is refused. Each session's secret is `va_<prefix>_<session>_<binding>_<8 hex>`.
-- The grant's hosts join the sandbox's domain allow list; a config with `network: true` or a
-  `network_allow_list` keeps its own.
+- With the Daytona broker, the grant's hosts join the sandbox's domain allow list; a config with
+  `network: true` or a `network_allow_list` keeps its own.
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
@@ -202,19 +202,26 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
 - `ROUTER_CODE_SANDBOX_BROKER=proxy` uses the router's egress proxy (`internal/sandbox/egress`)
   instead of Daytona Secrets. It needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` (the proxy
-  as a sandbox reaches it, `http://host:port`) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`. It needs
-  no secret prefix.
+  as a sandbox reaches it, `http://host:port`) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`. Every
+  router with this broker serves the proxy too, so it also needs `ROUTER_CODE_SANDBOX_PROXY_ADDR`
+  and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does not start. It needs no secret
+  prefix.
 - Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var, `HTTPS_PROXY`
   with its own proxy credential, and the proxy's CA certificate at `/tmp/va-egress-ca.pem`
-  (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`). The proxy puts
+  (`NODE_EXTRA_CA_CERTS`). Before any code runs, the router writes `/tmp/va-egress-ca-bundle.pem`:
+  the image's own roots and that CA (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`), so a
+  host reached directly is still verified. An image with no system roots file runs no code. The proxy puts
   the token in place of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git
   works too.
 - Network behind the proxy: the allow list is the proxy and the config's `allowed_domains` (or its
   `network_allow_list` and the proxy's IP address). `NO_PROXY` holds the config's own domains, so
   they go direct; a domain that matches a grant's host is left out, so its requests still go
-  through the proxy. A config with `network: true` and no allow list is refused when the session
-  starts: every request goes to the proxy, which refuses hosts no grant names. So is a
-  `network_allow_list` when the proxy URL names a host, not an IP address.
+  through the proxy, and it is left out of the allow list too. A config with `network: true` and no
+  allow list is refused when a session with a sandbox binding starts: every request goes to the
+  proxy, which refuses hosts no grant names. So is a `network_allow_list` when the proxy URL names
+  a host, not an IP address.
+- A connection the proxy cannot get a token for just now (a provider outage) keeps its grant; a
+  connection that needs a reconnect gives the sandbox nothing, and refuses a `required` binding.
 - Revocation through the proxy is immediate: it resolves the token on every request and keeps no
   copy. A deleted or disconnected connection fails the next request.
 - `go test -tags daytona_live -run TestLiveSuite ./internal/sandbox/daytona` runs the attacks
