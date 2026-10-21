@@ -3963,8 +3963,9 @@ func (a *Agent) missedLocked(participant stt.Participant) string {
 }
 
 // missedWords is how many of a caller's unanswered words a dropped reply's note carries.
-// About forty seconds of speech at a conversational 150 words a minute: a caller who goes on longer over every reply is answered on
-// what they are still on, and the note is not resent ever larger on each turn.
+// About forty seconds of speech at a conversational 150 words a minute: a caller who goes on
+// longer over every reply is answered on what they are still on, and the note is not resent
+// ever larger on each turn.
 const missedWords = 100
 
 // newestWords is the last limit words of text.

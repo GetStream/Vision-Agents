@@ -337,6 +337,38 @@ func (s *AgentSuite) TestTwoWordsOfAssentLeaveTheReplyToTheController() {
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
 
+func (s *AgentSuite) TestAResumedUtteranceRestatingAnsweredWordsPlusAMurmurLeavesTheReplyToPlay() {
+	s.join(true)
+	s.flow.then = []string{`{"disposition":"respond","floor":"continue"}`}
+	dropped := testutil.ToFloat64(staleReplies)
+	s.model.reply = nil
+	s.speak(nash)
+	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeFinal, Text: "two", Language: "en", Confidence: 1, Utterance: 7})
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	two := s.model.requests()[0].ID
+
+	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeReplacement, Text: "two mm", Language: "en", Utterance: 7})
+
+	s.Never(func() bool { return s.model.script(two).Abandoned() || testutil.ToFloat64(staleReplies) > dropped },
+		300*time.Millisecond, 5*time.Millisecond, "a murmur restated with the answered words dropped the reply")
+}
+
+func (s *AgentSuite) TestAResumedUtteranceRestatingAnsweredWordsPlusNewWordsDropsTheReply() {
+	s.join(true)
+	s.flow.then = []string{`{"disposition":"respond","floor":"continue"}`}
+	dropped := testutil.ToFloat64(staleReplies)
+	s.model.reply = nil
+	s.speak(nash)
+	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeFinal, Text: "two", Language: "en", Confidence: 1, Utterance: 7})
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	two := s.model.requests()[0].ID
+
+	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeReplacement, Text: "two wait no", Language: "en", Utterance: 7})
+
+	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply was not dropped")
+	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
 func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
 	s.join(true)
 	dropped := testutil.ToFloat64(staleReplies)

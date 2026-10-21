@@ -462,7 +462,8 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 // with those words in the history. A murmur or a lone word that is no interruption is somebody
 // waiting to be answered, and leaves it.
 func (c *converse) stale(transcript stt.Transcript, saying string, state floor) (Action, bool) {
-	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant || !takesFloor(saying) {
+	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant ||
+		!takesFloor(unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))) {
 		return Action{}, false
 	}
 	return c.decide(Action{
