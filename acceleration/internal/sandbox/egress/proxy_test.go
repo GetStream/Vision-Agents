@@ -540,6 +540,59 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainKeepsTheTLSHelloAndEndsWithTheH
 	s.ErrorIs(err, io.EOF)
 }
 
+// TestATunnelToAnAllowedDomainEndsWithTheSandbox: the host side sees the end when the sandbox
+// closes its connection, and the sandbox's bytes reach the host as they are.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	defer listener.Close()
+	s.answerAt(listener.Addr().String())
+	s.allow("outside.test")
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, _ := listener.Accept()
+		accepted <- conn
+	}()
+	conn, err := net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	defer conn.Close()
+	_, err = fmt.Fprintf(conn, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
+		basic("sbx", s.credential))
+	s.Require().NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	upstream := <-accepted
+	s.Require().NotNil(upstream)
+	defer upstream.Close()
+	_, err = io.WriteString(conn, "hello")
+	s.Require().NoError(err)
+	s.Require().NoError(upstream.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	got := make([]byte, 5)
+	_, err = io.ReadFull(upstream, got)
+	s.Require().NoError(err)
+	s.Equal("hello", string(got))
+
+	s.Require().NoError(conn.Close())
+
+	_, err = upstream.Read(got)
+	s.ErrorIs(err, io.EOF)
+}
+
+// TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
+// wildcard that names no domain, which no broker stores, takes nothing.
+func (s *ProxySuite) TestAHostWithATrailingDotIsTheHostWithout() {
+	status := func(target string) int { return s.connectStatus(target, basic("sbx", s.credential)).StatusCode }
+	s.allow("*.", "pypi.test")
+
+	s.Equal(http.StatusForbidden, status("evil.test.:443"))
+	s.Equal(http.StatusForbidden, status("evil.test:443"))
+	s.Equal(http.StatusForbidden, status(".:443"))
+	s.Empty(s.dialed())
+	s.Equal(http.StatusOK, status("PyPI.test.:443"))
+	s.Equal([]string{"pypi.test:443"}, s.dialed())
+}
+
 // TestAWildcardGrantTakesTheDomainAndTheNamesUnderItOnly: *. as core.SandboxRule reads it.
 func (s *ProxySuite) TestAWildcardGrantTakesTheDomainAndTheNamesUnderItOnly() {
 	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "*.github.test")}})
@@ -616,6 +669,19 @@ func (s *ProxySuite) TestAGrantThatEndsEndsItsOpenTunnelToo() {
 	s.Equal(http.StatusForbidden, deleted)
 	s.Len(s.granted.authorizations(), 1)
 	s.Equal(http.StatusProxyAuthRequired, s.connectStatus("api.github.test:443", basic("sbx", s.credential)).StatusCode)
+}
+
+// TestAGrantWithdrawnOnAnAllowedHostEndsItsOpenTunnel: the host stays allowed, so a new CONNECT
+// to it is a blind tunnel, but a tunnel the grant opened refuses its next request.
+func (s *ProxySuite) TestAGrantWithdrawnOnAnAllowedHostEndsItsOpenTunnel() {
+	s.allow("api.github.test")
+	client := s.sandbox(s.credential)
+	s.Require().Equal(http.StatusOK, s.again(client))
+
+	s.put(s.credential, egress.Record{Session: s.session, Allowed: []string{"api.github.test"}})
+
+	s.Equal(http.StatusForbidden, s.again(client))
+	s.Equal(http.StatusOK, s.connectStatus("api.github.test:443", basic("sbx", s.credential)).StatusCode)
 }
 
 // TestACredentialThatIsNotASandboxsIsAskedForOne is A14: none, one never issued, one in

@@ -145,12 +145,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress: CONNECT takes a host and a port", http.StatusBadRequest)
 		return
 	}
-	host = strings.ToLower(host)
+	// A name with a trailing dot is the name without it: matching and dialing take the same host.
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	// A grant names hosts, never addresses, so an address cannot be told apart from another
 	// host's (core.SandboxRule). A * is no host's name: a wildcard grant would match it, and
 	// its certificate would be one for every name under the domain.
 	granted := record.granted(host)
-	if net.ParseIP(host) != nil || strings.Contains(host, "*") || !granted && !record.allowed(host) {
+	if host == "" || net.ParseIP(host) != nil || strings.Contains(host, "*") || !granted && !record.allowed(host) {
 		p.logger.Warn("the sandbox egress proxy refused a host", "session", record.Session, "host", host)
 		http.Error(w, "egress: the sandbox has no grant for this host", http.StatusForbidden)
 		return
