@@ -44,6 +44,11 @@ class AgentConnectorBinding:
                 Every field is optional, and a field left out keeps today's behaviour.
             required (bool | Unset): Whether a session needs this connector. A required one that cannot be opened fails the
                 session; an optional one is left out of it. Default: False.
+            sandbox (bool | Unset): Whether code in the session's sandbox may call the connector's API with the binding's
+                connection. The sandbox gets the env var the connector's sandbox block names, holding a placeholder that the
+                sandbox's egress swaps for the credential only in a request to one of its hosts. Refused for a connector without
+                a sandbox block, for a config that sets no sandbox, and for two sandbox bindings whose connectors name the same
+                env var. Omitted is false.
             timeout_ms (int | Unset): How long one tool call may take, in milliseconds. Omitted, the session's default
                 applies.
             tool_patterns (list[str] | Unset): Names or path.Match patterns of the tools this binding offers, such as search
@@ -61,6 +66,7 @@ class AgentConnectorBinding:
     events: list[ConnectorBindingEvent] | Unset = UNSET
     policy: ConnectorBindingPolicy | Unset = UNSET
     required: bool | Unset = False
+    sandbox: bool | Unset = UNSET
     timeout_ms: int | Unset = UNSET
     tool_patterns: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -90,6 +96,8 @@ class AgentConnectorBinding:
 
         required = self.required
 
+        sandbox = self.sandbox
+
         timeout_ms = self.timeout_ms
 
         tool_patterns: list[str] | Unset = UNSET
@@ -112,6 +120,8 @@ class AgentConnectorBinding:
             field_dict["policy"] = policy
         if required is not UNSET:
             field_dict["required"] = required
+        if sandbox is not UNSET:
+            field_dict["sandbox"] = sandbox
         if timeout_ms is not UNSET:
             field_dict["timeout_ms"] = timeout_ms
         if tool_patterns is not UNSET:
@@ -158,6 +168,8 @@ class AgentConnectorBinding:
 
         required = d.pop("required", UNSET)
 
+        sandbox = d.pop("sandbox", UNSET)
+
         timeout_ms = d.pop("timeout_ms", UNSET)
 
         tool_patterns = cast(list[str], d.pop("tool_patterns", UNSET))
@@ -170,6 +182,7 @@ class AgentConnectorBinding:
             events=events,
             policy=policy,
             required=required,
+            sandbox=sandbox,
             timeout_ms=timeout_ms,
             tool_patterns=tool_patterns,
         )

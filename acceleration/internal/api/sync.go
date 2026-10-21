@@ -265,6 +265,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}

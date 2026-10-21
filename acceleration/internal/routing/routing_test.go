@@ -870,6 +870,38 @@ func (s *RoutingSuite) TestACandidateTheCallerSawFailIsTriedLast() {
 		"a voice lost on a call came straight back rather than giving way to the next one")
 }
 
+func (s *RoutingSuite) TestACandidateTheCallerSawFailStillServesWhenNothingElseCan() {
+	_, config, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush"},
+		Failed:     []string{"lush/multi"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("lush/multi", config.Name(), "a voice lost on a call is tried again when it is all there is")
+}
+
+func (s *RoutingSuite) TestAnExcludedCandidateIsNotTried() {
+	_, config, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush", "quick"},
+		Exclude:    []string{"lush/multi"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("quick/en", config.Name())
+}
+
+func (s *RoutingSuite) TestARequestThatExcludesEveryCandidateIsNotServed() {
+	_, _, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush"},
+		Exclude:    []string{"lush/multi"},
+	})
+
+	s.Error(err, "a transcription every model refused was handed back to one of them")
+}
+
 func (s *RoutingSuite) TestAPriorityListWinsOverATarget() {
 	_, config, err := s.newRouter().Select(s.ctx, Request{
 		CustomerID: "acme",

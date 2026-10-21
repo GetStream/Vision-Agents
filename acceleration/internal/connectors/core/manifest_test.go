@@ -688,3 +688,74 @@ func (s *ManifestSuite) TestAManifestStoredAsJSONReadsBackTheSame() {
 		s.Equal(m, back, id)
 	}
 }
+
+func (s *ManifestSuite) TestASandboxBlockIsReadAndEveryConnectionResolvesIt() {
+	parsed, err := ParseManifest(minimal("sandbox:\n  env: _EXAMPLE_TOKEN2\n  hosts: [api.example.com, \"*.example.org\"]\n"))
+	s.Require().NoError(err)
+	want := &SandboxRule{Env: "_EXAMPLE_TOKEN2", Hosts: []string{"api.example.com", "*.example.org"}}
+	s.Equal(want, parsed.Sandbox)
+
+	resolved, err := parsed.Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+	s.Equal(want, resolved.Sandbox)
+}
+
+func (s *ManifestSuite) TestASandboxEnvIsAnUpperCaseEnvVarName() {
+	for _, env := range []string{`""`, "example_token", "Example_TOKEN", "1TOKEN", "EXAMPLE-TOKEN", "EXAMPLE.TOKEN"} {
+		_, err := ParseManifest(minimal("sandbox:\n  env: " + env + "\n  hosts: [api.example.com]\n"))
+
+		s.ErrorContains(err, "sandbox.env:", env)
+		s.ErrorContains(err, "is not an env var name", env)
+	}
+	_, err := ParseManifest(minimal("sandbox:\n  hosts: [api.example.com]\n"))
+	s.ErrorContains(err, "sandbox.env:", "a block without env")
+}
+
+func (s *ManifestSuite) TestASandboxNeedsAHost() {
+	for _, hosts := range []string{"\n  hosts: []\n", "\n"} {
+		_, err := ParseManifest(minimal("sandbox:\n  env: EXAMPLE_TOKEN" + hosts))
+
+		s.ErrorContains(err, "sandbox.hosts: is empty", hosts)
+	}
+}
+
+// Daytona's allowlist takes hostnames only and exact or *. ones
+// (https://www.daytona.io/docs/en/secrets.md); a wildcard over a top-level domain or a
+// one-label name would send the credential to hosts nobody listed.
+func (s *ManifestSuite) TestASandboxHostIsALowercaseHostNameOrAWildcardDomain() {
+	for _, host := range []string{
+		"https://api.example.com", "api.example.com:443", "api.example.com/v1", "api.example.com?a=1",
+		"user@api.example.com", "API.example.com", "Api.example.com", "aPi.example.com", "apI.example.com", "api.Example.com", "api.eXample.com", "api.examplE.com",
+		"api.*.example.com", "*example.com", "**.example.com",
+		"*", "*.com", "localhost", "api.example.com.", "-api.example.com", "api-.example.com", "api..example.com",
+		"api.example.com ", "",
+		"*.*.example.com",
+		"1.2.3.4", "127.0.0.1", "169.254.169.254", "10.0.0.1", "10.0.0.9", "0x7f.0.0.1", "1.2.3.0x4", "0x7f.0x0.0x0.0x1", "a.0x7f000001", "*.0.0.1", "example.123",
+		"::1", "2001:db8::1", "[::1]", "[2001:db8::1]",
+	} {
+		_, err := ParseManifest(minimal("sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.org, \"" + host + "\"]\n"))
+
+		s.ErrorContains(err, "sandbox.hosts[1]:", host)
+		s.ErrorContains(err, "is not a lowercase host name or *. and a domain", host)
+		s.NotContains(err.Error(), "sandbox.hosts[0]", host)
+	}
+	for _, host := range []string{"example.com", "a.b.example.com", "x-1.example.com", "*.example.com", "*.api.example.com"} {
+		_, err := ParseManifest(minimal("sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [\"" + host + "\"]\n"))
+
+		s.NoError(err, host)
+	}
+}
+
+// A manifest without sandbox marshals as it did before the field existed, so the seeder finds
+// every stored built-in unchanged (store.sameManifest), and resolves without one.
+func (s *ManifestSuite) TestAManifestWithoutSandboxMarshalsAndResolvesWithoutIt() {
+	parsed, err := ParseManifest(minimal(""))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed)
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "sandbox")
+
+	resolved, err := parsed.Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+	s.Nil(resolved.Sandbox)
+}

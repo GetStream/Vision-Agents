@@ -1885,3 +1885,132 @@ func (s *ConfigsSuite) TestABindingWithoutAToolsListIsRefusedOnCreateAsOnPatch()
 	s.Equal(http.StatusBadRequest, created400)
 	s.Equal(http.StatusBadRequest, patched400)
 }
+
+// sessionGitHub binds GitHub, whose manifest has a sandbox block (GITHUB_TOKEN), through the
+// connection a session's end user picks, granting no tools by name. sandbox sets the binding's
+// sandbox key; false leaves it out, as a client written before it existed does.
+func sessionGitHub(alias string, sandbox bool) map[string]any {
+	binding := map[string]any{
+		"name": alias, "connector_id": "github",
+		"connection": map[string]any{"type": "session"},
+		"tools":      []map[string]any{},
+	}
+	if sandbox {
+		binding["sandbox"] = true
+	}
+	return binding
+}
+
+func (s *ConfigsSuite) TestAGitHubSandboxBindingIsStoredAndReadBack() {
+	created := s.createConfig(map[string]any{"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true)}})
+
+	s.Require().Len(value(created.Connectors), 1)
+	s.True(value(created.Connectors)[0].Sandbox)
+	read, stored := s.readConnectors(created.Id)
+	s.JSONEq(`[{"name":"code","connector_id":"github","connection":{"type":"session"},"tools":[],"required":false,"sandbox":true}]`, string(read))
+	s.JSONEq(`[{"name":"code","connector_id":"github","connection":{"type":"session"},"tools":[],"required":false,"sandbox":true}]`, stored)
+	var listed []AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs?name=builder", nil, &listed))
+	s.Require().Len(listed, 1)
+	s.True(value(listed[0].Connectors)[0].Sandbox)
+}
+
+// TestABindingWithoutSandboxIsReadAsOnTheBase is the control: the GET answer and the row are
+// what the base, a8181c43b, answered and stored for the same request (pr-w13-bind/author-1.md,
+// «Control probe»).
+func (s *ConfigsSuite) TestABindingWithoutSandboxIsReadAsOnTheBase() {
+	created := s.createConfig(map[string]any{"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", false)}})
+
+	read, stored := s.readConnectors(created.Id)
+
+	s.Equal(`[{"name":"code","connector_id":"github","connection":{"type":"session"},"tools":[],"required":false}]`, string(read))
+	s.Equal(`[{"name": "code", "tools": [], "required": false, "connection": {"type": "session"}, "connector_id": "github"}]`, stored)
+}
+
+func (s *ConfigsSuite) TestASandboxBindingToAConnectorWithoutASandboxBlockIsRefused() {
+	slack := sessionSlack("inbox")
+	slack["sandbox"] = true
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "builder", "sandbox": "daytona", "connectors": []map[string]any{slack}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector "slack" offers no access from a sandbox`)
+}
+
+func (s *ConfigsSuite) TestASandboxBindingInAConfigWithoutASandboxIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "builder", "connectors": []map[string]any{sessionGitHub("code", true)}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" sets sandbox, and the config has no sandbox`)
+}
+
+func (s *ConfigsSuite) TestTwoSandboxBindingsGivingTheSandboxOneEnvVarAreRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true), sessionGitHub("docs", true)},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector bindings "code" and "docs" both set sandbox`)
+	s.Contains(failure, "GITHUB_TOKEN")
+}
+
+// TestTwoSandboxBindingsToDifferentConnectorsGivingOneEnvVarAreRefused: the clash is on the env
+// var the sandbox holds, not on the connector, so a custom connector naming GITHUB_TOKEN clashes
+// with github.
+func (s *ConfigsSuite) TestTwoSandboxBindingsToDifferentConnectorsGivingOneEnvVarAreRefused() {
+	source, err := providers.FS.ReadFile("github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(source)
+	s.Require().NoError(err)
+	manifest.ID = "custom_" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	custom := sessionGitHub("docs", true)
+	custom["connector_id"] = manifest.ID
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true), custom},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector bindings "code" and "docs" both set sandbox`)
+	s.Contains(failure, "GITHUB_TOKEN")
+}
+
+func (s *ConfigsSuite) TestTwoBindingsToOneConnectorMayHaveSandboxOnOne() {
+	created := s.createConfig(map[string]any{"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true), sessionGitHub("docs", false)}})
+
+	s.Len(value(created.Connectors), 2)
+}
+
+// TestReplacingAConfigWithoutItsSandboxRefusesTheSandboxBindingItKeeps: a replace that leaves
+// connectors out keeps the bindings stored, and a sandbox binding needs the sandbox it drops.
+func (s *ConfigsSuite) TestReplacingAConfigWithoutItsSandboxRefusesTheSandboxBindingItKeeps() {
+	created := s.createConfig(map[string]any{"name": "builder", "sandbox": "daytona",
+		"connectors": []map[string]any{sessionGitHub("code", true)}})
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "builder"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" sets sandbox, and the config has no sandbox`)
+	s.Equal(Daytona, value(s.read(created.Id).Sandbox))
+}
+
+func (s *ConfigsSuite) TestPatchingASandboxBindingOntoAConfigWithoutASandboxIsRefused() {
+	created := s.createConfig(map[string]any{"name": "builder"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{sessionGitHub("code", true)}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "code" sets sandbox, and the config has no sandbox`)
+	s.Nil(s.read(created.Id).Connectors)
+}

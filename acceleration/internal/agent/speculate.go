@@ -195,6 +195,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	// The model is counted as starting now, when the ruling came back, so the decision is
 	// still measured in full and the head start shows up as a shorter wait for the model.
 	adopted := time.Now()
+	a.turns.started(ready.ID, kindCaller)
 	a.turns.begin(ready.ID, ready.Participant, ready.ReadyAt, ready.RevisedAt, ready.STTLatencyMs)
 	a.turns.modelStarted(ready.ID, adopted)
 	a.emitter.Send(Responding{TurnID: ready.ID, Participant: ready.Participant, Prompt: ready.Said()})

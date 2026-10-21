@@ -77,6 +77,10 @@ type Manifest struct {
 	// Channel is how the connector is an inbound channel (channel.go). A connector has
 	// sources, a channel, or both.
 	Channel *ChannelRule `yaml:"channel,omitempty" json:"channel,omitempty"`
+	// Sandbox is how code in a session's sandbox reaches the provider's API with a
+	// connection's credential (sandbox.go), or nil when it does not. Left out of the JSON when
+	// nil, so the JSON of every manifest without one stays as it was stored.
+	Sandbox *SandboxRule `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 	// BrokenRevisions are this connector's earlier revisions that do not work, each with why.
 	// A connection still pinned to one is refused a credential until a consent connects it
 	// again on the latest revision. Last, and left out of the JSON when empty, so the JSON of
@@ -673,6 +677,9 @@ func (m Manifest) Validate() error {
 	if m.Channel != nil {
 		m.checkChannel(fail, inputs, captures)
 	}
+	if m.Sandbox != nil {
+		m.checkSandbox(fail)
+	}
 
 	for _, point := range slices.Sorted(maps.Keys(m.Hooks)) {
 		field := "hooks." + point
@@ -759,6 +766,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 	}
 	return ResolvedManifest{
 		Channel:         m.Channel,
+		Sandbox:         m.Sandbox,
 		vars:            maps.Clone(m.Vars),
 		ConnectorID:     m.ID,
 		Revision:        m.Revision,

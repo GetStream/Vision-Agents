@@ -70,6 +70,39 @@ func (s *ConnectorsSuite) TestOnlyAConnectorThatReadsMessagesIsAChannel() {
 	s.False(listed["slack"])
 }
 
+// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 6), in a read and
+// in the list, is what code in a sandbox reads (env) and where its token may go (hosts).
+func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
+	want := &ConnectorSandbox{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com"}}
+	github := s.get("github")
+	s.Equal(6, github.Revision)
+	s.Equal(want, github.Sandbox)
+	for _, item := range s.list("").Items {
+		if item.ID == "github" {
+			s.Equal(want, item.Sandbox)
+		}
+	}
+}
+
+// TestNoOtherConnectorShowsASandbox is the control: on the base, b7187f62, no connector in the
+// list, built-in or custom, was answered with a sandbox key (pr-w13-man/author-1.md, «Control
+// probe»).
+func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
+	s.create(s.customConnector(s.customID()))
+	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors?limit=200", nil)
+	s.Require().Equal(http.StatusOK, status)
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &page))
+	s.Require().Greater(len(page.Items), 20)
+	for _, item := range page.Items {
+		if item["id"] != "github" {
+			s.NotContains(item, "sandbox", item["id"])
+		}
+	}
+}
+
 // TestAMovedPluginShowsItsSetupSteps: the steps the plugin catalog shows before a client is
 // pasted in come with its connector (T58), and a connector whose manifest has none shows none.
 func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
