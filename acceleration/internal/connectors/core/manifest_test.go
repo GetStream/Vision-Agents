@@ -706,6 +706,9 @@ func (s *ManifestSuite) TestASandboxHostIsALowercaseHostNameOrAWildcardDomain() 
 		"api.*.example.com", "*example.com", "**.example.com",
 		"*", "*.com", "localhost", "api.example.com.", "-api.example.com", "api-.example.com", "api..example.com",
 		"api.example.com ", "",
+		"*.*.example.com",
+		"1.2.3.4", "127.0.0.1", "169.254.169.254", "10.0.0.1", "0x7f.0.0.1", "*.0.0.1", "example.123",
+		"::1", "2001:db8::1", "[::1]", "[2001:db8::1]",
 	} {
 		_, err := ParseManifest(minimal("sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.org, \"" + host + "\"]\n"))
 

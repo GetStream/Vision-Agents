@@ -29,6 +29,11 @@ var (
 	// labels are RFC 1123 section 2.1's, at least two as hostSuffix asks, so *.com cannot hand
 	// a credential to a whole top-level domain; lowercase, so one host is written one way.
 	sandboxHost = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+	// sandboxNumericTLD is a host whose last label is all digits. RFC 3696 section 2 says a
+	// top-level domain is never all-numeric, so such a host is an IPv4 literal (1.2.3.4,
+	// 0x7f.0.0.1 and *.0.0.1 included) or a name the resolver may read as one, and the
+	// allowlist takes host names only.
+	sandboxNumericTLD = regexp.MustCompile(`\.[0-9]+$`)
 )
 
 func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
@@ -39,7 +44,7 @@ func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
 		fail("sandbox.hosts", "is empty: a credential with no host would go to every host")
 	}
 	for i, host := range m.Sandbox.Hosts {
-		if !sandboxHost.MatchString(host) {
+		if !sandboxHost.MatchString(host) || sandboxNumericTLD.MatchString(host) {
 			fail(fmt.Sprintf("sandbox.hosts[%d]", i), "%q is not a lowercase host name or *. and a domain, with no scheme, port, path or query", host)
 		}
 	}
