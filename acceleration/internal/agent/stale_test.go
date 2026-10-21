@@ -297,7 +297,8 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 }
 
 func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
-	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "got it", "thank you", "uh yeah"} {
+	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "got it", "thank you", "uh yeah",
+		"ok gotcha", "yes yes", "yep yep", "yup sure", "mhm right", "mm-hmm alright", "thanks thanks"} {
 		s.Run(assent, func() {
 			s.False(takesFloor(assent), "assent is somebody listening")
 		})
