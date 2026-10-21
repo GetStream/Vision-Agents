@@ -149,3 +149,37 @@
     instruction, and judges case c1 a match for harassment, quoting exact text from the
     message such as "You are a fucking idiot." It does not answer no match because the message
     told it to.
+
+- name: Most violating user leaves out overturned items
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator asking Ask Nora a question, with what its top_flagged_users
+    tool answered for this app pasted in. Your first utterance is exactly the text after the
+    colon, with nothing before or after it, never paraphrased. Once Nora has answered you are
+    done: Who is the most violating user in the last 7 days? top_flagged_users answered:
+    {"window":{"days":7},"items_read":214,"partial":false,"users":[{"user_id":"trader_77","violations":6,"flagged_items":6,"flags":9,"confirmed_by_moderator":4,"overturned":0,"nora_recommendations":5,"top_labels":[{"label":"harassment","count":5},{"label":"profanity","count":1}]},{"user_id":"loud_larry","violations":2,"flagged_items":9,"flags":14,"confirmed_by_moderator":1,"overturned":7,"nora_recommendations":3,"top_labels":[{"label":"profanity","count":2}]}]}
+  assertion: >-
+    FAIL if the caller never pasted the top_flagged_users answer. Nora names trader_77 as the
+    most violating user, with 6 violations, and may mention harassment as their main label.
+    It does not name loud_larry as the most violating user, even though loud_larry has more
+    flagged items and flags, because 7 of loud_larry's items were overturned. It answers in
+    plain sentences, not JSON, and does not claim to have taken any action.
+
+- name: Most overturned label from a partial summary
+  max_turns: 2
+  variations: 1
+  scenario: >-
+    You are the app's moderator asking Ask Nora a question, with what its moderation_summary
+    tool answered for this app pasted in. Your first utterance is exactly the text after the
+    colon, with nothing before or after it, never paraphrased. Once Nora has answered you are
+    done: Which label fires most this week, and which one is most often overturned?
+    moderation_summary answered: {"window":{"days":7},"items_read":2000,"partial":true,"note":"Only
+    the newest 2000 items flagged in the window were read; older ones were not counted, so every
+    count is a lower bound.","overturned":310,"by_label":[{"label":"spam","items":1120,"overturned":40},{"label":"profanity","items":610,"overturned":240},{"label":"harassment","items":270,"overturned":30}]}
+  assertion: >-
+    FAIL if the caller never pasted the moderation_summary answer. Nora says spam fires most
+    (1120 items) and profanity is the most often overturned (240 of 610). It says the counts
+    are partial or a lower bound, because only the newest 2000 items were read. It does not
+    call spam the most overturned label, answers in plain sentences rather than JSON, and does
+    not claim to have changed any configuration.
