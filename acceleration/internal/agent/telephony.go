@@ -742,7 +742,7 @@ func (a *Agent) availableTools() harness.Tools {
 		available.Tools = append(available.Tools, a.options.Skills.LoadTool())
 	}
 	if a.runsCode() {
-		available.Tools = append(available.Tools, harness.SandboxTool())
+		available.Tools = append(available.Tools, harness.SandboxTool(a.options.Sandbox))
 	}
 	return available
 }

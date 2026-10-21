@@ -40,10 +40,28 @@ type platform struct {
 	runBody      string
 	// sequence names the next sandbox created.
 	sequence int
+
+	// secrets are the organization's secrets by id, and calls every request about a secret
+	// or a sandbox's creation, in order, as "<method> <path>".
+	secrets map[string]*heldSecret
+	calls   []string
+	// refuse answers every request with a 500; createStatus, when set, answers a sandbox's
+	// creation with it.
+	refuse       bool
+	createStatus int
+	// test is the test the platform serves, when tests share it.
+	test string
+}
+
+// heldSecret is a secret as Daytona keeps it.
+type heldSecret struct {
+	Name, Value string
+	Hosts       []string
 }
 
 func newPlatform() *platform {
-	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{}}
+	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{},
+		secrets: map[string]*heldSecret{}}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
 	return stub
 }
@@ -53,7 +71,22 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 	defer p.mu.Unlock()
 	p.auth = r.Header.Get("Authorization")
 
+	if strings.HasPrefix(r.URL.Path, "/api/secret") || r.Method == http.MethodPost && r.URL.Path == "/api/sandbox" {
+		p.calls = append(p.calls, r.Method+" "+r.URL.Path)
+	}
+	if p.refuse {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"daytona is down"}`))
+		return
+	}
 	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/secret"):
+		p.secret(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox" && p.createStatus != 0:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(p.createStatus)
+		_, _ = w.Write([]byte(`{"message":"no capacity"}`))
 	case strings.HasPrefix(r.URL.Path, "/api/socket.io"):
 		w.WriteHeader(404)
 		return
@@ -102,6 +135,41 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(p.runStatus)
 		_, _ = w.Write([]byte(p.runBody))
 	}
+}
+
+// secret serves Daytona's secret API: create, update and delete. The caller holds mu.
+func (p *platform) secret(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name  string   `json:"name"`
+		Value *string  `json:"value"`
+		Hosts []string `json:"hosts"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	id := strings.TrimPrefix(r.URL.Path, "/api/secret/")
+	held := p.secrets[id]
+	switch {
+	case r.Method == http.MethodPost:
+		p.sequence++
+		id = "secret-" + string(rune('0'+p.sequence))
+		held = &heldSecret{Name: body.Name, Value: *body.Value, Hosts: body.Hosts}
+		p.secrets[id] = held
+	case held == nil:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"no such secret"}`))
+		return
+	case r.Method == http.MethodPatch:
+		held.Value = *body.Value
+	case r.Method == http.MethodDelete:
+		delete(p.secrets, id)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	answer, _ := json.Marshal(map[string]any{"id": id, "name": held.Name, "placeholder": "dtn_secret_" + id,
+		"hosts": held.Hosts, "createdAt": "2026-10-20T00:00:00Z", "updatedAt": "2026-10-20T00:00:00Z"})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(answer)
 }
 
 func (p *platform) executed() []map[string]any {
