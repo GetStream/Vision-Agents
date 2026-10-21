@@ -352,3 +352,14 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverAfterItReachedTheVoiceIsDrop
 	s.Require().Len(logged, 1)
 	s.Equal(true, logged[0]["sent_to_voice"])
 }
+
+func (s *AgentSuite) TestFinalWordsOverAReplyNobodyHeardDropIt() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.says(nash, "only the vegetarian options")
+
+	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "final words left the reply to play")
+	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
+}
