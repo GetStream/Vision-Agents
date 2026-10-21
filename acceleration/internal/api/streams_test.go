@@ -663,6 +663,10 @@ func (s *StreamsSuite) ending(connection *websocket.Conn) ([]frame, error) {
 }
 
 func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextModel() {
+	// A run before this one in the process left the model unavailable (key: live.go, healthKey).
+	redis := s.live.ShardRedis()
+	s.Require().NoError(redis.Do(s.T().Context(),
+		redis.B().Del().Key("health:stt:refusing:"+handingOverModel).Build()).Error())
 	listening := s.start("/v1/stt/stream", frame{
 		"target": "refusing/" + handingOverModel,
 		"stt":    frame{"providers": []string{"refusing/" + handingOverModel, "echoing/echoing-model"}},

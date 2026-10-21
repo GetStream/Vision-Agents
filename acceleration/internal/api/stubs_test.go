@@ -339,8 +339,8 @@ func (s *refusingSTT) Close() error {
 // handingOverModel refuses the account the way refusingModel does, for a socket that lists
 // a model after it. It is its own, and new each run, so the refusal that marks
 // refusingModel unavailable does not send that socket straight to the next model. New each
-// process, not each test: run the test again with -count=1, since -count=2 finds it
-// unavailable from the first run.
+// process: the test clears its health first, which a run before it in the process left
+// unavailable.
 var handingOverModel = fmt.Sprintf("handing-over-%d", time.Now().UnixNano())
 
 // echoingSTT settles a turn for every frame of audio it hears.
