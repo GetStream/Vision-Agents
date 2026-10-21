@@ -583,13 +583,14 @@ func (s *ConsentSuite) TestNessyWithoutTheAppsClientIsRefusedRatherThanRegistere
 }
 
 // Every refresh rotates the refresh token and a reused one ends the family, so no grace; the
-// family's 7 days are absolute, so no refresh_ttl, which counts from each issue (nessy.yaml).
-func (s *ConsentSuite) TestNessyRefreshPolicyRotatesWithNoGraceAndNoRefreshLifetime() {
+// managed client's family ends 24 hours after its last refresh, which refresh_ttl counts from each
+// issue (nessy.yaml).
+func (s *ConsentSuite) TestNessyRefreshPolicyRotatesWithNoGraceAndEndsAfterTheManagedIdleDay() {
 	refresh := s.resolve("nessy", nil).Refresh
 	s.Require().NotNil(refresh.Rotating)
 	s.True(*refresh.Rotating)
 	s.Zero(refresh.Grace)
-	s.Zero(refresh.RefreshTTL)
+	s.Equal(24*time.Hour, time.Duration(refresh.RefreshTTL))
 	s.Zero(refresh.AccessTTL)
 }
 

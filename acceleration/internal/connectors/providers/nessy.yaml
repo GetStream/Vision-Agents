@@ -100,9 +100,14 @@ refresh:
   # Every refresh rotates the refresh token, and presenting a rotated-out one revokes the whole
   # family, so there is no grace ([n]:docs/mcp.md:129-134). The token response always carries
   # expires_in ([n]:backend/cliauth/service.go:697), 8 hours ([n]:backend/cliauth/token.go:37),
-  # so no access_ttl. No refresh_ttl: a family lives 7 days from the Google sign-in, «absolute,
-  # not sliding» ([n]:backend/cliauth/token.go:38-43), while refresh_ttl counts from each issue
-  # (schemes/oauth2code/credential.go, refreshExpiresAt), so it would outlive the family.
+  # so no access_ttl. A family lives 7 days from the Google sign-in, «absolute, not sliding»
+  # ([n]:backend/cliauth/token.go:38-43), and a managed client's family also ends after 24 hours
+  # without a refresh, which then gets invalid_grant (NES-502: [n]:backend/cliauth/token.go:44-49,
+  # [n]:backend/cliauth/service.go:542, [n]:docs/mcp.md:132-133,232-239). Athena's client is
+  # managed ([n]:docs/mcp.md:206-215). Each refresh restarts the 24 hours from the new token's
+  # issue time, and refresh_ttl counts from each issue too (schemes/oauth2code/credential.go,
+  # refreshExpiresAt), so refresh_ttl is that idle window; the 7 days stay Nessy's to enforce.
+  refresh_ttl: 24h
   rotating: true
 rate_limit:
   # 120 calls a minute per user ([n]:docs/mcp.md:101).
