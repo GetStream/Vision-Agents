@@ -85,6 +85,14 @@ jobs:
         run: go test ./...
         working-directory: acceleration
 
+      - name: Vet phonecheck
+        run: go vet ./...
+        working-directory: acceleration/cmd/phonecheck
+
+      - name: Test phonecheck
+        run: go test -race ./...
+        working-directory: acceleration/cmd/phonecheck
+
       - name: Compile STS integration tests
         run: go test -tags integration -run '^$' -exec=true ./internal/sts/...
         working-directory: acceleration
