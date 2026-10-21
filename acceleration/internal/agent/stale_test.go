@@ -295,3 +295,31 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 		"a reply that had ended was dropped")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
+
+func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
+	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "got it", "thank you", "uh yeah"} {
+		s.Run(assent, func() {
+			s.False(takesFloor(assent), "assent is somebody listening")
+		})
+	}
+	for _, more := range []string{"okay wait", "yeah the second one", "got it but"} {
+		s.Run(more, func() {
+			s.True(takesFloor(more), "a word past assent is the caller saying more")
+		})
+	}
+}
+
+func (s *AgentSuite) TestTwoWordsOfAssentLeaveTheReplyToTheController() {
+	s.join(true)
+	s.flow.then = []string{`{"disposition":"ignore","floor":"continue"}`}
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "okay okay")
+
+	s.eventually(func() bool { return len(s.flow.requests()) == 2 }, "the assent was never put to the controller")
+	s.model.writes(two, "Two of what?")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was dropped over assent")
+	s.Zero(countOf[Interrupted](s.reported()))
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}

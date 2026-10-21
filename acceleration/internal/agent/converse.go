@@ -3,6 +3,7 @@ package agent
 import (
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -426,13 +427,20 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 	}), true
 }
 
-// takesFloor reports whether words are more than a murmur: a cough, "mm", a lone non-interruption.
+// takesFloor reports whether words are more than a murmur: a cough, "mm", a lone non-interruption,
+// or nothing but assent ("okay okay", "uh huh", "got it"), which is somebody listening.
 func takesFloor(saying string) bool {
 	if overlapNoise(saying) {
 		return false
 	}
-	fields := strings.Fields(words(saying))
-	return len(fields) > 1 || len(fields) == 1 && interruptsAlone[strings.ToLower(fields[0])]
+	fields := strings.Fields(strings.ToLower(words(saying)))
+	if len(fields) == 1 {
+		return interruptsAlone[fields[0]]
+	}
+	return slices.ContainsFunc(fields, func(field string) bool {
+		_, murmur := murmurs[field]
+		return !murmur
+	})
 }
 
 // supersede abandons a ruling asked for about words that have since changed.
@@ -1224,11 +1232,17 @@ func overlapNoise(text string) bool {
 	if strings.Contains(t, "cough") || strings.Contains(t, "ahem") {
 		return true
 	}
-	switch t {
-	case "huh", "uh", "mm", "hm", "hmm":
-		return true
-	}
-	return false
+	return murmurs[t]
+}
+
+// murmurs are the words of someone listening rather than taking the floor. True marks the ones
+// that are noise said alone (overlapNoise); the rest are assent, which only a run of murmurs is.
+// The punctuation is gone (words), so "uh-huh" is "uhhuh".
+var murmurs = map[string]bool{
+	"huh": true, "uh": true, "mm": true, "hm": true, "hmm": true,
+	"okay": false, "ok": false, "yeah": false, "yes": false, "yep": false, "yup": false,
+	"uhhuh": false, "mhm": false, "mmhmm": false, "right": false, "sure": false, "alright": false,
+	"got": false, "it": false, "gotcha": false, "thank": false, "thanks": false, "you": false,
 }
 
 // worthReporting says whether a judgement tells a reader anything the last one did not,
