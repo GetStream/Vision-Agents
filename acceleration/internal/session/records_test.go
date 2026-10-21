@@ -120,6 +120,17 @@ func (s *RecordSuite) TestAPlainTurnIsAQuestionAndAnAnswer() {
 	s.Equal(store.ResponseCompleted, s.held.finished[0].status)
 }
 
+func (s *RecordSuite) TestALineSaidAsWrittenIsAnAnswerOfItsOwn() {
+	s.took(agent.Said{TurnID: "say-1", Text: "Where does it hurt?", Purpose: agent.PurposeGreeting})
+
+	s.Require().Len(s.held.responses, 1)
+	s.Empty(s.held.responses[0].Said, "nobody asked for it")
+	s.Equal([]string{store.ItemAnswer}, s.held.kinds())
+	s.Equal("Where does it hurt?", s.held.items[0].Text)
+	s.Require().Len(s.held.finished, 1)
+	s.Equal(store.ResponseCompleted, s.held.finished[0].status)
+}
+
 func (s *RecordSuite) TestItemsKeepTheOrderTheyHappenedIn() {
 	s.took(
 		agent.Responding{TurnID: "turn-1", Prompt: "What is in my cart?"},

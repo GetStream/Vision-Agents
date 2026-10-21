@@ -763,19 +763,24 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			id = fmt.Sprintf("msg-%d", len(db.order)+1)
 			message["id"] = id
 		}
-		if _, exists := db.messages[id]; !exists {
-			db.order = append(db.order, id)
-			message["cid"] = "agent:" + parts[len(parts)-2]
-			message["created_at"] = db.now().UnixNano()
-			// Chat answers with the author it resolved the id to, which is how a reader
-			// learns who spoke: a stored message carries a user, not a user id. A user
-			// nobody named comes back named after their own id.
-			message["user"] = map[string]any{"id": message["user_id"], "name": message["user_id"]}
-			if _, ok := message["custom"].(map[string]any); !ok {
-				message["custom"] = map[string]any{}
-			}
-			db.messages[id] = message
+		if _, exists := db.messages[id]; exists {
+			// Chat refuses a message id it already has rather than returning that message,
+			// so a writer that reuses one finds out here as it would there. The wording is
+			// unverified.
+			refuse(w, "SendMessage failed with error: a message with ID "+id+" already exists")
+			return
 		}
+		db.order = append(db.order, id)
+		message["cid"] = "agent:" + parts[len(parts)-2]
+		message["created_at"] = db.now().UnixNano()
+		// Chat answers with the author it resolved the id to, which is how a reader
+		// learns who spoke: a stored message carries a user, not a user id. A user
+		// nobody named comes back named after their own id.
+		message["user"] = map[string]any{"id": message["user_id"], "name": message["user_id"]}
+		if _, ok := message["custom"].(map[string]any); !ok {
+			message["custom"] = map[string]any{}
+		}
+		db.messages[id] = message
 		result["message"] = db.messages[id]
 	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodDelete:
 		id := parts[len(parts)-1]
