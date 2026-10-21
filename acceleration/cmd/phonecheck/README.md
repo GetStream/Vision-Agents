@@ -184,6 +184,16 @@ Then one `call summary` line: `direction`, `provider`, `session_id`, `outcome`, 
 `talked_ms`, `total_ms`, `agent_sfu`, `router_address`, `sip_host`, `sfus_used`, `region_label`
 (and `vendor_call_id` outbound). `-log-format json` writes all of it as JSON on stderr.
 
+The timings, all counted from the end of the checks:
+
+- `connect_ms`: until the agent is on the call (outbound: the router places it; inbound: the
+  worker registers, the person dials, the worker answers).
+- `talked_ms`: from then until the agent's session and the person's call have both ended. It
+  includes the person's script and the router's 10 s wait before it ends the session, so it is
+  longer than `-talk`.
+- `total_ms`: until the run is torn down. Most of it is the wait for the `call_sites` row,
+  which Stream triggers about 30 s after the call ends.
+
 The router's own lines for the call carry the same `session_id`. Filter its log by it:
 
 ```bash
