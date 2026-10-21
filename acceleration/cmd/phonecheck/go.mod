@@ -3,6 +3,7 @@ module github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck
 go 1.27.0
 
 require (
+	github.com/GetStream/Vision-Agents/acceleration v0.0.0-00010101000000-000000000000
 	github.com/GetStream/Vision-Agents/sdks/go v0.0.0
 	github.com/stretchr/testify v1.12.1
 )

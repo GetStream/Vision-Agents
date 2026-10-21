@@ -37,6 +37,10 @@ type fakeRouter struct {
 	numbers    []acceleration.PhoneNumber
 	numbersErr error
 	logsErr    error
+	// rowLists is what each LogRows call returns in turn; the last list repeats.
+	rowLists [][]acceleration.AgentLog
+	listed   int
+	rows     map[string]acceleration.AgentLog
 }
 
 func (r *fakeRouter) Healthy(context.Context) error {
@@ -56,12 +60,21 @@ func (r *fakeRouter) LogsAvailable(context.Context) error {
 
 func (r *fakeRouter) LogRows(context.Context, string) ([]acceleration.AgentLog, error) {
 	*r.steps = append(*r.steps, "log rows")
-	return nil, nil
+	if len(r.rowLists) == 0 {
+		return nil, nil
+	}
+	list := r.rowLists[min(r.listed, len(r.rowLists)-1)]
+	r.listed++
+	return list, nil
 }
 
-func (r *fakeRouter) LogRow(context.Context, string) (acceleration.AgentLog, error) {
+func (r *fakeRouter) LogRow(_ context.Context, id string) (acceleration.AgentLog, error) {
 	*r.steps = append(*r.steps, "log row")
-	return acceleration.AgentLog{}, errors.New("no log row")
+	row, ok := r.rows[id]
+	if !ok {
+		return acceleration.AgentLog{}, errors.New("no log row")
+	}
+	return row, nil
 }
 
 func (r *fakeRouter) StartCall(context.Context, string, string) (agentSession, error) {
