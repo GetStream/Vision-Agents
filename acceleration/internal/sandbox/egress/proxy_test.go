@@ -10,10 +10,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -24,6 +26,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
@@ -54,8 +58,12 @@ type ProxySuite struct {
 	caCert, caKey []byte
 	trusted       *x509.CertPool
 	upstream      *x509.CertPool
+	upstreamCA    *x509.Certificate
+	upstreamKey   *ecdsa.PrivateKey
 	granted       *host
 	outside       *host
+	// answer, when set, is the address every host's request is sent to instead.
+	answer string
 
 	proxy *httptest.Server
 	logs  *lockedBuffer
@@ -95,18 +103,18 @@ func (s *ProxySuite) SetupSuite() {
 	s.caCert, s.caKey = caCert, keyPEM(s.T(), caKey)
 	s.trusted = x509.NewCertPool()
 	s.trusted.AddCert(routerCA)
-	upstreamCA, _, upstreamKey := newCA(s.T(), "hosts CA")
+	s.upstreamCA, _, s.upstreamKey = newCA(s.T(), "hosts CA")
 	s.upstream = x509.NewCertPool()
-	s.upstream.AddCert(upstreamCA)
-	s.granted = newHost(s.T(), upstreamCA, upstreamKey, "*.github.test", "github.test")
-	s.outside = newHost(s.T(), upstreamCA, upstreamKey, "outside.test")
+	s.upstream.AddCert(s.upstreamCA)
+	s.granted = newHost(s.T(), s.upstreamCA, s.upstreamKey, "*.github.test", "github.test")
+	s.outside = newHost(s.T(), s.upstreamCA, s.upstreamKey, "outside.test")
 }
 
 func (s *ProxySuite) SetupTest() {
 	s.granted.forget()
 	s.outside.forget()
 	s.logs = &lockedBuffer{}
-	s.token, s.failure, s.asked, s.handed, s.read, s.addresses = "", nil, 0, nil, nil, nil
+	s.token, s.failure, s.asked, s.handed, s.read, s.addresses, s.answer = "", nil, 0, nil, nil, nil, ""
 	s.connect("gho_first-token-of-the-connection")
 	s.session, s.credential, s.placeholder = "session-"+uuid.NewString(), egress.NewCredential(), "va_ph_"+uuid.NewString()
 	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "api.github.test")}})
@@ -124,25 +132,81 @@ func (s *ProxySuite) TearDownTest() {
 	}
 }
 
-func (s *ProxySuite) newProxy(store *egress.Store) *egress.Proxy {
+// newProxy is a proxy over store; change, when given, changes its options first.
+func (s *ProxySuite) newProxy(store *egress.Store, change ...func(*egress.Options)) *egress.Proxy {
 	dial := &net.Dialer{}
-	proxy, err := egress.New(egress.Options{Store: store, Tokens: s.tokens, CACert: s.caCert, CAKey: s.caKey,
+	options := egress.Options{Store: store, Tokens: s.tokens, CACert: s.caCert, CAKey: s.caKey,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: s.upstream},
 			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 				s.mu.Lock()
 				s.addresses = append(s.addresses, address)
+				to := s.answer
 				s.mu.Unlock()
-				to := s.granted
-				if strings.HasPrefix(address, "outside.test:") {
-					to = s.outside
+				switch {
+				case to != "":
+				case strings.HasPrefix(address, "outside.test:"):
+					to = s.outside.server.Listener.Addr().String()
+				default:
+					to = s.granted.server.Listener.Addr().String()
 				}
-				return dial.DialContext(ctx, network, to.server.Listener.Addr().String())
+				return dial.DialContext(ctx, network, to)
 			},
 		},
-		Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
+		Logger: slog.New(slog.NewTextHandler(s.logs, nil))}
+	for _, change := range change {
+		change(&options)
+	}
+	proxy, err := egress.New(options)
 	s.Require().NoError(err)
 	return proxy
+}
+
+// answering has every host's request answered by handler, over TLS as api.github.test.
+func (s *ProxySuite) answering(handler http.HandlerFunc) {
+	server := httptest.NewUnstartedServer(handler)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{sign(s.T(), s.upstreamCA, s.upstreamKey, "*.github.test", "github.test")}}
+	server.StartTLS()
+	s.T().Cleanup(server.Close)
+	s.answerAt(server.Listener.Addr().String())
+}
+
+// answeringRaw has every host's request answered with the bytes answer gives for the
+// Authorization it carried, then the connection closed: an answer no HTTP server would send.
+func (s *ProxySuite) answeringRaw(answer func(authorization string) string) {
+	listener, err := tls.Listen("tcp", "127.0.0.1:0",
+		&tls.Config{Certificates: []tls.Certificate{sign(s.T(), s.upstreamCA, s.upstreamKey, "*.github.test", "github.test")}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				request, err := http.ReadRequest(bufio.NewReader(conn))
+				if err != nil {
+					return
+				}
+				_, _ = io.WriteString(conn, answer(request.Header.Get("Authorization")))
+			}()
+		}
+	}()
+	s.answerAt(listener.Addr().String())
+}
+
+func (s *ProxySuite) answerAt(address string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.answer = address
+}
+
+// key is where Redis keeps credential's record: its SHA-256.
+func key(credential string) string {
+	sum := sha256.Sum256([]byte(credential))
+	return "sandbox:egress:" + hex.EncodeToString(sum[:])
 }
 
 func (s *ProxySuite) tokens(_ context.Context, grant egress.Grant) (string, error) {
@@ -340,6 +404,8 @@ func (s *ProxySuite) TestAPlaceholderInAnyOtherFormIsSentAsItIs() {
 		"Bearer " + base64.StdEncoding.EncodeToString([]byte(s.placeholder)),
 		basic(s.placeholder, "x"),
 		basic("x", s.placeholder) + "!",
+		basic("x", "a"+s.placeholder),
+		basic("x", s.placeholder+"a"),
 	}
 	for _, authorization := range sent {
 		s.get(authorization)
@@ -387,6 +453,7 @@ func (s *ProxySuite) TestAWildcardGrantTakesTheDomainAndTheNamesUnderItOnly() {
 	s.Equal(http.StatusOK, status("GitHub.test:443"))
 	s.Equal(http.StatusForbidden, status("evilgithub.test:443"))
 	s.Equal(http.StatusForbidden, status("github.test.outside.test:443"))
+	s.Equal(http.StatusForbidden, status("*.github.test:443"))
 }
 
 // TestARedirectToAnOutsideHostCarriesNoToken is A6: the sandbox follows with the
@@ -480,13 +547,63 @@ func (s *ProxySuite) TestACredentialThatIsNotASandboxsIsAskedForOne() {
 
 // TestRedisHoldsNoCredential: what Redis keeps opens no tunnel.
 func (s *ProxySuite) TestRedisHoldsNoCredential() {
-	keys, err := s.redis.Do(s.ctx, s.redis.B().Keys().Pattern("sandbox:egress:*").Build()).AsStrSlice()
+	value, err := s.redis.Do(s.ctx, s.redis.B().Get().Key(key(s.credential)).Build()).ToString()
+
 	s.Require().NoError(err)
-	s.Require().NotEmpty(keys)
-	for _, key := range keys {
-		value, err := s.redis.Do(s.ctx, s.redis.B().Get().Key(key).Build()).ToString()
-		s.Require().NoError(err)
-		s.NotContains(key+value, s.credential)
+	s.Contains(value, s.session)
+	s.NotContains(value, s.credential)
+}
+
+// TestARecordLivesForTheTTLItIsPutWith: the session's lifetime, no more.
+func (s *ProxySuite) TestARecordLivesForTheTTLItIsPutWith() {
+	credential := egress.NewCredential()
+	s.Require().NoError(s.store.Put(s.ctx, credential, egress.Record{Session: s.session,
+		Grants: []egress.Grant{s.grant(s.placeholder, "api.github.test")}}, 800*time.Millisecond))
+	s.T().Cleanup(func() { _ = s.store.Delete(context.Background(), credential) })
+
+	left, err := s.redis.Do(s.ctx, s.redis.B().Pttl().Key(key(credential)).Build()).AsInt64()
+
+	s.Require().NoError(err)
+	s.Positive(left)
+	s.LessOrEqual(left, int64(800))
+}
+
+// TestACorruptRecordIsAnErrorNotAGrant: a record that does not read is 503, and nothing is
+// tunnelled.
+func (s *ProxySuite) TestACorruptRecordIsAnErrorNotAGrant() {
+	s.Require().NoError(s.redis.Do(s.ctx, s.redis.B().Set().Key(key(s.credential)).Value("{not json").Px(time.Minute).Build()).Error())
+
+	s.Equal(http.StatusServiceUnavailable, s.connectStatus("api.github.test:443", basic("sbx", s.credential)).StatusCode)
+	s.Empty(s.dialed())
+}
+
+// TestACredentialNearTheSandboxsIsAskedForOne is A14: only the credential itself opens a
+// tunnel, not one a character off, in another case, cut short or longer.
+func (s *ProxySuite) TestACredentialNearTheSandboxsIsAskedForOne() {
+	c := s.credential
+	flipped := "A"
+	if strings.HasSuffix(c, "A") {
+		flipped = "B"
+	}
+	for _, near := range []string{c[:len(c)-1] + flipped, strings.ToLower(c), c[:len(c)-1], c[:20], c + "A", " " + c} {
+		s.Equal(http.StatusProxyAuthRequired, s.connectStatus("api.github.test:443", basic("sbx", near)).StatusCode, near)
+	}
+	s.Equal(http.StatusOK, s.connectStatus("api.github.test:443", basic("sbx", c)).StatusCode)
+}
+
+// TestTheCredentialIsBasicsPasswordOnly: the scheme is read without case (RFC 9110 section
+// 11.1), and the user name is never the credential.
+func (s *ProxySuite) TestTheCredentialIsBasicsPasswordOnly() {
+	encoded := func(raw string) string { return base64.StdEncoding.EncodeToString([]byte(raw)) }
+	for header, want := range map[string]int{
+		"basic " + encoded("sbx:"+s.credential): http.StatusOK,
+		"BASIC " + encoded("sbx:"+s.credential): http.StatusOK,
+		"Basic " + encoded(":"+s.credential):    http.StatusOK,
+		"Basic " + encoded(s.credential+":"):    http.StatusProxyAuthRequired,
+		"Basic " + encoded(s.credential):        http.StatusProxyAuthRequired,
+		"Basic " + encoded(s.credential+":x"):   http.StatusProxyAuthRequired,
+	} {
+		s.Equal(want, s.connectStatus("api.github.test:443", header).StatusCode, header)
 	}
 }
 
@@ -526,16 +643,19 @@ func (s *ProxySuite) TestOnlyConnectIsProxied() {
 	s.Empty(s.granted.authorizations())
 }
 
-// TestAnUpgradeIsRefused: an upgraded connection would skip the response rewrite.
+// TestAnUpgradeIsRefused: an upgraded connection, to any protocol, would skip the response
+// rewrite.
 func (s *ProxySuite) TestAnUpgradeIsRefused() {
-	request := s.request(http.MethodGet, "https://api.github.test/echo", "Bearer "+s.placeholder, "")
-	request.Header.Set("Connection", "Upgrade")
-	request.Header.Set("Upgrade", "websocket")
+	for _, protocol := range []string{"websocket", "h2c", "anything/1"} {
+		request := s.request(http.MethodGet, "https://api.github.test/echo", "Bearer "+s.placeholder, "")
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", protocol)
 
-	response, _, err := s.send(s.sandbox(s.credential), request)
+		response, _, err := s.send(s.sandbox(s.credential), request)
 
-	s.Require().NoError(err)
-	s.Equal(http.StatusNotImplemented, response.StatusCode)
+		s.Require().NoError(err)
+		s.Equal(http.StatusNotImplemented, response.StatusCode, protocol)
+	}
 	s.Empty(s.granted.authorizations())
 }
 
@@ -591,6 +711,303 @@ func (s *ProxySuite) TestAProxyNeedsACAToSignWith() {
 	s.ErrorContains(err, "not a CA's")
 	_, err = egress.New(egress.Options{CACert: s.caCert, CAKey: leafKey})
 	s.Error(err)
+}
+
+// TestTheProductionTransportDialsNoInternalAddress is A11 past CONNECT: a granted name that
+// resolves to a local address is never dialed by the transport the router uses.
+func (s *ProxySuite) TestTheProductionTransportDialsNoInternalAddress() {
+	proxy, err := egress.New(egress.Options{Store: s.store, Tokens: s.tokens, CACert: s.caCert, CAKey: s.caKey,
+		Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
+	s.Require().NoError(err)
+	s.proxy = httptest.NewServer(proxy)
+	s.T().Cleanup(s.proxy.Close)
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "localhost")}})
+
+	response, _, err := s.send(s.sandbox(s.credential), s.request(http.MethodGet, "https://localhost/echo", "Bearer "+s.placeholder, ""))
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusBadGateway, response.StatusCode)
+	s.Contains(s.logs.String(), "resolved to a non-public address")
+}
+
+// TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12: the certificate names the
+// CONNECT host only, is no CA's, is the router CA's and lives two hours; h2 is not
+// negotiated, and TLS before 1.2 is refused.
+func (s *ProxySuite) TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12() {
+	// The handshake verifies the leaf against the router's CA alone (tunnel's RootCAs).
+	state := s.handshake(&tls.Config{NextProtos: []string{"h2", "http/1.1"}})
+
+	s.Equal("http/1.1", state.NegotiatedProtocol)
+	leaf := state.PeerCertificates[0]
+	s.Equal([]string{"api.github.test"}, leaf.DNSNames)
+	s.False(leaf.IsCA)
+	s.Equal("router sandbox CA", leaf.Issuer.CommonName)
+	s.LessOrEqual(leaf.NotAfter.Sub(leaf.NotBefore), 2*time.Hour)
+	for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11} {
+		s.Error(s.tunnel(&tls.Config{MinVersion: tls.VersionTLS10, MaxVersion: version}).Handshake(), version)
+	}
+}
+
+// handshake is the TLS state the sandbox gets in a tunnel to api.github.test with config.
+func (s *ProxySuite) handshake(config *tls.Config) tls.ConnectionState {
+	conn := s.tunnel(config)
+	s.Require().NoError(conn.Handshake())
+	return conn.ConnectionState()
+}
+
+// tunnel is a CONNECT to api.github.test:443, and TLS in it with config.
+func (s *ProxySuite) tunnel(config *tls.Config) *tls.Conn {
+	conn, err := net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = conn.Close() })
+	s.Require().NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
+	_, err = fmt.Fprintf(conn, "CONNECT api.github.test:443 HTTP/1.1\r\nHost: api.github.test:443\r\nProxy-Authorization: %s\r\n\r\n",
+		basic("sbx", s.credential))
+	s.Require().NoError(err)
+	// A one-byte reader keeps no byte of the handshake from tls.Client.
+	response, err := http.ReadResponse(bufio.NewReaderSize(conn, 16), nil)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	config.ServerName, config.RootCAs = "api.github.test", s.trusted
+	return tls.Client(conn, config)
+}
+
+// TestASilentOrIdleTunnelIsClosed: a sandbox that sends no handshake, or no next request,
+// holds no tunnel past its timeout.
+func (s *ProxySuite) TestASilentOrIdleTunnelIsClosed() {
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) {
+		options.HandshakeTimeout, options.IdleTimeout = 200*time.Millisecond, 200*time.Millisecond
+	}))
+	s.T().Cleanup(s.proxy.Close)
+	silent := s.tunnel(&tls.Config{}).NetConn()
+	idle := s.tunnel(&tls.Config{})
+	_, err := io.WriteString(idle, "GET /echo HTTP/1.1\r\nHost: api.github.test\r\n\r\n")
+	s.Require().NoError(err)
+	reader := bufio.NewReader(idle)
+	response, err := http.ReadResponse(reader, nil)
+	s.Require().NoError(err)
+	_, err = io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	_, silentEnd := silent.Read(make([]byte, 1))
+	_, idleEnd := reader.ReadByte()
+
+	s.ErrorIs(silentEnd, io.EOF)
+	s.ErrorIs(idleEnd, io.EOF)
+}
+
+// TestAnEncodedResponseToATokenIsRefused is A5: a host that encodes its echo in a way the
+// transport does not undo would hand the sandbox the token to decode.
+func (s *ProxySuite) TestAnEncodedResponseToATokenIsRefused() {
+	for _, encoding := range []string{"deflate", "x-gzip", "br", "identity, deflate"} {
+		s.answering(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Encoding", encoding)
+			_, _ = io.WriteString(w, r.Header.Get("Authorization"))
+		})
+
+		response, body := s.get("Bearer " + s.placeholder)
+
+		s.Equal(http.StatusBadGateway, response.StatusCode, encoding)
+		s.Empty(body, encoding)
+	}
+	s.Contains(s.logs.String(), "refused an encoded response")
+}
+
+// TestAnIdentityEncodedResponseIsRead: identity is no encoding.
+func (s *ProxySuite) TestAnIdentityEncodedResponseIsRead() {
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "identity")
+		_, _ = io.WriteString(w, r.Header.Get("Authorization"))
+	})
+
+	response, body := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal("Bearer "+s.placeholder, body)
+}
+
+// TestATrailerOrAnInformationalResponseIsNotSentOn is A5: ReverseProxy sends both on past
+// the response rewrite.
+func (s *ProxySuite) TestATrailerOrAnInformationalResponseIsNotSentOn() {
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", "<"+r.Header.Get("Authorization")+">; rel=preload")
+		w.WriteHeader(http.StatusEarlyHints)
+		w.Header().Del("Link")
+		w.Header().Set("Trailer", "X-Echo")
+		_, _ = io.WriteString(w, "body")
+		w.Header().Set("X-Echo", r.Header.Get("Authorization"))
+	})
+	var informational []string
+	request := s.request(http.MethodGet, "https://api.github.test/echo", "Bearer "+s.placeholder, "")
+	request = request.WithContext(httptrace.WithClientTrace(s.ctx, &httptrace.ClientTrace{
+		Got1xxResponse: func(status int, header textproto.MIMEHeader) error {
+			informational = append(informational, fmt.Sprint(status, header))
+			return nil
+		}}))
+
+	response, body, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal("body", body)
+	s.Empty(informational)
+	s.Empty(response.Trailer)
+}
+
+// TestAnEncodedEchoComesBackAsThePlaceholder is A5 for a host that escapes what it echoes:
+// in a JSON string, URL-encoded or in base64.
+func (s *ProxySuite) TestAnEncodedEchoComesBackAsThePlaceholder() {
+	const token = "gho/first+tok!en&x<y"
+	s.connect(token)
+	inJSON := func(value string) string { out, _ := json.Marshal(value); return strings.Trim(string(out), `"`) }
+	forms := []func(string) string{
+		inJSON,
+		func(value string) string { return strings.ReplaceAll(value, "/", `\/`) },
+		url.QueryEscape,
+		url.PathEscape,
+		func(value string) string { return base64.StdEncoding.EncodeToString([]byte(value)) },
+		func(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) },
+	}
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		sent := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		for _, form := range forms {
+			w.Header().Add("X-Echo", form(sent))
+		}
+		for _, form := range forms {
+			_, _ = io.WriteString(w, form(sent)+"\n")
+		}
+	})
+
+	response, body := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusOK, response.StatusCode)
+	for _, form := range forms {
+		s.NotContains(body, form(token))
+		s.Contains(body, form(s.placeholder)+"\n")
+	}
+	for i, form := range forms {
+		s.Equal(form(s.placeholder), response.Header.Values("X-Echo")[i])
+	}
+}
+
+// TestEveryValueOfAnEchoedHeaderIsRewritten: a host may send a header more than once.
+func (s *ProxySuite) TestEveryValueOfAnEchoedHeaderIsRewritten() {
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("X-Echo", "first")
+		w.Header().Add("X-Echo", r.Header.Get("Authorization"))
+	})
+
+	response, _ := s.get("Bearer " + s.placeholder)
+
+	s.Equal([]string{"first", "Bearer " + s.placeholder}, response.Header.Values("X-Echo"))
+}
+
+// TestARangeIsNotSentWithAToken is A5: a range of an echo hands the token over in pieces no
+// rewrite recognises.
+func (s *ProxySuite) TestARangeIsNotSentWithAToken() {
+	var ranges []string
+	s.answering(func(w http.ResponseWriter, r *http.Request) {
+		ranges = append(ranges, r.Header.Get("Range")+r.Header.Get("If-Range"))
+		http.ServeContent(w, r, "echo.txt", time.Time{}, strings.NewReader("auth="+r.Header.Get("Authorization")))
+	})
+	request := s.request(http.MethodGet, "https://api.github.test/echo", "Bearer "+s.placeholder, "")
+	request.Header.Set("Range", "bytes=12-18")
+	request.Header.Set("If-Range", `"tag"`)
+
+	response, body, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal("auth=Bearer "+s.placeholder, body)
+	s.Equal([]string{""}, ranges)
+}
+
+// TestTheSchemeIsReadWithoutCase: RFC 9110 section 11.1; the host gets it as it was sent.
+func (s *ProxySuite) TestTheSchemeIsReadWithoutCase() {
+	sent := []string{"bearer", "BEARER", "Token"}
+	for _, scheme := range sent {
+		_, body := s.get(scheme + " " + s.placeholder)
+		s.Contains(body, `"authorization":"`+scheme+" "+s.placeholder+`"`)
+	}
+
+	s.Equal([]string{"bearer gho_first-token-of-the-connection", "BEARER gho_first-token-of-the-connection",
+		"Token gho_first-token-of-the-connection"}, s.granted.authorizations())
+}
+
+// TestTheSandboxReadsNoTokenErrorText: the 401 and 502 say which binding gave no token, not
+// why, and the log holds none of the error either: a provider's may quote its answer.
+func (s *ProxySuite) TestTheSandboxReadsNoTokenErrorText() {
+	const canary = "canary-from-the-resolver"
+	s.fail(fmt.Errorf("%w: %s", sandbox.ErrNoCredential, canary))
+	disconnected, disconnectedBody := s.get("Bearer " + s.placeholder)
+	s.fail(errors.New(canary))
+	unavailable, unavailableBody := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusUnauthorized, disconnected.StatusCode)
+	s.Equal(http.StatusBadGateway, unavailable.StatusCode)
+	s.Equal("egress: the connection gives no token: github\n", disconnectedBody)
+	s.Equal("egress: the connection gives no token: github\n", unavailableBody)
+	s.NotContains(s.logs.String(), canary)
+	s.Contains(s.logs.String(), "class=no_credential")
+}
+
+// TestAHostThatCannotBeReachedIsABadGateway: and the dial error, which holds nothing of a
+// host's, is logged.
+func (s *ProxySuite) TestAHostThatCannotBeReachedIsABadGateway() {
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.answerAt(closed.Addr().String())
+	s.Require().NoError(closed.Close())
+
+	response, body := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusBadGateway, response.StatusCode)
+	s.Empty(body)
+	s.Contains(s.logs.String(), "connection refused")
+}
+
+// TestAHostThatSendsNoHeaderInTimeIsABadGateway: a slow host holds no tunnel past the
+// header timeout.
+func (s *ProxySuite) TestAHostThatSendsNoHeaderInTimeIsABadGateway() {
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.HeaderTimeout = 200 * time.Millisecond }))
+	s.T().Cleanup(s.proxy.Close)
+	release := make(chan struct{})
+	s.answering(func(http.ResponseWriter, *http.Request) { <-release })
+	// Before the host's Close, which waits for its handler.
+	s.T().Cleanup(func() { close(release) })
+
+	response, _ := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusBadGateway, response.StatusCode)
+	s.Contains(s.logs.String(), "class=header_timeout")
+}
+
+// TestAMalformedAnswerEchoingTheTokenIsNotLogged is A13: an error the transport gives for a
+// malformed header line, status line, length or trailer quotes the line; TearDownTest checks
+// the token reached no log.
+func (s *ProxySuite) TestAMalformedAnswerEchoingTheTokenIsNotLogged() {
+	for _, answer := range []func(string) string{
+		func(authorization string) string {
+			return "HTTP/1.1 200 OK\r\nbad header " + authorization + "\r\n\r\n"
+		},
+		func(authorization string) string { return "HTTP/1.1 " + authorization + "\r\n\r\n" },
+		func(authorization string) string {
+			return "HTTP/1.1 200 OK\r\nContent-Length: " + authorization + "\r\n\r\n"
+		},
+		func(authorization string) string {
+			return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nbody\r\n0\r\nbad trailer " + authorization + "\r\n\r\n"
+		},
+	} {
+		s.answeringRaw(answer)
+
+		response, err := s.sandbox(s.credential).Do(s.request(http.MethodGet, "https://api.github.test/echo", "Bearer "+s.placeholder, ""))
+		if err == nil {
+			_, _ = io.ReadAll(response.Body)
+			_ = response.Body.Close()
+		}
+	}
+
+	s.Contains(s.logs.String(), "got no answer it could read")
+	s.Contains(s.logs.String(), "lost a host's response mid-body")
 }
 
 // host is a granted or outside host: what it saw, and an echo of it.

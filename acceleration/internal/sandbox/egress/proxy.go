@@ -6,6 +6,7 @@ package egress
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -18,13 +19,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	publicegress "github.com/GetStream/Vision-Agents/acceleration/internal/egress"
@@ -39,6 +43,10 @@ const (
 	// idleTimeout closes a tunnel no request has used for it: http.DefaultTransport's
 	// IdleConnTimeout (net/http/transport.go).
 	idleTimeout = 90 * time.Second
+	// headerTimeout ends a request whose host sends no response header in time: nginx's
+	// proxy_read_timeout default
+	// (https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout).
+	headerTimeout = 60 * time.Second
 	// leafValidity is how long a host's certificate is valid. A client checks it only in the
 	// handshake it is minted for; an hour each side leaves room for a sandbox clock that is
 	// off by that much.
@@ -61,6 +69,9 @@ type Options struct {
 	// addresses only and verifies the host with the system's roots.
 	Transport http.RoundTripper
 	Logger    *slog.Logger
+	// HandshakeTimeout, IdleTimeout and HeaderTimeout replace handshakeTimeout, idleTimeout
+	// and headerTimeout when set, for tests.
+	HandshakeTimeout, IdleTimeout, HeaderTimeout time.Duration
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -72,6 +83,8 @@ type Proxy struct {
 	leafKey   *ecdsa.PrivateKey
 	transport http.RoundTripper
 	logger    *slog.Logger
+
+	handshakeTimeout, idleTimeout time.Duration
 }
 
 func New(options Options) (*Proxy, error) {
@@ -93,7 +106,8 @@ func New(options Options) (*Proxy, error) {
 		transport = publicegress.NewClient(0, nil).Transport
 	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
-		transport: transport, logger: options.Logger}, nil
+		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, logger: options.Logger,
+		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout)}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants cover, and nothing
@@ -124,8 +138,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	host = strings.ToLower(host)
 	// A grant names hosts, never addresses, so an address cannot be told apart from another
-	// host's (core.SandboxRule).
-	if net.ParseIP(host) != nil || !record.granted(host) {
+	// host's (core.SandboxRule). A * is no host's name: a wildcard grant would match it, and
+	// its certificate would be one for every name under the domain.
+	if net.ParseIP(host) != nil || strings.Contains(host, "*") || !record.granted(host) {
 		p.logger.Warn("the sandbox egress proxy refused a host", "session", record.Session, "host", host)
 		http.Error(w, "egress: the sandbox has no grant for this host", http.StatusForbidden)
 		return
@@ -165,19 +180,22 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 	}
 	server := &http.Server{
 		Handler:           p.inner(t),
-		ReadHeaderTimeout: handshakeTimeout,
-		IdleTimeout:       idleTimeout,
-		ErrorLog:          slog.NewLogLogger(p.logger.Handler(), slog.LevelDebug),
+		ReadHeaderTimeout: p.handshakeTimeout,
+		IdleTimeout:       p.idleTimeout,
+		// What it logs is the sandbox's side of the tunnel, a failed handshake or a panic in
+		// inner.
+		ErrorLog: slog.NewLogLogger(p.logger.Handler(), slog.LevelInfo),
 	}
-	// HTTP/1.1 only, so each request goes through inner, not an HTTP/2 stream it never sees.
+	// HTTP/1.1 only: the server here serves no HTTP/2, so a sandbox offering h2 is held to
+	// HTTP/1.1 rather than refused.
 	tlsConn := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{leaf}, NextProtos: []string{"http/1.1"},
 		MinVersion: tls.VersionTLS12})
 	// Serve returns once the one connection is taken; the server goes on serving it.
 	_ = server.Serve(&single{conn: tlsConn})
 }
 
-// inner forwards one request in t's tunnel. It reads the grants again for each, so a
-// credential Delete ends works in no tunnel it opened.
+// inner forwards one request in t's tunnel. It reads the grants again for each, so after
+// Delete no request goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -206,12 +224,15 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			http.Error(w, "egress: the sandbox's grant for this host has ended", http.StatusForbidden)
 			return
 		}
+		logger := p.logger.With("session", record.Session, "host", host)
 		forward := &httputil.ReverseProxy{
 			Rewrite:   func(pr *httputil.ProxyRequest) { p.toHost(pr, t) },
 			Transport: p.transport,
-			ErrorLog:  slog.NewLogLogger(p.logger.Handler(), slog.LevelDebug),
+			// It logs a body lost mid-copy, whose error may quote the host's bytes: a
+			// malformed trailer line that echoes the token.
+			ErrorLog: log.New(fixedLine{logger: logger, message: "the sandbox egress proxy lost a host's response mid-body"}, "", 0),
 			ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
-				p.logger.Warn("the sandbox egress proxy could not reach a host", "session", record.Session, "host", host, "error", err)
+				failed(logger, err)
 				w.WriteHeader(http.StatusBadGateway)
 			},
 		}
@@ -222,8 +243,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		}
 		token, err := p.tokens(r.Context(), grant)
 		if err != nil {
-			p.logger.Warn("the sandbox egress proxy has no token for a grant", "session", record.Session,
-				"binding", grant.Binding, "host", host, "error", err)
+			// A provider's refresh error may quote its answer (resolver.statusAfter wraps it),
+			// so only its class is logged.
+			logger.Warn("the sandbox egress proxy has no token for a grant", "binding", grant.Binding, "class", errorClass(err))
 			status := http.StatusBadGateway
 			if errors.Is(err, sandbox.ErrNoCredential) {
 				status = http.StatusUnauthorized
@@ -231,7 +253,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			http.Error(w, "egress: the connection gives no token: "+grant.Binding, status)
 			return
 		}
-		pairs := []string{token, grant.Placeholder}
+		pairs := echoes(token, grant.Placeholder)
 		if form.basic {
 			pairs = append(pairs, form.credential(token), form.credential(grant.Placeholder))
 		}
@@ -241,23 +263,175 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			// Without it the transport asks for gzip and decompresses, so the rewrite reads
 			// the body as sent (net/http Transport.DisableCompression).
 			pr.Out.Header.Del("Accept-Encoding")
+			// A range of an echo is a piece of the token no rewrite recognises.
+			pr.Out.Header.Del("Range")
+			pr.Out.Header.Del("If-Range")
 		}
 		forward.ModifyResponse = func(response *http.Response) error {
+			// An encoding the transport did not undo hides the token from the rewrite, and
+			// the sandbox decodes it.
+			if encoded(response.Header) {
+				return errEncoded
+			}
 			replacer := strings.NewReplacer(pairs...)
 			for _, values := range response.Header {
 				for i, value := range values {
 					values[i] = replacer.Replace(value)
 				}
 			}
-			response.Body = newRewriting(response.Body, pairs...)
+			// The transport fills Trailer in at the body's end, after this rewrite, and
+			// ReverseProxy sends it on, so it is dropped: Trailer here, the rest on Close.
+			response.Trailer = nil
+			response.Body = &trailerless{ReadCloser: newRewriting(response.Body, pairs...), response: response}
 			response.ContentLength = -1
 			response.Header.Del("Content-Length")
-			p.logger.Info("a sandbox request carried a connection's token", "session", record.Session,
-				"binding", grant.Binding, "host", host, "status", response.StatusCode)
+			logger.Info("a sandbox request carried a connection's token", "binding", grant.Binding, "status", response.StatusCode)
 			return nil
 		}
-		forward.ServeHTTP(w, r)
+		// ReverseProxy sends a 1xx's headers on before ModifyResponse sees any.
+		forward.ServeHTTP(finalOnly{w}, r)
 	}
+}
+
+// errEncoded is a substituted request's response in an encoding the rewrite cannot read.
+var errEncoded = errors.New("egress: the host's response is encoded")
+
+// encoded says whether header names a Content-Encoding other than identity: net/http's
+// transport undoes the gzip it asked for itself and removes the header.
+func encoded(header http.Header) bool {
+	for _, value := range header.Values("Content-Encoding") {
+		for coding := range strings.SplitSeq(value, ",") {
+			if coding = strings.TrimSpace(coding); coding != "" && !strings.EqualFold(coding, "identity") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// failed logs why a request got no answer from its host. Only an error from before the
+// connection was had, a dial or a TLS handshake, is logged as it is: any later one may quote
+// the host's answer, an echo of the token in a malformed header line.
+func failed(logger *slog.Logger, err error) {
+	var early unconnected
+	switch {
+	case errors.Is(err, errEncoded):
+		logger.Warn("the sandbox egress proxy refused an encoded response to a request with a token")
+	case errors.As(err, &early):
+		logger.Warn("the sandbox egress proxy could not reach a host", "error", early.err)
+	default:
+		logger.Warn("the sandbox egress proxy got no answer it could read from a host", "class", errorClass(err))
+	}
+}
+
+// errorClass is the kind of err, for a log that must not hold its text.
+func errorClass(err error) string {
+	var netErr net.Error
+	switch {
+	case errors.Is(err, errNoHeader):
+		return "header_timeout"
+	case errors.Is(err, sandbox.ErrNoCredential):
+		return "no_credential"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.As(err, &netErr):
+		return "network"
+	}
+	return "other"
+}
+
+// fixedLine is a log.Logger's writer that logs message, never what it was given.
+type fixedLine struct {
+	logger  *slog.Logger
+	message string
+}
+
+func (f fixedLine) Write(p []byte) (int, error) {
+	f.logger.Warn(f.message)
+	return len(p), nil
+}
+
+// trailerless is a response body that leaves its response no trailer once it is closed,
+// which is when ReverseProxy reads it.
+type trailerless struct {
+	io.ReadCloser
+	response *http.Response
+}
+
+func (b *trailerless) Close() error {
+	err := b.ReadCloser.Close()
+	b.response.Trailer = nil
+	return err
+}
+
+// finalOnly is a ResponseWriter that sends no informational (1xx) response.
+type finalOnly struct {
+	http.ResponseWriter
+}
+
+func (w finalOnly) WriteHeader(status int) {
+	if status >= http.StatusOK {
+		w.ResponseWriter.WriteHeader(status)
+	}
+}
+
+func (w finalOnly) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// errNoHeader is a host that sent no response header within the header timeout.
+var errNoHeader = errors.New("egress: the host sent no response header in time")
+
+// outbound sends a request with next, ends it when the host sends no response header
+// within headerTimeout, and marks an error from before a connection was had as unconnected.
+type outbound struct {
+	next          http.RoundTripper
+	headerTimeout time.Duration
+}
+
+func (o outbound) RoundTrip(request *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithCancel(request.Context())
+	var connected atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }})
+	timer := time.AfterFunc(o.headerTimeout, cancel)
+	response, err := o.next.RoundTrip(request.WithContext(ctx))
+	if !timer.Stop() {
+		if err == nil {
+			_ = response.Body.Close()
+		}
+		cancel()
+		return nil, stack.Wrap(errNoHeader)
+	}
+	if err != nil {
+		cancel()
+		if !connected.Load() {
+			return nil, unconnected{err: err}
+		}
+		return nil, err
+	}
+	response.Body = cancelling{ReadCloser: response.Body, cancel: cancel}
+	return response, nil
+}
+
+// unconnected is an error from before a connection to the host was had, which holds no byte
+// the host sent.
+type unconnected struct {
+	err error
+}
+
+func (u unconnected) Error() string { return u.err.Error() }
+func (u unconnected) Unwrap() error { return u.err }
+
+// cancelling is a response body that ends its request's context once closed.
+type cancelling struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b cancelling) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 // toHost sends pr to port 443 of the tunnel's host, whatever its URL says.

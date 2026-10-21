@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"log/slog"
+	"net"
+	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -26,4 +28,22 @@ func newSandboxProxy(settings config.CodeSandbox, redis *live.Client, connection
 	}
 	return egress.New(egress.Options{Store: egress.NewStore(redis.Redis()), Tokens: egress.ResolverTokens(connections, schemes),
 		CACert: []byte(settings.ProxyCACert), CAKey: []byte(settings.ProxyCAKey), Logger: logger})
+}
+
+// serveSandboxProxy has serve run proxy on addr, until stop. Without a proxy it listens on
+// nothing.
+func serveSandboxProxy(proxy *egress.Proxy, addr string, serve func(*http.Server, net.Listener),
+	logger *slog.Logger) (stop func() error, err error) {
+	if proxy == nil {
+		return func() error { return nil }, nil
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout}
+	logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr")
+	go serve(server, listener)
+	// Close, not a drain: a tunnel is the sandbox's to reopen.
+	return server.Close, nil
 }

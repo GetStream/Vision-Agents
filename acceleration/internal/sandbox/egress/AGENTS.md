@@ -9,17 +9,18 @@ The router's egress proxy for code in a sandbox. The sandbox holds a placeholder
 3. The host must be a name one of the record's grants covers, and the port 443. An IP literal, any other host or any other port: 403, nothing is tunnelled.
 4. The proxy answers the TLS handshake with a certificate for the host, signed by the router's CA (`code_sandbox.proxy_ca_cert`, `proxy_ca_key`). The sandbox trusts that CA's certificate.
 5. For each request in the tunnel it reads the record again (a `Delete` ends open tunnels too), checks `Host` is the CONNECT host (else 421), and looks for a grant's placeholder in `Authorization`: `Bearer <ph>`, `token <ph>`, or Basic whose password is `<ph>`. Nowhere else: not the body, the query or another header.
-6. With one, it asks `Tokens` for the token (the connections resolver, on every request: no copy is kept), puts it in the placeholder's place, and sends the request over TLS verified with the system's roots. The response's headers and body have the token, and Basic's encoded form of it, turned back into the placeholder.
+6. With one, it asks `Tokens` for the token (the connections resolver, on every request: no copy is kept), puts it in the placeholder's place, and sends the request over TLS verified with the system's roots. The response's headers and body have the token turned back into the placeholder: as sent, in a JSON string, URL-encoded, in base64 and in Basic's encoded form. `Range` and `If-Range` are dropped from the request, so no echo comes back in pieces. A response in a `Content-Encoding` the transport did not undo is refused (502), and its trailers and any 1xx response are not sent on.
 
 ## Rules
 
-- The token is never logged, put in an error or returned to the sandbox. Logs name the session, binding, host and status only.
+- The token is never logged, put in an error or returned to the sandbox. Logs name the session, binding, host and status only. An error from the host, or from a provider's refresh, may quote its answer, so only its class is logged; a dial or TLS error, which holds no byte of an answer, is logged as it is.
 - A non-CONNECT request is refused (405): plain HTTP would carry a placeholder in the clear.
 - Upgrades are refused (501): an upgraded connection's bytes would skip the response rewrite.
 
 ## Known limits
 
-- A host that echoes the token in another encoding (escaped, compressed with an encoding the transport does not undo, split across headers) gives it to the sandbox. Grant only hosts that do not.
+- A host that echoes the token in a form the rewrite does not know (another escape, split across headers, its case changed) gives it to the sandbox. Grant only hosts that do not.
+- A host that keeps the token it was sent and returns it later, in the response to a request that carries no placeholder, gives it to the sandbox: only a response to a request with the token is rewritten.
 - A valid proxy credential works from wherever the proxy is reachable: the proxy cannot tell the sandbox from someone who copied the credential out of it. The accepted controls are the network and the credential's life, not code here: the port is reachable only from the sandbox provider's egress (AI-1582), and each sandbox gets its own random credential that expires with its session (`Store.Put`'s ttl) and ends on `Delete`.
 
 ## Tests

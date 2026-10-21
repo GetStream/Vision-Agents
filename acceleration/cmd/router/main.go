@@ -1306,17 +1306,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
-	if sandboxProxy != nil {
-		proxies, err := net.Listen("tcp", settings.CodeSandbox.ProxyAddr)
-		if err != nil {
-			return err
-		}
-		// Close, not a drain: a tunnel is the sandbox's to reopen.
-		proxyServer := &http.Server{Handler: sandboxProxy, ReadHeaderTimeout: readHeaderTimeout}
-		defer proxyServer.Close()
-		logger.Info("serving the sandbox egress proxy", "address", proxies.Addr().String(), "setting", "code_sandbox.proxy_addr")
-		go serve(proxyServer, proxies)
+	stopSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, serve, logger)
+	if err != nil {
+		return err
 	}
+	defer stopSandboxProxy()
 
 	if settings.PprofAddr != "" {
 		go servePprof(settings.PprofAddr, logger)

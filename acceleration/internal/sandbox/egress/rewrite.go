@@ -3,7 +3,9 @@ package egress
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"io"
+	"net/url"
 	"strings"
 )
 
@@ -39,6 +41,44 @@ func (a authorization) credential(secret string) string {
 		return base64.StdEncoding.EncodeToString([]byte(a.user + ":" + secret))
 	}
 	return secret
+}
+
+// echoes are token and placeholder in each form a host may echo a credential in, as
+// newRewriting takes them: as sent, in a JSON string (Go's encoder escapes & < >, PHP's
+// json_encode escapes /), URL-encoded and in base64. A form the same as the token as sent
+// is left out.
+func echoes(token, placeholder string) []string {
+	pairs := []string{token, placeholder}
+	seen := map[string]bool{token: true}
+	for _, form := range []func(string) string{
+		func(s string) string { return jsonString(s, true) },
+		func(s string) string { return jsonString(s, false) },
+		func(s string) string { return strings.ReplaceAll(jsonString(s, true), "/", `\/`) },
+		func(s string) string { return strings.ReplaceAll(jsonString(s, false), "/", `\/`) },
+		url.QueryEscape, url.PathEscape,
+		inBase64(base64.StdEncoding), inBase64(base64.URLEncoding),
+		inBase64(base64.RawStdEncoding), inBase64(base64.RawURLEncoding),
+	} {
+		if old := form(token); !seen[old] {
+			seen[old] = true
+			pairs = append(pairs, old, form(placeholder))
+		}
+	}
+	return pairs
+}
+
+func inBase64(encoding *base64.Encoding) func(string) string {
+	return func(s string) string { return encoding.EncodeToString([]byte(s)) }
+}
+
+// jsonString is s in a JSON string, without its quotes.
+func jsonString(s string, escapeHTML bool) string {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(escapeHTML)
+	// A string always encodes.
+	_ = encoder.Encode(s)
+	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(out.String(), "\n"), `"`), `"`)
 }
 
 // rewriting is a response body with every olds[i] replaced by news[i] as it streams, so a
@@ -88,7 +128,9 @@ func (r *rewriting) rewrite() {
 	for {
 		at, which := -1, 0
 		for i, old := range r.olds {
-			if found := bytes.Index(r.in, old); found >= 0 && (at < 0 || found < at) {
+			// The leftmost first, so none before it goes out as it is; at one place the
+			// longest, as a padded base64 begins with its unpadded form.
+			if found := bytes.Index(r.in, old); found >= 0 && (at < 0 || found < at || found == at && len(old) > len(r.olds[which])) {
 				at, which = found, i
 			}
 		}

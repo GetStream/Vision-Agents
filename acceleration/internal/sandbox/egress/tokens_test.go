@@ -136,6 +136,18 @@ func (s *ResolverTokensSuite) TestASchemeThatIsNotRegisteredOrSendsNoBearerGives
 	s.ErrorIs(notBearer, sandbox.ErrNotBearer)
 }
 
+// TestAConnectionThatCannotAnswerNowStillHasACredential: a request that ends, or a store
+// that cannot be read, is a 502 to retry, never a 401 asking for a reconnect.
+func (s *ResolverTokensSuite) TestAConnectionThatCannotAnswerNowStillHasACredential() {
+	ended, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, err := s.tokens(ended, s.grant)
+
+	s.Require().ErrorIs(err, context.Canceled)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
+}
+
 // sends is a scheme whose requests carry authorization as their Authorization.
 type sends struct {
 	core.Scheme
