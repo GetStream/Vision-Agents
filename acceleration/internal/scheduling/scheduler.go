@@ -114,7 +114,29 @@ const (
 	ReasonNoLine      = "no_agent_number"
 	ReasonNotAnswered = "not_answered"
 	ReasonRungAlready = "already_called"
+	// ReasonPaused is not a failure: it is on the missed run of a one-shot
+	// whose time came while the task was paused.
+	ReasonPaused = "task_paused"
 )
+
+// SleptThrough is the missed run of the occurrence a paused one-shot slept
+// through, for a resume that finds its time gone; nil when there is none. A
+// repeating task has none: a pause skips what it sleeps through. Nor has an
+// active task, whose due occurrence is the worker's, or a failed one, whose
+// occurrence has its failed run; paused after failing, it has no next run.
+// Inserted, the occurrence's unique key leaves a run already there (one
+// settled by the pause, or one a second resume wrote) as it is.
+func SleptThrough(task store.ScheduledTask) *store.ScheduledTaskRun {
+	if task.RRule != "" || task.State != store.ScheduledTaskPaused || task.NextRunAt == nil {
+		return nil
+	}
+	finished, reason := time.Now().UTC(), ReasonPaused
+	return &store.ScheduledTaskRun{
+		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: *task.NextRunAt,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunMissed, Error: &reason, FinishedAt: &finished,
+	}
+}
 
 // ReasonOf is the code a failed attempt is recorded under.
 func ReasonOf(err error) string {

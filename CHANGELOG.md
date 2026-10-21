@@ -681,7 +681,9 @@ them included; what the user types next is counted on their day as before.
 
 The same tasks are a REST resource, `/v1/agents/scheduled-tasks`: a backend schedules for
 the user it names with `X-Stream-User-Id`, and the owner reads, changes, pauses, resumes
-and deletes their tasks from a device, runs included. `agent.yaml` takes a `scheduling:`
+and deletes their tasks from a device, runs included. A one-shot resumed after its time
+came is completed, its occurrence listed as a `missed` run with error `task_paused`.
+`agent.yaml` takes a `scheduling:`
 block (`enabled`, `max_tasks_per_user`, `default_timezone`) in the Go, Python and
 JavaScript SDKs.
 
@@ -866,8 +868,8 @@ writes them on the person's message as `image` attachments, so every reader of t
 them. The model sees them with the reply to that question alone, as it already did in a session
 not kept in Chat; when the conversation is reopened, history says the photos were sent without
 sending them again. A retry with the same id, text and images is the same question; different
-images under the same id are a 409. Videos still take no request id. The Swift SDK now sends a
-request id with every question, images or not.
+images under the same id are a 409. Videos still take no request id. The Swift and Kotlin SDKs now
+send a request id with every question, images or not.
 
 ### The reply model is told who is speaking once a second person talks
 
