@@ -8,12 +8,12 @@ import { LiveReasoning } from "../src/index.js";
 describe("LiveReasoning", () => {
   let reasoning: LiveReasoning;
 
-  function window(text: string, offset: number, id = "r1"): void {
+  function window(text: string, offset: number, id = "r1", message = "reply"): void {
     reasoning.read({
-      id: "m1",
+      id: message,
       text: "ignored",
       reasoning: { id, offset, text, length: offset + text.length },
-    } as { reasoning?: unknown });
+    } as { id: string; reasoning?: unknown });
   }
 
   beforeEach(() => {
@@ -24,7 +24,7 @@ describe("LiveReasoning", () => {
     window("The order was ", 0);
     window("delivered unopened.", 14);
 
-    assert.equal(reasoning.get("r1"), "The order was delivered unopened.");
+    assert.equal(reasoning.get("reply", "r1"), "The order was delivered unopened.");
   });
 
   it("adds only what is new from a repeat of recent thinking", () => {
@@ -33,7 +33,7 @@ describe("LiveReasoning", () => {
     window("the policy, which allows 30 days", 9);
     window("policy", 13);
 
-    assert.equal(reasoning.get("r1"), "Checking the policy, which allows 30 days");
+    assert.equal(reasoning.get("reply", "r1"), "Checking the policy, which allows 30 days");
   });
 
   it("leaves a paragraph break for a missed window rather than running on", () => {
@@ -41,14 +41,14 @@ describe("LiveReasoning", () => {
 
     window("Much later.", 40);
 
-    assert.equal(reasoning.get("r1"), "First thought.\n\nMuch later.");
+    assert.equal(reasoning.get("reply", "r1"), "First thought.\n\nMuch later.");
   });
 
   it("starts somebody joining midway from the window they get", () => {
     window("the rest of it", 300, "r2");
 
-    assert.equal(reasoning.get("r2"), "the rest of it");
-    assert.equal(reasoning.get("r1"), undefined);
+    assert.equal(reasoning.get("reply", "r2"), "the rest of it");
+    assert.equal(reasoning.get("reply", "r1"), undefined);
   });
 
   it("counts positions in code points, as the router does", () => {
@@ -56,12 +56,28 @@ describe("LiveReasoning", () => {
 
     window(" 🌸 bloom", 4);
 
-    assert.equal(reasoning.get("r1"), "café 🌸 bloom");
+    assert.equal(reasoning.get("reply", "r1"), "café 🌸 bloom");
+  });
+
+  // Every reply numbers its steps from `r1`, so a later reply's first round is not the earlier
+  // one's, whether it thinks for less or for more.
+  it("keeps each reply's thinking for its own steps", () => {
+    window("Looking up the order history and the return policy.", 0, "r1", "first");
+
+    window("Refund it.", 0, "r1", "second");
+    window("Checking which of the two orders arrived damaged, then the refund window.", 0, "r1", "third");
+
+    assert.equal(reasoning.get("first", "r1"), "Looking up the order history and the return policy.");
+    assert.equal(reasoning.get("second", "r1"), "Refund it.");
+    assert.equal(
+      reasoning.get("third", "r1"),
+      "Checking which of the two orders arrived damaged, then the refund window.",
+    );
   });
 
   it("changes nothing for a message with no window", () => {
-    reasoning.read({});
+    reasoning.read({ id: "reply" });
 
-    assert.equal(reasoning.get("r1"), undefined);
+    assert.equal(reasoning.get("reply", "r1"), undefined);
   });
 });

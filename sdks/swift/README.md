@@ -78,7 +78,7 @@ let parts = AIMessagePart.parts(from: message.allAttachments.map { ($0.type.rawV
 VStack(alignment: .leading) {
     AIMessagePartsView(parts: parts) { part in
         if let step = part.reasoning {
-            StreamingReasoningView(part: step, text: reasoning[step.id])
+            StreamingReasoningView(part: step, text: reasoning[message: message.id, step: step.id])
         } else {
             AIMessagePartView(part: part, approver: approver)
         }
@@ -89,9 +89,10 @@ VStack(alignment: .leading) {
 
 A step keeps only the opening of its reasoning. The whole of it comes with the reply's live
 updates, a window at a time, and `LiveReasoning` puts it back together: read every
-`MessageUpdatedEvent` into it, from `chatClient.eventsController()`, and look a step up by its id.
-The same events controller carries `AIIndicatorUpdateEvent`, which says what the agent is
-doing before its answer starts, for `AITypingIndicatorView`.
+`MessageUpdatedEvent` into it, from `chatClient.eventsController()`, and look a step up by its
+reply and its id: every reply numbers its steps from `r1`. The same events controller carries
+`AIIndicatorUpdateEvent`, which says what the agent is doing before its answer starts, for
+`AITypingIndicatorView`.
 
 Ask with `session.responses.create`, from `AIComposerView`'s send; its stop button is
 `session.interrupt()`. Start the session first, so its socket runs this phone's tools.
