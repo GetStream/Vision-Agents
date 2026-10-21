@@ -695,9 +695,35 @@ func (s *StreamsSuite) TestAVendorThatRefusesTheAccountHandsTheSocketToTheNextMo
 		}
 	}()
 
+	// Before any of the next model's words: the caller is told who transcribes from now on,
+	// in the shape of the first started, and hears nothing of the refusal.
+	handedOver := s.nextFrame(listening)
+	s.Equal(frame{"type": "started", "provider": "echoing", "model": "echoing-model"}, handedOver,
+		"the refusal reached the caller rather than the model now transcribing")
 	transcript := s.nextFrame(listening)
-	s.Equal("transcript", transcript["type"], "the refusal reached the caller rather than the next model's words: %v", transcript)
+	s.Equal("transcript", transcript["type"], "%v", transcript)
 	s.Equal("echoing", transcript["provider"])
+}
+
+func (s *StreamsSuite) TestASocketNoModelRefusesStartsOnce() {
+	// The model the refusing one hands over to, opened on its own.
+	listening := s.start("/v1/stt/stream", frame{"target": "echoing/echoing-model"})
+	s.Require().Equal("started", s.nextFrame(listening)["type"])
+	silence := audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1}
+	for range 2 {
+		s.Require().NoError(listening.WriteMessage(websocket.BinaryMessage, silence.Bytes()))
+	}
+	for range 2 {
+		heard := s.nextFrame(listening)
+		s.Require().Equal("transcript", heard["type"], "%v", heard)
+	}
+
+	s.Require().NoError(listening.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")))
+	rest, _ := s.ending(listening)
+	for _, read := range rest {
+		s.NotEqual("started", read["type"], "a socket no model refused said it started again: %v", rest)
+	}
 }
 
 // refused opens a socket on the model that refuses the account, speaks into it and returns
