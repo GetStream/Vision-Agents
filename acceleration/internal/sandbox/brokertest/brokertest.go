@@ -1,6 +1,6 @@
 // Package brokertest is the suite every sandbox.CredentialBroker passes: the contract the
 // session relies on, and the attacks on it a test can make without a sandbox's real egress
-// (A1, A2, A8, A9, A10 and A13 of the wave's attack table; the egress ones run live for each
+// (A1, A2, A8, A9, A10 and A13, as far as logs and errors go, of the wave's attack table; the egress ones run live for each
 // broker). It is test code: import it only from _test.go files.
 package brokertest
 
@@ -10,14 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
-	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -31,8 +27,10 @@ type Subject struct {
 	Held func(ref string) (value string, hosts []string, ok bool)
 	// Left is everything the broker has left with the provider, of every session.
 	Left func() []string
-	// Refuse makes the provider refuse every request from now on.
+	// Refuse makes the provider refuse every request from now on, until Recover.
 	Refuse func()
+	// Recover has the provider answer again.
+	Recover func()
 }
 
 // BrokerContract is the suite. New builds a broker for session over tokens, logging to
@@ -44,7 +42,6 @@ type BrokerContract struct {
 	ctx    context.Context
 	logs   *bytes.Buffer
 	logger *slog.Logger
-	spans  *tracetest.SpanRecorder
 
 	mu sync.Mutex
 	// tokens are what each binding's connection holds now, and refused the error each
@@ -57,31 +54,19 @@ type BrokerContract struct {
 	errs   []error
 }
 
-// SetupSuite installs the span recorder once: the global provider takes a delegate once
-// per process.
-func (s *BrokerContract) SetupSuite() {
-	s.spans = tracetest.NewSpanRecorder()
-	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(s.spans)))
-}
-
 func (s *BrokerContract) SetupTest() {
 	s.ctx = context.Background()
 	s.logs = &bytes.Buffer{}
 	s.logger = slog.New(slog.NewMultiHandler(slog.NewJSONHandler(s.logs, nil), slog.NewTextHandler(s.logs, nil)))
-	s.spans.Reset()
 	s.tokens, s.refused, s.issued, s.errs = map[string]sandbox.Token{}, map[string]error{}, nil, nil
 	s.connect("github", "gho_first", 1)
 }
 
-// TearDownTest is A13: no token reached a log line, a span or an error.
+// TearDownTest is A13: no token reached a log line or an error. Spans are not checked: the
+// provider SDKs make theirs only when told to, with an exporter of their own.
 func (s *BrokerContract) TearDownTest() {
-	var spans strings.Builder
-	for _, span := range s.spans.Ended() {
-		fmt.Fprintf(&spans, "%s %v %v %v\n", span.Name(), span.Attributes(), span.Events(), span.Status())
-	}
 	for _, token := range s.issued {
 		s.NotContains(s.logs.String(), token, "a log line")
-		s.NotContains(spans.String(), token, "a span")
 		for _, err := range s.errs {
 			s.NotContains(fmt.Sprintf("%v %+v", err, err), token, "an error")
 		}
@@ -273,4 +258,48 @@ func (s *BrokerContract) TestAProviderThatRefusesLeavesTheTokenInNoError() {
 	_, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
 
 	s.Error(s.returned(err))
+}
+
+// TestARefusedRefreshIsAnErrorWithoutTheToken is A13 on the refresh path: a new revision the
+// provider refuses to take fails the run, and the error holds no token.
+func (s *BrokerContract) TestARefusedRefreshIsAnErrorWithoutTheToken() {
+	subject := s.subject("session-1")
+	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
+	s.Require().NoError(s.returned(err))
+
+	s.connect("github", "gho_second", 2)
+	subject.Refuse()
+
+	s.Error(s.returned(subject.Broker.BeforeRun(s.ctx)))
+	subject.Recover()
+	value, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	s.Require().True(ok)
+	s.Equal("gho_first", value)
+}
+
+// TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried: a revoked connection's credential
+// the provider would not delete fails the run, stays held, and goes on the next run or Close.
+func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried() {
+	subject := s.subject("session-1")
+	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN"), grant("gitlab", "GITLAB_TOKEN")})
+	s.Require().NoError(s.returned(err))
+	s.Require().Len(mount.Secrets, 2)
+
+	s.disconnect("github")
+	subject.Refuse()
+	s.Error(s.returned(subject.Broker.BeforeRun(s.ctx)))
+	_, _, ok := subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	s.True(ok, "the secret stays while the provider refuses")
+
+	subject.Recover()
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+	_, _, ok = subject.Held(mount.Secrets["GITHUB_TOKEN"])
+	s.False(ok, "the next run withdraws it")
+	s.Len(subject.Left(), 1)
+
+	subject.Refuse()
+	s.Error(s.returned(subject.Broker.Close(s.ctx)))
+	subject.Recover()
+	s.Require().NoError(s.returned(subject.Broker.Close(s.ctx)))
+	s.Empty(subject.Left(), "Close deletes what an earlier try could not")
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
@@ -123,6 +124,34 @@ func (s *SandboxGrantsSuite) TestASchemeWithoutABearerTokenOrNoResolverGivesNoCr
 
 	s.ErrorIs(unsent, sandbox.ErrNoCredential)
 	s.ErrorIs(unresolved, sandbox.ErrNoCredential)
+}
+
+// nonBearer is a scheme that sends its credential as Basic, which Daytona would not
+// replace a placeholder in.
+type nonBearer struct{ core.Scheme }
+
+func (nonBearer) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return roundTripper(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+		return base.RoundTrip(r)
+	})
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestASchemeSendingAnotherAuthorizationGivesNoCredential: a header that is not
+// "Bearer <token>" is no token to hand over, whatever it holds.
+func (s *SandboxGrantsSuite) TestASchemeSendingAnotherAuthorizationGivesNoCredential() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, d := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+
+	_, err := s.manager.sandboxTokens(map[string]core.Scheme{"crm": nonBearer{d.schemes["crm"]}})(s.ctx, box.(sandbox.Granted).Grants()[0])
+
+	s.ErrorIs(err, sandbox.ErrNoCredential)
 }
 
 // TestAResolverFailureThatMayPassIsNoReasonToWithdraw: any other failure, here a cancelled

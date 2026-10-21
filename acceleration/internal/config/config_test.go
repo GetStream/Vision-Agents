@@ -215,6 +215,18 @@ func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnle
 	s.ErrorContains(err, "code_sandbox.broker")
 }
 
+// TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.
+func (s *ConfigSuite) TestTheSecretPrefixHoldsNoUnderscore() {
+	for _, prefix := range []string{"stg_dev", "Stg", "stg-dev", "stg.dev"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", prefix)
+		_, _, err := Load("")
+		s.ErrorContains(err, "code_sandbox.secret_prefix", prefix)
+	}
+	s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", "stg2")
+	_, _, err := Load("")
+	s.NoError(err)
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -3,9 +3,11 @@ package daytona
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"slices"
 	"testing"
 
@@ -48,6 +50,11 @@ func TestSecretsBrokerContract(t *testing.T) {
 				held.mu.Lock()
 				defer held.mu.Unlock()
 				held.refuse = true
+			},
+			Recover: func() {
+				held.mu.Lock()
+				defer held.mu.Unlock()
+				held.refuse = false
 			},
 		}
 	}})
@@ -144,6 +151,58 @@ func (s *SecretsSuite) TestARequiredGrantWithoutACredentialCreatesNoSandbox() {
 	_, err := box.Run(s.ctx, "print(1)", nil)
 
 	s.ErrorIs(err, sandbox.ErrNoCredential)
+	s.Empty(s.platform.history())
+}
+
+// TestASandboxDaytonaWouldNotDeleteStillLosesItsSecrets: the secrets go first, so a sandbox
+// that stays at Daytona holds no credential, and Close reports the sandbox.
+func (s *SecretsSuite) TestASandboxDaytonaWouldNotDeleteStillLosesItsSecrets() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.platform.mu.Lock()
+	s.platform.deleteStatus = http.StatusInternalServerError
+	s.platform.mu.Unlock()
+
+	s.Error(s.box.Close())
+
+	s.Empty(s.platform.secretNames())
+}
+
+// TestAGrantWithoutHostsIsRefused: Daytona would keep a secret that no host may receive.
+func (s *SecretsSuite) TestAGrantWithoutHostsIsRefused() {
+	hostless := github
+	hostless.Hosts = nil
+	box := s.granted("stg", sandbox.Config{}, hostless)
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.ErrorContains(err, "no host")
+	s.Empty(s.platform.history())
+}
+
+// TestAGrantAddsItsHostsToAnOpenNetworkWithDomains: network with allowed_domains is the
+// domain list, so the grant's hosts join it (ruling 3).
+func (s *SecretsSuite) TestAGrantAddsItsHostsToAnOpenNetworkWithDomains() {
+	box := s.granted("stg", sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org"}}, github)
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("pypi.org,api.github.com,uploads.github.com", s.platform.requests()[0]["domainAllowList"])
+}
+
+// TestARequiredGrantWhoseCredentialFailedJustNowCreatesNoSandbox: a required grant is never
+// left out silently, whatever the reason.
+func (s *SecretsSuite) TestARequiredGrantWhoseCredentialFailedJustNowCreatesNoSandbox() {
+	required := github
+	required.Required = true
+	box := s.granted("stg", sandbox.Config{}, required)
+	s.tokenErr = errors.New("the provider could not renew the credential just now")
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, sandbox.ErrNoCredential)
 	s.Empty(s.platform.history())
 }
 

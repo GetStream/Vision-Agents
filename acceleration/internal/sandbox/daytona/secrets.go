@@ -84,6 +84,9 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 	defer s.mu.Unlock()
 	mount := sandbox.Mount{Secrets: map[string]string{}}
 	for _, grant := range grants {
+		if len(grant.Hosts) == 0 {
+			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: connector %q has no host for the sandbox to send its credential to", grant.Binding), s.release(ctx))
+		}
 		token, err := s.options.Tokens(ctx, grant)
 		if err != nil {
 			if grant.Required {

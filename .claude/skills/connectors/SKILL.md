@@ -171,7 +171,8 @@ connector's API. Code reads a placeholder (`dtn_secret_…`) from the env var th
 over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token there
 (https://www.daytona.io/docs/en/secrets.md); code never reads the token.
 
-- The router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging); without it a session
+- The router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging; lowercase letters and
+  digits only, so one router's sweep never matches another's); without it a session
   with such a binding is refused. Each session's secret is `va_<prefix>_<session>_<binding>_<8 hex>`.
 - The grant's hosts join the sandbox's domain allow list; a config with `network: true` or a
   `network_allow_list` keeps its own.
@@ -181,6 +182,13 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect deletes it. Daytona refuses a request that carries a placeholder it does not
   substitute (another host, the query, another session's): 502 «could not reach upstream host».
+- `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
+  grants, the connector limiter and the audit. That is intended.
+- Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
+  host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
+  broker closes it.
+- Known limit: a router crash, or a Close that fails or times out, leaves the secret (a live
+  token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
 - `go test -tags daytona_live -run TestLiveSuite ./internal/sandbox/daytona` runs the attacks
   against Daytona with `DAYTONA_API_KEY` and canary values.
 

@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -334,6 +335,11 @@ type CodeSandbox struct {
 	SecretPrefix string `koanf:"secret_prefix"`
 }
 
+// secretPrefix is what code_sandbox.secret_prefix may hold. Secrets are named
+// va_<prefix>_<session>_..., so a prefix with an underscore in it would make one router's
+// sweep of va_stg_ match the secrets of another named stg_dev.
+var secretPrefix = regexp.MustCompile(`^[a-z0-9]+$`)
+
 // CodeSandboxBrokerDaytona is the code_sandbox.broker value for Daytona Secrets
 // (daytona.BrokerName).
 const CodeSandboxBrokerDaytona = "daytona"
@@ -597,6 +603,10 @@ func (c Config) validate() error {
 	}
 	if c.CodeSandbox.Broker != CodeSandboxBrokerDaytona {
 		return fmt.Errorf("config: code_sandbox.broker is %s, got %q", CodeSandboxBrokerDaytona, c.CodeSandbox.Broker)
+	}
+	if c.CodeSandbox.SecretPrefix != "" && !secretPrefix.MatchString(c.CodeSandbox.SecretPrefix) {
+		return fmt.Errorf("config: code_sandbox.secret_prefix is lowercase letters and digits only, got %q: "+
+			"a prefix holding _ would match another router's secrets (va_stg_ and va_stg_dev_)", c.CodeSandbox.SecretPrefix)
 	}
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
