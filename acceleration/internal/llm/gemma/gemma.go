@@ -1,4 +1,5 @@
-// Package gemma reaches a Gemma 4 model deployed on Baseten.
+// Package gemma reaches a Gemma 4 model served by vLLM on our own deployment: Baseten, or
+// any other OpenAI-compatible host.
 //
 // Unlike DeepSeek, Gemma is not on Baseten's shared Model APIs: it has to be deployed,
 // which gives it its own endpoint. The Truss recipe is in deploy/gemma-4. Until someone
@@ -21,8 +22,13 @@ import (
 // ProviderName is the stable name used in routing config and stats.
 const ProviderName = "gemma"
 
-// apiKeyEnvVar holds the credentials when Options does not.
-const apiKeyEnvVar = "BASETEN_API_KEY"
+// apiKeyEnvVar holds the credentials when Options does not, for whichever host serves the
+// deployment.
+const apiKeyEnvVar = "GEMMA_API_KEY"
+
+// basetenAPIKeyEnvVar is read when apiKeyEnvVar is empty, so a deployment on Baseten needs
+// no key of its own.
+const basetenAPIKeyEnvVar = "BASETEN_API_KEY"
 
 // baseURLEnvVar is the deployment's OpenAI-compatible endpoint, which Baseten prints once
 // the model is pushed.
@@ -57,10 +63,10 @@ type Options struct {
 // makes an undeployed Gemma fail over rather than hang.
 func New(options Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = keypool.Getenv(apiKeyEnvVar)
+		options.APIKey = keypool.Getenv(apiKeyEnvVar, basetenAPIKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, stack.Wrap(errors.New("gemma: " + apiKeyEnvVar + " is required"))
+		return nil, stack.Wrap(errors.New("gemma: " + apiKeyEnvVar + " or " + basetenAPIKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = defaultModel

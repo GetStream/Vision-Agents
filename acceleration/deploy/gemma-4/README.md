@@ -60,6 +60,12 @@ GEMMA_BASE_URL=https://model-$MODEL_ID.api.baseten.co/environments/production/sy
 The Go provider appends `/chat/completions` to that, so the URL must end in `/v1` and nothing
 more. `BASETEN_API_KEY` is the bearer token.
 
+## Another host
+
+Any host that serves this vLLM recipe over OpenAI-compatible chat completions works the same
+way. Point `GEMMA_BASE_URL` at its root up to `/v1` and set `GEMMA_API_KEY` to its bearer
+token. With `GEMMA_API_KEY` unset, the provider sends `BASETEN_API_KEY`.
+
 ## No model.py
 
 Unlike `deploy/parakeet` and `deploy/s2-pro`, this deployment has no Python. vLLM's image
