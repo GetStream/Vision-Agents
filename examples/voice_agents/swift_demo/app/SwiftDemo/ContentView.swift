@@ -7,11 +7,35 @@ import VisionAgentsCore
 /// which agents exist; it is told which one it talks to, the way a real app would be, in
 /// `Demo.agentName`.
 struct ContentView: View {
+    private enum Tab {
+        case chat, voice
+    }
+
+    @State private var tab = Tab.chat
+    @State private var voiceStyle = VoiceStyle.orb
+    @State private var isPickingStyle = false
+
     var body: some View {
         NavigationStack {
             content
                 .navigationTitle("Larkspur support")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    if tab == .voice && !Demo.streamAPIKey.isEmpty {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                isPickingStyle = true
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                            }
+                            .accessibilityLabel("Voice style")
+                        }
+                    }
+                }
+                .sheet(isPresented: $isPickingStyle) {
+                    VoiceStyleSheet(style: $voiceStyle)
+                        .presentationDetents([.height(320)])
+                }
         }
     }
 
@@ -23,11 +47,13 @@ struct ContentView: View {
                 Text("Put the STREAM_API_KEY the router runs with in Demo.streamAPIKey.")
             }
         } else {
-            TabView {
+            TabView(selection: $tab) {
                 ChatView(agent: Demo.agentName)
                     .tabItem { Label("Chat", systemImage: "text.bubble") }
-                VoiceView(agent: Demo.agentName)
+                    .tag(Tab.chat)
+                VoiceView(agent: Demo.agentName, style: voiceStyle)
                     .tabItem { Label("Voice", systemImage: "waveform") }
+                    .tag(Tab.voice)
             }
         }
     }
