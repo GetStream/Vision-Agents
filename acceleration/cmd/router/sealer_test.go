@@ -334,10 +334,21 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyCanSealNewRows() {
 func (s *ConnectorSealerSuite) TestAWrappedKeyUnwrapsOnlyUnderItsOwnVersion() {
 	kms := newLocalKMS(s)
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
-	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
+	wrapped := kms.wrap("first-key", "router-kek-v1")
+	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", wrapped)
 
 	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V2_WRAPPED: unwrap")
+	s.NotContains(err.Error(), wrapped)
+	s.NotContains(err.Error(), "first-key")
+}
+
+func (s *ConnectorSealerSuite) TestAWrappedKeyThatUnwrapsToNothingIsRefused() {
+	kms := newLocalKMS(s)
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("", "router-kek-v1"))
+
+	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
+	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: unwrapped to an empty key")
 }
 
 func (s *ConnectorSealerSuite) TestAVersionSetBothPlainAndWrappedIsRefused() {
@@ -348,6 +359,7 @@ func (s *ConnectorSealerSuite) TestAVersionSetBothPlainAndWrappedIsRefused() {
 	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED and a plain version 1 key")
 	s.ErrorContains(err, "are both set")
+	s.NotContains(err.Error(), "first-key")
 }
 
 func (s *ConnectorSealerSuite) TestAWrappedKeyWithoutAKMSKeyIsRefused() {

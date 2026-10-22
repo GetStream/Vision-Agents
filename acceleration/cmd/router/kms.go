@@ -50,5 +50,8 @@ func unwrapKEK(ctx context.Context, unwrapper kekUnwrapper, version int, encoded
 	if err != nil {
 		return "", fmt.Errorf("unwrap: %w", err)
 	}
+	if len(plaintext) == 0 {
+		return "", errors.New("unwrapped to an empty key")
+	}
 	return string(plaintext), nil
 }
