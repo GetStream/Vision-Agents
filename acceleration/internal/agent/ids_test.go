@@ -194,7 +194,7 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 		`{"name":"Wing Wait"}`:    true,
 		`{"name":"Will Alvarez"}`: false,
 	} {
-		_, got := placeholderName(llm.ToolCall{Name: "create_reservation", Arguments: arguments})
+		_, got := placeholderName(nil, llm.ToolCall{Name: "create_reservation", Arguments: arguments})
 		assert.Equal(t, stand, got, arguments)
 	}
 	assert.True(t, failedResult(placeholderResult("Caller")))

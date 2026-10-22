@@ -190,10 +190,10 @@ func emptyResult(tool, key string) string {
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
-// gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe". A name of more than
-// four words is not one either: PhoneLLM Max booked a table under the note that resumes a
-// turn ("Carry on with the caller from what is in your instructions...").
-func placeholderName(call llm.ToolCall) (string, bool) {
+// gave: PhoneLLM Mini booked tables for "Caller", Qwen for "John Doe". More than four words
+// is suspicious unless a caller or tool supplied them: PhoneLLM Max booked a table under
+// the note that resumes a turn ("Carry on with the caller from what is in your instructions...").
+func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
 		return "", false
@@ -203,12 +203,62 @@ func placeholderName(call llm.ToolCall) (string, bool) {
 		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
 			continue
 		}
-		if slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4 ||
-			notAName(text) {
+		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4 ||
+			notAName(text)) && !nameWasGiven(history, text) {
 			return text, true
 		}
 	}
 	return "", false
+}
+
+// A name field can identify a place or business, not just a person. The lexical
+// heuristics must not reject a name the caller or a successful tool already gave.
+func nameWasGiven(history []llm.Message, name string) bool {
+	words := func(text string) string {
+		return " " + strings.ToLower(strings.Join(strings.FieldsFunc(text, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}), " ")) + " "
+	}
+	wanted := words(name)
+	if wanted == "  " {
+		return false
+	}
+	var contains func(any) bool
+	contains = func(value any) bool {
+		switch value := value.(type) {
+		case string:
+			return strings.Contains(words(value), wanted)
+		case []any:
+			return slices.ContainsFunc(value, contains)
+		case map[string]any:
+			for _, child := range value {
+				if contains(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, message := range history {
+		switch message.Role {
+		case llm.User:
+			if contains(message.Content) {
+				return true
+			}
+		case llm.ToolResult:
+			if failedResult(message.Content) {
+				continue
+			}
+			var result any
+			if json.Unmarshal([]byte(message.Content), &result) != nil {
+				result = message.Content
+			}
+			if contains(result) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // unheardNumber reports an argument of four or more digits that neither the caller nor a

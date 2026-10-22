@@ -526,7 +526,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(a.History(), requested.Call); misspelled {
 		parts = llm.TextParts(misspelledResult(name, spelled))
-	} else if name, stand := placeholderName(requested.Call); stand {
+	} else if name, stand := placeholderName(a.History(), requested.Call); stand {
 		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
