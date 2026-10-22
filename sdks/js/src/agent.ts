@@ -70,7 +70,10 @@ export interface Pipeline {
   tts?: string;
   /** A speech-to-speech target. Naming one means no transcriber or voice is opened. */
   sts?: string;
-  /** A provider-specific voice id. */
+  /**
+   * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+   * the name you gave it. Prefix it with `custom:` to mean only yours.
+   */
   voice?: string;
   /** A language hint, which narrows the candidates in every modality. */
   language?: string;
