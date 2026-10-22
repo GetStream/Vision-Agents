@@ -195,7 +195,7 @@ func (c *callRun) waitForTheEnd(ctx context.Context) error {
 	if err := <-personDone; err != nil {
 		errs = append(errs, fmt.Errorf("the person's call: %w", err))
 	}
-	c.sum.Talked = time.Since(c.connected)
+	c.sum.Session = time.Since(c.connected)
 	return errors.Join(errs...)
 }
 
@@ -210,7 +210,7 @@ func (c *callRun) logSites(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	streamMedia, err := c.readStreamMedia(ctx, sessionID, placed)
+	bridgeSIPAddr, err := c.readBridgeStreamSIPAddr(ctx, sessionID, placed)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (c *callRun) logSites(ctx context.Context) error {
 
 	hops := collectHops(ctx, c.logger, c.d.lookup, c.resolveSIP, callHosts{
 		AgentSFU: joined.SFUHost, CallerSFU: sites.Caller.SFU, Router: routerHost(c.cfg.Router), StreamSIP: sipHost,
-		CustomerTrunk: placed.CustomerTrunkHost, StreamMedia: streamMedia,
+		CustomerTrunk: placed.CustomerTrunkHost, BridgeStreamSIPAddr: bridgeSIPAddr,
 	})
 	logHops(ctx, c.logger, c.d.locator, hops)
 	logStreamSFUs(c.logger, sites)
@@ -251,9 +251,9 @@ func (c *callRun) readPlaced(ctx context.Context, sessionID string) (callPlacedR
 	return placed, nil
 }
 
-// readStreamMedia reads where Stream sent its audio from, which only a call through a
-// customer's own SIP trunk has: there the router's own bridge dials Stream and sees it.
-func (c *callRun) readStreamMedia(ctx context.Context, sessionID string, placed callPlacedRow) (string, error) {
+// readBridgeStreamSIPAddr reads the Stream SIP server the router's bridge connected to, which
+// only a call through a customer's own SIP trunk has: there the bridge dials Stream itself.
+func (c *callRun) readBridgeStreamSIPAddr(ctx context.Context, sessionID string, placed callPlacedRow) (string, error) {
 	if placed.CustomerTrunkHost == "" {
 		return "", nil
 	}
@@ -262,7 +262,7 @@ func (c *callRun) readStreamMedia(ctx context.Context, sessionID string, placed 
 		return "", fmt.Errorf("read the bridge's media addresses: %w", err)
 	}
 	if addr == "" {
-		c.logger.Warn("the router wrote no bridge_media row")
+		c.logger.Warn("the router wrote no bridge_media row, so stream_sip is inferred from DNS")
 	}
 	return addr, nil
 }

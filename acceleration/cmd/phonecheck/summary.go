@@ -7,7 +7,7 @@ import (
 
 type summary struct {
 	Direction, Provider, SessionID, Outcome string
-	Connect, Talked, Total                  time.Duration
+	Connect, Session, Total                 time.Duration
 	PersonCall                              time.Duration // zero when the vendor's record did not say
 	AgentSFU, CallerSFU, RouterAddress      string
 	SIPHost, SFUsUsed, RegionLabel          string
@@ -17,7 +17,7 @@ type summary struct {
 func (s summary) log(logger *slog.Logger) {
 	args := []any{
 		"direction", s.Direction, "provider", s.Provider, "session_id", s.SessionID, "outcome", s.Outcome,
-		"connect_ms", s.Connect.Milliseconds(), "talked_ms", s.Talked.Milliseconds(),
+		"connect_ms", s.Connect.Milliseconds(), "session_ms", s.Session.Milliseconds(),
 	}
 	if s.PersonCall > 0 {
 		args = append(args, "person_call_s", int(s.PersonCall.Seconds()))

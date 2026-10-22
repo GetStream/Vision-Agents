@@ -252,10 +252,10 @@ and, locally, the lines of `<scratchpad>/router.log` with that run's `session_id
 main session. Per call, one short block:
 
 - **Hops:** agent SFU, caller SFU (and where Stream placed each side), router address, Stream
-  SIP host, the customer's trunk and Stream's media address (`stream_media`) when there is a
-  trunk, SFUs used, person side and `region_label`, each with `observed`, `inferred` or
+  SIP host (on a trunk call, the address the router's bridge connected to, `observed`), the
+  customer's trunk when there is one, SFUs used, person side and `region_label`, each with `observed`, `inferred` or
   `reported`.
-- **Timings:** `connect_ms`, `talked_ms`, `person_call_s`, `total_ms`, and when the `call_sites`
+- **Timings:** `connect_ms`, `session_ms` (the agent's session, until the router ended it), `person_call_s` (the call itself), `total_ms`, and when the `call_sites`
   row came.
 - **Gaps:** anything missing, plainly: `person call not observed` (Telnyx outbound), no
   `call_sites` row, a host that did not resolve, a run skipped and why.

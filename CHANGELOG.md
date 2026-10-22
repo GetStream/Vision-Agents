@@ -705,8 +705,10 @@ An ended call writes a `call_sites` row with Stream's SFU count and places. No A
 
 `acceleration/cmd/phonecheck` places a live outbound or inbound test call through a router, local
 or remote, with Twilio or Telnyx playing the person, and logs the site of every hop and the call's
-timings. It changes nothing at any vendor: the person side is set up by hand first, as its README
-says. See its README, or ask Claude to run one with the `phonecheck` skill.
+timings. On a call through a customer's own SIP trunk its `stream_sip` hop is the Stream SIP
+server the router's bridge connected to, `observed`; otherwise it is looked up in DNS and marked
+`inferred`. `session_ms` is how long the agent's session lasted, `person_call_s` the call itself.
+It changes nothing at any vendor: the person side is set up by hand first, as its README says. See its README, or ask Claude to run one with the `phonecheck` skill.
 
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 

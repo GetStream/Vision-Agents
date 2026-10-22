@@ -340,7 +340,7 @@ func (s *RunSuite) TestACallThroughACustomersTrunkLogsTheTrunkAsAHop() {
 	s.Len(s.hopLines("customer_trunk"), 1)
 }
 
-func (s *RunSuite) TestACallThroughACustomersTrunkLogsWhereStreamsAudioCameFrom() {
+func (s *RunSuite) TestACallThroughACustomersTrunkLogsTheStreamSIPServerTheBridgeConnectedTo() {
 	s.addRows(
 		logRow("1", "joined", time.Now(), map[string]any{"sfu_edge": "sfu-a1", "sfu_host": "sfu.example.com"}),
 		logRow("2", "call_placed", time.Now(), map[string]any{
@@ -354,14 +354,13 @@ func (s *RunSuite) TestACallThroughACustomersTrunkLogsWhereStreamsAudioCameFrom(
 
 	s.Require().NoError(s.run())
 
-	media := s.hopLines("stream_media")
-	s.Require().Len(media, 1)
-	s.Equal("203.0.113.10", media[0]["address"])
-	s.Equal("observed", media[0]["how"])
-	s.NotEmpty(media[0]["place"])
 	sip := s.hopLines("stream_sip")
 	s.Require().Len(sip, 1)
-	s.Equal("inferred", sip[0]["how"])
+	s.Equal("203.0.113.10", sip[0]["address"])
+	s.Equal("observed", sip[0]["how"])
+	s.NotEmpty(sip[0]["place"])
+	s.Empty(s.hopLines("stream_media"))
+	s.NotContains(s.looked.all(), "sip.example.com")
 }
 
 func (s *RunSuite) TestACallThroughACustomersTrunkWithNoBridgeRowSaysSo() {
@@ -375,8 +374,10 @@ func (s *RunSuite) TestACallThroughACustomersTrunkWithNoBridgeRowSaysSo() {
 
 	s.Require().NoError(s.run())
 
-	s.Empty(s.hopLines("stream_media"))
-	s.Len(s.linesSaying("the router wrote no bridge_media row"), 1)
+	sip := s.hopLines("stream_sip")
+	s.Require().Len(sip, 1)
+	s.Equal("inferred", sip[0]["how"])
+	s.Len(s.linesSaying("the router wrote no bridge_media row, so stream_sip is inferred from DNS"), 1)
 }
 
 func (s *RunSuite) TestBothSidesSFUsAreHopsAndInTheSummary() {

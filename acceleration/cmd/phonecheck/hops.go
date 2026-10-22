@@ -20,29 +20,35 @@ type hop struct {
 
 type lookupFunc func(ctx context.Context, host string) ([]netip.Addr, error)
 
-// callHosts are the hosts a call passed through. CustomerTrunk and StreamMedia are empty
-// unless the call went out through a customer's own SIP trunk. StreamMedia is an address,
-// not a host: where Stream sent its audio from, as the router's bridge saw it.
+// callHosts are the hosts a call passed through. CustomerTrunk and BridgeStreamSIPAddr are
+// empty unless the call went out through a customer's own SIP trunk. BridgeStreamSIPAddr is an
+// address, not a host: the Stream SIP server the router's SIP bridge actually connected to.
+// When set it is the stream_sip hop and StreamSIP is not looked up.
 type callHosts struct {
-	AgentSFU, CallerSFU, Router, StreamSIP, CustomerTrunk, StreamMedia string
+	AgentSFU, CallerSFU, Router, StreamSIP, CustomerTrunk, BridgeStreamSIPAddr string
 }
 
 // collectHops resolves each hop's host. resolveSIP looks the SIP host up from the place chosen
-// with -sip-lookup-from. A host that does not resolve is logged and kept with no address.
+// with -sip-lookup-from, unless the bridge saw the SIP server itself. A host that does not
+// resolve is logged and kept with no address.
 func collectHops(ctx context.Context, logger *slog.Logger, lookup, resolveSIP lookupFunc, hosts callHosts) []hop {
 	hops := []hop{
 		resolvedSFU(ctx, logger, lookup, hop{Name: "agent_sfu", Host: hosts.AgentSFU, How: "reported"}),
 		resolvedSFU(ctx, logger, lookup, hop{Name: "caller_sfu", Host: hosts.CallerSFU, How: "reported"}),
 		resolved(ctx, logger, lookup, hop{Name: "router_address", Host: hosts.Router, How: "observed"}),
-		resolved(ctx, logger, resolveSIP, hop{Name: "stream_sip", Host: hosts.StreamSIP, How: "inferred"}),
+		streamSIP(ctx, logger, resolveSIP, hosts),
 	}
 	if hosts.CustomerTrunk != "" {
 		hops = append(hops, resolved(ctx, logger, lookup, hop{Name: "customer_trunk", Host: hosts.CustomerTrunk, How: "reported"}))
 	}
-	if hosts.StreamMedia != "" {
-		hops = append(hops, parsed(logger, hop{Name: "stream_media", Host: hosts.StreamMedia, How: "observed"}))
-	}
 	return hops
+}
+
+func streamSIP(ctx context.Context, logger *slog.Logger, resolveSIP lookupFunc, hosts callHosts) hop {
+	if hosts.BridgeStreamSIPAddr != "" {
+		return parsed(logger, hop{Name: "stream_sip", Host: hosts.BridgeStreamSIPAddr, How: "observed"})
+	}
+	return resolved(ctx, logger, resolveSIP, hop{Name: "stream_sip", Host: hosts.StreamSIP, How: "inferred"})
 }
 
 // parsed is a hop whose host is already an address.
