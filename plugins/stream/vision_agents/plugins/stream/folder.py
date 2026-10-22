@@ -216,6 +216,9 @@ class Settings:
     tts: str = ""
     sts: str | None = None
     voice: str = ""
+    """The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+    the vendor's own voice name instead."""
     llm: str = ""
     harness: str = ""
     subagent: str = ""

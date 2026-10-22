@@ -141,7 +141,11 @@ public sealed record Declaration
     /// <summary>Null when the declaration says nothing, and empty when it turns speech-to-speech off.</summary>
     public string? Sts { get; init; }
 
-    /// <summary>A provider-specific voice id.</summary>
+    /// <summary>
+    /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    /// the name you gave it. Prefix it with <c>custom:</c> to mean only yours. A native (sts) agent
+    /// takes the vendor's own voice name instead.
+    /// </summary>
     public string Voice { get; init; } = "";
 
     /// <summary>The model that answers.</summary>
