@@ -1,6 +1,7 @@
 package gemma
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,45 @@ func (s *GemmaSuite) bearerSent(options Options) string {
 	_, err = llm.Collect(stream)
 	s.Require().NoError(err)
 	return authorization
+}
+
+func (s *GemmaSuite) TestARulingIsHeldToItsSchema() {
+	// Asked only for a JSON object, the deployment answered {"disposition":"continue"}.
+	var body struct {
+		ResponseFormat struct {
+			Type       string `json:"type"`
+			JSONSchema struct {
+				Name   string         `json:"name"`
+				Strict bool           `json:"strict"`
+				Schema map[string]any `json:"schema"`
+			} `json:"json_schema"`
+		} `json:"response_format"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.NoError(json.NewDecoder(r.Body).Decode(&body))
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"t\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	s.T().Cleanup(server.Close)
+	s.T().Setenv(apiKeyEnvVar, "k")
+	s.T().Setenv(baseURLEnvVar, server.URL+"/v1")
+	provider, err := New(Options{})
+	s.Require().NoError(err)
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "rule"}},
+		Text: llm.TextParams{Format: llm.FormatJSONSchema, Schema: &llm.JSONSchema{
+			Name: "ruling", Schema: map[string]any{"type": "object"},
+		}},
+	})
+	s.Require().NoError(err)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	s.Equal("json_schema", body.ResponseFormat.Type)
+	s.Equal("ruling", body.ResponseFormat.JSONSchema.Name)
+	s.True(body.ResponseFormat.JSONSchema.Strict)
+	s.Equal(map[string]any{"type": "object"}, body.ResponseFormat.JSONSchema.Schema)
 }
 
 func (s *GemmaSuite) TestAnUndeployedGemmaFailsToBuild() {

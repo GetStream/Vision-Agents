@@ -2,12 +2,14 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -107,7 +109,7 @@ func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 	s.Contains(question, "Caller: what is the capital of France")
 	s.Contains(question, "Agent: Paris.")
 	s.Contains(question, `"and of Spain"`, "the words being judged have to be in there")
-	s.Equal(llm.FormatJSONObject, asked[0].Text.Format,
+	s.Equal(llm.FormatJSONSchema, asked[0].Text.Format,
 		"the answer is parsed, so prose is not an option")
 	s.Equal(512, asked[0].MaxOutputTokens,
 		"thinking models spend the budget before the JSON, and 32 was only enough for a fragment")
@@ -176,7 +178,7 @@ func (s *FlowSuite) TestAnUnreadableOverlapStopsTheAgent() {
 func (s *FlowSuite) TestEveryConversationalDecisionParses() {
 	for _, disposition := range []Disposition{Wait, Ignore, Respond, Clarify} {
 		for _, floor := range []Floor{Stop, Shorten, Continue} {
-			answer, err := parseFlow(`{"disposition":"` + string(disposition) +
+			answer, _, err := parseFlow(`{"disposition":"` + string(disposition) +
 				`","floor":"` + string(floor) + `"}`)
 
 			s.Require().NoError(err)
@@ -187,7 +189,7 @@ func (s *FlowSuite) TestEveryConversationalDecisionParses() {
 }
 
 func (s *FlowSuite) TestMarkdownFencesDoNotHideAValidDecision() {
-	answer, err := parseFlow("```json\n" +
+	answer, _, err := parseFlow("```json\n" +
 		`{"disposition":"respond","floor":"continue"}` +
 		"\n```")
 
@@ -197,16 +199,50 @@ func (s *FlowSuite) TestMarkdownFencesDoNotHideAValidDecision() {
 }
 
 func (s *FlowSuite) TestInventedDecisionsAreRejected() {
-	_, err := parseFlow(`{"disposition":"guess","floor":"continue"}`)
+	_, invalid, err := parseFlow(`{"disposition":"guess","floor":"continue"}`)
 	s.ErrorContains(err, "invalid flow disposition")
+	s.Equal("disposition", invalid)
 
-	_, err = parseFlow(`{"disposition":"respond","floor":"talk-over"}`)
+	_, invalid, err = parseFlow(`{"disposition":"respond","floor":"talk-over"}`)
 	s.ErrorContains(err, "invalid floor decision")
+	s.Equal("floor", invalid)
 }
 
 func (s *FlowSuite) TestExtraSpeechIsRejected() {
-	_, err := parseFlow(`Sure: {"disposition":"respond","floor":"continue"}`)
+	_, invalid, err := parseFlow(`Sure: {"disposition":"respond","floor":"continue"}`)
 	s.ErrorContains(err, "decode flow decision")
+	s.Equal("decode", invalid)
+}
+
+func (s *FlowSuite) TestTheControllerIsHeldToTheValuesItIsTrustedWith() {
+	// Gemma, asked only for a JSON object, ruled {"disposition":"continue","floor":"continue"}.
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", Participant: "Alex", Text: "go on"}))
+
+	text := s.waitAsked(1)[0].Text
+	s.Require().NotNil(text.Schema, "a schema is what keeps a floor out of the disposition")
+	sent, err := json.Marshal(text.Schema.Schema)
+	s.Require().NoError(err)
+	s.JSONEq(`{
+		"type": "object",
+		"properties": {
+			"disposition": {"type": "string", "enum": ["wait", "ignore", "respond", "clarify"]},
+			"floor": {"type": "string", "enum": ["stop", "shorten", "continue"]}
+		},
+		"required": ["disposition", "floor"],
+		"additionalProperties": false
+	}`, string(sent))
+}
+
+func (s *FlowSuite) TestARefusedRulingIsCounted() {
+	before := testutil.ToFloat64(invalidRulings.WithLabelValues("disposition"))
+	s.model.answers["candidate-1"] = `{"disposition":"continue","floor":"continue"}`
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", Participant: "Alex", Text: "go on"}))
+
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor,
+		5*time.Millisecond, "the caller's turn was dropped")
+	s.Equal(before+1, testutil.ToFloat64(invalidRulings.WithLabelValues("disposition")),
+		"the fallback stands in for a refused ruling, which is invisible unless it is counted")
 }
 
 func (s *FlowSuite) TestCancelAbandonsACreateThatHasNotReturned() {

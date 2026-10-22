@@ -135,11 +135,30 @@ const (
 	// the answer needs it: a model handed a conversation and asked about it will
 	// otherwise sometimes carry the conversation on instead.
 	FormatJSONObject TextFormat = "json_object"
+	// FormatJSONSchema asks for one JSON object that matches TextParams.Schema. A model
+	// whose Capabilities do not report JSONSchema is asked for a JSON object instead, so
+	// the caller still checks what comes back.
+	FormatJSONSchema TextFormat = "json_schema"
 )
+
+// JSON reports whether the answer is asked for as JSON rather than prose.
+func (f TextFormat) JSON() bool { return f == FormatJSONObject || f == FormatJSONSchema }
+
+// JSONSchema is what an answer asked for in FormatJSONSchema must match.
+type JSONSchema struct {
+	// Name labels the schema for the provider: letters, digits, underscores and dashes,
+	// at most 64 of them.
+	Name string
+	// Schema is the JSON Schema itself. It is sent strict, so every property has to be
+	// required and additionalProperties false.
+	Schema map[string]any
+}
 
 // TextParams configures the answer's shape and length.
 type TextParams struct {
 	Format TextFormat
+	// Schema is what an answer in FormatJSONSchema must match.
+	Schema *JSONSchema
 	// Verbosity is the default level of detail, one of low, medium or high. Empty leaves
 	// the provider's own default in place. It is dropped for models that do not take it.
 	Verbosity string

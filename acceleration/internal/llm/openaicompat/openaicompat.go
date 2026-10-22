@@ -546,7 +546,17 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 			OfAuto: param.NewOpt(request.ToolChoice),
 		}
 	}
-	if request.Text.Format == llm.FormatJSONObject {
+	if schema := l.options.Capabilities.Schema(request.Text); schema != nil {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   schema.Name,
+					Schema: schema.Schema,
+					Strict: param.NewOpt(true),
+				},
+			},
+		}
+	} else if request.Text.Format.JSON() {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}

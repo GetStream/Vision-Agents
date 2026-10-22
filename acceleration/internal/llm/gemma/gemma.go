@@ -99,6 +99,9 @@ func New(options Options) (*openaicompat.LLM, error) {
 			}
 			return fields
 		},
+		// vLLM constrains decoding to the schema, which kept the flow controller to its
+		// own values where json_object let it answer "continue" for a disposition.
+		Capabilities: llm.Capabilities{JSONSchema: true},
 		// Thinking off still leaves an empty thought channel in some answers.
 		ThoughtChannel: true,
 		// The thought channel can take the opening of a tool call with it, and the rest

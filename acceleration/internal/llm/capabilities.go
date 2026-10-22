@@ -46,6 +46,10 @@ type Capabilities struct {
 	// InputModalities are the input kinds this model accepts besides text, e.g. "image".
 	// Empty means text-only, and input carrying anything else is refused.
 	InputModalities []string
+	// JSONSchema reports whether the model holds its answer to a strict JSON Schema.
+	// Without it a schema is dropped and the answer is asked for as a JSON object, which
+	// is what every JSON caller had before schemas and what it still checks for itself.
+	JSONSchema bool
 }
 
 // Validate reports whether a request asks for something this model does not do.
@@ -98,6 +102,15 @@ func (c Capabilities) Validate(params ResponseParams) error {
 		return stack.Wrap(fmt.Errorf("llm: this model does not accept %s input", ModalityImage))
 	}
 	return nil
+}
+
+// Schema is the schema to send with a request, or nil when it asked for none or this model
+// takes none.
+func (c Capabilities) Schema(text TextParams) *JSONSchema {
+	if text.Format != FormatJSONSchema || !c.JSONSchema {
+		return nil
+	}
+	return text.Schema
 }
 
 // Accepts reports whether this model takes that input kind. Text is implicit.
