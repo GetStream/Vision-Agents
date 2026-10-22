@@ -825,10 +825,19 @@ func (s *Service) recordPlaced(
 	}
 }
 
+// bridgeMediaTimeout bounds writing the bridge_media row, which the node waits for when it
+// stops.
+const bridgeMediaTimeout = 5 * time.Second
+
 // recordBridgeMedia keeps where each side of a call through a customer's own SIP trunk
 // sends its audio from, as the router's bridge saw in their SDP. It is the only place the
 // Stream side's real address shows: the SIP host's DNS answer depends on who asks.
 func (s *Service) recordBridgeMedia(ctx context.Context, customerID, sessionID string, media sipbridge.MediaAddrs) {
+	if media.Stream == "" && media.Customer == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, bridgeMediaTimeout)
+	defer cancel()
 	details := map[string]any{}
 	if media.Stream != "" {
 		details["stream_media_addr"] = media.Stream

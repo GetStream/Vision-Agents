@@ -1,6 +1,7 @@
 package sipbridge
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -159,10 +160,11 @@ func flowB(ctx context.Context, cfg Config, customer, stream leg) (MediaAddrs, e
 	log.Info("customer answered", media(customerSide, customerAnswer)...)
 
 	answered, err := ParseMedia(customerAnswer)
+	var reanswer []byte
 	if err == nil {
 		var final Media
 		if final, err = retargetOffer(answered, toCustomer); err == nil {
-			_, err = stream.Reinvite(ctx, streamSDP.build(final))
+			reanswer, err = stream.Reinvite(ctx, streamSDP.build(final))
 		}
 	}
 	if err != nil {
@@ -170,7 +172,7 @@ func flowB(ctx context.Context, cfg Config, customer, stream leg) (MediaAddrs, e
 		return MediaAddrs{}, stack.Wrap(fmt.Errorf("pointing stream at the customer: %w", err))
 	}
 	log.Info("stream now sends RTP to the customer")
-	return MediaAddrs{Customer: answered.Addr, Stream: streamMedia.Addr}, nil
+	return MediaAddrs{Customer: answered.Addr, Stream: cmp.Or(addrOf(reanswer), streamMedia.Addr)}, nil
 }
 
 // media is the log fields for one side's SDP body: where it sends RTP and what it speaks.

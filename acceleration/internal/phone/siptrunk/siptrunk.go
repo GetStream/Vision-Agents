@@ -141,7 +141,8 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 	}()
 	log.Info("call through a customer's sip trunk connected")
 	if connected != nil {
-		connected(bridged.Media())
+		// Its own goroutine, so a slow write of where the audio goes cannot hold up a hang-up.
+		p.running.Go(func() { connected(bridged.Media()) })
 	}
 
 	select {

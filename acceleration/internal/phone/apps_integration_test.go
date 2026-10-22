@@ -720,6 +720,15 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkKeepsWhereEachSidesAudioComes
 	s.Equal(map[string]any{"stream_media_addr": "203.0.113.10", "customer_media_addr": "198.51.100.7"}, row.Details)
 }
 
+func (s *AppsSuite) TestABridgeThatSawNoAddressWritesNoRow() {
+	call := s.callsThroughATrunk()
+	s.Require().NotNil(call.vendor.dialed.Connected)
+
+	call.vendor.dialed.Connected(sipbridge.MediaAddrs{})
+
+	s.Empty(s.eventRows(call.placed, "bridge_media"))
+}
+
 func (s *AppsSuite) TestACallThroughAVendorHasNoBridgeToHearFrom() {
 	_, err := s.service.Call(s.ctx, CallRequest{
 		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",

@@ -185,6 +185,24 @@ func (s *SIPTrunkSuite) TestAConnectedCallSaysWhereEachSidesAudioComesFrom() {
 	}
 }
 
+func (s *SIPTrunkSuite) TestASlowConnectedCallbackDoesNotHoldUpTheHangup() {
+	told, release := make(chan struct{}), make(chan struct{})
+	placing := outbound()
+	placing.Connected = func(sipbridge.MediaAddrs) {
+		close(told)
+		<-release
+	}
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	<-told
+
+	s.provider.stop()
+
+	call := s.dialer.call
+	s.Eventually(call.wasHungUp, time.Second, 10*time.Millisecond, "the hang-up waited for the callback")
+	close(release)
+}
+
 func (s *SIPTrunkSuite) TestCancellingTheRequestDoesNotEndTheCall() {
 	request, cancel := context.WithCancel(context.Background())
 	dialed, err := s.provider.Dial(request, outbound())

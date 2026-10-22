@@ -128,6 +128,17 @@ func TestFlowBSetsUpStreamFirstThenRetargets(t *testing.T) {
 		mediaOf(t, stream.body(3)))
 }
 
+func TestFlowBTakesStreamsAddressFromItsLastAnswer(t *testing.T) {
+	moved := buildSDP(Media{Addr: "203.0.113.20", Port: 20002, Codecs: []Codec{pcma, dtmfCodec}, Direction: DirSendRecv}, 6, 1)
+	stream := &fakeLeg{inviteAnswer: streamAnswerPCMASDP, reinviteAnswer: moved}
+	customer := &fakeLeg{inviteAnswer: customerPCMA}
+
+	media, err := flowB(t.Context(), flowConfig(), customer, stream)
+	require.NoError(t, err)
+
+	require.Equal(t, "203.0.113.20", media.Stream)
+}
+
 func TestFlowBFirstStreamInviteUsesTheConfiguredPlaceholder(t *testing.T) {
 	cfg := flowConfig()
 	cfg.FlowB.PlaceholderAddr = "0.0.0.0"
