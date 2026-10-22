@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// unpricedEvery is how often the same unpriced item is logged again.
-const unpricedEvery = 10 * time.Minute
-
 // key is the item an entry prices, without the attributes that choose between its entries.
 type key struct {
 	modality, provider, model string
@@ -26,8 +23,10 @@ type List struct {
 	entries map[key][]Entry
 	logger  *slog.Logger
 	// warned is when each unpriced item was last logged, so a busy one is not logged on
-	// every row.
-	warned sync.Map
+	// every row. It is logged again once unpricedEvery has passed, by now.
+	warned        sync.Map
+	unpricedEvery time.Duration
+	now           func() time.Time
 }
 
 // NewList checks the entries and returns the list they make. version names it on every
@@ -36,7 +35,7 @@ func NewList(version string, entries []Entry, logger *slog.Logger) (*List, error
 	if logger == nil {
 		logger = slog.Default()
 	}
-	list := &List{version: version, entries: map[key][]Entry{}, logger: logger}
+	list := &List{version: version, entries: map[key][]Entry{}, logger: logger, unpricedEvery: 10 * time.Minute, now: time.Now}
 	for _, entry := range entries {
 		if err := validate(entry); err != nil {
 			return nil, err
@@ -150,17 +149,17 @@ func (l *List) Quote(item Item, used Quantities) Quote {
 	return quote
 }
 
-// warn logs an unpriced item unless it was logged in the last ten minutes. Rows are priced
+// warn logs an unpriced item unless it was logged within unpricedEvery. Rows are priced
 // from many goroutines, so the time is swapped in rather than read and then written.
 func (l *List) warn(item Item) {
-	now := time.Now()
+	now := l.now()
 	k := keyOf(item)
 	for {
 		last, seen := l.warned.LoadOrStore(k, now)
 		if !seen {
 			break
 		}
-		if now.Sub(last.(time.Time)) < unpricedEvery {
+		if now.Sub(last.(time.Time)) < l.unpricedEvery {
 			return
 		}
 		if l.warned.CompareAndSwap(k, last, now) {
@@ -176,9 +175,19 @@ func (l *List) Billable(item Item) bool {
 	return !ok || entry.Billable()
 }
 
-// Entry is the item's entry.
+// Entry is a copy of the item's entry: the list's own rates are read by concurrent quotes.
 func (l *List) Entry(item Item) (Entry, bool) {
-	return l.match(item)
+	entry, ok := l.match(item)
+	if !ok {
+		return Entry{}, false
+	}
+	entry.When = maps.Clone(entry.When)
+	entry.Rates = maps.Clone(entry.Rates)
+	entry.Tiers = slices.Clone(entry.Tiers)
+	for i := range entry.Tiers {
+		entry.Tiers[i].Rates = maps.Clone(entry.Tiers[i].Rates)
+	}
+	return entry, true
 }
 
 // Unpriced is the items that are billable and have no rate: what a deployment should

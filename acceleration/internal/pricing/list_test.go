@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -260,6 +261,68 @@ func (s *PricingSuite) TestAModelWithoutAPriceIsBillableAndLoggedOnce() {
 	s.Zero(first.CostMicros)
 	s.Equal(1, strings.Count(s.logs.String(), "billable work has no price"))
 	s.Contains(s.logs.String(), "modality=memory provider=mem0 model=search")
+}
+
+func (s *PricingSuite) TestAModelWithoutAPriceIsLoggedAgainOnceTheIntervalHasPassed() {
+	list := s.list()
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	list.now = func() time.Time { return clock }
+	list.unpricedEvery = time.Minute
+	item := Item{Modality: "memory", Provider: "mem0", Model: "search"}
+
+	list.Quote(item, Quantities{})
+	clock = clock.Add(time.Minute - time.Nanosecond)
+	list.Quote(item, Quantities{})
+	s.Equal(1, strings.Count(s.logs.String(), "billable work has no price"), "a repeat within the interval")
+
+	clock = clock.Add(time.Nanosecond)
+	list.Quote(item, Quantities{})
+	s.Equal(2, strings.Count(s.logs.String(), "billable work has no price"), "a repeat once the interval has passed")
+
+	clock = clock.Add(time.Second)
+	list.Quote(item, Quantities{})
+	s.Equal(2, strings.Count(s.logs.String(), "billable work has no price"), "the interval runs from the last log")
+}
+
+func (s *PricingSuite) TestAnEntryHandedOutIsACopy() {
+	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})
+	entry.When = map[string]string{"service_tier": "flex"}
+	entry.Tiers = []Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(2)}}}
+	list := s.list(entry)
+	item := llmItem("m", map[string]string{"service_tier": "flex"})
+
+	handed, ok := list.Entry(item)
+	s.Require().True(ok)
+	handed.Rates[InputTokens] = perMillion(100)
+	handed.Tiers[0].Rates[InputTokens] = perMillion(100)
+	handed.Tiers[0].AboveInputTokens = 1
+	handed.When["service_tier"] = "warp"
+
+	s.Equal(int64(1_000), list.Quote(item, Quantities{InputTokens: 1_000}).CostMicros)
+	s.Equal(int64(2_002), list.Quote(item, Quantities{InputTokens: 1_001}).CostMicros)
+	again, _ := list.Entry(item)
+	s.Equal(entry, again)
+}
+
+// TestAnEntryCanBeChangedWhileTheListQuotes is for the race detector: rows are priced from
+// many goroutines while another caller holds an entry.
+func (s *PricingSuite) TestAnEntryCanBeChangedWhileTheListQuotes() {
+	list := s.list(llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)}))
+	done := make(chan int64)
+	go func() {
+		var cost int64
+		for range 1_000 {
+			cost = list.Quote(llmItem("m", nil), Quantities{InputTokens: 1_000}).CostMicros
+		}
+		done <- cost
+	}()
+
+	for range 1_000 {
+		handed, _ := list.Entry(llmItem("m", nil))
+		handed.Rates[InputTokens] = perMillion(100)
+	}
+
+	s.Equal(int64(1_000), <-done)
 }
 
 func (s *PricingSuite) TestUnpricedListsTheBillableItemsWithNoRate() {

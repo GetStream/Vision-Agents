@@ -124,8 +124,8 @@ func (r Rate) micros(quantity int64) float64 {
 	return r.USD * 1e6 * float64(billed) / float64(r.Per)
 }
 
-// Tier prices a prompt longer than AboveInputTokens at Rates, for the whole request: OpenAI
-// over 272K, xAI from 200K (199,999), Claude Haiku over 100K.
+// Tier prices a prompt longer than AboveInputTokens at Rates, for the whole request, as
+// vendors that charge more for a long context do.
 type Tier struct {
 	AboveInputTokens int64          `json:"above_input_tokens"`
 	Rates            map[Meter]Rate `json:"rates"`
