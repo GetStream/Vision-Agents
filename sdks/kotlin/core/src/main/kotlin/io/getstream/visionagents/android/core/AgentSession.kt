@@ -263,7 +263,14 @@ public class AgentSession internal constructor(
     private fun run(call: AgentEvent.ToolCall, tool: AgentTool) {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = try {
-                Command.ToolResult(call.id, output = tool.run(call.argumentValues), requestId = call.requestId, turnId = call.turnId)
+                val output = tool.run(call.argumentValues)
+                Command.ToolResult(
+                    call.id,
+                    output = output.text,
+                    requestId = call.requestId,
+                    turnId = call.turnId,
+                    images = output.images,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

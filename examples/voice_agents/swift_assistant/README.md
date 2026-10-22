@@ -3,13 +3,13 @@
 Juno, a personal assistant in the shape of the Grok and Meta AI apps: conversations kept in a
 sidebar, a chat that shows its thinking and its steps, a voice mode you switch into and back
 out of, tools that run on the phone for the things only the phone knows, and the person's own
-Gmail, connected from a button at the top of the chat.
+Gmail and Linear, connected in the chat the first time the agent needs them.
 
 ```
 agent.yaml           what runs the agent: models, voice, search, greeting
 instructions.md      what the agent is told
 configure/main.go    the backend half that runs once: syncs this directory to the router
-backend/main.go      the backend half that stays up: Stream tokens, and the person's Gmail
+backend/main.go      the backend half that stays up: Stream tokens, and sending from Gmail
 app/                 the phone half: SwiftUI over VisionAgentsCore and StreamChatAI
 ```
 
@@ -32,8 +32,8 @@ which `agent.yaml` has no field for: the first shows a step for the phone's own 
 and the second adds `vision`, which looks through the phone's camera on a call.
 
 Leave the backend running. It signs the Stream token the phone is its user with, as the Swift
-demo's does, and does what only a server may with the person's Gmail connection: start its
-consent, read whether it is connected, delete it, and send a mail through it.
+demo's does, and does what only a server may with the person's Gmail connection: send a mail
+through it.
 
 ```bash
 STREAM_API_SECRET=<the router's STREAM_API_SECRET> \
@@ -47,8 +47,8 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-takes `stream-chat-swift` from its `develop` branch, because the voice glow (`AIVoiceGlowView`)
-is not in a released `StreamChatAI` yet.
+takes `stream-chat-swift` from its `develop` branch, because the AI components it uses
+(`AIConversationView`, `AIToolAuthorizationView`) are not in a released `StreamChatAI` yet.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, `sdks/swift/core`, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
@@ -57,39 +57,54 @@ and `INWORLD_API_KEY` for a call. Web search needs one of `EXA_API_KEY`, `TAVILY
 `PERPLEXITY_API_KEY`; without one the agent is never offered the tool, and only the router's
 log says so.
 
-## Gmail
+## Gmail and Linear
 
-The envelope at the top right of a conversation connects the person's Gmail. The backend starts
-the router's consent for their own Gmail connection, with `return_url` set to the app's own
-scheme, `io.getstream.visionagents.swiftassistant:/gmail` (the router takes one only in reverse
-domain form, RFC 8252 section 7.1); the app opens the launch page in a web authentication sheet
-with the handoff token in its fragment, the person answers Google, and the router stores the
-grant and sends the sheet back to the app. The Google credential stays sealed in the router.
+The agent binds `gmail` and `linear` as each person's own (`connectors:` in `agent.yaml`).
+Ask "what are my most important Linear tickets?" before Linear is connected, and the agent's
+Linear call waits for you to sign in. Its step in the reply asks you to connect Linear, with
+Connect and Not now.
 
-The agent binds `gmail` as each person's own (`connectors:` in `agent.yaml`). Google's Gmail MCP
-server searches, reads, labels and drafts, but cannot send, so sending is `send_email`, a tool
-on the phone that asks first and has the backend post to Gmail's REST API through the router's
-proxy for the same connection. A conversation open before Gmail was connected picks it up on
-its next Gmail call.
+Connect opens the router's sign-in page in a web authentication sheet, with the handoff token
+in its fragment. You sign in at Linear, the router stores the grant, and it hands the sheet back
+to the app's own scheme, `io.getstream.visionagents.swiftassistant:/connected`. Every new
+conversation names that as its session's `return_url`, and the router takes one only in reverse
+domain form (RFC 8252 section 7.1). The call that waited then carries on in the same reply, on
+your own account, and the agent answers with the list. Later conversations use the account with
+no sign-in.
 
-What it takes, once:
+Not now ends the call without it, and the agent says so. A sign-in refused at Linear, or one not
+finished within ten minutes, ends it the same way, and stopping the reply ends it too.
 
-1. **A Google OAuth client.** In a Google Cloud project, enable `gmail.googleapis.com` and
-   `gmailmcp.googleapis.com`, and enroll the project in the
-   [Workspace Developer Preview](https://developers.google.com/workspace/preview), which the
-   Gmail MCP server is part of. Set up the consent screen with the `gmail.readonly` and
-   `gmail.compose` scopes, then create a client of type Web application, marked for an
-   AI-powered agent, with `http://localhost:8080/v1/agents/connectors/oauth/callback` as an
-   authorized redirect URI.
-2. **The router's settings,** in the repo-root `.env`: `ROUTER_CONNECTORS_ENABLED=true`,
-   `ROUTER_AUTH_KEK`, `ROUTER_PUBLIC_URL=http://localhost:8080`, a `DASHBOARD_BASE_URL` (the
-   launch page will not render without one), and the client as `GOOGLE_MCP_CLIENT_ID` and
-   `GOOGLE_MCP_CLIENT_SECRET`. Or give the app its own client instead of the environment's:
-   `PUT /v1/agents/connectors/gmail/oauth-client`. Restart the router after either.
-3. **`go run ./configure` again,** which binds `gmail` to the agent.
+The credentials stay sealed in the router, and the app never sees them. Every connector signs in
+this way, Gmail included. The router writes the sign-in on the call's `ai_tool_call` step
+(`awaiting_authorization`, with an `authorization`), StreamChatAI's `AIToolAuthorizationView`
+shows it when the `AIToolApprover` has an `AIToolAuthorizer`, and Not now calls
+`AgentSession.declineLogin`.
 
-Without the client, the button says so: the router answers that it has no OAuth client for
-`gmail` and names both ways to give it one.
+Google's Gmail MCP server searches, reads, labels and drafts, but cannot send, so sending is
+`send_email`, a tool on the phone that asks first and has the backend post to Gmail's REST API
+through the router's proxy for the same connection. Asked to send before Gmail is connected, it
+tells the agent to call a Gmail tool first, which asks for the sign-in.
+
+To try the sign-in again, delete the person's connection in the Volt dashboard, under Library ›
+Connectors › Connections, or with `DELETE /v1/agents/connections/{id}`.
+
+What it takes, once, besides the router's `ROUTER_CONNECTORS_ENABLED=true`, `ROUTER_AUTH_KEK`
+and `ROUTER_PUBLIC_URL=http://localhost:8080` in the repo-root `.env` (restart the router after
+a change), and `go run ./configure` again, which binds both:
+
+- Linear needs nothing more, since its MCP server registers the router's client by itself
+  (dynamic client registration).
+- Gmail needs a Google OAuth client. In a Google Cloud project, enable
+  `gmail.googleapis.com` and `gmailmcp.googleapis.com`, and enroll the project in the
+  [Workspace Developer Preview](https://developers.google.com/workspace/preview), which the
+  Gmail MCP server is part of. Set up the consent screen with the `gmail.readonly` and
+  `gmail.compose` scopes, then create a client of type Web application, marked for an
+  AI-powered agent, with `http://localhost:8080/v1/agents/connectors/oauth/callback` as an
+  authorized redirect URI. Give it to the router as `GOOGLE_MCP_CLIENT_ID` and
+  `GOOGLE_MCP_CLIENT_SECRET`, or as the app's own with
+  `PUT /v1/agents/connectors/gmail/oauth-client`. Without one, the agent says Gmail cannot be
+  connected here.
 
 ## What the app shows
 
@@ -119,9 +134,13 @@ Without the client, the button says so: the router answers that it has no OAuth 
 - **Sources.** A reply lists what it read in `support_message.sources` only when a shown
   tool's result is a citations object, and the built-in search answers in prose, so a searched
   reply never carries any. Neither SDK nor `StreamChatAI` has a view for them yet either.
-- **Connecting Gmail from the chat.** When the agent reaches for Gmail before it is connected,
-  the router writes a `connector_authorization` card on the reply, which `StreamChatAI` does not
-  render, since it reads only `ai_` attachments. The instructions send the person to the
-  Gmail button instead.
+- A sign-in is not asked for on a call. A call's words are written by its transcript, so there
+  is no reply to show it on, and an account not connected yet is not available by voice.
+  Connect it in writing first.
+- Closing the sign-in sheet midway leaves its Connect button unable to open it again, because
+  the router hands a sign-in to the first browser that opens it. Not now and asking again
+  begins a fresh one.
+- A conversation from before this has no `return_url`, so its sign-ins go back to the dashboard
+  and the sheet never comes back. Start a new chat.
 - **Memory across conversations** needs `MEM0_API_KEY` on the router and a `memory` on the
   session, which `SessionOptions` has no field for.

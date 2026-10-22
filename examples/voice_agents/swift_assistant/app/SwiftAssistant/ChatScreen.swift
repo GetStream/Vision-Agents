@@ -14,7 +14,6 @@ struct ChatScreen: View {
     /// Says which session a new conversation became, once it is first written or talked to.
     let onStarted: (String) -> Void
 
-    @Environment(GmailAccount.self) private var gmail
     @State private var chat: AgentChat?
     @State private var failure: String?
     /// What the person just asked, shown at once with its photos until Stream's copy of their
@@ -42,52 +41,31 @@ struct ChatScreen: View {
     private static let thinkHarder = "think_harder"
 
     var body: some View {
-        VStack(spacing: 0) {
-            // The person's messages in bubbles, the agent's as their steps and then their answer.
-            // What the person asks shows at once, and Stream's copy takes its place, photos and
-            // all, which keeps them from loading again. Each question goes to the top as it is
-            // asked, and its reply writes itself out below it without moving what is on screen.
-            // While the agent thinks, the list shows its thinking, which the reply's first step
-            // takes over once it arrives.
-            AIConversationView(
-                messages: chat?.listMessages ?? [],
-                pendingMessage: asking.map { asked in
-                    AIPendingMessage(id: asked.id, text: asked.text, attachments: asked.photos.map { .image($0) })
-                },
-                isThinking: activity == .thinking,
-                approver: chat.map { approver(for: $0.session) },
-                loadOlderMessages: chat?.hasOlderMessages == true ? { await chat?.loadOlderMessages() } : nil,
-                viewFactory: MessageViews(chat: chat),
-                footer: {
-                    if case .working(let text) = activity {
-                        AITypingIndicatorView(text: text)
-                    }
-                },
-                emptyContent: {
-                    Welcome()
-                })
-                .scrollDismissesKeyboard(.interactively)
-
-            if isWelcoming {
-                SuggestionsView(suggestions: Self.starters) { send($0) }
-            }
-            if let failure = failure ?? chat?.failure ?? chat?.session.conversation.failure {
-                Text(failure)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal)
-            }
-            AIComposerView(
-                viewFactory: Composer(onTalk: talk),
-                viewModel: composer,
-                onMessageSend: { send($0) },
-                onStopGenerating: { chat?.stop() })
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                GmailButton(gmail: gmail)
-            }
-        }
+        // The person's messages in bubbles, the agent's as their steps and then their answer.
+        // What the person asks shows at once, and Stream's copy takes its place, photos and
+        // all, which keeps them from loading again. Each question goes to the top as it is
+        // asked, and its reply writes itself out below it without moving what is on screen.
+        // While the agent thinks, the list shows its thinking, which the reply's first step
+        // takes over once it arrives.
+        AIConversationView(
+            messages: chat?.listMessages ?? [],
+            pendingMessage: asking.map { asked in
+                AIPendingMessage(id: asked.id, text: asked.text, attachments: asked.photos.map { .image($0) })
+            },
+            isThinking: activity == .thinking,
+            approver: chat.map { approver(for: $0.session) },
+            loadOlderMessages: chat?.hasOlderMessages == true ? { await chat?.loadOlderMessages() } : nil,
+            viewFactory: MessageViews(chat: chat),
+            footer: {
+                if case .working(let text) = activity {
+                    AITypingIndicatorView(text: text)
+                }
+            },
+            emptyContent: {
+                Welcome()
+            })
+        .scrollDismissesKeyboard(.interactively)
+        .modifier(ComposerBar(bar: composerBar))
         .fullScreenCover(isPresented: $isVoiceShown) {
             if let chat {
                 VoiceMode(chat: chat)
@@ -141,6 +119,29 @@ struct ChatScreen: View {
                     try? await Assistant.sessions.delete(abandoned)
                 }
             }
+        }
+    }
+
+    /// The starters, why asking failed, and the composer, over the bottom of the conversation.
+    private var composerBar: some View {
+        VStack(spacing: 0) {
+            if isWelcoming {
+                SuggestionsView(suggestions: Self.starters) { send($0) }
+            }
+            if let failure = failure ?? chat?.failure ?? chat?.session.conversation.failure {
+                Text(failure)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .modifier(Floating(shape: .capsule))
+                    .padding(.horizontal)
+            }
+            AIComposerView(
+                viewFactory: Composer(onTalk: talk),
+                viewModel: composer,
+                onMessageSend: { send($0) },
+                onStopGenerating: { chat?.stop() })
         }
     }
 
@@ -222,6 +223,7 @@ struct ChatScreen: View {
                 var options = SessionOptions(agent: Assistant.agentName)
                 options.llm = Assistant.chatModel
                 options.tools = Assistant.tools
+                options.returnURL = Assistant.returnURL
                 session = try await Assistant.agents.chat(options)
             }
             let opened = try await AgentChat.open(session)
@@ -235,10 +237,17 @@ struct ChatScreen: View {
         }
     }
 
-    /// Answers the questions of the tools that ask first, as the person signed in here.
+    /// Answers the questions of the tools that ask first, and the sign-ins the agent's
+    /// connectors wait for, as the person signed in here. A sign-in opens in a web
+    /// authentication sheet, which the router hands back to this app once the provider has
+    /// answered; "Not now" ends the call without it.
     private func approver(for session: AgentSession) -> AIToolApprover {
-        AIToolApprover(userID: Assistant.user.id, clientID: AIClientIdentity.installID) {
-            call, allowed in
+        AIToolApprover(
+            userID: Assistant.user.id, clientID: AIClientIdentity.installID,
+            authorizer: AIToolAuthorizer(callbackScheme: Assistant.callbackScheme) { call in
+                try await session.declineLogin(call.id)
+            }
+        ) { call, allowed in
             try await session.decide(call.id, allowed: allowed)
         }
     }
@@ -288,12 +297,26 @@ private struct ReplyActions: View {
     }
 }
 
-/// The composer with the way into voice mode beside the message box.
+/// The composer with the way into voice mode beside the message box. Its button and its
+/// field float over the conversation, so they are glass rather than filled.
 private final class Composer: AIComposerViewFactory {
     let onTalk: () -> Void
 
     init(onTalk: @escaping () -> Void) {
         self.onTalk = onTalk
+    }
+
+    func makeLeadingComposerView(options: AIComposerLeadingViewOptions) -> some View {
+        AddAttachmentsButton(onTap: options.onTap)
+            .modifier(Floating(shape: .circle, isInteractive: true))
+    }
+
+    func makeComposerInputView(options: AIComposerInputViewOptions) -> some View {
+        AIComposerInputView(
+            viewModel: options.viewModel, speechHandler: options.speechHandler,
+            onMessageSend: options.onMessageSend, onStopGenerating: options.onStopGenerating
+        )
+        .modifier(Floating(shape: .rect(cornerRadius: AIAppearance.shared.tokens.layout.radius3xl), isInteractive: true))
     }
 
     func makeTrailingComposerView(options: AIComposerTrailingViewOptions) -> some View {
@@ -304,6 +327,39 @@ private final class Composer: AIComposerViewFactory {
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.circle)
         .accessibilityLabel("Talk to Juno")
+    }
+}
+
+/// Floats the composer over the conversation, which scrolls on beneath it, while the list keeps
+/// the latest message clear of it. Where the system has it, the conversation blurs away under
+/// the composer as it does under the navigation bar, softly rather than at a hairline, so the
+/// composer does not read as a bar of its own.
+private struct ComposerBar<Bar: View>: ViewModifier {
+    let bar: Bar
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content
+                .safeAreaBar(edge: .bottom, spacing: 0) { bar }
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
+        } else {
+            content.safeAreaInset(edge: .bottom, spacing: 0) { bar }
+        }
+    }
+}
+
+/// What floats over the conversation lets it show through: glass where the system has it,
+/// and a material before.
+private struct Floating<S: Shape>: ViewModifier {
+    let shape: S
+    var isInteractive = false
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular.interactive(isInteractive), in: shape)
+        } else {
+            content.background(.regularMaterial, in: shape)
+        }
     }
 }
 

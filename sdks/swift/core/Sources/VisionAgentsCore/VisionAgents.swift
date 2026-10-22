@@ -35,6 +35,12 @@ public struct SessionOptions: Sendable {
     public var tools: [AgentTool] = []
     /// Cost labels, carried onto every request the session makes.
     public var tags: [String: String] = [:]
+    /// Where a sign-in the conversation asks for goes back to. Name your app's own scheme in
+    /// reverse domain form, such as `com.example.app:/connected`, and the router hands the web
+    /// authentication sheet back to the app. It is kept with the session, so a conversation
+    /// carried on later goes back there too. Nil sends the sign-in back to the dashboard, which a
+    /// phone cannot open.
+    public var returnURL: URL?
 
     public init(agent: String? = nil) {
         self.agent = agent
@@ -180,6 +186,7 @@ public struct VisionAgents: Sendable {
             incognito: options.incognito,
             llm: options.llm,
             projectId: options.projectID,
+            returnUrl: options.returnURL?.absoluteString,
             startVoice: options.startVoice ? true : nil,
             stt: options.stt,
             tags: options.tags.isEmpty

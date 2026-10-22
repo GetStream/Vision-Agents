@@ -16,6 +16,14 @@ enum Assistant {
     /// with and may not reach its person's Gmail connection on the router, so it asks this.
     static let backendURL = URL(string: "http://localhost:8098")!
 
+    /// The scheme the router sends a sign-in sheet back to, once the person has answered the
+    /// provider an agent's tool needs, such as Linear or Gmail. The router takes an app's own
+    /// scheme only in reverse domain form.
+    static let callbackScheme = "io.getstream.visionagents.swiftassistant"
+
+    /// Where the sign-ins a conversation asks for go back to, kept with its session.
+    static let returnURL = URL(string: callbackScheme + ":/connected")!
+
     /// The customer `go run ./configure` stored the agent under.
     static let customerID = "examples"
 

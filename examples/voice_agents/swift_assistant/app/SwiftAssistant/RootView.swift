@@ -4,8 +4,6 @@ import SwiftUI
 /// The conversation in front, and the ones there were in a sidebar that slides over it.
 struct RootView: View {
     @State private var conversations = Conversations()
-    /// The person's Gmail, connected once for every conversation.
-    @State private var gmail = GmailAccount()
     @State private var isMenuOpen = false
     /// The conversation open, or nil for a new one.
     @State private var selected: String?
@@ -50,7 +48,6 @@ struct RootView: View {
                 }
             }
         }
-        .environment(gmail)
         .onChange(of: isMenuOpen) { _, isOpen in
             // The router titles a conversation as it goes, so the list is read again each
             // time it is shown. The sidebar slides over the composer without ending its
