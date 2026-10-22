@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -491,6 +492,9 @@ func (a *Agent) saidNative(transcript sts.OutputTranscript) {
 	}
 	a.mu.Lock()
 	a.saying = a.spoken.String()
+	if heard := a.heard[transcript.ResponseID]; heard != nil {
+		heard.text = a.saying
+	}
 	a.mu.Unlock()
 	a.emitter.Send(ResponseDelta{TurnID: transcript.ResponseID, Text: transcript.Text})
 }
@@ -512,6 +516,7 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	a.waitingSince = time.Time{}
 	prompt := a.heardText
 	a.mu.Unlock()
+	a.sending(started.ResponseID, started.ResponseID, "")
 
 	if !waiting.IsZero() {
 		a.turns.started(started.ResponseID, kindCaller)
@@ -526,9 +531,11 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
 		return
 	}
+	heard := a.utteranceOf(chunk.ResponseID)
 	var err error
-	if marked, ok := a.options.Edge.(MarkedPlayout); ok {
-		err = marked.PublishAudioMarked(chunk.Audio, a.turns.marksFor(chunk.ResponseID))
+	marked, marks := a.options.Edge.(MarkedPlayout)
+	if marks {
+		err = marked.PublishAudioMarked(chunk.Audio, withUtterance(a.turns.marksFor(chunk.ResponseID), heard))
 	} else {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
 	}
@@ -538,6 +545,9 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 	if a.abandonedTurn(chunk.ResponseID) {
 		a.dropSpeech()
 		return
+	}
+	if heard != nil && !heard.published.Swap(true) && !marks {
+		heard.FirstAudiblePulled(time.Now())
 	}
 	a.mu.Lock()
 	a.lastSpokeAt = time.Now()
@@ -555,6 +565,7 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	said := strings.TrimSpace(a.spoken.String())
 	a.spoken.Reset()
+	heard := a.takeUtterance(complete.ResponseID)
 
 	a.mu.Lock()
 	_, alreadyAbandoned := a.abandoned[complete.ResponseID]
@@ -597,8 +608,11 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 
 	a.emitter.Send(Responded{TurnID: complete.ResponseID, Text: said, PendingWork: pending > 0 || a.Busy()})
 	if !complete.Interrupted {
+		a.heardBefore(heard)
 		a.emitter.Send(Spoke{
 			TurnID:            complete.ResponseID,
+			SynthesisID:       complete.ResponseID,
+			Characters:        int64(utf8.RuneCountInString(said)),
 			AudioDurationMs:   complete.AudioDurationMs,
 			TimeToFirstByteMs: complete.TimeToFirstByteMs,
 		})

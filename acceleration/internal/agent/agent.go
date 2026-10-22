@@ -388,6 +388,9 @@ type Agent struct {
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
+	// heard is each synthesis that has not settled, with what the voice was sent for it,
+	// for reporting when it starts being heard.
+	heard map[string]*utterance
 	// interrupting holds off new replies until the voice, edge and old model stream have
 	// all finished the interruption cleanup.
 	interrupting bool
@@ -622,6 +625,7 @@ func New(options Options) (*Agent, error) {
 		voices:           map[string]string{},
 		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
+		heard:            map[string]*utterance{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
 		speculations:     map[string]*speculation{},
@@ -3508,16 +3512,23 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				continue
 			}
 			speech := leveller.Level(typed.Audio)
+			heard := a.utteranceOf(typed.SynthesisID)
 			var err error
-			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+			marked, marks := a.options.Edge.(MarkedPlayout)
+			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(speech, a.turns.marksFor(turnOf(typed.SynthesisID)))
+				err = marked.PublishAudioMarked(speech, withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard))
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
 			if err != nil {
 				a.fail(err, "edge")
+			}
+			// An edge that cannot say when its track took the audio is taken at its word,
+			// like firstAudio below.
+			if heard != nil && !heard.published.Swap(true) && !marks {
+				heard.FirstAudiblePulled(time.Now())
 			}
 			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
 			a.mu.Lock()
@@ -3539,6 +3550,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
+			heard := a.takeUtterance(typed.SynthesisID)
 			overlapping.finished(typed.SynthesisID)
 			a.settleVoice(voice)
 			a.logger.Info("finished speaking", append([]any{
@@ -3552,8 +3564,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if !typed.Interrupted {
 				// An interrupted utterance was not heard in full, so it must not be
 				// recorded as a finished spoken reply.
+				a.heardBefore(heard)
 				a.emitter.Send(Spoke{
 					TurnID:            turnOf(typed.SynthesisID),
+					SynthesisID:       typed.SynthesisID,
+					Characters:        typed.Characters,
 					AudioDurationMs:   typed.AudioDurationMs,
 					TimeToFirstByteMs: typed.TimeToFirstByteMs,
 				})
@@ -3868,14 +3883,14 @@ func (a *Agent) speakSentence(turnID, text string) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return voice.Synthesize(tts.Request{ID: id, Text: text, Final: true})
+		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true})
 	}
 
 	if a.openTurn != turnID {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Text: text})
+	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text})
 }
 
 // speakWhole says a piece of text that is already complete, as one utterance.
@@ -3886,7 +3901,7 @@ func (a *Agent) speakWhole(turnID, text string) error {
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
-	if err := voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
+	if err := a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
 		// Refused, it is never said, so it is not counted as being said either.
 		a.settle()
 		return err

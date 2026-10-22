@@ -508,10 +508,21 @@ func frameOf(event session.Event) (frame, bool) {
 			"held_ms":     typed.HeldMs,
 		}, true
 
+	case agent.Speaking:
+		return frame{
+			"type":         "speaking",
+			"turn_id":      typed.TurnID,
+			"synthesis_id": typed.SynthesisID,
+			"text":         typed.Text,
+			"at":           typed.At,
+		}, true
+
 	case agent.Spoke:
 		return frame{
 			"type":                  "spoke",
 			"turn_id":               typed.TurnID,
+			"synthesis_id":          typed.SynthesisID,
+			"characters":            typed.Characters,
 			"audio_duration_ms":     typed.AudioDurationMs,
 			"time_to_first_byte_ms": typed.TimeToFirstByteMs,
 		}, true

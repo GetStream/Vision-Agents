@@ -1157,6 +1157,8 @@ func turnIDOf(event Event) string {
 		return typed.TurnID
 	case agent.Interrupted:
 		return typed.TurnID
+	case agent.Speaking:
+		return typed.TurnID
 	case agent.Spoke:
 		return typed.TurnID
 	}

@@ -205,9 +205,31 @@ type Blocked struct {
 
 func (Blocked) isAgentEvent() {}
 
+// Speaking means an utterance of the agent's started being heard: the call's track took
+// its first audible frame or, from an edge that cannot say, publishing its first chunk
+// returned. It comes before the utterance's Spoke, and is sent for one the caller then
+// talks over too, whose cut is Interrupted.
+type Speaking struct {
+	TurnID string
+	// SynthesisID is the utterance, as on its Spoke.
+	SynthesisID string
+	// Text is what the voice had been sent for the utterance by then: all of a line said
+	// as written or of a sentence a voice took on its own, and the start of a reply a
+	// streaming voice is still being sent. A speech-to-speech model's transcript so far.
+	Text string
+	At   time.Time
+}
+
+func (Speaking) isAgentEvent() {}
+
 // Spoke means a piece of the reply finished being synthesised and published.
 type Spoke struct {
 	TurnID string
+	// SynthesisID is the utterance, as on its Speaking.
+	SynthesisID string
+	// Characters is how much text was synthesised, or for a speech-to-speech model how long
+	// its transcript is.
+	Characters int64
 	// AudioDurationMs is how much speech was published.
 	AudioDurationMs float64
 	// TimeToFirstByteMs is how long the participant waited to hear anything.

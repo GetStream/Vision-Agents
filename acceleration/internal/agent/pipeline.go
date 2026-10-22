@@ -693,6 +693,8 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		return
 	}
 	a.utterances = 0
+	// What the lost voice was saying will not be heard from it.
+	a.heard = map[string]*utterance{}
 	replace := !a.closed && !a.switching.Load() &&
 		len(a.lostVoices) < maxLostVoices
 	if replace {
