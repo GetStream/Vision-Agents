@@ -371,10 +371,9 @@ func (s *RoutingSuite) TestTheConversationalGroupLeadsWithGemmaAndKeepsLunaToFai
 		"the cheapest model that holds a short turn heads the group while it is up")
 	s.ElementsMatch([]string{
 		"gemma/gemma-4-26B-A4B-it",
-		"cerebras/gemma-4-31b",
 		"openai/gpt-5.6-luna",
 	}, names(candidates),
-		"Luna stays in the group, so a turn still has a model when both Gemmas are down")
+		"Luna stays in the group, so a turn still has a model when Gemma is down")
 }
 
 func (s *RoutingSuite) TestTheFlowGroupLeadsWithGemmaAndLunaCatchesItBeingDown() {

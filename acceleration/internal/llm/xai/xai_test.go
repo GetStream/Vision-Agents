@@ -61,6 +61,25 @@ func TestANamedEffortIsSent(t *testing.T) {
 	require.Equal(t, "xhigh", (<-sent)["reasoning_effort"])
 }
 
+func TestTheCacheKeyIsSentAsPromptCacheKey(t *testing.T) {
+	server, sent := grok(t)
+	provider, err := New(Options{APIKey: "test", BaseURL: server.URL})
+	require.NoError(t, err)
+	defer provider.Close()
+	require.True(t, provider.Capabilities().PromptCacheKey)
+
+	stream, err := provider.Create(t.Context(), llm.ResponseParams{
+		Input:          []llm.Message{{Role: llm.User, Content: "hi"}},
+		PromptCacheKey: "agent-config-7",
+	})
+	require.NoError(t, err)
+	_, err = llm.Collect(stream)
+	require.NoError(t, err)
+
+	require.Equal(t, "agent-config-7", (<-sent)["prompt_cache_key"],
+		"xAI reads a cached prefix back only for a request that names its key")
+}
+
 func TestNoneIsRefusedBeforeItIsSent(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

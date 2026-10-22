@@ -2471,20 +2471,6 @@ llm:
         per_million_cached_input_tokens: 0.015
         per_million_output_tokens: 0.60
 
-    # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
-    # stays off: the live path wants the first word, not a think-then-speak turn.
-    - provider: cerebras
-      model: gemma-4-31b
-      description: "Gemma 4 31B on Cerebras, at around 1,500 tokens a second."
-      benchmark: { intelligence_index: 14 }
-      context_window: 256000
-      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
-      realtime: true
-      tier: low-latency
-      price:
-        per_million_input_tokens: 2.15
-        per_million_output_tokens: 2.70
-
     # Pro is a 1.6T-parameter frontier model: better answers, and slow enough that it wants
     # to be off the live path unless the caller asked for quality.
     - provider: deepseek
@@ -3142,18 +3128,16 @@ llm:
   aliases:
     # Small talk, as cheaply and quickly as it can be had: the smallest models here, for
     # an agent whose turns are short and whose instructions are simple. Gemma 4 26B, with
-    # 4B active per token, is preferred; Gemma 4 31B on Cerebras and GPT-5.6 Luna catch it
-    # being down. Like the STT groups this names its members, since being small is not
-    # something a model declares.
+    # 4B active per token, is preferred; GPT-5.6 Luna catches it being down. Like the STT
+    # groups this names its members, since being small is not something a model declares.
     llm-conversational:
       title: Conversational
-      description: "Super lightweight models for simple, short turns. Prefers Gemma 4 26B-A4B, then Gemma 4 31B on Cerebras and GPT-5.6 Luna."
+      description: "Super lightweight models for simple, short turns. Prefers Gemma 4 26B-A4B, then GPT-5.6 Luna."
       require_realtime: true
       tier: low-latency
       prefer: gemma/gemma-4-26B-A4B-it
       only:
         - gemma/gemma-4-26B-A4B-it
-        - cerebras/gemma-4-31b
         - openai/gpt-5.6-luna
 
     # A fast answer, in whatever language. The shorthand a caller reaches for when the only
@@ -3487,15 +3471,6 @@ decision_model:
         per_million_input_tokens: 0.042
 
     - provider: openrouter
-      model: perplexity/pplx-decider-v1.1-27b
-      description: "Perplexity's Decider V1.1 through OpenRouter. The cheapest per call of the large decision models."
-      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
-      realtime: true
-      tier: low-latency
-      price:
-        per_million_input_tokens: 0.02
-
-    - provider: openrouter
       model: inception/mercury-decide
       description: "Inception's diffusion-based decision model."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
@@ -3519,10 +3494,11 @@ decision_model:
 
     # Perplexity's own Decisions API, at the rate its reference gives
     # (docs.perplexity.ai/api-reference/decisions-post, read 2026-10-09). It is the only
-    # host left for Decider V1: OpenRouter lists it but no longer has an endpoint behind it.
+    # host left for either Decider: OpenRouter lists both but has no endpoint behind them
+    # (V1.1 answered "No endpoints found" there on 2026-10-20).
     - provider: perplexity
       model: pplx-decider-v1.1-27b
-      description: "Perplexity's Decider V1.1 on Perplexity's own API."
+      description: "Perplexity's Decider V1.1 on Perplexity's own API. The cheapest per call of the large decision models."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency

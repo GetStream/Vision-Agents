@@ -116,6 +116,11 @@ const (
 // closedByConnectionLoss is the one session.closed reason that is not somebody's decision.
 const closedByConnectionLoss = "connection_lost"
 
+// closeGrace is how long Close waits for session.closed, which carries the session's final
+// billed seconds, before dropping the socket. It arrived 775 ms after session.close when
+// measured.
+const closeGrace = 2 * time.Second
+
 // Options configures the provider. APIKey falls back to OPENAI_API_KEY.
 type Options struct {
 	APIKey string
@@ -292,9 +297,16 @@ type STS struct {
 	carrying bool
 	started  bool
 	closed   bool
+	// closing is set while Close waits for session.closed, so the connection ending in
+	// that time is not reported as a failure.
+	closing bool
 	// ended is set once the server reported the session closed, so the transport closing
 	// after it is not reported a second time.
 	ended bool
+	// finished is closed once session.closed has been read or the connection has ended,
+	// which is what Close waits for.
+	finished     chan struct{}
+	finishedOnce sync.Once
 }
 
 // New validates the options and returns an unstarted provider.
@@ -331,11 +343,12 @@ func New(settings Options) (*STS, error) {
 	}
 
 	return &STS{
-		options: settings,
-		keys:    keys,
-		logger:  logger.With("provider", ProviderName, "model", settings.Model),
-		emitter: sts.NewEmitter(sts.EmitterBuffer),
-		tools:   settings.Tools,
+		options:  settings,
+		keys:     keys,
+		logger:   logger.With("provider", ProviderName, "model", settings.Model),
+		emitter:  sts.NewEmitter(sts.EmitterBuffer),
+		tools:    settings.Tools,
+		finished: make(chan struct{}),
 	}, nil
 }
 
@@ -552,20 +565,23 @@ func (s *STS) Interrupt(int) error {
 func (s *STS) Events() <-chan sts.Event { return s.emitter.Events() }
 
 // Close ends the session, asking the server to finish it first so the seconds it bills
-// stop there. A reply still in flight is settled as interrupted, so it is billed once like
-// every other.
+// stop there, and waiting up to closeGrace for session.closed so they are read. A reply
+// still in flight is settled as interrupted, so it is billed once like every other.
 func (s *STS) Close() error {
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.closing {
 		s.mu.Unlock()
 		return nil
 	}
+	s.closing = true
 	conn := s.conn
 	s.mu.Unlock()
 
 	if conn != nil {
 		if err := s.send(clientEvent{Type: eventSessionClose}); err != nil {
 			s.logger.Debug("could not close the session gracefully", "error", err)
+		} else {
+			s.awaitSessionClosed()
 		}
 	}
 
@@ -580,6 +596,23 @@ func (s *STS) Close() error {
 	}
 	s.emitter.Close()
 	return nil
+}
+
+// awaitSessionClosed waits for the server to report the session closed, or the connection
+// to end, for at most closeGrace.
+func (s *STS) awaitSessionClosed() {
+	timer := time.NewTimer(closeGrace)
+	defer timer.Stop()
+	select {
+	case <-s.finished:
+	case <-timer.C:
+		s.logger.Debug("the session did not report closing in time", "waited", closeGrace)
+	}
+}
+
+// finish releases Close from waiting for session.closed.
+func (s *STS) finish() {
+	s.finishedOnce.Do(func() { close(s.finished) })
 }
 
 // Provider implements sts.STS.
@@ -699,6 +732,7 @@ func (s *STS) send(frame any) error {
 // readLoop translates server frames into events until the connection ends.
 func (s *STS) readLoop(conn *websocket.Conn) {
 	defer s.Close()
+	defer s.finish()
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -720,9 +754,9 @@ func (s *STS) readLoop(conn *websocket.Conn) {
 // is not coming.
 func (s *STS) handleReadError(err error) {
 	s.mu.Lock()
-	closed, ended := s.closed, s.ended
+	closed, closing, ended := s.closed, s.closing, s.ended
 	s.mu.Unlock()
-	if closed || ended {
+	if closed || closing || ended {
 		return
 	}
 
@@ -773,6 +807,7 @@ func (s *STS) handleMessage(event serverEvent) {
 			Clean:    event.Reason != closedByConnectionLoss,
 			At:       time.Now(),
 		})
+		s.finish()
 		_ = s.Close()
 	case eventError:
 		failure := errors.New("openailive: unknown error")

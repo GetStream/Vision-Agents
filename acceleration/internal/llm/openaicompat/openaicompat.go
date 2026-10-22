@@ -8,8 +8,8 @@
 //
 // The contract above this is shaped like the Responses API, and chat completions is the
 // older and smaller of the two. What it cannot express -- a stored response to continue
-// from, a cache key, a conversation held by the provider -- is dropped rather than
-// approximated, and the capabilities this reports say so.
+// from, a cache key the provider has no field for, a conversation held by the provider --
+// is dropped rather than approximated, and the capabilities this reports say so.
 package openaicompat
 
 import (
@@ -71,9 +71,18 @@ type Options struct {
 	APIKey     string
 	// BaseURL is the endpoint root, up to and including /v1.
 	BaseURL string
-	// Capabilities is what this model accepts. Store, Conversations and PromptCacheKey
-	// are forced off, because chat completions has nowhere to put them.
+	// Capabilities is what this model accepts. Store and Conversations are forced off,
+	// because chat completions has nowhere to put them, and so is PromptCacheKey unless
+	// CacheKeyField or CacheKeyHeader says where this provider takes it.
 	Capabilities llm.Capabilities
+	// CacheKeyField is the body field a request's PromptCacheKey is sent in, for a provider
+	// that caches by a key outside the chat completions schema, such as xAI's
+	// prompt_cache_key.
+	CacheKeyField string
+	// CacheKeyHeader is the header a request's PromptCacheKey is sent in, for a provider
+	// that routes by it, such as Baseten's x-session-affinity. Such a header pins every
+	// request sharing the key to one replica, so the key has to name one conversation.
+	CacheKeyHeader string
 	// RequestFields builds the request fields outside the OpenAI schema, such as a vLLM
 	// chat template's arguments or a reasoning effort the endpoint spells its own way.
 	// It is given the effort already resolved against the model's capabilities.
@@ -154,7 +163,7 @@ func New(options Options) (*LLM, error) {
 	}
 	options.Capabilities.Store = false
 	options.Capabilities.Conversations = false
-	options.Capabilities.PromptCacheKey = false
+	options.Capabilities.PromptCacheKey = options.CacheKeyField != "" || options.CacheKeyHeader != ""
 	options.Capabilities.CacheTTLs = nil
 
 	clientOptions := []option.RequestOption{
@@ -721,9 +730,15 @@ func (l *LLM) requestOptions(request llm.ResponseParams) []option.RequestOption 
 		fields["continue_final_message"] = true
 		fields["add_generation_prompt"] = false
 	}
-	options := make([]option.RequestOption, 0, len(fields))
+	if request.PromptCacheKey != "" && l.options.CacheKeyField != "" {
+		fields[l.options.CacheKeyField] = request.PromptCacheKey
+	}
+	options := make([]option.RequestOption, 0, len(fields)+1)
 	for key, value := range fields {
 		options = append(options, option.WithJSONSet(key, value))
+	}
+	if request.PromptCacheKey != "" && l.options.CacheKeyHeader != "" {
+		options = append(options, option.WithHeader(l.options.CacheKeyHeader, request.PromptCacheKey))
 	}
 	return options
 }
