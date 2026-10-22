@@ -72,7 +72,7 @@ func (s *TwilioSuite) TestWaitLogsTheCallUntilItEnds() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 
-	err := s.person.Wait(context.Background(), call)
+	_, err := s.person.Wait(context.Background(), call)
 
 	s.Require().NoError(err)
 	s.Equal(3, s.statusLines(), s.logs.String())
@@ -87,7 +87,7 @@ func (s *TwilioSuite) TestAnOutboundWaitFindsTheCallToThePersonNumber() {
 	s.fake.add("CAnewer", call.Started.Add(5*time.Second), "in-progress", "completed")
 	s.fake.list("CAolder", "CAnewer")
 
-	err := s.person.Wait(context.Background(), call)
+	_, err := s.person.Wait(context.Background(), call)
 
 	s.Require().NoError(err)
 	s.Contains(s.fake.paths(), "GET /2010-04-01/Accounts/"+fakeSID+"/Calls/CAnewer.json")
@@ -101,7 +101,7 @@ func (s *TwilioSuite) TestAnOutboundCallThatNeverShowsUpIsNotObserved() {
 	call := s.call(person.Outbound)
 	call.Talk = 0
 
-	err := s.person.Wait(context.Background(), call)
+	_, err := s.person.Wait(context.Background(), call)
 
 	s.Require().NoError(err)
 	s.Equal(1, strings.Count(s.logs.String(), "person call not observed"), s.logs.String())
@@ -114,9 +114,20 @@ func (s *TwilioSuite) TestACallThatNeverEndsStopsBeingWaitedOn() {
 	call.Talk = 0
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 
-	err := s.person.Wait(context.Background(), call)
+	_, err := s.person.Wait(context.Background(), call)
 
 	s.ErrorContains(err, "did not end")
+}
+
+func (s *TwilioSuite) TestAnEndedCallSaysHowLongThePersonWasOn() {
+	call := s.call(person.Inbound)
+	s.Require().NoError(s.person.Dial(context.Background(), call))
+
+	length, err := s.person.Wait(context.Background(), call)
+
+	s.Require().NoError(err)
+	s.Equal(25*time.Second, length)
+	s.Contains(s.logs.String(), "person_call_s=25")
 }
 
 func (s *TwilioSuite) TestHangupCompletesTheCallStillLive() {
@@ -132,7 +143,8 @@ func (s *TwilioSuite) TestHangupCompletesTheCallStillLive() {
 func (s *TwilioSuite) TestHangupLeavesAnEndedCallAlone() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
-	s.Require().NoError(s.person.Wait(context.Background(), call))
+	_, err := s.person.Wait(context.Background(), call)
+	s.Require().NoError(err)
 
 	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
@@ -145,7 +157,7 @@ func (s *TwilioSuite) TestHangupEndsTheLiveCallItFound() {
 	s.fake.list("CAfound")
 	waitMargin = 50 * time.Millisecond
 	call.Talk = 0
-	_ = s.person.Wait(context.Background(), call) // follows the found call until the margin runs out
+	_, _ = s.person.Wait(context.Background(), call) // follows the found call until the margin runs out
 
 	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
@@ -166,19 +178,21 @@ func (s *TwilioSuite) TestHangupLooksForAnOutboundCallItNeverFound() {
 func (s *TwilioSuite) TestASecondInboundRunFollowsItsOwnCall() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
-	s.Require().NoError(s.person.Wait(context.Background(), call))
+	_, err := s.person.Wait(context.Background(), call)
+	s.Require().NoError(err)
 	s.Require().NoError(s.person.Hangup(context.Background(), call))
 	s.fake.placedStatuses = []string{"in-progress", "completed"}
 
 	s.Require().NoError(s.person.Dial(context.Background(), call))
-	s.Require().NoError(s.person.Wait(context.Background(), call))
+	_, err = s.person.Wait(context.Background(), call)
+	s.Require().NoError(err)
 
 	s.Contains(s.fake.paths(), "GET /2010-04-01/Accounts/"+fakeSID+"/Calls/CAplaced2.json")
 	s.Contains(s.logs.String(), "status=in-progress")
 }
 
 func (s *TwilioSuite) TestAnInboundWaitWithNoPlacedCallIsAnError() {
-	err := s.person.Wait(context.Background(), s.call(person.Inbound))
+	_, err := s.person.Wait(context.Background(), s.call(person.Inbound))
 
 	s.ErrorContains(err, "no call was placed")
 }
@@ -188,7 +202,8 @@ func (s *TwilioSuite) TestATimeThatCannotBeReadIsLeftEmptyAndWarnedAbout() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 
-	s.Require().NoError(s.person.Wait(context.Background(), call))
+	_, err := s.person.Wait(context.Background(), call)
+	s.Require().NoError(err)
 
 	s.Contains(s.logs.String(), "could not read a time of the person's call")
 	s.Contains(s.logs.String(), "value=yesterday")
@@ -217,7 +232,8 @@ func (s *TwilioSuite) TestNothingButCallsIsSent() {
 	s.fake.placedStatuses = []string{"in-progress", "completed"}
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
-	s.Require().NoError(s.person.Wait(context.Background(), call))
+	_, err := s.person.Wait(context.Background(), call)
+	s.Require().NoError(err)
 	s.Require().NoError(s.person.Hangup(context.Background(), call))
 
 	for _, request := range s.fake.paths() {
@@ -231,8 +247,9 @@ func (s *TwilioSuite) TestNothingLoggedCarriesTheAuthToken() {
 	call := s.call(person.Inbound)
 	s.Require().NoError(s.person.Dial(context.Background(), call))
 	s.fake.failWith = 500
+	_, waitErr := s.person.Wait(context.Background(), call)
 	errs := []error{
-		s.person.Wait(context.Background(), call),
+		waitErr,
 		s.person.Hangup(context.Background(), call),
 		s.person.Dial(context.Background(), call),
 	}

@@ -188,6 +188,7 @@ type fakePerson struct {
 	waiting   chan struct{} // closed when Wait starts; nil is fine
 	stayOn    bool          // Wait lasts until ctx ends
 	waitErr   error         // what Wait returns once the call ended
+	length    time.Duration // how long Wait says the call lasted
 	hangupErr error
 	readyErr  error
 }
@@ -209,20 +210,20 @@ func (p *fakePerson) Dial(_ context.Context, call person.Call) error {
 	return nil
 }
 
-func (p *fakePerson) Wait(ctx context.Context, call person.Call) error {
+func (p *fakePerson) Wait(ctx context.Context, call person.Call) (time.Duration, error) {
 	p.calls = append(p.calls, call)
 	if p.waiting != nil {
 		close(p.waiting)
 	}
 	if p.stayOn {
 		<-ctx.Done()
-		return ctx.Err()
+		return 0, ctx.Err()
 	}
 	p.steps.add("person_wait")
 	if p.ended != nil {
 		close(p.ended)
 	}
-	return p.waitErr
+	return p.length, p.waitErr
 }
 
 func (p *fakePerson) Hangup(context.Context, person.Call) error {

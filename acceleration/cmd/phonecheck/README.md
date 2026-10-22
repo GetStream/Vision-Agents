@@ -204,11 +204,12 @@ Stream placed each side (`agent_location`, `caller_location`) and how far that i
 (`agent_distance_to_sfu_km`, `caller_distance_to_sfu_km`), each empty when Stream does not say.
 `caller_location` is where Stream's SIP side joined the call from, not where the person is.
 
-A `person call` line gives the person side's status, start and end where the tool can see them.
+A `person call` line gives the person side's status, start and end where the tool can see them,
+and `person_call_s` once the call has both.
 
 Then one `call summary` line: `direction`, `provider`, `session_id`, `outcome`, `connect_ms`,
-`talked_ms`, `total_ms`, `agent_sfu`, `caller_sfu`, `router_address`, `sip_host`, `sfus_used`, `region_label`
-(and `vendor_call_id` outbound). `-log-format json` writes all of it as JSON on stderr.
+`talked_ms`, `person_call_s` (when known), `total_ms`, `agent_sfu`, `caller_sfu`, `router_address`,
+`sip_host`, `sfus_used`, `region_label` (and `vendor_call_id` outbound). `-log-format json` writes all of it as JSON on stderr.
 
 The timings, all counted from the end of the checks:
 
@@ -217,6 +218,9 @@ The timings, all counted from the end of the checks:
 - `talked_ms`: from then until the agent's session and the person's call have both ended. It
   includes the person's script and the router's 10 s wait before it ends the session, so it is
   longer than `-talk`.
+- `person_call_s`: the person's own call, start to end, from the vendor's call record.
+  `talked_ms` runs on until the router ends the session, about 10 s after the hang-up, so it is
+  that much longer.
 - `total_ms`: until the run is torn down. Most of it is the wait for the `call_sites` row,
   which Stream triggers about 30 s after the call ends.
 

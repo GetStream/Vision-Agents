@@ -180,7 +180,11 @@ func (c *callRun) connectedTo(session agentSession) {
 // waitForTheEnd watches the person's call and the agent's session side by side.
 func (c *callRun) waitForTheEnd(ctx context.Context) error {
 	personDone := make(chan error, 1)
-	go func() { personDone <- c.d.person.Wait(ctx, c.call) }()
+	go func() {
+		length, err := c.d.person.Wait(ctx, c.call)
+		c.sum.PersonCall = length
+		personDone <- err
+	}()
 
 	sessionCtx, cancel := context.WithTimeout(ctx, c.cfg.Talk+sessionWaitMargin)
 	defer cancel()

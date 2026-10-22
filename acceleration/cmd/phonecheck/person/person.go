@@ -23,6 +23,14 @@ func (d Direction) String() string {
 	return "outbound"
 }
 
+// LengthOf is how long a call lasted by its record's start and end, zero without both.
+func LengthOf(start, end time.Time) time.Duration {
+	if start.IsZero() || end.IsZero() {
+		return 0
+	}
+	return end.Sub(start)
+}
+
 // Call is what every adapter needs for one call.
 type Call struct {
 	ID           string // the run's call id, on every log line
@@ -46,8 +54,9 @@ type Person interface {
 	// placed. Inbound only.
 	Dial(ctx context.Context, call Call) error
 	// Wait blocks until the person's call has ended, logging chosen fields of the vendor's
-	// call record.
-	Wait(ctx context.Context, call Call) error
+	// call record. It returns how long the call lasted by that record, zero when the call was
+	// not observed or the record lacks its start or end.
+	Wait(ctx context.Context, call Call) (time.Duration, error)
 	// Hangup ends the call it placed or found, if it is still live, and forgets it.
 	Hangup(ctx context.Context, call Call) error
 }

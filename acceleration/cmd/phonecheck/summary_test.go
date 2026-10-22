@@ -40,3 +40,19 @@ func (s *SummarySuite) TestAnInboundSummaryHasNoVendorCallID() {
 
 	s.NotContains(out.String(), "vendor_call_id")
 }
+
+func (s *SummarySuite) TestThePersonsCallLengthSitsNextToTalkedMs() {
+	var out bytes.Buffer
+
+	summary{Talked: 35 * time.Second, PersonCall: 27 * time.Second}.log(newLogger("text", &out))
+
+	s.Contains(out.String(), "talked_ms=35000 person_call_s=27 total_ms=")
+}
+
+func (s *SummarySuite) TestAnUnknownPersonCallLengthIsLeftOut() {
+	var out bytes.Buffer
+
+	summary{Talked: 35 * time.Second}.log(newLogger("text", &out))
+
+	s.NotContains(out.String(), "person_call_s")
+}

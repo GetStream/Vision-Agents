@@ -60,25 +60,25 @@ func (p *Person) Dial(ctx context.Context, call person.Call) error {
 
 // Wait follows the person's call to a final status. Inbound it is the call Dial placed;
 // outbound it is the newest call to the person's number since the run began.
-func (p *Person) Wait(ctx context.Context, call person.Call) error {
+func (p *Person) Wait(ctx context.Context, call person.Call) (time.Duration, error) {
 	a, err := newAPI()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if call.Direction == person.Inbound {
 		sid, _ := p.current()
 		if sid == "" {
-			return errors.New("no call was placed, so there is none to follow")
+			return 0, errors.New("no call was placed, so there is none to follow")
 		}
 		return p.follow(ctx, a, call, sid)
 	}
 	sid, found, err := p.findOutbound(ctx, a, call)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !found {
 		call.Logger.Warn("person call not observed")
-		return nil
+		return 0, nil
 	}
 	return p.follow(ctx, a, call, sid)
 }
@@ -139,7 +139,7 @@ func (p *Person) findOutbound(ctx context.Context, a api, call person.Call) (sid
 	}
 }
 
-func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string) error {
+func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string) (time.Duration, error) {
 	followCtx, cancel := context.WithTimeout(ctx, call.Talk+waitMargin)
 	defer cancel()
 	last := ""
@@ -147,9 +147,9 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 		rec, err := a.call(followCtx, sid)
 		if err != nil {
 			if followCtx.Err() != nil {
-				return didNotEnd(ctx)
+				return 0, didNotEnd(ctx)
 			}
-			return err
+			return 0, err
 		}
 		p.setCall(sid, rec.Status)
 		if rec.Status != last {
@@ -157,10 +157,10 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 			last = rec.Status
 		}
 		if isFinal(rec.Status) {
-			return nil
+			return lengthOf(rec), nil
 		}
 		if !sleep(followCtx, pollEvery) {
-			return didNotEnd(ctx)
+			return 0, didNotEnd(ctx)
 		}
 	}
 }
@@ -188,8 +188,17 @@ func endLiveCallsTo(ctx context.Context, a api, call person.Call) error {
 func logStatus(call person.Call, rec callRecord) {
 	warnUnread(call, "start", rec.StartTime)
 	warnUnread(call, "end", rec.EndTime)
-	call.Logger.Info("person call", "status", rec.Status, "start", formatTime(rec.StartTime.Time),
-		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel)
+	logged := []any{"status", rec.Status, "start", formatTime(rec.StartTime.Time),
+		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel}
+	if length := lengthOf(rec); length > 0 {
+		logged = append(logged, "person_call_s", int(length.Seconds()))
+	}
+	call.Logger.Info("person call", logged...)
+}
+
+// lengthOf is how long the person's call lasted by its record, zero until it has both times.
+func lengthOf(rec callRecord) time.Duration {
+	return person.LengthOf(rec.StartTime.Time, rec.EndTime.Time)
 }
 
 func warnUnread(call person.Call, field string, t twilioTime) {

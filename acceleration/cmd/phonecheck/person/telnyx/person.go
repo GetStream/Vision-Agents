@@ -72,17 +72,17 @@ func (p *Person) Dial(ctx context.Context, call person.Call) error {
 
 // Wait follows the call Dial placed to a final status. Telnyx gives no call id for a call
 // to the person's number, so outbound it only waits out the call.
-func (p *Person) Wait(ctx context.Context, call person.Call) error {
+func (p *Person) Wait(ctx context.Context, call person.Call) (time.Duration, error) {
 	if call.Direction == person.Outbound {
-		return waitUnobserved(ctx, call)
+		return 0, waitUnobserved(ctx, call)
 	}
 	sid, _ := p.placed()
 	if sid == "" {
-		return errors.New("no call was placed, so there is none to follow")
+		return 0, errors.New("no call was placed, so there is none to follow")
 	}
 	a, err := newAPI()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	return p.follow(ctx, a, call, sid)
 }
@@ -123,7 +123,7 @@ func waitUnobserved(ctx context.Context, call person.Call) error {
 	return nil
 }
 
-func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string) error {
+func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string) (time.Duration, error) {
 	followCtx, cancel := context.WithTimeout(ctx, call.Talk+waitMargin)
 	defer cancel()
 	last, seen := "", false
@@ -131,11 +131,11 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 		rec, err := a.call(followCtx, sid)
 		switch {
 		case err != nil && followCtx.Err() != nil:
-			return didNotEnd(ctx)
+			return 0, didNotEnd(ctx)
 		case errors.Is(err, errNotFound) && !seen:
 			// Telnyx reads are eventually consistent: a call just placed may 404 for a moment.
 		case err != nil:
-			return err
+			return 0, err
 		default:
 			seen = true
 			p.setCall(sid, rec.Status)
@@ -144,11 +144,11 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 				last = rec.Status
 			}
 			if isFinal(rec.Status) {
-				return nil
+				return lengthOf(rec), nil
 			}
 		}
 		if !sleep(followCtx, pollEvery) {
-			return didNotEnd(ctx)
+			return 0, didNotEnd(ctx)
 		}
 	}
 }
@@ -164,8 +164,17 @@ func didNotEnd(ctx context.Context) error {
 func logStatus(call person.Call, rec callRecord) {
 	warnUnread(call, "start", rec.StartTime)
 	warnUnread(call, "end", rec.EndTime)
-	call.Logger.Info("person call", "status", rec.Status, "start", formatTime(rec.StartTime.Time),
-		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel)
+	logged := []any{"status", rec.Status, "start", formatTime(rec.StartTime.Time),
+		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel}
+	if length := lengthOf(rec); length > 0 {
+		logged = append(logged, "person_call_s", int(length.Seconds()))
+	}
+	call.Logger.Info("person call", logged...)
+}
+
+// lengthOf is how long the person's call lasted by its record, zero until it has both times.
+func lengthOf(rec callRecord) time.Duration {
+	return person.LengthOf(rec.StartTime.Time, rec.EndTime.Time)
 }
 
 func warnUnread(call person.Call, field string, t telnyxTime) {

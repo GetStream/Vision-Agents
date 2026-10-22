@@ -287,6 +287,16 @@ func (s *RunSuite) TestTheSummaryIsWrittenOnEveryExit() {
 	s.NotEmpty(s.linesSaying("could not hang up the person's call"))
 }
 
+func (s *RunSuite) TestTheSummaryGivesThePersonsCallLength() {
+	s.person.length = 27 * time.Second
+
+	s.Require().NoError(s.run())
+
+	summaries := s.linesSaying("call summary")
+	s.Require().Len(summaries, 1)
+	s.InDelta(27, summaries[0]["person_call_s"], 0)
+}
+
 func (s *RunSuite) TestTheRegionLabelIsLoggedAndChangesNothing() {
 	s.Require().NoError(s.run())
 	without := s.steps.calls()
