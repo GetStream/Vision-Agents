@@ -68,8 +68,8 @@ const noProxy = "localhost,127.0.0.1,::1"
 // BrokerOptions are what Broker needs: the proxy and its store, and the session's tokens.
 type BrokerOptions struct {
 	Store *Store
-	// URL is the proxy as a sandbox reaches it, code_sandbox.proxy_public_url: http, an IPv4
-	// address and a port.
+	// URL is the proxy as a sandbox reaches it, code_sandbox.proxy_public_url: http or https, an
+	// IPv4 address and a port. With https the sandbox's clients reach it through its TLS tunnel.
 	URL string
 	// CACert is the PEM certificate of the CA the proxy signs each host's certificate with,
 	// which the sandbox trusts. Never its key.
@@ -112,10 +112,8 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 		return nil, stack.Wrap(errors.New("egress: the proxy broker needs redis, the proxy's CA certificate, a session and tokens"))
 	}
 	proxy, ok := config.ProxyURL(o.URL)
-	// Most of a sandbox's clients cannot use an https proxy URL (live probe, 2026-10-22), so the
-	// sandbox is handed http alone.
-	if !ok || proxy.Scheme != "http" {
-		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://<public IPv4 address>:port, with no user, path, query or fragment"))
+	if !ok {
+		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http or https://<public IPv4 address>:port, with no user, path, query or fragment"))
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -188,10 +186,22 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	for _, name := range bundleEnv {
 		run[name] = bundlePath
 	}
-	for _, name := range proxyEnv {
-		run[name] = proxy.String()
+	mount := sandbox.Mount{Env: env, RunEnv: run, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}, Setup: []string{bundle}}
+	clients := proxy
+	if proxy.Scheme == "https" {
+		clients = url.URL{Scheme: "http", User: proxy.User, Host: "127.0.0.1:" + tunnelPort}
+		start := startTunnel(b.proxy)
+		mount.Files[tunnelPath] = forwarder
+		mount.Setup = append(mount.Setup, start)
+		mount.EachRun = []string{start}
+		// Node's fetch and https ignore the proxy env vars without it
+		// (https://nodejs.org/api/cli.html#node_use_env_proxy1; live probe, 2026-10-22).
+		run["NODE_USE_ENV_PROXY"] = "1"
 	}
-	return sandbox.Mount{Env: env, RunEnv: run, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}, Setup: []string{bundle}}, nil
+	for _, name := range proxyEnv {
+		run[name] = clients.String()
+	}
+	return mount, nil
 }
 
 // BeforeRun withdraws a grant whose connection gives sandbox.ErrNoCredential and stores the
