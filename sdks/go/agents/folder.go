@@ -154,10 +154,13 @@ type Settings struct {
 	STT         string `yaml:"stt"`
 	TTS         string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
-	STS     *string `yaml:"sts"`
-	Voice   string  `yaml:"voice"`
-	LLM     string  `yaml:"llm"`
-	Harness string  `yaml:"harness"`
+	STS *string `yaml:"sts"`
+	// Voice is the voice the agent speaks in: a provider's own voice id, or one of your voices by
+	// id or by the name you gave it. Prefix it with custom: to mean only yours. A native (sts)
+	// agent takes the vendor's own voice name instead.
+	Voice   string `yaml:"voice"`
+	LLM     string `yaml:"llm"`
+	Harness string `yaml:"harness"`
 	// Role is what the agent is for in the app, beyond answering people: agent_moderator, or
 	// empty to leave the stored one. One live agent per app holds a role.
 	Role string `yaml:"role"`

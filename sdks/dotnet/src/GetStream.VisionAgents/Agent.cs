@@ -88,7 +88,10 @@ public sealed record Pipeline
     /// <summary>The model that speaks.</summary>
     public string? Tts { get; init; }
 
-    /// <summary>A provider-specific voice id.</summary>
+    /// <summary>
+    /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    /// the name you gave it. Prefix it with <c>custom:</c> to mean only yours.
+    /// </summary>
     public string? Voice { get; init; }
 
     /// <summary>A hint, which narrows the candidates in every modality.</summary>
