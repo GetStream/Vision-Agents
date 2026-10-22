@@ -314,7 +314,7 @@ type Server struct {
 	directory          *node.Directory
 	workers            *node.Workers
 	forwarder          *node.Forwarder
-	peers              [][]byte // what a peer may present: one credential per key of the keyring
+	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
@@ -563,7 +563,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			logger.Warn("peers cannot forward to or from this node without a key encryption key",
 				"setting", "ROUTER_AUTH_KEK")
 		} else {
-			credential, server.peers = options.Secrets.Derive(node.CredentialPurpose)
+			credential, server.peerCredentials = options.Secrets.Derive(node.CredentialPurpose)
 		}
 		server.forwarder = node.NewForwarder(logger, credential)
 	}
@@ -676,7 +676,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	// Peers reach this node on the same port its callers do, so what they forward is
 	// served beside everything else rather than on a listener of its own.
-	return node.Serve(served, s.peers)
+	return node.Serve(served, s.peerCredentials)
 }
 
 // withSentry reports what goes wrong serving a request to Sentry.

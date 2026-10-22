@@ -58,15 +58,15 @@ func Forwarded(ctx context.Context) bool {
 // accepted credentials, which only the deployment's own nodes can derive. With none
 // accepted, every call is refused.
 func Serve(api http.Handler, accepted [][]byte) http.Handler {
-	peers := peers{}
+	check := peerCredentials{}
 	for _, credential := range accepted {
-		peers.accepted = append(peers.accepted, []byte(hex.EncodeToString(credential)))
+		check.accepted = append(check.accepted, []byte(hex.EncodeToString(credential)))
 	}
 	// An unknown method is otherwise refused before any interceptor runs. Handing it to
 	// one keeps the credential check in front of every call, whatever it names.
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(peers.unary),
-		grpc.StreamInterceptor(peers.stream),
+		grpc.UnaryInterceptor(check.unary),
+		grpc.StreamInterceptor(check.stream),
 		grpc.UnknownServiceHandler(func(any, grpc.ServerStream) error {
 			return status.Error(codes.Unimplemented, "node: no such method")
 		}),
@@ -212,19 +212,19 @@ func (f *Forwarder) peer(address string) (*grpc.ClientConn, error) {
 	return peer, nil
 }
 
-// peers checks that a call came from one of this deployment's own nodes.
-type peers struct {
+// peerCredentials checks that a call came from one of this deployment's own nodes.
+type peerCredentials struct {
 	accepted [][]byte
 }
 
-func (p peers) unary(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+func (p peerCredentials) unary(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if err := p.check(ctx); err != nil {
 		return nil, err
 	}
 	return handler(ctx, request)
 }
 
-func (p peers) stream(server any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+func (p peerCredentials) stream(server any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	if err := p.check(stream.Context()); err != nil {
 		return err
 	}
@@ -233,11 +233,14 @@ func (p peers) stream(server any, stream grpc.ServerStream, _ *grpc.StreamServer
 
 // check compares what was presented with every accepted credential, in constant time and
 // without stopping at a match, so how long it takes says nothing about which came close.
-func (p peers) check(ctx context.Context) error {
-	presented := []byte(strings.Join(metadata.ValueFromIncomingContext(ctx, credentialKey), ""))
+// Nothing presented, or more than one value, is never a match, whatever is accepted.
+func (p peerCredentials) check(ctx context.Context) error {
+	values := metadata.ValueFromIncomingContext(ctx, credentialKey)
 	matched := 0
-	for _, credential := range p.accepted {
-		matched |= subtle.ConstantTimeCompare(presented, credential)
+	if len(values) == 1 && values[0] != "" {
+		for _, credential := range p.accepted {
+			matched |= subtle.ConstantTimeCompare([]byte(values[0]), credential)
+		}
 	}
 	if matched == 0 {
 		return status.Error(codes.Unauthenticated, "node: not one of this deployment's nodes")

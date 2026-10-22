@@ -104,4 +104,6 @@ func (s *ScheduledTasksSuite) TestANodeWithNoKeyringRefusesEveryForward() {
 
 	text, _, err := s.forwardDelivery(other, s.suiteCredential())
 	s.refused(text, err)
+	text, _, err = s.forwardDelivery(other, nil)
+	s.refused(text, err)
 }

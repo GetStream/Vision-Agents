@@ -134,3 +134,26 @@ func (s *ForwardSuite) TestAMethodTheNodeDoesNotHaveNeedsTheCredentialToo() {
 	s.Equal(codes.Unimplemented, status.Code(err), "error: %v", err)
 	s.Zero(s.answered.Load(), "the node's handler ran")
 }
+
+func (s *ForwardSuite) TestANodeAcceptingAnEmptyCredentialStillRefusesAForwardWithNone() {
+	address := s.node(nil, []byte("current"))
+
+	_, err := s.ask(address, nil)
+	s.refused(err)
+}
+
+func (s *ForwardSuite) TestACredentialSplitAcrossValuesIsRefused() {
+	address := s.node([]byte("current"))
+	half := hex.EncodeToString([]byte("current"))
+
+	err := s.call(address, "/node.Node/Other", metadata.Pairs(credentialKey, half[:6], credentialKey, half[6:]))
+	s.Equal(codes.Unauthenticated, status.Code(err), "error: %v", err)
+}
+
+func (s *ForwardSuite) TestTheCredentialSentTwiceIsRefused() {
+	address := s.node([]byte("current"))
+	sent := hex.EncodeToString([]byte("current"))
+
+	err := s.call(address, "/node.Node/Other", metadata.Pairs(credentialKey, sent, credentialKey, sent))
+	s.Equal(codes.Unauthenticated, status.Code(err), "error: %v", err)
+}

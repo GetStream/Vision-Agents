@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"testing"
 
@@ -96,6 +97,10 @@ func (s *KeyringSuite) TestTwoProcessesHoldingOneKeyDeriveOneCredential() {
 	key := sha256.Sum256([]byte("shared-key"))
 	s.NotEqual(key[:], presented)
 	s.NotEqual([]byte("shared-key"), presented)
+	// Nor is it signed with the key the sealer encrypts with.
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("node-forward-v1"))
+	s.NotEqual(mac.Sum(nil), presented)
 }
 
 func (s *KeyringSuite) TestAnotherKeyDerivesAnotherCredential() {
@@ -131,4 +136,21 @@ func (s *KeyringSuite) TestARotatedKeyringAcceptsTheCredentialOfEveryKeyItHolds(
 	current, accepted := rotated.Derive("node-forward-v1")
 	s.Equal(newer, current, "a rotated keyring presents its current key's credential")
 	s.ElementsMatch([][]byte{older, newer}, accepted)
+}
+
+func (s *KeyringSuite) TestTheCurrentKeyInTheMiddleOfTheKeyringIsTheOneThatIsPresented() {
+	keys := map[int]string{1: "key-one", 2: "key-two", 3: "key-three", 4: "key-four", 5: "key-five"}
+	middle, err := NewSealerWithKeyring(3, keys)
+	s.Require().NoError(err)
+	alone, err := NewSealer("key-three")
+	s.Require().NoError(err)
+
+	// Many rounds, because the keys are held in a map and a lucky order must not pass.
+	for range 20 {
+		current, accepted := middle.Derive("node-forward-v1")
+		again, _ := alone.Derive("node-forward-v1")
+		s.Equal(again, current)
+		s.Len(accepted, len(keys))
+		s.Contains(accepted, current)
+	}
 }
