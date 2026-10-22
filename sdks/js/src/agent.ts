@@ -72,7 +72,8 @@ export interface Pipeline {
   sts?: string;
   /**
    * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
-   * the name you gave it. Prefix it with `custom:` to mean only yours.
+   * the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+   * the vendor's own voice name instead.
    */
   voice?: string;
   /** A language hint, which narrows the candidates in every modality. */
@@ -100,6 +101,11 @@ export interface Declaration {
   tts?: string;
   /** An empty string turns speech-to-speech off, which is different from saying nothing. */
   sts?: string;
+  /**
+   * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+   * the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+   * the vendor's own voice name instead.
+   */
   voice?: string;
   llm?: string;
   harness?: Schemas["Harness"];

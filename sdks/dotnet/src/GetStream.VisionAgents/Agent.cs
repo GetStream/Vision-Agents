@@ -90,7 +90,8 @@ public sealed record Pipeline
 
     /// <summary>
     /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
-    /// the name you gave it. Prefix it with <c>custom:</c> to mean only yours.
+    /// the name you gave it. Prefix it with <c>custom:</c> to mean only yours. A native (sts) agent
+    /// takes the vendor's own voice name instead.
     /// </summary>
     public string? Voice { get; init; }
 

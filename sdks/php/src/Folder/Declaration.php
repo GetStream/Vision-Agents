@@ -26,6 +26,9 @@ final readonly class Declaration
 
     /**
      * @param ?string $sts null when the declaration says nothing, empty when it turns it off
+     * @param string $voice the voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+     *     the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent
+     *     takes the vendor's own voice name instead
      * @param list<string> $plugins
      * @param list<string> $keyterms
      * @param array<string, string> $tags
