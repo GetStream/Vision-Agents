@@ -170,6 +170,53 @@ func (s *RunsSuite) TestARunThatOutlastsItsTimeoutTimesOut() {
 	s.Equal("timeout", failure.Code)
 }
 
+func (s *RunsSuite) TestARunsImagesReachTheModel() {
+	first, second := "https://example.com/"+s.utils.uuid()+".png", "https://example.com/"+s.utils.uuid()+".jpg"
+
+	s.run(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "what is in these?",
+		Images: &[]ImageSource{{Url: first}, {Url: second}}})
+
+	var seen []string
+	for _, request := range s.vision.requests() {
+		for _, message := range request.Input {
+			for _, part := range message.Parts {
+				if part.Image != nil && (part.Image.URL == first || part.Image.URL == second) {
+					seen = append(seen, part.Image.URL)
+				}
+			}
+		}
+	}
+	s.Equal([]string{first, second}, seen, "both images, in the order they were sent")
+}
+
+func (s *RunsSuite) TestAnImageThatIsNoImageIsRefused() {
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "hello",
+		Images: &[]ImageSource{{Url: "ftp://example.com/a.png"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_request", failure.Code)
+}
+
+func (s *RunsSuite) TestARunWithTooManyImagesIsRefused() {
+	images := make([]ImageSource, maxRunImages+1)
+	for index := range images {
+		images[index] = ImageSource{Url: fmt.Sprintf("https://example.com/%d.png", index)}
+	}
+
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "hello", Images: &images})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_request", failure.Code)
+}
+
+func (s *RunsSuite) TestAnAgentThatCannotSeeIsAConfigFailure() {
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello",
+		Images: &[]ImageSource{{Url: "https://example.com/a.png"}}})
+
+	s.Equal(http.StatusBadRequest, status, "it fails the same way every time, so it is no 503 to retry")
+	s.Equal(codeInvalidConfig, failure.Code)
+}
+
 func (s *RunsSuite) TestARunWithNoInputIsRefused() {
 	status, _ := s.runFails(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "  "})
 

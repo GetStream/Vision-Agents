@@ -36,11 +36,18 @@ const runLeaseGrace = 30 * time.Second
 // measurement: about as long as a short run takes to free its slot. # unverified
 const runRetryAfter = 5 * time.Second
 
+// maxRunImages bounds the images on one run: as many as a question in a chat may carry.
+const maxRunImages = 8
+
 var (
 	// errRunTimedOut is a run that did not settle in its timeout.
 	errRunTimedOut = newAPIError(ErrorTypeTimeout, "the run did not finish within its timeout")
 	// errNoAnswer is a run whose agent settled without saying anything.
 	errNoAnswer = APIError{Type: ErrorTypeUnavailable, Code: codeModelFailed, Message: "the agent gave no answer"}
+	// errRunCannotSee is a run with images on an agent that cannot look at them. It fails the
+	// same way every time, so it is no 503 a caller retries.
+	errRunCannotSee = APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: "the run has images, and " +
+		"the agent config has no vision skill and a conversation model that takes text alone"}
 )
 
 // createRun runs an agent config on one input as a headless text session and answers with what
@@ -62,6 +69,18 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	}
 	if body.ConfigId == "" {
 		return nil, invalidRequest("config_id names the agent config to run")
+	}
+	sent := value(body.Images)
+	if len(sent) > maxRunImages {
+		return nil, invalidRequest(fmt.Sprintf("at most %d images go with one run", maxRunImages))
+	}
+	wires := make([]wireImage, 0, len(sent))
+	for _, image := range sent {
+		wires = append(wires, wireImage{URL: image.Url, Detail: string(value(image.Detail))})
+	}
+	images, err := imagesFromWire(wires)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
 	}
 	tags := tagsSent(body.Tags)
 	if err := tags.Validate(); err != nil {
@@ -128,7 +147,10 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 		}
 	}()
 
-	if _, err := created.Respond(ctx, runInput(body.Input), nil, options.LLM{}); err != nil {
+	if _, err := created.Respond(ctx, runInput(body.Input), images, options.LLM{}); err != nil {
+		if errors.Is(err, agent.ErrCannotSeeImages) {
+			return nil, errRunCannotSee
+		}
 		return nil, runFailed(ctx, err, modelFailed(err))
 	}
 	var run runOutcome
@@ -219,7 +241,12 @@ func (s *Server) registerRuns(api huma.API) {
 			"A config whose role is agent_moderator is then told the answer format the chat review " +
 			"worker parses, after both, so no edit to the agent can change it.\n" +
 			"The input is handed to the agent as JSON data, never as instructions.\n" +
-			"A config that does not start a session is a 400 invalid_config, a spent budget a 403 " +
+			"Images, at most 8, go with the input in the order sent, so the input can refer to them " +
+			"by their place in the list. The agent's vision skill looks at them, or its conversation " +
+			"model when that can see; an image that is no HTTP(S) URL or image data URI, or more than " +
+			"8, is a 400 invalid_request.\n" +
+			"A config that does not start a session, or that cannot see a run's images, is a 400 " +
+			"invalid_config, which retrying does not fix, a spent budget a 403 " +
 			"budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may " +
 			"have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with " +
 			"Retry-After, a model that failed or said nothing a 503 model_failed, and a run that " +
@@ -247,6 +274,7 @@ type createRunResponse struct {
 type CreateRunRequest struct {
 	ConfigId     string             `json:"config_id" doc:"The agent config to run."`
 	Input        any                `json:"input" doc:"What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions."`
+	Images       *[]ImageSource     `json:"images,omitempty" doc:"Images that go with the input, in order, so the input can refer to them by their place in this list. At most 8. An agent with no vision skill and a conversation model that cannot see refuses them with a 400 invalid_config."`
 	Instructions *string            `json:"instructions,omitempty" doc:"What the agent is told for this run alone, added to its config's instructions."`
 	Tags         *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request the run makes alongside the config's own."`
 	TimeoutMs    *int               `json:"timeout_ms,omitempty" minimum:"1000" maximum:"600000" doc:"How long the run may take before it is given up as a 504. Two minutes when left out."`

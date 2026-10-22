@@ -4520,6 +4520,9 @@ type CreateRunRequest struct {
 	// ConfigId The agent config to run.
 	ConfigId string `json:"config_id"`
 
+	// Images Images that go with the input, in order, so the input can refer to them by their place in this list. At most 8. An agent with no vision skill and a conversation model that cannot see refuses them with a 400 invalid_config.
+	Images *[]ImageSource `json:"images,omitempty"`
+
 	// Input What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as instructions.
 	Input interface{} `json:"input"`
 
@@ -10520,7 +10523,8 @@ type ClientInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
-	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -10532,7 +10536,8 @@ type ClientInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
-	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -14552,7 +14557,8 @@ func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors 
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
-// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes any type of body and a specified content type.
 //
@@ -14574,7 +14580,8 @@ func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
-// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -29968,7 +29975,8 @@ type ClientWithResponsesInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
-	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29980,7 +29988,8 @@ type ClientWithResponsesInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
-	// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -50655,7 +50664,8 @@ func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, plu
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
-// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50673,7 +50683,8 @@ func (c *ClientWithResponses) CreateRunWithBodyWithResponse(ctx context.Context,
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
-// A config that does not start a session is a 400 invalid_config, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.create_run_request_tags import CreateRunRequestTags
+    from ..models.image_source import ImageSource
 
 
 T = TypeVar("T", bound="CreateRunRequest")
@@ -23,6 +24,9 @@ class CreateRunRequest:
         config_id (str): The agent config to run.
         input_ (Any): What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as
             instructions.
+        images (list[ImageSource] | Unset): Images that go with the input, in order, so the input can refer to them by
+            their place in this list. At most 8. An agent with no vision skill and a conversation model that cannot see
+            refuses them with a 400 invalid_config.
         instructions (str | Unset): What the agent is told for this run alone, added to its config's instructions.
         tags (CreateRunRequestTags | Unset): Cost labels, carried onto every request the run makes alongside the
             config's own.
@@ -31,6 +35,7 @@ class CreateRunRequest:
 
     config_id: str
     input_: Any
+    images: list[ImageSource] | Unset = UNSET
     instructions: str | Unset = UNSET
     tags: CreateRunRequestTags | Unset = UNSET
     timeout_ms: int | Unset = UNSET
@@ -40,6 +45,13 @@ class CreateRunRequest:
         config_id = self.config_id
 
         input_ = self.input_
+
+        images: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.images, Unset):
+            images = []
+            for images_item_data in self.images:
+                images_item = images_item_data.to_dict()
+                images.append(images_item)
 
         instructions = self.instructions
 
@@ -57,6 +69,8 @@ class CreateRunRequest:
                 "input": input_,
             }
         )
+        if images is not UNSET:
+            field_dict["images"] = images
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
         if tags is not UNSET:
@@ -69,11 +83,21 @@ class CreateRunRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.create_run_request_tags import CreateRunRequestTags
+        from ..models.image_source import ImageSource
 
         d = dict(src_dict)
         config_id = d.pop("config_id")
 
         input_ = d.pop("input")
+
+        _images = d.pop("images", UNSET)
+        images: list[ImageSource] | Unset = UNSET
+        if _images is not UNSET:
+            images = []
+            for images_item_data in _images:
+                images_item = ImageSource.from_dict(images_item_data)
+
+                images.append(images_item)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -89,6 +113,7 @@ class CreateRunRequest:
         create_run_request = cls(
             config_id=config_id,
             input_=input_,
+            images=images,
             instructions=instructions,
             tags=tags,
             timeout_ms=timeout_ms,

@@ -638,6 +638,15 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).
 - The `anthropic` provider sends `ANTHROPIC_WORKSPACE_ID` as the `anthropic-workspace-id` header, so an Anthropic key that is not scoped to a workspace is accepted; with it unset, requests are sent as before.
 
+### A run takes images
+
+`POST /v1/agents/runs` takes optional `images`, up to 8 `{url, detail}` like a response's, that go
+with the input in the order sent, so the input can refer to them by their place in the list. The
+agent's vision skill looks at them, or its conversation model when that can see. An image that
+is no HTTP(S) URL or image data URI, or more than 8, is a 400 `invalid_request`; an agent that
+can see neither way is a 400 `invalid_config`, not a 503 `model_failed`, since retrying fails
+the same way every time. A run without images is unchanged.
+
 ### An agent config sets the guide its calls are reviewed by
 
 `AgentConfig` takes an optional `review` with `instructions`: what the model reviewing a
