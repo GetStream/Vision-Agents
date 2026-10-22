@@ -183,6 +183,8 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - With the Daytona broker, the router needs `ROUTER_CODE_SANDBOX_SECRET_PREFIX` (`stg` on staging; lowercase letters and
   digits only, so one router's sweep never matches another's); without it a session
   with such a binding is refused. Each session's secret is `va_<prefix>_<session>_<binding>_<8 hex>`.
+- A prefix belongs to one deployment (one Redis), and `stg` is never used locally: routers that
+  share a prefix delete each other's secrets.
 - With the Daytona broker, the grant's hosts join the sandbox's domain allow list; a config with
   `network: true` or a `network_allow_list` keeps its own.
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the

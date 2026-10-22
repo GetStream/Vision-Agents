@@ -7,10 +7,13 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -79,4 +82,22 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 	go serve(server, listener)
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
 	return server.Close, nil
+}
+
+// secretSweeper sweeps the Daytona secrets a crashed router left behind, and is nil where there
+// are none to sweep: under the proxy broker, whose grants expire in Redis, and without Daytona
+// or a secret prefix, which every secret this router makes is named with. It also needs the
+// node directory, the only thing that says whether a session runs on another router.
+func secretSweeper(settings config.CodeSandbox, redis *live.Client, directory *node.Directory,
+	logger *slog.Logger) (*daytona.Sweeper, error) {
+	if settings.Broker != config.CodeSandboxBrokerDaytona || settings.SecretPrefix == "" || !daytona.Configured() {
+		return nil, nil
+	}
+	// newDirectory is nil exactly when redis is.
+	if directory == nil {
+		logger.Warn("the Daytona secrets a crashed router leaves behind are not swept without redis", "setting", "redis.addr")
+		return nil, nil
+	}
+	return daytona.NewSweeper(daytona.SweepOptions{Prefix: settings.SecretPrefix, Sessions: directory,
+		Slots: concurrency.New(redis.Redis(), nil), Logger: logger})
 }
