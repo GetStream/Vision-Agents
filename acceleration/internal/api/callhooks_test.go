@@ -54,7 +54,7 @@ func (s *CallHooksSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.e164 = s.utils.number()
 	s.callID = "phone-" + s.e164
-	s.stats = &recordedStats{asked: make(chan string, 8), answer: &getstream.QueryCallStatsMapResponse{}}
+	s.stats = &recordedStats{asked: make(chan string, 8), answer: &getstream.QueryCallSessionParticipantStatsResponse{}}
 	s.router.readCallStats = s.stats.read
 	s.router.callStatsWaits = []time.Duration{0}
 }
@@ -218,14 +218,15 @@ func (s *CallHooksSuite) TestTheHookIgnoresWhoeverTheCallerClaimsToBe() {
 func (s *CallHooksSuite) TestAnEndedPlacedCallGetsACallSitesRow() {
 	s.releasing()
 	s.placed()
-	s.stats.answer = &getstream.QueryCallStatsMapResponse{
-		Counts: getstream.CallStatsParticipantCounts{SfusUsed: 2},
-	}
+	s.stats.answer = agentAndCaller("sfu-a.example.com", "sfu-c.example.com")
 
 	s.Require().Equal(http.StatusOK, s.end(`{}`))
 
 	row := s.callSitesRow()
 	s.Equal("2", row.Details["sfus_used"])
+	s.Equal("sfu-a.example.com", row.Details["agent_current_sfu"])
+	s.Equal("sfu-c.example.com", row.Details["caller_current_sfu"])
+	s.NotContains(s.logged.String(), "+15550100002", "the caller's participant id names its number")
 	s.Equal("session-1", row.Details["stream_session_id"])
 	s.NotContains(row.Details, "stream_sip_host", "a placed call's SIP host is on its call_placed row")
 	s.Equal("session-1", <-s.stats.asked)
@@ -279,11 +280,11 @@ func (s *CallHooksSuite) TestTheWebhookIsAnsweredBeforeTheStatsAreRead() {
 // asked for once that answer is given. hold, when set, keeps the answer back until closed.
 type recordedStats struct {
 	asked  chan string
-	answer *getstream.QueryCallStatsMapResponse
+	answer *getstream.QueryCallSessionParticipantStatsResponse
 	hold   chan struct{}
 }
 
-func (r *recordedStats) read(ctx context.Context, _ *getstream.Stream, _, _, session string) (*getstream.QueryCallStatsMapResponse, error) {
+func (r *recordedStats) read(ctx context.Context, _ *getstream.Stream, _, _, session string) (*getstream.QueryCallSessionParticipantStatsResponse, error) {
 	if r.hold != nil {
 		select {
 		case <-r.hold:

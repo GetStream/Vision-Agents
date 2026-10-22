@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,24 +15,87 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// callSites is how many SFUs Stream ran a call on, and where they were.
+// callSites is which SFU each side of a phone call was on, and how many SFUs Stream used.
 type callSites struct {
-	SFUsUsed     int
-	SFULocations []string
+	SFUsUsed int
+	Agent    sideSite
+	Caller   sideSite
 }
 
-// sitesOf reads a call's SFUs out of its stats, one "<id> <datacenter> <country>-<subdivision>"
-// per SFU.
-func sitesOf(stats *getstream.QueryCallStatsMapResponse) callSites {
+// sideSite is the SFU one side of a call was on. Location is where Stream placed that side,
+// and DistanceKm how far that is from the SFU; both are empty when Stream does not know.
+type sideSite struct {
+	SFU, Location, DistanceKm string
+}
+
+// sitesOf reads each side's SFU out of a session's participant stats. The phone caller is
+// told apart by its participant id; anyone else is the agent.
+func sitesOf(stats *getstream.QueryCallSessionParticipantStatsResponse) callSites {
 	sites := callSites{SFUsUsed: stats.Counts.SfusUsed}
-	if stats.Sfus == nil {
-		return sites
-	}
-	for _, sfu := range stats.Sfus.Locations {
-		region := strings.Trim(sfu.Location.CountryIsoCode+"-"+sfu.Location.SubdivisionIsoCode, "-")
-		sites.SFULocations = append(sites.SFULocations, joinPresent(sfu.ID, sfu.Datacenter, region))
+	for _, participant := range stats.Participants {
+		side := &sites.Agent
+		if _, caller := phone.CallerNumber(participant.UserID); caller {
+			side = &sites.Caller
+		}
+		for _, session := range participant.Sessions {
+			if session.CurrentSfu != nil && *session.CurrentSfu != "" {
+				*side = siteOf(session)
+			}
+		}
 	}
 	return sites
+}
+
+func siteOf(session getstream.CallStatsParticipantSession) sideSite {
+	site := sideSite{SFU: *session.CurrentSfu}
+	if place := session.Location; place != nil {
+		site.Location = joinPresent(textOf(place.City), textOf(place.Subdivision), textOf(place.CountryIsoCode))
+	}
+	if km := session.DistanceToSfuKilometers; km != nil {
+		site.DistanceKm = strconv.FormatFloat(*km, 'f', 0, 64)
+	}
+	return site
+}
+
+// everySessionHasAnSFU says the stats are ready: Stream fills a session's current_sfu some
+// time after the call ends.
+func everySessionHasAnSFU(stats *getstream.QueryCallSessionParticipantStatsResponse) bool {
+	if len(stats.Participants) == 0 {
+		return false
+	}
+	for _, participant := range stats.Participants {
+		for _, session := range participant.Sessions {
+			if session.CurrentSfu == nil || *session.CurrentSfu == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// details is the call_sites row's details, minus what is not about the SFUs.
+func (sites callSites) details() map[string]any {
+	details := map[string]any{"sfus_used": strconv.Itoa(sites.SFUsUsed)}
+	sites.Agent.addTo(details, "agent")
+	sites.Caller.addTo(details, "caller")
+	return details
+}
+
+func (site sideSite) addTo(details map[string]any, side string) {
+	details[side+"_current_sfu"] = site.SFU
+	if site.Location != "" {
+		details[side+"_location"] = site.Location
+	}
+	if site.DistanceKm != "" {
+		details[side+"_distance_to_sfu_km"] = site.DistanceKm
+	}
+}
+
+func textOf(text *string) string {
+	if text == nil {
+		return ""
+	}
+	return *text
 }
 
 func joinPresent(parts ...string) string {
@@ -40,14 +105,14 @@ func joinPresent(parts ...string) string {
 			present = append(present, part)
 		}
 	}
-	return strings.Join(present, " ")
+	return strings.Join(present, ", ")
 }
 
-// readCallStats asks Stream for one session's call stats.
-type readCallStats func(ctx context.Context, client *getstream.Stream, callType, callID, session string) (*getstream.QueryCallStatsMapResponse, error)
+// readCallStats asks Stream for one session's participant stats.
+type readCallStats func(ctx context.Context, client *getstream.Stream, callType, callID, session string) (*getstream.QueryCallSessionParticipantStatsResponse, error)
 
-func streamCallStats(ctx context.Context, client *getstream.Stream, callType, callID, session string) (*getstream.QueryCallStatsMapResponse, error) {
-	response, err := client.Video().GetCallStatsMap(ctx, callType, callID, session, &getstream.GetCallStatsMapRequest{})
+func streamCallStats(ctx context.Context, client *getstream.Stream, callType, callID, session string) (*getstream.QueryCallSessionParticipantStatsResponse, error) {
+	response, err := client.Video().QueryCallSessionParticipantStats(ctx, callType, callID, session, &getstream.QueryCallSessionParticipantStatsRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -56,16 +121,17 @@ func streamCallStats(ctx context.Context, client *getstream.Stream, callType, ca
 
 // defaultCallStatsWaits is how long to wait before each stats read. Stream fills a call's
 // stats in some time after the call ends, so the first read waits and later ones try again.
-var defaultCallStatsWaits = []time.Duration{10 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second}
+var defaultCallStatsWaits = []time.Duration{5 * time.Second, 10 * time.Second, 10 * time.Second, 10 * time.Second}
 
-// fetchCallSites reads a call's stats until they name where its SFUs were, waiting before
-// each try. Stats that never fill give the last answer; no answer at all gives the last error.
+// fetchCallSites reads a call's stats until every session in them names its SFU, waiting
+// before each try. Stats that never fill give the last answer; no answer at all gives the
+// last error.
 func fetchCallSites(
 	ctx context.Context,
-	read func(context.Context) (*getstream.QueryCallStatsMapResponse, error),
+	read func(context.Context) (*getstream.QueryCallSessionParticipantStatsResponse, error),
 	waits []time.Duration,
 ) (callSites, error) {
-	var last *getstream.QueryCallStatsMapResponse
+	var last *getstream.QueryCallSessionParticipantStatsResponse
 	var lastErr error
 	for _, wait := range waits {
 		select {
@@ -82,7 +148,7 @@ func fetchCallSites(
 			continue
 		}
 		last = stats
-		if stats.Sfus != nil && len(stats.Sfus.Locations) > 0 {
+		if everySessionHasAnSFU(stats) {
 			break
 		}
 	}
@@ -148,17 +214,12 @@ func (s *Server) logCallSites(call endedCall) {
 		defer cancel()
 
 		sites, err := s.fetchSites(ctx, call, read, waits)
-		details := map[string]any{
-			"sfus_used":         strconv.Itoa(sites.SFUsUsed),
-			"sfu_locations":     strings.Join(sites.SFULocations, ", "),
-			"stream_session_id": call.streamSession,
-		}
-		logged := []any{"session_id", call.callID, "stream_session_id", call.streamSession,
-			"sfus_used", sites.SFUsUsed, "sfu_locations", sites.SFULocations}
+		details := sites.details()
+		details["stream_session_id"] = call.streamSession
 		if call.sipHost != "" {
 			details["stream_sip_host"] = call.sipHost
-			logged = append(logged, "stream_sip_host", call.sipHost)
 		}
+		logged := append([]any{"session_id", call.callID}, attributesOf(details)...)
 		if err != nil {
 			details["error_message"] = err.Error()
 			s.logger.Warn("could not read a phone call's sites", append(logged, "error", err)...)
@@ -174,9 +235,18 @@ func (s *Server) fetchSites(ctx context.Context, call endedCall, read readCallSt
 	if err != nil {
 		return callSites{}, err
 	}
-	return fetchCallSites(ctx, func(ctx context.Context) (*getstream.QueryCallStatsMapResponse, error) {
+	return fetchCallSites(ctx, func(ctx context.Context) (*getstream.QueryCallSessionParticipantStatsResponse, error) {
 		return read(ctx, bound.Client, call.callType, call.callID, call.streamSession)
 	}, waits)
+}
+
+// attributesOf is details as log attributes, in key order so the line reads the same each time.
+func attributesOf(details map[string]any) []any {
+	var attributes []any
+	for _, key := range slices.Sorted(maps.Keys(details)) {
+		attributes = append(attributes, key, details[key])
+	}
+	return attributes
 }
 
 // recordCallSites writes the call_sites row, under the session's config and agent when the

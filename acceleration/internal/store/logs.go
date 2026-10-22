@@ -83,7 +83,8 @@ func SafeLogText(text string) string {
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
 	// Explicitly allow metadata; arbitrary tool arguments/results and request headers never enter storage.
-	for _, key := range []string{"turn_id", "tool_call_id", "tool", "provider", "model", "duration_ms", "context", "kind", "error_message", "error_code", "probability", "held_ms", "sfu_edge", "sfu_host", "stream_sip_host", "vendor", "vendor_call_id", "sfus_used", "sfu_locations", "stream_session_id", "customer_trunk_host"} {
+	for _, key := range []string{"turn_id", "tool_call_id", "tool", "provider", "model", "duration_ms", "context", "kind", "error_message", "error_code", "probability", "held_ms", "sfu_edge", "sfu_host", "stream_sip_host", "vendor", "vendor_call_id", "sfus_used", "stream_session_id", "customer_trunk_host",
+		"agent_current_sfu", "agent_location", "agent_distance_to_sfu_km", "caller_current_sfu", "caller_location", "caller_distance_to_sfu_km"} {
 		if value, ok := details[key]; ok {
 			out[key] = SafeLogText(fmt.Sprint(value))
 		}
