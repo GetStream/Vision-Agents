@@ -671,7 +671,7 @@ or from `heard` being asked about the agent's message while it is still being wr
 `{ chars: 0, done: false }` until its `speaking`, for at most `SPEECH_GRACE_MS` (5 s); one that
 turns out to say nothing is let go of at once, and one let go of stays let go of. Leaving the
 call or stopping the voice ends the holding. It reads the frames the session already receives,
-so `events()` is untouched (#TBD).
+so `events()` is untouched (#1142).
 
 ### A tool call waits for the person to sign in, and carries on once they have
 
