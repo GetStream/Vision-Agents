@@ -11,6 +11,19 @@ built from this repo. **The deploy lives in Stream's private infra repo** (`GetS
 chart, and the CLI, cluster names and credentials are all there. This repo is public — name
 the runbook, not the infrastructure.
 
+The accelerate runbooks and `rocky fastdeploy` for accelerate are on the private repo's
+accelerate branches, not yet on its `master`. A `rocky` built from `master` has `rocky launch`
+(`upload`, `deploy`, `inspect`) but its `fastdeploy` swaps only chat, moderation and feeds, so
+from it a router reaches staging the tagged way below. The acceleration shard's files
+(`infra/shards/<shard>/`) are on those branches too, and `rocky launch deploy` refuses without
+them. Without switching a checkout, export them (`git archive <branch> infra | tar -x -C <dir>`)
+and point `ROCKY_DIR` at that `infra/` directory itself, not its parent.
+
+`rocky launch deploy --dry-run` reports a published release as missing, because the dry run
+prints the existence checks instead of running them. `rocky launch inspect` says what each
+target runs, and a pod's `fetch-binary` init container logs the version and sha256 it
+installed.
+
 Kubernetes owns the image, a version registry owns the binary: a pod fetches
 `router-linux-<arch>` at start, so shipping a router is publishing a binary, moving that
 pointer and restarting. Not an image build, not a chart deploy.
@@ -53,8 +66,9 @@ reproducible, so the checksum a pod reports traces back to a commit.
 
 Staging and the benchmark release (`perfbench -target benchmark`, nobody else's traffic) ship
 a router without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in
-the private repo; `rocky fastdeploy --service accelerate-staging` (or `accelerate-benchmark`)
-builds this checkout and swaps it in, in 11-20 s warm.
+the private repo; `rocky fastdeploy --service accelerate-staging` (or `accelerate-benchmark`),
+from a `rocky` built off the accelerate branches (see above), builds this checkout and swaps it
+in, in 11-20 s warm.
 
 - It needs `source ~/.config/rocky/gcp.env`, Docker, Go and gcloud, and an arm64 machine:
   the build runs natively and these releases' pods run arm64 only. It builds the working tree,
