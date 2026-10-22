@@ -202,15 +202,17 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
 - `ROUTER_CODE_SANDBOX_BROKER=proxy` uses the router's egress proxy (`internal/sandbox/egress`)
   instead of Daytona Secrets. It needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` (the proxy
-  as a sandbox reaches it, `http://<IPv4 address>:port`) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`.
+  as a sandbox reaches it, `http://<public IPv4 address>:port`: no path, query, user, or private,
+  loopback or link-local address) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`.
   Every router with this broker serves the proxy too, so it also needs
   `ROUTER_CODE_SANDBOX_PROXY_ADDR` and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does
-  not start. A host name or an IPv6 address in the public URL also stops the start. It needs no
+  not start. A host name, an IPv6 address or a non-public address in the public URL also stops the start. It needs no
   secret prefix.
 - How egress is forced: Daytona's network allow list holds the proxy's address alone
   (`<address>/32`). Daytona gets no domain allow list and no `OutboundProxyUrl`. The sandbox then
-  reaches the proxy and nothing else, by TCP or UDP, and TLS passes as it is (live probe,
-  2026-10-22). Either Daytona setting brings in its netleash. Under a domain allow list, netleash
+  reaches the proxy and, of Daytona's own network, only the netleash gateway (172.20.0.1:18080,
+  which answers 403 without an `OutboundProxyUrl`), by TCP or UDP, and TLS passes as it is (live
+  probe and CIDR probe, 2026-10-22). Either Daytona setting brings in its netleash. Under a domain allow list, netleash
   ends TLS itself and refuses the proxy's certificate for a granted host (staging E2E,
   2026-10-22: `tls: bad certificate`).
 - Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var. Every command and

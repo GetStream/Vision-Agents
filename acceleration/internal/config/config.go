@@ -23,6 +23,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -625,8 +626,9 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: code_sandbox.broker is %s or %s, got %q", CodeSandboxBrokerDaytona, CodeSandboxBrokerProxy,
 			c.CodeSandbox.Broker)
 	}
-	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!proxyURL(c.CodeSandbox.ProxyPublicURL) || c.CodeSandbox.ProxyCACert == "") {
-		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://<IPv4 address>:port: " +
+	_, validProxy := ProxyURL(c.CodeSandbox.ProxyPublicURL)
+	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!validProxy || c.CodeSandbox.ProxyCACert == "") {
+		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://<public IPv4 address>:port: " +
 			"a sandbox reaches that address alone and has no DNS to look a host name up with) and proxy_ca_cert " +
 			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox reaches the proxy")
 	}
@@ -654,17 +656,26 @@ func (c Config) validate() error {
 	return c.validateShard()
 }
 
-// proxyURL says whether raw is an http URL with an IPv4 address and no user: the sandbox's proxy
-// URL carries its own credential as the user. The sandbox may reach that address alone, through
-// Daytona's network allow list, which takes IP ranges, so it has no DNS to look a name up with,
-// and no IPv6 route (live probe, 2026-10-22).
-func proxyURL(raw string) bool {
+// ProxyURL parses raw as the proxy's public URL, http://<IPv4 address>:port, and says whether it
+// is one a sandbox can use. The URL carries the sandbox's own credential as its user, so it has
+// none. The sandbox may reach that address alone, through Daytona's network allow list, which
+// takes IP ranges, so it has no DNS to look a name up with, and no IPv6 route (live probe,
+// 2026-10-22). The address must be public: a sandbox reaches no loopback, private (RFC 1918),
+// link-local (169.254/16, the metadata address too), unspecified or broadcast address, and the
+// range would let it reach that address of the provider's network. The port is 1 to 65535, and
+// the URL has no path, query or fragment.
+func ProxyURL(raw string) (*url.URL, bool) {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "http" || parsed.User != nil {
-		return false
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return nil, false
 	}
 	address, err := netip.ParseAddr(parsed.Hostname())
-	return err == nil && address.Is4()
+	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
+		return nil, false
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	return parsed, err == nil && port >= 1 && port <= 65535
 }
 
 // validateShard refuses shard settings that would write a shard's calls where no reader

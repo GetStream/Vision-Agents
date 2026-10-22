@@ -88,6 +88,7 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 	const proxy = "http://203.0.113.7:8091"
 	cases := []sandbox.Config{
 		{},
+		{NetworkAllowList: []string{"10.0.0.0/8"}},
 		{Network: true, AllowedDomains: []string{"pypi.org", "api.github.com", "github.com", "*.pythonhosted.org"}},
 	}
 	for _, config := range cases {

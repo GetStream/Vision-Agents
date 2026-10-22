@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -101,9 +101,9 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 	if o.Store == nil || len(o.CACert) == 0 || o.Session == "" || o.Tokens == nil {
 		return nil, stack.Wrap(errors.New("egress: the proxy broker needs redis, the proxy's CA certificate, a session and tokens"))
 	}
-	proxy, err := url.Parse(o.URL)
-	if err != nil || proxy.Scheme != "http" || !ipv4(proxy.Hostname()) || proxy.User != nil {
-		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://<IPv4 address>:port, with no user"))
+	proxy, ok := config.ProxyURL(o.URL)
+	if !ok {
+		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://<public IPv4 address>:port, with no user, path, query or fragment"))
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -117,12 +117,6 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 		}
 	}
 	return &Broker{options: o, proxy: proxy, allowed: allowed}, nil
-}
-
-// ipv4 says whether host is an IPv4 address, which the provider limits the sandbox's network to.
-func ipv4(host string) bool {
-	address, err := netip.ParseAddr(host)
-	return err == nil && address.Is4()
 }
 
 // allowedHost is a config's allowed domain as a Record's host: lower case, without a trailing
