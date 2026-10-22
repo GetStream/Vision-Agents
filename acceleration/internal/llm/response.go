@@ -44,7 +44,11 @@ type Response struct {
 	// while it acts will say something and call a tool in the same breath.
 	ToolCalls []ToolCall
 	Usage     Usage
-	Status    ResponseStatus
+	// ServiceTier is the tier the provider says it served the response at, such as
+	// OpenAI's default, flex or fast, which it bills at different rates. Empty for a
+	// provider that does not say.
+	ServiceTier string
+	Status      ResponseStatus
 	// IncompleteReason says why a StatusIncomplete response stopped early.
 	IncompleteReason string
 	// TimeToFirstTokenMs is how long the caller waited for anything at all, which is the

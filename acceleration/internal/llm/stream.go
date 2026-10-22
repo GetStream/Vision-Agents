@@ -318,6 +318,7 @@ type ResponseWriter struct {
 	reasoning          strings.Builder
 	deltas             int
 	usage              Usage
+	serviceTier        string
 	status             ResponseStatus
 	incompleteReason   string
 	providerResponseID string
@@ -416,6 +417,11 @@ func (w *ResponseWriter) Usage(usage Usage) {
 	w.usage = usage
 }
 
+// ServiceTier records the tier the provider says it served the response at.
+func (w *ResponseWriter) ServiceTier(tier string) {
+	w.serviceTier = tier
+}
+
 // Incomplete records that the model stopped for a reason of the caller's making, such as
 // the token cap.
 func (w *ResponseWriter) Incomplete(reason string) {
@@ -473,6 +479,7 @@ func (w *ResponseWriter) settle(failure error) {
 		ReasoningText:      w.reasoning.String(),
 		ToolCalls:          w.assembled(),
 		Usage:              w.usage,
+		ServiceTier:        w.serviceTier,
 		Status:             w.status,
 		IncompleteReason:   w.incompleteReason,
 		TimeToFirstTokenMs: timeToFirstToken,

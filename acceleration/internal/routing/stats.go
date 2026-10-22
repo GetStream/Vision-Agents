@@ -135,7 +135,13 @@ func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Clien
 
 // Quote is what that usage of the provider costs, priced as Record prices a row.
 func (r *Recorder) Quote(config ProviderConfig, usage Usage) pricing.Quote {
-	return quote(r.pricer, r.modality, config, nil, row(r.modality, config, Stat{Usage: usage}).Quantities())
+	return r.QuoteStat(config, Stat{Usage: usage})
+}
+
+// QuoteStat is what the stat's row costs, its meters and attributes included, priced as
+// Record prices it.
+func (r *Recorder) QuoteStat(config ProviderConfig, entry Stat) pricing.Quote {
+	return quote(r.pricer, r.modality, config, entry.Attributes, row(r.modality, config, entry).Quantities())
 }
 
 // Record queues a stat, pricing what its row holds and dropping it if the writer is too

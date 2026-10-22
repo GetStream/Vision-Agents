@@ -199,6 +199,38 @@ func (s *OpenAISuite) TestImplicitCachingSendsNoBreakpoint() {
 	s.NotContains(string(raw), "prompt_cache_breakpoint")
 }
 
+// TestTheTierAndUsageOpenAIReportedReachTheResponse uses a first turn of a cached
+// conversation as gpt-5.6-terra answered it, served at the flex tier.
+func (s *OpenAISuite) TestTheTierAndUsageOpenAIReportedReachTheResponse() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `event: response.completed
+data: {"type":"response.completed","response":{"id":"r","status":"completed","service_tier":"flex",`+
+			`"usage":{"input_tokens":2389,"input_tokens_details":{"cache_write_tokens":2386,"cached_tokens":0},`+
+			`"output_tokens":22,"output_tokens_details":{"reasoning_tokens":7},"total_tokens":2411}}}
+
+`)
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+
+	s.Equal("flex", response.ServiceTier)
+	s.Equal(llm.Usage{
+		InputTokens:         2389,
+		InputTokensDetails:  llm.InputTokensDetails{CacheWriteTokens: 2386},
+		OutputTokens:        22,
+		OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: 7},
+		TotalTokens:         2411,
+	}, response.Usage)
+}
+
 // sendMessage is Slack's MCP slack_send_message input schema as its server listed it on
 // 2026-10-08: two required properties and four optional ones (AI-969).
 var sendMessage = llm.Tool{
