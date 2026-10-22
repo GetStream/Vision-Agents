@@ -706,7 +706,7 @@ func (s *ConverseSuite) assertRevisedQueueIsNotReplayed(decision harness.Floor) 
 	s.False(waiting, "the accepted correction replaces a queued Continue or Shorten turn")
 }
 
-func (s *ConverseSuite) TestAQueuedTurnSurvivesASeparateNumberedUtteranceWithTheSamePrefix() {
+func (s *ConverseSuite) TestANewerNumberedUtteranceWithTheSamePrefixFoldsTheQueuedTurnIntoItsAnswer() {
 	const queuedText = "Way"
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.queueSettledTurn(queuedText, 7, harness.Continue)
