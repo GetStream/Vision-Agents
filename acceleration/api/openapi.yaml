@@ -13058,7 +13058,7 @@ paths:
       x-client-accessible: true
   /v1/agents/scheduled-tasks/{id}/resume:
     post:
-      description: The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+      description: 'The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed task cannot be resumed (409).'
       operationId: resumeScheduledTask
       parameters:
         - description: The task, as returned when it was created.
@@ -13076,7 +13076,11 @@ paths:
                 $ref: '#/components/schemas/ScheduledTask'
           description: The task, running again
         "400":
-          $ref: '#/components/responses/BadRequest'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The task has no occurrence left (schedule_in_past), or the request is malformed
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":

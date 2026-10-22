@@ -89,7 +89,9 @@ def sync_detailed(
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
     failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
-    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+    listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a
+    failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was:
+    give it a new schedule, then resume it. A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.
@@ -122,7 +124,9 @@ def sync(
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
     failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
-    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+    listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a
+    failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was:
+    give it a new schedule, then resume it. A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.
@@ -150,7 +154,9 @@ async def asyncio_detailed(
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
     failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
-    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+    listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a
+    failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was:
+    give it a new schedule, then resume it. A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.
@@ -181,7 +187,9 @@ async def asyncio(
 
      The next occurrence is counted from now, so missed occurrences are never replayed, and a run of
     failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence
-    listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+    listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a
+    failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was:
+    give it a new schedule, then resume it. A completed task cannot be resumed (409).
 
     Args:
         id (str): The task, as returned when it was created.

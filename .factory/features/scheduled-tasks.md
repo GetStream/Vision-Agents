@@ -167,6 +167,13 @@ end. A run made by hand is never held.
   (`schedule_tools.go:365`). Only two resumes that race meet the unique key on the
   occurrence, which keeps the first. The tool result says which time was missed, in the
   task's zone (`schedule_tools.go:435`).
+- **Any other task with no occurrence left is not resumed (AI-1639).** A failed one-shot,
+  a one-shot paused after its occurrence failed, and a repeat past its `until` or `COUNT`
+  are refused with `schedule_in_past`. The task keeps its state, `next_run_at` and failure
+  streak. The API answers 400 before it reads the config or the limit
+  (`internal/api/scheduled_tasks.go:505`), and the tool refuses the same way
+  (`schedule_tools.go:379`). Example: a one-shot reminder whose delivery failed stays
+  `failed`, not `completed`. To run it again, give it a new schedule, then resume it.
 - **A running run becomes `missed` when the user pauses or edits the task (S4).** This
   covers a held run and a run in flight. The edit decides what happens next: a repeating
   task goes on to its next occurrence, and an active one-shot comes due again at the save,

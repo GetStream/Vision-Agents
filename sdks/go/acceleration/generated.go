@@ -10605,7 +10605,7 @@ type ClientInterface interface {
 
 	// ResumeScheduledTask Resume a scheduled task
 	//
-	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed task cannot be resumed (409).
 	//
 	// Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
 	ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14737,7 +14737,7 @@ func (c *Client) PauseScheduledTask(ctx context.Context, id string, reqEditors .
 
 // ResumeScheduledTask Resume a scheduled task
 //
-// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed task cannot be resumed (409).
 //
 // Corresponds with POST /v1/agents/scheduled-tasks/{id}/resume (the `ResumeScheduledTask` operationId).
 func (c *Client) ResumeScheduledTask(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -30061,7 +30061,7 @@ type ClientWithResponsesInterface interface {
 
 	// ResumeScheduledTaskWithResponse Resume a scheduled task
 	//
-	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+	// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed task cannot be resumed (409).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -39420,7 +39420,7 @@ type ResumeScheduledTaskResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ScheduledTask
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *ErrorResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
@@ -39439,7 +39439,7 @@ func (r ResumeScheduledTaskResponse) GetJSON200() *ScheduledTask {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ResumeScheduledTaskResponse) GetJSON400() *BadRequest {
+func (r ResumeScheduledTaskResponse) GetJSON400() *ErrorResponse {
 	return r.JSON400
 }
 
@@ -50808,7 +50808,7 @@ func (c *ClientWithResponses) PauseScheduledTaskWithResponse(ctx context.Context
 
 // ResumeScheduledTaskWithResponse Resume a scheduled task
 //
-// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+// The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed task cannot be resumed (409).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -59786,7 +59786,7 @@ func ParseResumeScheduledTaskResponse(rsp *http.Response) (*ResumeScheduledTaskR
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
