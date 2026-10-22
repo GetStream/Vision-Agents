@@ -155,7 +155,7 @@ Read the task, then its runs, then the logs, in that order.
 
 | Check | How | What it means |
 | --- | --- | --- |
-| Task `state` | `GET /v1/agents/scheduled-tasks/{id}` | `paused`: a pause, or its config was deleted (`internal/api/configs.go:308`). `failed`: five failed occurrences in a row (`maxConsecutiveFailures`); resume clears it. `completed`: a one-shot ran, or the repeat has nothing left |
+| Task `state` | `GET /v1/agents/scheduled-tasks/{id}` | `paused`: a pause, or its config was deleted (`internal/api/configs.go:308`). `failed`: five failed occurrences in a row (`maxConsecutiveFailures`), or a last occurrence that failed; resume clears it. A failed task with no occurrence left, or a paused one that did not sleep through its time, answers resume with 400 `schedule_in_past`: PATCH a new schedule first. A paused one-shot whose time passed while paused is completed with a `missed` run (`task_paused`). `completed`: a one-shot ran, or the repeat has nothing left |
 | `next_run_at`, `upcoming` | same | In the task's zone. Wrong hour: the zone (below) |
 | `schedule.timezone` | same | Resolved at create from the call, the session, `users.timezone`, then `default_timezone`. A session opened with a zone moves `users.timezone` (`internal/api/session_create.go:76`) |
 | `quiet_hours` | same | An occurrence due inside them is held to their end: its run stays `running` with nothing sent. A run by hand is never held |

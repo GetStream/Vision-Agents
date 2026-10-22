@@ -1814,7 +1814,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Resume a scheduled task
-         * @description The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). A completed task cannot be resumed (409).
+         * @description The next occurrence is counted from now, so missed occurrences are never replayed, and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, its occurrence listed in its runs as missed (error task_paused). Any other task with no occurrence left, such as a failed one-shot or a repeat past its until, is refused (400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed task cannot be resumed (409).
          */
         readonly post: operations["resumeScheduledTask"];
         readonly delete?: never;
@@ -12895,7 +12895,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduledTask"];
                 };
             };
-            readonly 400: components["responses"]["BadRequest"];
+            /** @description The task has no occurrence left (schedule_in_past), or the request is malformed */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
