@@ -694,7 +694,7 @@ the offsets count from its first word.
 A reply a sentence voice started saying before the model finished it was split in two in the
 Chat channel: the first message settled to the text so far, and a second one carried on and
 settled to the whole reply, its start said twice. It is now one message, settled once the
-model has finished and the voice has said some of it.
+model has finished and the voice has said some of it (#1145).
 
 ### A tool call waits for the person to sign in, and carries on once they have
 
