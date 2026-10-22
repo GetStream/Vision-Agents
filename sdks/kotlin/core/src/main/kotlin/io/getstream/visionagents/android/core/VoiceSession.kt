@@ -58,6 +58,10 @@ public class VoiceSession private constructor(
     private val cameraOn = MutableStateFlow(false)
     private val stoppedBy = MutableStateFlow<Throwable?>(null)
 
+    /** What the camera showed lately, while it is on, for the agent to look at. */
+    private val frames = CameraFrames()
+    private var looking: CameraFilter? = null
+
     /** The Stream call this device is on, once it has joined. */
     public val call: StateFlow<Call?> = joined.asStateFlow()
 
@@ -76,7 +80,8 @@ public class VoiceSession private constructor(
      * The agent is already there: it joined when the session was created. The microphone is on
      * and plays through the speaker; the camera is off unless [camera] is true, and starts on
      * the back lens, since what an agent is shown is whatever the caller is pointing at. Both are
-     * set before joining, so no front-facing frame is ever published.
+     * set before joining, so no front-facing frame is ever published. While the camera is on, the
+     * agent can look through it: see [setCameraEnabled].
      *
      * It joins on the client handed over with [use], or else on one built from the agents' key,
      * user and token, which every voice session then shares.
@@ -107,6 +112,7 @@ public class VoiceSession private constructor(
             // Remote audio otherwise plays out of the earpiece, and an agent you talk to
             // hands-free wants the speaker.
             call.speaker.setSpeakerPhone(true)
+            if (camera) look(call)
             cameraOn.value = camera
             muted.value = false
             joined.value = call
@@ -126,13 +132,20 @@ public class VoiceSession private constructor(
         this.muted.value = muted
     }
 
-    /** Turns this device's camera on or off. Re-enabling keeps the back lens. */
+    /**
+     * Turns this device's camera on or off. Re-enabling keeps the back lens.
+     *
+     * While it is on, the agent can look through it: its vision skill asks for what the camera
+     * showed when a question was put, and [session] answers with those frames, sampled twice a
+     * second from what the call publishes. Turned off, what it showed is forgotten.
+     */
     public fun setCameraEnabled(enabled: Boolean) {
         val call = joined.value ?: return
         if (enabled && call.camera.direction.value != CameraDirection.Back) {
             call.camera.flip()
         }
         call.camera.setEnabled(enabled)
+        if (enabled) look(call) else stopLooking()
         cameraOn.value = enabled
     }
 
@@ -150,7 +163,22 @@ public class VoiceSession private constructor(
         leaveCall(closeSession = true)
     }
 
+    /** Samples the call's camera for the agent, and lets [session] answer with what it showed. */
+    private fun look(call: Call) {
+        if (looking != null) return
+        looking = CameraFilter(call::videoFilter, frames).also { it.start() }
+        session.cameraFrames = frames
+    }
+
+    private fun stopLooking() {
+        looking?.stop()
+        looking = null
+        frames.clear()
+        session.cameraFrames = null
+    }
+
     private suspend fun leaveCall(closeSession: Boolean) {
+        stopLooking()
         joined.value?.leave()
         joined.value = null
         cameraOn.value = false
