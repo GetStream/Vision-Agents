@@ -558,7 +558,7 @@ func (s *PluginsSuite) TestAClientNamingAPluginBesideNessyIsRefused() {
 }
 
 // A client that names no plugin, without user or for one named read-only, adds nothing that
-// sends data out. The base, cc60bf611, answered 200 to both (ai1641/author-1.md, «Control probe»).
+// sends data out. The base, cc60bf611, answered 200 to both.
 func (s *PluginsSuite) TestAClientBesideNessyThatNamesNoNewPluginIsStored() {
 	agent := s.nessyConfig(map[string]any{"name": "linear", "readonly": true, "user": false})
 
@@ -594,7 +594,7 @@ func (s *PluginsSuite) TestAnAppLoginNamingAPluginBesideNessyIsRefused() {
 
 // Logins that name no new plugin are finished as before: the app's of a plugin named
 // read-only, the app's of a server the config names by URL, and an end user's. The base,
-// cc60bf611, answered 302, 302 and 200 (ai1641/author-1.md, «Control probe»).
+// cc60bf611, answered 302, 302 and 200.
 func (s *PluginsSuite) TestLoginsBesideNessyThatNameNoNewPluginAreFinished() {
 	agent := s.nessyConfig(map[string]any{"name": "linear", "readonly": true, "user": false})
 	exchanged := false
@@ -617,7 +617,7 @@ func (s *PluginsSuite) TestLoginsBesideNessyThatNameNoNewPluginAreFinished() {
 }
 
 // TestAnAppLoginWithoutASensitiveConnectorNamesThePlugin is the control: the base,
-// cc60bf611, answered 302 and named linear (ai1641/author-1.md, «Control probe»).
+// cc60bf611, answered 302 and named linear.
 func (s *PluginsSuite) TestAnAppLoginWithoutASensitiveConnectorNamesThePlugin() {
 	agent := s.data.createAgentConfig()
 	exchanged := false
@@ -631,7 +631,7 @@ func (s *PluginsSuite) TestAnAppLoginWithoutASensitiveConnectorNamesThePlugin() 
 
 // The config an app login names is read before the code is exchanged, so a login on a config
 // that is gone asks for no token. The base, cc60bf611, answered the same 500 after exchanging
-// the code (ai1641/author-1.md, «Control probe»).
+// the code.
 func (s *PluginsSuite) TestAnAppLoginOnAConfigThatIsGoneExchangesNoCode() {
 	exchanged := false
 	tokens := s.tokenServer(&exchanged)
