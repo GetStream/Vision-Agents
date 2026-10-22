@@ -1,12 +1,7 @@
 # internal/webhook
 
-Standard Webhooks signing for deliveries the router sends and receives, and the MCP Events delivery body. No state, no I/O.
+Standard Webhooks for secrets the router makes: `NewSecret` (a `whsec_` secret, 32 random bytes), `Sign` (the `v1,` HMAC-SHA256 of `id.timestamp.body`) and `Verify` (`webhook-id`, `webhook-timestamp` within 5 minutes, any one of the `webhook-signature` list; else `ErrBadSignature`). `Event` and `MaxEventBytes` are one MCP Events delivery and its 256 KiB cap.
 
-- `NewSecret`: a fresh `whsec_` secret (32 random bytes, base64).
-- `Sign`: the `v1,` HMAC-SHA256 of `id.timestamp.body`, as the `webhook-signature` header carries it.
-- `Verify`: checks `webhook-id`, `webhook-timestamp` (5 min either way) and `webhook-signature` (any one of a space-separated list) against a secret; `ErrBadSignature` otherwise.
-- `Event`, `MaxEventBytes`: one MCP Events delivery and the most it may hold (256 KiB).
+Callers: `internal/eventforward` signs forwards to event destinations; `internal/mcpevents` and `internal/pluginevents` make subscription secrets and verify MCP Events deliveries.
 
-Used by `internal/eventforward` (signs what it forwards to a customer's event destinations), `internal/mcpevents` (connector MCP Events subscriptions) and `internal/pluginevents` (the plugin system's MCP Events, until it is removed).
-
-`internal/connectors/verifiers/standardwebhooks` checks the same signature on a provider app's inbound webhooks. It is a `core.Verifier` that reads the age limit from the connector manifest; this package is for secrets the router itself makes.
+A provider app's inbound Standard Webhooks are checked by `internal/connectors/verifiers/standardwebhooks`, a `core.Verifier` whose age limit comes from the connector manifest.
