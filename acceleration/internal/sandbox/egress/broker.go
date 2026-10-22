@@ -112,7 +112,9 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 		return nil, stack.Wrap(errors.New("egress: the proxy broker needs redis, the proxy's CA certificate, a session and tokens"))
 	}
 	proxy, ok := config.ProxyURL(o.URL)
-	if !ok {
+	// Most of a sandbox's clients cannot use an https proxy URL (live probe, 2026-10-22), so the
+	// sandbox is handed http alone.
+	if !ok || proxy.Scheme != "http" {
 		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://<public IPv4 address>:port, with no user, path, query or fragment"))
 	}
 	if o.Logger == nil {
