@@ -747,6 +747,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("analysing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Noted.", analyses: true}, nil
 	})
+	// A guardrail judge that finds every turn against its policy.
+	reasoning.Register("judging", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: `{"violates": 1, "reason": "it is against the policy"}`}, nil
+	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
 	})
