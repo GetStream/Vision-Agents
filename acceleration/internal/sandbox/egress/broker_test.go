@@ -758,8 +758,14 @@ func newGitHost(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey) *gi
 		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "HOME=" + root}}
 	g.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		g.mu.Lock()
-		g.seen = append(g.seen, request.Header.Get("Authorization"))
-		g.rest = append(g.rest, request.URL.String())
+		// Every Authorization value is kept, so a second line holding the token shows; a request with
+		// none is kept as "". Go moves Host out of Header, so it is kept apart.
+		authorizations := request.Header.Values("Authorization")
+		if len(authorizations) == 0 {
+			authorizations = []string{""}
+		}
+		g.seen = append(g.seen, authorizations...)
+		g.rest = append(g.rest, request.URL.String(), request.Host)
 		for name, values := range request.Header {
 			if name != "Authorization" {
 				g.rest = append(g.rest, values...)
@@ -785,7 +791,7 @@ func (g *gitHost) requests() []string {
 	return slices.Clone(g.seen)
 }
 
-// elsewhere is each request's URL and every header value but Authorization.
+// elsewhere is each request's URL, Host and every header value but Authorization.
 func (g *gitHost) elsewhere() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()

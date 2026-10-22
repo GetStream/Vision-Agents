@@ -430,6 +430,19 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelGitCannotUseTheGrant() {
 	s.NotContains(description, "x-access-token")
 }
 
+// TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub: Bearer is not offered for github.com,
+// so the description gives the placeholder's host alone.
+func (s *SecretsSuite) TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub() {
+	grant := githubGit
+	grant.Hosts = []string{"github.com"}
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, grant)).Description
+
+	s.Contains(description, " $GITHUB_TOKEN is a placeholder that works only for github.com, only in a request header.")
+	s.NotContains(description, "Code may call")
+	s.NotContains(description, "Bearer")
+}
+
 // TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem: no broker, no egress that takes Basic.
 func (s *SecretsSuite) TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem() {
 	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Grants: []sandbox.Grant{githubGit}})
