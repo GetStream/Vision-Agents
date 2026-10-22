@@ -340,14 +340,13 @@ func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried(
 // placeholder is pushed with the placeholder as it is: the body is never rewritten.
 func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
 	subject := s.subject("session-1")
-	if !subject.Broker.Basic() {
-		// Daytona: its egress runs in Daytona's network, which no test here reaches. Git sends the
-		// placeholder Base64-encoded, which Daytona does not replace (live A12,
-		// daytona/daytona_live_test.go), so github.com gets no token.
-		s.Nil(subject.Push, "a broker whose egress takes no Basic has no git push to check")
-		s.T().Skip("the broker's egress takes no Basic auth, so git gets no token: live A12 checks it")
+	if subject.Push == nil {
+		// Daytona: its egress runs in Daytona's network, which no test here reaches. What a test
+		// here can check is the run_code description (daytona/secrets_test.go). Daytona replaces
+		// the placeholder in git's Base64 Basic header: live staging E2E, 2026-10-22, session
+		// 01a16514-923c-7843-9214-40a94453f194.
+		s.T().Skip("the broker's egress runs outside this process: the live E2E checks git")
 	}
-	s.Require().NotNil(subject.Push, "a broker whose egress takes Basic proves it with a push")
 	github := grant("github", "GITHUB_TOKEN")
 	github.Hosts = append(github.Hosts, "github.com")
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{github})

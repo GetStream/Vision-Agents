@@ -418,16 +418,19 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
 	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}
 
-// TestRunCodeTellsTheModelGitCannotUseTheGrant: Daytona replaces a plain header alone. Bearer is
-// not offered for github.com, which git cannot send it to.
-func (s *SecretsSuite) TestRunCodeTellsTheModelGitCannotUseTheGrant() {
+// TestRunCodeTellsTheModelGitTakesTheGrant: Daytona replaces the placeholder in git's Base64
+// Basic header too (live staging E2E, 2026-10-22, session 01a16514-923c-7843-9214-40a94453f194: git ls-remote with
+// x-access-token:$GITHUB_TOKEN, rc 0). Bearer is not offered for github.com, which git cannot
+// send it to.
+func (s *SecretsSuite) TestRunCodeTellsTheModelGitTakesTheGrant() {
 	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit)).Description
 
 	s.Contains(description, "Code may call api.github.com with $GITHUB_TOKEN: send it over HTTPS as "+
 		"`Authorization: Bearer $GITHUB_TOKEN`; the value is a placeholder that works only for api.github.com, github.com")
-	s.Contains(description, " git over HTTPS cannot use $GITHUB_TOKEN: git sends it Base64-encoded, which only the router's "+
-		"code_sandbox.broker: proxy replaces.")
-	s.NotContains(description, "x-access-token")
+	s.Contains(description, " git over HTTPS takes it as the password in the remote's URL, such as "+
+		"https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git.")
+	s.NotContains(description, "cannot use")
+	s.NotContains(description, "code_sandbox.broker")
 }
 
 // TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub: Bearer is not offered for github.com,
@@ -441,14 +444,6 @@ func (s *SecretsSuite) TestRunCodeOffersNoBearerForAGrantWhoseOnlyHostIsGithub()
 	s.Contains(description, " $GITHUB_TOKEN is a placeholder that works only for github.com, only in a request header.")
 	s.NotContains(description, "Code may call")
 	s.NotContains(description, "Bearer")
-}
-
-// TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem: no broker, no egress that takes Basic.
-func (s *SecretsSuite) TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem() {
-	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Grants: []sandbox.Grant{githubGit}})
-	s.Require().NoError(err)
-
-	s.Contains(sandbox.Tool(box).Description, " git over HTTPS cannot use $GITHUB_TOKEN")
 }
 
 // TestASandboxWithoutGrantsIsCreatedAsOnBase is the control: a sandbox no binding gives

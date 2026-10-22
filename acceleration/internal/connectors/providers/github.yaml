@@ -159,9 +159,11 @@ sources:
 # https://cli.github.com/manual/gh_help_environment, opened October 20, 2026). A placeholder is
 # replaced only in a request header and only when the header carries it verbatim ([secrets]),
 # so code sends it as «Authorization: Bearer», which every scheme's token takes ([rest] and
-# api_base above). The proxy broker (code_sandbox.broker: proxy) also replaces it as Basic
-# auth's password, which is how git sends it to github.com. Daytona does not: a header that
-# carries it Base64-encoded is not matched ([secrets], «Transformed placeholders»).
+# api_base above). git sends it to github.com as Basic auth's password, Base64-encoded. Both
+# brokers replace it there: the proxy broker (code_sandbox.broker: proxy) by its own rewrite, and
+# Daytona in live staging E2E on 2026-10-22 (session 01a16514-923c-7843-9214-40a94453f194: git ls-remote of a public
+# repo with «Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)» exited 0, the same with a
+# fake placeholder got 502), although [secrets], «Transformed placeholders», says it does not.
 sandbox:
   env: GITHUB_TOKEN
   hosts:
@@ -174,6 +176,6 @@ sandbox:
     # [remotes]: git over HTTPS uses «An HTTPS URL like https://github.com/user/repo.git», and
     # «When Git prompts you for your password, enter your personal access token»; [install]:
     # «git clone https://x-access-token:TOKEN@github.com/owner/repo.git». GitHub refuses
-    # «Authorization: Bearer» there (401 to git-receive-pack, 2026-10-22T03:53:09Z), so only
-    # the proxy broker serves git; under Daytona, git to github.com gets no token.
+    # «Authorization: Bearer» there (401 to git-receive-pack, 2026-10-22T03:53:09Z), so git
+    # takes the Basic form, which both brokers replace (see the comment above `sandbox`).
     - github.com
