@@ -638,6 +638,31 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).
 - The `anthropic` provider sends `ANTHROPIC_WORKSPACE_ID` as the `anthropic-workspace-id` header, so an Anthropic key that is not scoped to a workspace is accepted; with it unset, requests are sent as before.
 
+### The session socket says when each utterance starts being heard
+
+A new `speaking` frame comes when the call's track takes the first audible frame of an
+utterance of the agent's, so a page can reveal a reply as it is said rather than as the Chat
+channel has it written: `turn_id`, `synthesis_id`, `text` and `at`. `text` is what the voice
+had been sent for the utterance by then, which is all of a greeting or other line said as
+written and of a sentence a voice that takes one at a time was given, and the start of the
+reply for a streaming voice, which is still being sent the rest. A speech-to-speech model's is
+its transcript so far. An edge with no track of its own reports it once publishing the first
+chunk returns. `spoke` now carries the same `synthesis_id` and the `characters` synthesised
+(for a speech-to-speech model, its transcript's), and always comes after the utterance's
+`speaking`. An utterance the caller talks over is still reported `speaking` if any of it was
+heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged.
+
+`speaking` also carries `delay_ms`: for an utterance reported before the track got to it (one
+that finished being made behind speech still queued), how long after `at` it is expected to be
+heard, from the speech queued ahead of it at the edge. `interrupted` carries `synthesis_id` and
+`heard_ms` when any of the turn had been heard: the utterance the track was playing and how
+many milliseconds of it went out before the cut. Every character count on the session socket,
+`characters` included, is in Unicode code points.
+
+Each of the agent's spoken messages in the Chat channel already carries that same `turn_id`,
+now pinned by tests: one being written, settled, cut off, a greeting (`say-...`) or other line
+said as written, and each message of a reply a sentence voice leaves more than one of (#1128).
+
 ### A tool call waits for the person to sign in, and carries on once they have
 
 When the agent calls a connector bound as each person's own (`connection.type: session`) that

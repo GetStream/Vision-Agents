@@ -423,6 +423,30 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("reads what is being heard off a speaking event, before the spoke that ends it", async () => {
+    const [session, connection] = await opened();
+    const at = "2026-10-22T09:30:00.123456789Z";
+
+    connection.send({ type: "speaking", turn_id: "turn-1", synthesis_id: "turn-1#0", text: "Hello there.", at });
+    connection.send({ type: "spoke", turn_id: "turn-1", synthesis_id: "turn-1#0", characters: 12, audio_duration_ms: 900 });
+
+    const read = [];
+    for await (const event of session.events()) {
+      read.push(event);
+      if (read.length === 2) {
+        break;
+      }
+    }
+    const [speaking, spoke] = read;
+    assert.equal(speaking?.kind, "speaking");
+    assert.equal(speaking?.text, "Hello there.");
+    assert.equal(speaking?.frame["at"], at);
+    assert.equal(spoke?.kind, "spoke");
+    assert.equal(spoke?.frame["synthesis_id"], speaking?.frame["synthesis_id"]);
+    assert.equal(spoke?.frame["characters"], 12);
+    await session.close();
+  });
+
   it("sends what the caller asked the conversation to do", async () => {
     const [session, connection] = await opened();
 

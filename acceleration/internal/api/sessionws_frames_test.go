@@ -221,3 +221,48 @@ func TestACancelledModelCallOnTheTimelineSaysWhyAndWhatItCost(t *testing.T) {
 	require.JSONEq(t, `[{"input_tokens":10,"model":"fast","operation_id":"op-1","output_tokens":2,"provider":"stub","purpose":"flow","started_at":"2026-10-20T12:00:00Z","success":false,"error_code":"cancelled","ttft_ms":80}]`,
 		string(raw))
 }
+
+func TestASpeakingFrameSaysWhatStartedBeingHeardAndWhen(t *testing.T) {
+	at := time.Date(2026, 10, 22, 9, 30, 0, 123456789, time.UTC)
+
+	sent, ok := frameOf(agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1#0", Text: "Hello there.", At: at})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"at":"2026-10-22T09:30:00.123456789Z","delay_ms":0,"synthesis_id":"turn-1#0","text":"Hello there.","turn_id":"turn-1","type":"speaking"}`,
+		string(raw))
+}
+
+func TestASpeakingFrameReportedBeforeTheTrackGotToItSaysHowLongUntilItIsHeard(t *testing.T) {
+	at := time.Date(2026, 10, 22, 9, 30, 0, 0, time.UTC)
+
+	sent, ok := frameOf(agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1#1", Text: "Four.", At: at, DelayMs: 640})
+
+	require.True(t, ok)
+	require.Equal(t, 640.0, sent["delay_ms"])
+}
+
+func TestAnInterruptedFrameSaysHowMuchOfTheUtteranceCutWasHeard(t *testing.T) {
+	sent, ok := frameOf(agent.Interrupted{TurnID: "turn-1", SynthesisID: "turn-1#2", HeardMs: 420})
+
+	require.True(t, ok)
+	require.Equal(t, "turn-1#2", sent["synthesis_id"])
+	require.Equal(t, 420.0, sent["heard_ms"])
+
+	unheard, ok := frameOf(agent.Interrupted{TurnID: "turn-2"})
+
+	require.True(t, ok)
+	require.NotContains(t, unheard, "heard_ms", "nothing heard is not zero heard, so a client keeps its own count")
+	require.NotContains(t, unheard, "synthesis_id")
+}
+
+func TestASpokeFrameCarriesTheCharactersSynthesisedAndTheUtterance(t *testing.T) {
+	sent, ok := frameOf(agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0", Characters: 12, AudioDurationMs: 900, TimeToFirstByteMs: 140})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"audio_duration_ms":900,"characters":12,"synthesis_id":"turn-1#0","time_to_first_byte_ms":140,"turn_id":"turn-1","type":"spoke"}`,
+		string(raw))
+}

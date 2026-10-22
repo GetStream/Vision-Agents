@@ -91,7 +91,12 @@ const purposeField = "purpose"
 var purposes = []string{agent.PurposeGreeting, agent.PurposeCheckIn, agent.PurposeUpdate}
 
 // turnField names the turn a reply was written for, so a reader can match the stored reply
-// to the one it watched being written.
+// to the one it watched being written. It is the turn_id the session socket's speaking and
+// spoke name the reply's utterances by, so a page can reveal the message as it is heard.
+// Every message of the agent's that was said carries it: one being written, settled, cut
+// off, a line said as written, and each of the messages a reply spoken a sentence at a time
+// can leave. A synthesis id is not stamped: a message is written before the voice has any
+// of it, and one message may be several of a sentence voice's syntheses.
 const turnField = "turn_id"
 
 // interruptedTextField keeps what a reply the caller cut off was going to say. Its text is
