@@ -629,8 +629,9 @@ func (c Config) validate() error {
 	}
 	_, validProxy := ProxyURL(c.CodeSandbox.ProxyPublicURL)
 	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!validProxy || c.CodeSandbox.ProxyCACert == "") {
-		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://<public IPv4 address>:port: " +
-			"a sandbox reaches that address alone and has no DNS to look a host name up with) and proxy_ca_cert " +
+		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url " +
+			"(http://<public IPv4 address>:port or https://<public IPv4 address>:port: a sandbox reaches that address " +
+			"alone and has no DNS to look a host name up with) and proxy_ca_cert " +
 			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox reaches the proxy")
 	}
 	// An https URL a sandbox cannot use is served as plain HTTP by the listener, which would

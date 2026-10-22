@@ -262,7 +262,7 @@ func (s *ConfigSuite) TestTheProxyBrokersProxyIsAnIPv4Address() {
 	for _, address := range []string{"http://proxy.stg.example:8091", "http://[2001:db8::7]:8091", "http://[::ffff:203.0.113.7]:8091"} {
 		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
 		_, _, err := Load("")
-		s.ErrorContains(err, "code_sandbox.proxy_public_url (http://<public IPv4 address>:port", address)
+		s.ErrorContains(err, "code_sandbox.proxy_public_url (http://<public IPv4 address>:port or https://<public IPv4 address>:port", address)
 	}
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
