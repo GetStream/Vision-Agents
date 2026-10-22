@@ -750,7 +750,6 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 	s.logger.Info("placed a phone call", append([]any{"session_id", sessionID,
 		"vendor_call_id", dialed.VendorCallID, "vendor", held.Vendor}, sites.logged()...)...)
-	s.recordPlaced(ctx, request.Owner.CustomerID, sessionID, dialed, held.Vendor, sites)
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,
 		RouteID:     routeID,
@@ -765,6 +764,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		s.logger.Error("could not record a call's trunk for cleanup; it may leak",
 			"trunk", trunkID, "call", callID, "error", err)
 	}
+	s.recordPlaced(context.WithoutCancel(ctx), request.Owner.CustomerID, sessionID, dialed, held.Vendor, sites)
 	return Placed{
 		VendorCallID: dialed.VendorCallID,
 		Status:       dialed.Status,
@@ -800,7 +800,8 @@ func (p placedSites) logged() []any {
 }
 
 // recordPlaced keeps where a placed call was sent, found later by its session id. The call
-// is already ringing, so a failure is logged and goes no further.
+// is already ringing, so a failure is logged and goes no further, and a slow store cannot
+// hold the reply for longer than agentLogTimeout.
 func (s *Service) recordPlaced(
 	ctx context.Context,
 	customerID, sessionID string,
@@ -811,7 +812,9 @@ func (s *Service) recordPlaced(
 	details := sites.details()
 	details["vendor"] = vendor
 	details["vendor_call_id"] = placed.VendorCallID
-	err := s.store.RecordAgentLog(context.WithoutCancel(ctx), &store.AgentLog{
+	ctx, cancel := context.WithTimeout(ctx, agentLogTimeout)
+	defer cancel()
+	err := s.store.RecordAgentLog(ctx, &store.AgentLog{
 		CustomerID: customerID,
 		SessionID:  sessionID,
 		Source:     "system",
@@ -825,9 +828,9 @@ func (s *Service) recordPlaced(
 	}
 }
 
-// bridgeMediaTimeout bounds writing the bridge_media row, which the node waits for when it
-// stops.
-const bridgeMediaTimeout = 5 * time.Second
+// agentLogTimeout bounds writing a call_placed or bridge_media row. The node waits for the
+// bridge_media row when it stops.
+const agentLogTimeout = 5 * time.Second
 
 // recordBridgeMedia keeps where each side of a call through a customer's own SIP trunk
 // sends its audio from, as the router's bridge saw in their SDP. It is the only place the
@@ -836,7 +839,7 @@ func (s *Service) recordBridgeMedia(ctx context.Context, customerID, sessionID s
 	if media.Stream == "" && media.Customer == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, bridgeMediaTimeout)
+	ctx, cancel := context.WithTimeout(ctx, agentLogTimeout)
 	defer cancel()
 	details := map[string]any{}
 	if media.Stream != "" {

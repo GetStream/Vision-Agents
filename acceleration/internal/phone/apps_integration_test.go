@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -649,6 +650,34 @@ func (s *AppsSuite) TestAPlacedCallWritesACallPlacedRow() {
 	for key, value := range row.Details {
 		s.NotContains(value, s.vendor.dialed.Bridge.Password, key)
 	}
+}
+
+func (s *AppsSuite) TestASlowCallPlacedRowDoesNotFailTheCallOrLoseItsResourceRow() {
+	// Holding the customer's log lock makes the call_placed write wait.
+	locked, unlock := make(chan struct{}), make(chan struct{})
+	go func() {
+		_ = s.store.DB().RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 731))", s.customer)
+			close(locked)
+			<-unlock
+			return err
+		})
+	}()
+	<-locked
+
+	started := time.Now()
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	waited := time.Since(started)
+	close(unlock)
+
+	s.Require().NoError(err)
+	s.Less(waited, 2*agentLogTimeout, "the reply waits for the row only up to its timeout")
+	s.Empty(s.callPlacedRows(placed))
+	resources, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
+	s.Require().NoError(err)
+	s.Len(resources, 1)
 }
 
 // trunkCall is a call placed through a customer's own trunk, with what its service logged and
