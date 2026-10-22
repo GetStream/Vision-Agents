@@ -221,3 +221,95 @@ func TestACancelledModelCallOnTheTimelineSaysWhyAndWhatItCost(t *testing.T) {
 	require.JSONEq(t, `[{"input_tokens":10,"model":"fast","operation_id":"op-1","output_tokens":2,"provider":"stub","purpose":"flow","started_at":"2026-10-20T12:00:00Z","success":false,"error_code":"cancelled","ttft_ms":80}]`,
 		string(raw))
 }
+
+func TestASpeakingFrameSaysWhatStartedBeingHeardAndWhen(t *testing.T) {
+	at := time.Date(2026, 10, 22, 9, 30, 0, 123456789, time.UTC)
+
+	sent, ok := frameOf(agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1#0", Text: "Hello there.", At: at})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"at":"2026-10-22T09:30:00.123456789Z","delay_ms":0,"synthesis_id":"turn-1#0","text":"Hello there.","turn_id":"turn-1","type":"speaking"}`,
+		string(raw))
+}
+
+func TestASpeakingFrameReportedBeforeTheTrackGotToItSaysHowLongUntilItIsHeard(t *testing.T) {
+	at := time.Date(2026, 10, 22, 9, 30, 0, 0, time.UTC)
+
+	sent, ok := frameOf(agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1#1", Text: "Four.", At: at, DelayMs: 640})
+
+	require.True(t, ok)
+	require.Equal(t, 640.0, sent["delay_ms"])
+}
+
+func TestAnInterruptedFrameSaysHowMuchOfTheUtteranceCutWasHeard(t *testing.T) {
+	sent, ok := frameOf(agent.Interrupted{TurnID: "turn-1", SynthesisID: "turn-1#2", HeardMs: 420})
+
+	require.True(t, ok)
+	require.Equal(t, "turn-1#2", sent["synthesis_id"])
+	require.Equal(t, 420.0, sent["heard_ms"])
+
+	unheard, ok := frameOf(agent.Interrupted{TurnID: "turn-2"})
+
+	require.True(t, ok)
+	require.NotContains(t, unheard, "heard_ms", "nothing heard is not zero heard, so a client keeps its own count")
+	require.NotContains(t, unheard, "synthesis_id")
+}
+
+func TestASpokeFrameCarriesTheCharactersSynthesisedAndTheUtterance(t *testing.T) {
+	sent, ok := frameOf(agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0", Characters: 12, AudioDurationMs: 900, TimeToFirstByteMs: 140})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"audio_duration_ms":900,"characters":12,"synthesis_id":"turn-1#0","time_to_first_byte_ms":140,"turn_id":"turn-1","type":"spoke"}`,
+		string(raw))
+}
+
+func TestASpeakingFrameSaysWhereItsUtteranceIsInTheReplysMessage(t *testing.T) {
+	at := time.Date(2026, 10, 22, 9, 30, 0, 0, time.UTC)
+
+	sent, ok := frameOf(agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1#1",
+		Text: "Your card ends in last four digits, 1234.", Message: &agent.MessageSpan{Start: 6, End: 39}, At: at})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"at":"2026-10-22T09:30:00Z","delay_ms":0,"message_end":39,"message_start":6,"synthesis_id":"turn-1#1","text":"Your card ends in last four digits, 1234.","turn_id":"turn-1","type":"speaking"}`,
+		string(raw))
+}
+
+func TestASpokeFrameSaysWhereAllOfItsUtteranceIsInTheReplysMessage(t *testing.T) {
+	sent, ok := frameOf(agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1", Characters: 48, AudioDurationMs: 2900,
+		Message: &agent.MessageSpan{End: 41}})
+
+	require.True(t, ok)
+	require.Equal(t, 0, sent["message_start"])
+	require.Equal(t, 41, sent["message_end"])
+}
+
+func TestAnInterruptedFrameSaysWhereTheUtteranceCutIsInTheReplysMessage(t *testing.T) {
+	sent, ok := frameOf(agent.Interrupted{TurnID: "turn-1", SynthesisID: "turn-1#2", HeardMs: 420,
+		Message: &agent.MessageSpan{Start: 39, End: 70}})
+
+	require.True(t, ok)
+	require.Equal(t, 39, sent["message_start"])
+	require.Equal(t, 70, sent["message_end"])
+}
+
+func TestFramesOfAnUtteranceWithNoKnownPlaceInTheMessageLeaveItOut(t *testing.T) {
+	// A client reading a router before message offsets counts the voice's characters, and
+	// one with nothing to go by here does the same.
+	for _, event := range []agent.Event{
+		agent.Speaking{TurnID: "turn-1", SynthesisID: "turn-1", Text: "Hi."},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1", Characters: 3},
+		agent.Interrupted{TurnID: "turn-1"},
+	} {
+		sent, ok := frameOf(event)
+
+		require.True(t, ok)
+		require.NotContains(t, sent, "message_start")
+		require.NotContains(t, sent, "message_end")
+	}
+}

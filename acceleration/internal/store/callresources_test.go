@@ -64,3 +64,20 @@ func (s *StoreSuite) TestRecordCallResourceRequiresACall() {
 	})
 	s.ErrorContains(err, "call")
 }
+
+func (s *StoreSuite) TestReadingACallsResourcesDeletesNothing() {
+	for _, trunk := range []string{"read-trunk-1", "read-trunk-2"} {
+		s.Require().NoError(s.store.RecordCallResource(s.ctx, &CallResource{
+			TrunkID: trunk, RouteID: "route-" + trunk,
+			CallType: "default", CallID: "read-call", CustomerID: "acme",
+		}))
+	}
+
+	read, err := s.store.CallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "read-call")
+	s.Require().NoError(err)
+	s.Len(read, 2)
+
+	released, err := s.store.ReleaseCallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "read-call")
+	s.Require().NoError(err)
+	s.Len(released, 2, "reading left both rows for the release")
+}

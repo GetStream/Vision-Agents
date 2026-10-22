@@ -17,6 +17,7 @@ import (
 
 // fakeCall is a connected call that ends when it is hung up.
 type fakeCall struct {
+	media    sipbridge.MediaAddrs
 	done     chan struct{}
 	once     sync.Once
 	hungUp   bool
@@ -27,6 +28,9 @@ func newFakeCall() *fakeCall { return &fakeCall{done: make(chan struct{})} }
 
 func (c *fakeCall) Done() <-chan struct{} { return c.done }
 func (c *fakeCall) Err() error            { return nil }
+func (c *fakeCall) Media() sipbridge.MediaAddrs {
+	return c.media
+}
 func (c *fakeCall) Hangup(context.Context) error {
 	c.hangupMu.Lock()
 	c.hungUp = true
@@ -162,6 +166,41 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	}.WithDefaults()
 	want.Logger = nil
 	s.Equal(want, got)
+}
+
+func (s *SIPTrunkSuite) TestAConnectedCallSaysWhereEachSidesAudioComesFrom() {
+	s.dialer.call.media = sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}
+	told := make(chan sipbridge.MediaAddrs, 1)
+	placing := outbound()
+	placing.Connected = func(media sipbridge.MediaAddrs) { told <- media }
+
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+
+	select {
+	case media := <-told:
+		s.Equal(sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}, media)
+	case <-time.After(time.Second):
+		s.FailNow("the connected call never said where its audio comes from")
+	}
+}
+
+func (s *SIPTrunkSuite) TestASlowConnectedCallbackDoesNotHoldUpTheHangup() {
+	told, release := make(chan struct{}), make(chan struct{})
+	placing := outbound()
+	placing.Connected = func(sipbridge.MediaAddrs) {
+		close(told)
+		<-release
+	}
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	<-told
+
+	s.provider.stop()
+
+	call := s.dialer.call
+	s.Eventually(call.wasHungUp, time.Second, 10*time.Millisecond, "the hang-up waited for the callback")
+	close(release)
 }
 
 func (s *SIPTrunkSuite) TestCancellingTheRequestDoesNotEndTheCall() {

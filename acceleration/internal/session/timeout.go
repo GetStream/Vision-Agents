@@ -2,8 +2,19 @@ package session
 
 import "time"
 
-// SetTimeout ends the session d from now. Calling it again moves the moment.
-func (s *Session) SetTimeout(d time.Duration) {
+// TimeoutReason is which wait a timeout is, named in the log line when it ends a session.
+type TimeoutReason string
+
+const (
+	// TimeoutHangup ends a phone session after the caller has left.
+	TimeoutHangup TimeoutReason = "hangup"
+	// TimeoutStart ends a phone session nobody joined in time.
+	TimeoutStart TimeoutReason = "start"
+)
+
+// SetTimeout ends the session d from now. Calling it again moves the moment and replaces
+// the reason.
+func (s *Session) SetTimeout(d time.Duration, reason TimeoutReason) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
@@ -11,7 +22,7 @@ func (s *Session) SetTimeout(d time.Duration) {
 	}
 	s.stopTimeout()
 	armed := s.timeoutArmed
-	s.timeout = time.AfterFunc(d, func() { s.timedOut(armed) })
+	s.timeout = time.AfterFunc(d, func() { s.timedOut(armed, reason) })
 }
 
 // ClearTimeout removes the timeout: the session runs until it is stopped.
@@ -38,7 +49,7 @@ func (s *Session) stopTimeout() {
 // the session closing in the meantime. It waits out a voice start or stop under way, which
 // may clear the timeout. The ending is called holding no lock: it closes the session, which
 // takes commandMu and s.mu.
-func (s *Session) timedOut(armed uint64) {
+func (s *Session) timedOut(armed uint64, reason TimeoutReason) {
 	s.commandMu.Lock()
 	s.mu.Lock()
 	if s.closing || armed != s.timeoutArmed {
@@ -51,6 +62,6 @@ func (s *Session) timedOut(armed uint64) {
 	s.mu.Unlock()
 	s.commandMu.Unlock()
 	if end != nil {
-		end()
+		end(reason)
 	}
 }

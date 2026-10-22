@@ -610,6 +610,15 @@ func TestAnEmptyConnectorToolListIsRefused(t *testing.T) {
 	}
 }
 
+func TestAConnectorSandboxThatIsNotABooleanIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: github\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "agent.yaml") || !strings.Contains(err.Error(), "`github` into bool") {
+		t.Errorf("a sandbox that is not a boolean loaded: %v", err)
+	}
+}
+
 func TestAConnectorEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    plugin: github\n")

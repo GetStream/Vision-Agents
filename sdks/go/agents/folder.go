@@ -271,6 +271,9 @@ type ConnectorSettings struct {
 	Connection *string `yaml:"connection"`
 	// Required is whether a session needs this connector. Nil leaves it optional.
 	Required *bool `yaml:"required"`
+	// Sandbox is whether code in the agent's sandbox may call the connector's API with
+	// the binding's connection. False sends no sandbox key.
+	Sandbox bool `yaml:"sandbox"`
 }
 
 func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {

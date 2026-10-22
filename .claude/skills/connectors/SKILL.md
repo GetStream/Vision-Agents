@@ -168,7 +168,7 @@ router uses the user's only connected connection to that connector, if there is 
 
 `agent.yaml`: the sync API accepts `connectors`, and the Go SDK folder reader reads the block
 (`sdks/go/agents/config.go`, `connectorBindings`). An entry whose `connection:` the app does not have
-is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error.
+is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error. `sandbox: true` lets code in the session's sandbox call the connector's API with the binding's connection.
 The left-out entries go to the router as `left_out_connectors` and are served on the agent config.
 Other SDKs: unverified, check `git grep connectors sdks/js/src plugins/stream` before relying on it.
 

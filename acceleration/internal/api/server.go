@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -314,6 +315,7 @@ type Server struct {
 	directory          *node.Directory
 	workers            *node.Workers
 	forwarder          *node.Forwarder
+	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
@@ -360,6 +362,10 @@ type Server struct {
 	mcpEvents     *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
+	// Stream, and how long to wait before each read. Tests replace both.
+	readCallStats  readCallStats
+	callStatsWaits []time.Duration
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -499,6 +505,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		eventForwarder:     options.EventForwarder,
 		mcpEvents:          options.MCPEvents,
 		episodes:           options.Episodes,
+		readCallStats:      streamCallStats,
+		callStatsWaits:     slices.Clone(defaultCallStatsWaits),
 		slackApps:          options.SlackApps,
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
@@ -554,7 +562,17 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 	if options.Directory != nil {
-		server.forwarder = node.NewForwarder(logger)
+		var credential []byte
+		if options.Secrets == nil {
+			// Peers prove they are this deployment's nodes with a credential the keyring
+			// derives, so without one no node can be let in and none of this node's
+			// requests is answered by another.
+			logger.Warn("peers cannot forward to or from this node without a key encryption key",
+				"setting", "ROUTER_AUTH_KEK")
+		} else {
+			credential, server.peerCredentials = options.Secrets.Derive(node.CredentialPurpose)
+		}
+		server.forwarder = node.NewForwarder(logger, credential)
 	}
 	return server, nil
 }
@@ -665,7 +683,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	// Peers reach this node on the same port its callers do, so what they forward is
 	// served beside everything else rather than on a listener of its own.
-	return node.Serve(served)
+	return node.Serve(served, s.peerCredentials)
 }
 
 // withSentry reports what goes wrong serving a request to Sentry.

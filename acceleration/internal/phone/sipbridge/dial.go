@@ -104,10 +104,12 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 		case <-flowCtx.Done():
 		}
 	}()
-	if err := flow(flowCtx, cfg, customer, stream); err != nil {
+	media, err := flow(flowCtx, cfg, customer, stream)
+	if err != nil {
 		ua.Close()
 		return nil, err
 	}
+	call.media = media
 	if err := finishSetup(ctx, call, customer, stream); err != nil {
 		ua.Close()
 		return nil, err
