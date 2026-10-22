@@ -20,7 +20,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -o /out/router ./cmd/router
+RUN CGO_ENABLED=0 go build -trimpath -o /out/router ./cmd/router \
+    && CGO_ENABLED=0 go build -trimpath -o /out/usage ./cmd/usage
 
 FROM debian:bookworm-slim
 
@@ -30,6 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/router /usr/local/bin/router
+# The usage service runs from the same image: `--entrypoint usage`, or `command` in compose.
+COPY --from=build /out/usage /usr/local/bin/usage
 
-EXPOSE 8080
+EXPOSE 8080 8070
 ENTRYPOINT ["router"]

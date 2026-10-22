@@ -1,0 +1,146 @@
+// Package alerts checks named conditions in the process that can see them, and sends one
+// Sentry event per condition that holds at most once per interval, which Sentry's alert rules
+// route by the usage_alert tag. Without a Sentry DSN an alert is only logged, at ERROR, which
+// it always is too.
+package alerts
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/getsentry/sentry-go"
+)
+
+// Level is how loud an alert is.
+type Level string
+
+const (
+	// Warn is for a person to look at today.
+	Warn Level = "warn"
+	// Page is for a person to look at now.
+	Page Level = "page"
+)
+
+// sentryLevel is the level a Sentry event of the alert is sent at.
+func (l Level) sentryLevel() sentry.Level {
+	if l == Page {
+		return sentry.LevelFatal
+	}
+	return sentry.LevelError
+}
+
+// Check reports whether a condition holds at now, and the numbers to send with it.
+type Check func(now time.Time) (holds bool, extra map[string]any)
+
+// Condition is one named thing that should never be true.
+type Condition struct {
+	// Name is the alert's name, which Sentry's rules and the fingerprint use.
+	Name  string
+	Level Level
+	Check Check
+}
+
+// Options configure a Loop.
+type Options struct {
+	// Hub sends the events; nil is sentry.CurrentHub().
+	Hub    *sentry.Hub
+	Logger *slog.Logger
+	// Source names the process in the alert's source tag, such as "usage/<pod>".
+	Source string
+	// Tags are added to every event, such as the router's shard.
+	Tags map[string]string
+	// Every is how often the conditions are checked; defaults to 15 s.
+	Every time.Duration
+	// Limit is the least time between two events of one condition; defaults to a minute.
+	Limit time.Duration
+	// Now is the loop's clock; nil is time.Now.
+	Now func() time.Time
+}
+
+// Loop checks its conditions every interval until it is stopped.
+type Loop struct {
+	options    Options
+	conditions []Condition
+	sent       map[string]time.Time
+}
+
+// New returns a loop over conditions; Run starts it.
+func New(options Options, conditions ...Condition) *Loop {
+	if options.Hub == nil {
+		options.Hub = sentry.CurrentHub()
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+	if options.Every == 0 {
+		options.Every = 15 * time.Second
+	}
+	if options.Limit == 0 {
+		options.Limit = time.Minute
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	return &Loop{options: options, conditions: conditions, sent: map[string]time.Time{}}
+}
+
+// Add registers more conditions. Call it before Run.
+func (l *Loop) Add(conditions ...Condition) {
+	l.conditions = append(l.conditions, conditions...)
+}
+
+// Run checks every condition at once and then every interval, until ctx is done.
+func (l *Loop) Run(ctx context.Context) {
+	ticker := time.NewTicker(l.options.Every)
+	defer ticker.Stop()
+	for {
+		l.check()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// check sends each condition that holds and was not sent within the limit.
+func (l *Loop) check() {
+	now := l.options.Now()
+	for _, condition := range l.conditions {
+		holds, extra := condition.Check(now)
+		if !holds {
+			continue
+		}
+		if last, ok := l.sent[condition.Name]; ok && now.Sub(last) < l.options.Limit {
+			continue
+		}
+		l.sent[condition.Name] = now
+		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, condition.Level, extra)
+	}
+}
+
+// Send sends one alert now, for a short-lived process (a job) that has no loop. It goes to
+// the current hub, tagged with the binary's name; the caller flushes Sentry before it exits.
+func Send(name string, level Level, extra map[string]any) {
+	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, level, extra)
+}
+
+func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]string, name string, level Level, extra map[string]any) {
+	logger.Error("usage alert", "alert", name, "level", level, "source", source, "extra", extra)
+	event := sentry.NewEvent()
+	event.Level = level.sentryLevel()
+	event.Message = "usage alert: " + name
+	event.Fingerprint = []string{"usage_alert:" + name}
+	event.Tags = map[string]string{}
+	for key, value := range tags {
+		event.Tags[key] = value
+	}
+	event.Tags["usage_alert"] = name
+	event.Tags["source"] = source
+	// The SDK has no extra data any more; a context is where Sentry shows the numbers.
+	event.Contexts = map[string]sentry.Context{"usage_alert": extra}
+	hub.CaptureEvent(event)
+}
