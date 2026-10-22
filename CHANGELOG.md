@@ -645,7 +645,7 @@ with the input in the order sent, so the input can refer to them by their place 
 agent's vision skill looks at them, or its conversation model when that can see. An image that
 is no HTTP(S) URL or image data URI, or more than 8, is a 400 `invalid_request`; an agent that
 can see neither way is a 400 `invalid_config`, not a 503 `model_failed`, since retrying fails
-the same way every time. A run without images is unchanged.
+the same way every time. A run without images is unchanged (#1133).
 
 ### An agent config sets the guide its calls are reviewed by
 
