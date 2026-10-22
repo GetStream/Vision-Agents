@@ -65,6 +65,10 @@ call answered by an all-Telnyx pipeline.
 
 Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
 
+### `audexum` plugin: Audexum TTS
+
+Adds a new `audexum` plugin exposing `audexum.TTS`, backed by Audexum's OpenAI-compatible `/v1/audio/speech` endpoint. It returns a full clip per request, decoded to `PcmData`, defaults to the `Nova` voice, and reads `AUDEXUM_API_KEY` from the environment. Install with `vision-agents[audexum]`.
+
 ### Agent metadata describing the configured providers (#618)
 
 The agent user is now published with metadata describing its own pipeline, so dashboards and Stream Chat clients can tell what an agent is made of without out-of-band bookkeeping. `Agent.components_metadata` returns `{"llm" | "vlm" | "realtime": {...}, "stt": ..., "tts": ..., "turn_detection": ..., "avatar": ..., "processors": [...]}` where each entry is `{"provider": <plugin name>, "model": <str | None>}`, and `Agent.authenticate()` writes it (plus `is_agent: True`) to the edge user's custom data. `StreamEdge` now merges via a partial update instead of an upsert, so custom fields written by other clients survive. Adds the public `MetadataValue` type in `vision_agents.core.edge.types`.
