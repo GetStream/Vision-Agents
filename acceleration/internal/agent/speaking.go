@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -14,6 +17,15 @@ import (
 // syntheses settle within it.
 const finishedKept = 64
 
+// MessageSpan is where an utterance is in the text of the Chat message its reply is written
+// into, in Unicode code points: from Start up to End. The voice is sent other words than
+// the message holds (a direction a voice acts, "last four digits, 1234" for "last four
+// 1234", sentences without the space between them), so a page revealing the message as it
+// is heard goes by this rather than by how much the voice said.
+type MessageSpan struct {
+	Start, End int
+}
+
 // utterance is one synthesis on its way to the caller, kept so that the moment it starts
 // being heard can be reported with what it says (Speaking), and how much of it was heard
 // if it is cut off (Interrupted).
@@ -21,8 +33,10 @@ type utterance struct {
 	agent       *Agent
 	turnID      string
 	synthesisID string
-	// text is what the voice has been sent for it. Agent.mu guards it.
-	text string
+	// text is what the voice has been sent for it, and message where that is in the
+	// reply's message. Agent.mu guards both.
+	text    string
+	message MessageSpan
 	// published is set once any of its audio went to the edge.
 	published atomic.Bool
 	// publishedUs is how much of its audio went to the edge, in microseconds.
@@ -120,16 +134,26 @@ func (a *Agent) announce(heard *utterance, at time.Time, delayMs float64) {
 		at, delayMs = time.Unix(0, pulled), 0
 	}
 	a.mu.Lock()
-	text := heard.text
+	text, message := heard.text, heard.message
 	a.mu.Unlock()
-	a.emitter.Send(Speaking{TurnID: heard.turnID, SynthesisID: heard.synthesisID, Text: text, At: at, DelayMs: delayMs})
+	a.emitter.Send(Speaking{TurnID: heard.turnID, SynthesisID: heard.synthesisID, Text: text, Message: &message, At: at, DelayMs: delayMs})
 }
 
-// synthesize sends a request to the voice, keeping what each utterance is sent. It is kept
-// first, since a voice may send audio back before Synthesize returns. A request the voice
-// refuses leaves nothing more of the utterance to be heard, so it is let go of.
-func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.Request) error {
-	a.sending(turnID, request.ID, request.Text)
+// span is where the utterance is in its reply's message, nil for one the agent has no
+// record of. It is read once the utterance is taken, when nothing changes it any more.
+func (u *utterance) span() *MessageSpan {
+	if u == nil {
+		return nil
+	}
+	return &u.message
+}
+
+// synthesize sends a request to the voice, keeping what each utterance is sent and where
+// that is in the reply's message. It is kept first, since a voice may send audio back
+// before Synthesize returns. A request the voice refuses leaves nothing more of the
+// utterance to be heard, so it is let go of.
+func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan) error {
+	a.sending(turnID, request.ID, request.Text, message)
 	err := voice.Synthesize(request)
 	if err != nil {
 		a.takeUtterance(request.ID)
@@ -137,10 +161,11 @@ func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.
 	return err
 }
 
-// sending adds text to what an utterance has been sent, opening it if it is new. One that
-// already finished is not opened again: a delta sent after it settled is never heard, and
-// would be kept forever.
-func (a *Agent) sending(turnID, synthesisID, text string) {
+// sending adds text to what an utterance has been sent, opening it if it is new, and
+// stretches it to the end of message: a streaming voice's utterance is a reply's sentences
+// one after another. One that already finished is not opened again: a delta sent after it
+// settled is never heard, and would be kept forever.
+func (a *Agent) sending(turnID, synthesisID, text string, message MessageSpan) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	heard := a.heard[synthesisID]
@@ -148,10 +173,11 @@ func (a *Agent) sending(turnID, synthesisID, text string) {
 		if _, done := a.finished[synthesisID]; done {
 			return
 		}
-		heard = &utterance{agent: a, turnID: turnID, synthesisID: synthesisID}
+		heard = &utterance{agent: a, turnID: turnID, synthesisID: synthesisID, message: message}
 		a.heard[synthesisID] = heard
 	}
 	heard.text += text
+	heard.message.End = max(heard.message.End, message.End)
 }
 
 // utteranceLocked is the utterance a synthesis is, nil for one the agent has no record of.
@@ -186,10 +212,26 @@ func (a *Agent) forgetUtterancesLocked() {
 	a.finishedOrder = a.finishedOrder[:0]
 }
 
-// cutShortLocked is the utterance of a turn being heard when it was cut off, and how many
-// milliseconds of it had been, or empty for a turn none of whose open utterances the track
-// had started on. Of several, it is the one the track took last. Agent.mu must be held.
-func (a *Agent) cutShortLocked(turnID string, now time.Time) (string, float64) {
+// cutShort is the utterance of a turn being heard when it was cut off, how many
+// milliseconds of it had been, and where all it had been sent is in the reply's message.
+type cutShort struct {
+	synthesisID string
+	heardMs     float64
+	message     *MessageSpan
+}
+
+// cut says so on an interruption, which is left saying nothing of it when cut is empty.
+func (cut cutShort) cut(interrupted Interrupted) Interrupted {
+	if cut.synthesisID != "" {
+		interrupted.SynthesisID, interrupted.HeardMs, interrupted.Message = cut.synthesisID, cut.heardMs, cut.message
+	}
+	return interrupted
+}
+
+// cutShortLocked is the utterance of a turn being heard when it was cut off, empty for a
+// turn none of whose open utterances the track had started on. Of several, it is the one
+// the track took last. Agent.mu must be held.
+func (a *Agent) cutShortLocked(turnID string, now time.Time) cutShort {
 	var cut *utterance
 	var latest int64
 	for _, heard := range a.heard {
@@ -198,10 +240,11 @@ func (a *Agent) cutShortLocked(turnID string, now time.Time) (string, float64) {
 		}
 	}
 	if cut == nil {
-		return "", 0
+		return cutShort{}
 	}
 	heardMs, _ := cut.heardBy(now)
-	return cut.synthesisID, heardMs
+	message := cut.message
+	return cutShort{synthesisID: cut.synthesisID, heardMs: heardMs, message: &message}
 }
 
 // heardBefore reports an utterance that is about to be reported spoken as being heard, if
@@ -226,4 +269,49 @@ func queuedAhead(stats PlayoutStats, counted bool, ownMs float64) float64 {
 		return 0
 	}
 	return max(0, float64(stats.Waiting.Microseconds())/1000-ownMs)
+}
+
+// messageText is a piece of the reply's text without directions as its message has it. The
+// message starts at the reply's first word, and where each sentence is in it is counted
+// from there.
+func (a *Agent) messageText(plain string) string {
+	if a.spoken.Len() == 0 {
+		return strings.TrimLeftFunc(plain, unicode.IsSpace)
+	}
+	return plain
+}
+
+// sentencesOf gives the chunker more of the reply, keeping it for a voice that acts
+// directions so that its sentences can be found in the message.
+func (a *Agent) sentencesOf(text string) []sentence {
+	if a.performs {
+		a.performed = append(a.performed, []rune(text)...)
+	}
+	return a.chunk.Add(text)
+}
+
+// inMessage is where a sentence the chunker cut is in the reply's message. A voice that does
+// not act directions is given the message's own text, so it is where the chunker found it.
+// One that does is given the reply with its directions, and a position in that is how much
+// of the message the text before it makes once they are taken out.
+func (a *Agent) inMessage(cut sentence) MessageSpan {
+	if !a.performs {
+		return MessageSpan{Start: cut.start, End: cut.end}
+	}
+	return MessageSpan{Start: a.plainBefore(cut.start), End: a.plainBefore(cut.end)}
+}
+
+// plainBefore is how many characters of the message the first at characters of what a
+// voice that acts directions was given come to.
+func (a *Agent) plainBefore(at int) int {
+	before := tts.Unperformed(string(a.performed[:min(at, len(a.performed))]))
+	return utf8.RuneCountInString(strings.TrimLeftFunc(before, unicode.IsSpace))
+}
+
+// appendSpoken adds a line the agent says of its own accord to the reply, a filler or an
+// apology, and returns where it is in the reply's message.
+func (a *Agent) appendSpoken(line string) MessageSpan {
+	start := utf8.RuneCountInString(a.spoken.String())
+	a.spoken.WriteString(line)
+	return MessageSpan{Start: start, End: start + utf8.RuneCountInString(line)}
 }

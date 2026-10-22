@@ -695,9 +695,9 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	}
 	a.utterances = 0
 	// What a reply cut off with the voice had been heard of, before it is forgotten.
-	cutID, heardMs := "", 0.0
+	var cutShort cutShort
 	if lost == a.tts && a.speakingTurn != "" {
-		cutID, heardMs = a.cutShortLocked(a.speakingTurn, time.Now())
+		cutShort = a.cutShortLocked(a.speakingTurn, time.Now())
 	}
 	// What the lost voice was saying will not be heard from it.
 	a.forgetUtterancesLocked()
@@ -729,7 +729,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 			current.Release(cut)
 		}
 		a.turns.interrupt(cut)
-		a.emitter.Send(Interrupted{TurnID: cut, SynthesisID: cutID, HeardMs: heardMs})
+		a.emitter.Send(cutShort.cut(Interrupted{TurnID: cut}))
 	}
 	if !replace {
 		return
