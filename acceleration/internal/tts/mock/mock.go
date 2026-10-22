@@ -16,6 +16,7 @@ import (
 	"math"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -251,7 +252,7 @@ func (t *TTS) speak(ctx context.Context, id, said string) {
 		SynthesisID:       id,
 		Provider:          ProviderName,
 		Model:             t.model,
-		Characters:        int64(len(said)),
+		Characters:        int64(utf8.RuneCountInString(said)),
 		AudioDurationMs:   saidMs,
 		TimeToFirstByteMs: float64(firstByteAt.Sub(started).Microseconds()) / 1000,
 		SynthesisTimeMs:   float64(time.Since(started).Microseconds()) / 1000,
@@ -267,7 +268,7 @@ func (t *TTS) settle(id, said string, started time.Time, durationMs float64, int
 		SynthesisID:     id,
 		Provider:        ProviderName,
 		Model:           t.model,
-		Characters:      int64(len(said)),
+		Characters:      int64(utf8.RuneCountInString(said)),
 		AudioDurationMs: durationMs,
 		SynthesisTimeMs: float64(time.Since(started).Microseconds()) / 1000,
 		Interrupted:     interrupted,

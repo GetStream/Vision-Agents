@@ -57,6 +57,24 @@ func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, scope AppScope, c
 	return slices.Concat(lists...), nil
 }
 
+// CallResourcesInApp is what ReleaseCallResourcesInApp would delete for one call, read
+// without deleting it.
+func (s *Store) CallResourcesInApp(ctx context.Context, scope AppScope, callType, callID string) ([]CallResource, error) {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]CallResource, error) {
+		var resources []CallResource
+		err := db.NewSelect().Model(&resources).
+			Where("call_type = ?", callType).
+			Where("call_id = ?", callID).
+			ApplyQueryBuilder(scope.where).
+			Scan(ctx)
+		return resources, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: call resources: %w", err)
+	}
+	return slices.Concat(lists...), nil
+}
+
 // CallPin is the Stream app a customer's call has its lines in: the app the trunk carrying
 // it was made in, whether an outbound leg's or an attached number's. A session joining the
 // call has to be in that app. Found is false for a call with no lines of its own.

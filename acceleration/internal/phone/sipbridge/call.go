@@ -22,6 +22,8 @@ var errNotEstablished = errors.New("call not set up yet")
 type Call struct {
 	legs [2]leg
 	log  *slog.Logger
+	// media is where each side sent its audio from at setup, fixed before Dial returns.
+	media MediaAddrs
 
 	established atomic.Bool
 	ending      atomic.Bool
@@ -36,6 +38,9 @@ func newCall(customer, stream leg, log *slog.Logger) *Call {
 
 // Done is closed when the call has ended.
 func (c *Call) Done() <-chan struct{} { return c.done }
+
+// Media is where each side sent its audio from when the call was set up.
+func (c *Call) Media() MediaAddrs { return c.media }
 
 // Err says why the call ended, nil for a normal hangup. Read it after Done is closed.
 func (c *Call) Err() error { return c.err }
@@ -104,8 +109,13 @@ func (c *Call) onReinvite(ctx context.Context, from side, offer []byte) ([]byte,
 	if !c.established.Load() {
 		return nil, stack.Wrap(errNotEstablished)
 	}
-	c.log.Info("re-INVITE received, passing it on", "from", from)
-	return c.other(from).Reinvite(ctx, offer)
+	c.log.Info("re-INVITE received, passing it on", media(from, offer)...)
+	answer, err := c.other(from).Reinvite(ctx, offer)
+	if err != nil {
+		return nil, err
+	}
+	c.log.Info("re-INVITE answered", media(1-from, answer)...)
+	return answer, nil
 }
 
 func (c *Call) onInfo(ctx context.Context, from side, contentType string, body []byte) error {

@@ -3,6 +3,8 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net"
@@ -16,12 +18,21 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
 // ForwardedHeader marks a request a peer handed over, so the node it arrives at answers
 // it rather than looking for somewhere else to send it.
 const ForwardedHeader = "X-Acceleration-Forwarded"
+
+// CredentialPurpose is what a deployment's keyring derives the credential its nodes present
+// to each other for. The version is there so a change to the credential's form can be told
+// from a wrong key.
+const CredentialPurpose = "node-forward-v1"
+
+// credentialKey is the metadata a peer's credential travels in.
+const credentialKey = "x-acceleration-node-credential"
 
 type forwardedKey struct{}
 
@@ -42,8 +53,24 @@ func Forwarded(ctx context.Context) bool {
 // nodes, and the only traffic here is between a deployment's own processes. gRPC wants
 // HTTP/2, which a peer speaks without TLS by prior knowledge, so h2c sits outside: an
 // HTTP/1.1 request passes through it untouched, sockets included.
-func Serve(api http.Handler) http.Handler {
-	server := grpc.NewServer()
+//
+// Anyone who reaches that port can speak gRPC to it, so every call must carry one of the
+// accepted credentials, which only the deployment's own nodes can derive. With none
+// accepted, every call is refused.
+func Serve(api http.Handler, accepted [][]byte) http.Handler {
+	check := peerCredentials{}
+	for _, credential := range accepted {
+		check.accepted = append(check.accepted, []byte(hex.EncodeToString(credential)))
+	}
+	// An unknown method is otherwise refused before any interceptor runs. Handing it to
+	// one keeps the credential check in front of every call, whatever it names.
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(check.unary),
+		grpc.StreamInterceptor(check.stream),
+		grpc.UnknownServiceHandler(func(any, grpc.ServerStream) error {
+			return status.Error(codes.Unimplemented, "node: no such method")
+		}),
+	)
 	RegisterNodeServer(server, &forwarded{api: api})
 
 	return h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,18 +110,24 @@ func Address(listen string) (string, error) {
 // Forwarder hands requests to this deployment's other nodes, keeping one connection to
 // each for as long as the process runs.
 type Forwarder struct {
-	logger *slog.Logger
+	logger     *slog.Logger
+	credential string
 
 	mu    sync.Mutex
 	peers map[string]*grpc.ClientConn
 }
 
-// NewForwarder returns a Forwarder that has not connected to anything yet.
-func NewForwarder(logger *slog.Logger) *Forwarder {
+// NewForwarder returns a Forwarder that has not connected to anything yet, presenting
+// credential to every peer it hands a request to.
+func NewForwarder(logger *slog.Logger, credential []byte) *Forwarder {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Forwarder{logger: logger, peers: map[string]*grpc.ClientConn{}}
+	return &Forwarder{
+		logger:     logger,
+		credential: hex.EncodeToString(credential),
+		peers:      map[string]*grpc.ClientConn{},
+	}
 }
 
 // Forward hands a request to the node at an address and writes back what it answered.
@@ -148,6 +181,7 @@ func (f *Forwarder) Ask(
 		headers = append(headers, &Header{Name: "Host", Values: []string{r.Host}})
 	}
 
+	ctx = metadata.AppendToOutgoingContext(ctx, credentialKey, f.credential)
 	return NewNodeClient(peer).Forward(ctx, &ForwardRequest{
 		Method:     r.Method,
 		Url:        r.URL.RequestURI(),
@@ -176,6 +210,42 @@ func (f *Forwarder) peer(address string) (*grpc.ClientConn, error) {
 	f.peers[address] = peer
 
 	return peer, nil
+}
+
+// peerCredentials checks that a call came from one of this deployment's own nodes.
+type peerCredentials struct {
+	accepted [][]byte
+}
+
+func (p peerCredentials) unary(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := p.check(ctx); err != nil {
+		return nil, err
+	}
+	return handler(ctx, request)
+}
+
+func (p peerCredentials) stream(server any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := p.check(stream.Context()); err != nil {
+		return err
+	}
+	return handler(server, stream)
+}
+
+// check compares what was presented with every accepted credential, in constant time and
+// without stopping at a match, so how long it takes says nothing about which came close.
+// Nothing presented, or more than one value, is never a match, whatever is accepted.
+func (p peerCredentials) check(ctx context.Context) error {
+	values := metadata.ValueFromIncomingContext(ctx, credentialKey)
+	matched := 0
+	if len(values) == 1 && values[0] != "" {
+		for _, credential := range p.accepted {
+			matched |= subtle.ConstantTimeCompare([]byte(values[0]), credential)
+		}
+	}
+	if matched == 0 {
+		return status.Error(codes.Unauthenticated, "node: not one of this deployment's nodes")
+	}
+	return nil
 }
 
 // forwarded answers what a peer hands over by running it through this node's own handler.

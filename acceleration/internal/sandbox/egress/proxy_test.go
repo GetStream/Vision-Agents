@@ -1482,3 +1482,13 @@ func (b *lockedBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestTheListenerTLSHoldsTLS12AndHTTP11: the floor and the protocol a tunnel's TLS has. Go's
+// own default floor is TLS 1.2 today, so the setting is read from the config, which a default
+// would not show.
+func (s *ProxySuite) TestTheListenerTLSHoldsTLS12AndHTTP11() {
+	config := s.newProxy(s.store).ListenerTLS("203.0.113.7")
+
+	s.Equal(uint16(tls.VersionTLS12), config.MinVersion)
+	s.Equal([]string{"http/1.1"}, config.NextProtos)
+}

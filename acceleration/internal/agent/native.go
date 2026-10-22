@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -192,6 +193,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
 			a.mu.Lock()
+			cut := a.cutShortLocked(complete.ResponseID, time.Now())
 			_, abandoned := a.abandoned[complete.ResponseID]
 			a.abandoned[complete.ResponseID] = struct{}{}
 			playing := a.speakingTurn == complete.ResponseID
@@ -202,7 +204,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			}
 			if !abandoned {
 				a.turns.interrupt(complete.ResponseID)
-				a.emitter.Send(Interrupted{TurnID: complete.ResponseID, Participant: participant})
+				a.emitter.Send(cut.cut(Interrupted{TurnID: complete.ResponseID, Participant: participant}))
 			}
 		}
 		select {
@@ -221,6 +223,15 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 // separately by receiveSTS because PublishAudio can block until queued audio plays.
 func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan sts.Event) {
 	defer p.running.Done()
+	// A reply the session dropped before completing will never be heard from it. A session
+	// replaced by another leaves the new one's alone.
+	defer func() {
+		a.mu.Lock()
+		if a.pipe == p {
+			a.forgetUtterancesLocked()
+		}
+		a.mu.Unlock()
+	}()
 	retry := false
 	cleanTerminal := false
 	var retryErr error
@@ -491,6 +502,11 @@ func (a *Agent) saidNative(transcript sts.OutputTranscript) {
 	}
 	a.mu.Lock()
 	a.saying = a.spoken.String()
+	if heard := a.heard[transcript.ResponseID]; heard != nil {
+		// The message is the transcript, trimmed once the reply settles.
+		heard.text = a.saying
+		heard.message.End = utf8.RuneCountInString(strings.TrimSpace(a.saying))
+	}
 	a.mu.Unlock()
 	a.emitter.Send(ResponseDelta{TurnID: transcript.ResponseID, Text: transcript.Text})
 }
@@ -512,6 +528,7 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	a.waitingSince = time.Time{}
 	prompt := a.heardText
 	a.mu.Unlock()
+	a.sending(started.ResponseID, started.ResponseID, "", MessageSpan{})
 
 	if !waiting.IsZero() {
 		a.turns.started(started.ResponseID, kindCaller)
@@ -522,13 +539,18 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 
 // replyAudio publishes a piece of the model's voice, unless the reply was abandoned.
 func (a *Agent) replyAudio(chunk sts.AudioChunk) {
-	if a.abandonedTurn(chunk.ResponseID) {
+	a.mu.Lock()
+	_, gone := a.abandoned[chunk.ResponseID]
+	heard := a.utteranceLocked(chunk.ResponseID)
+	a.mu.Unlock()
+	if gone {
 		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
 		return
 	}
 	var err error
-	if marked, ok := a.options.Edge.(MarkedPlayout); ok {
-		err = marked.PublishAudioMarked(chunk.Audio, a.turns.marksFor(chunk.ResponseID))
+	marked, marks := a.options.Edge.(MarkedPlayout)
+	if marks {
+		err = marked.PublishAudioMarked(chunk.Audio, withUtterance(a.turns.marksFor(chunk.ResponseID), heard))
 	} else {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
 	}
@@ -538,6 +560,9 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 	if a.abandonedTurn(chunk.ResponseID) {
 		a.dropSpeech()
 		return
+	}
+	if heard.sent(chunk.Audio.DurationMs()) && !marks {
+		heard.FirstAudiblePulled(time.Now())
 	}
 	a.mu.Lock()
 	a.lastSpokeAt = time.Now()
@@ -555,6 +580,7 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	said := strings.TrimSpace(a.spoken.String())
 	a.spoken.Reset()
+	heard := a.takeUtterance(complete.ResponseID)
 
 	a.mu.Lock()
 	_, alreadyAbandoned := a.abandoned[complete.ResponseID]
@@ -582,8 +608,12 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 		// long as the queue is deep. An interrupt the caller asked for by hand already
 		// reported itself, so the model's own report of the same cut is not repeated.
 		if !alreadyAbandoned {
+			cut := Interrupted{TurnID: complete.ResponseID, Participant: participant}
+			if heardMs, ok := heard.heardBy(time.Now()); ok {
+				cut.SynthesisID, cut.HeardMs, cut.Message = complete.ResponseID, heardMs, heard.span()
+			}
 			a.turns.interrupt(complete.ResponseID)
-			a.emitter.Send(Interrupted{TurnID: complete.ResponseID, Participant: participant})
+			a.emitter.Send(cut)
 		}
 	} else {
 		a.turns.completed(complete.ResponseID, 0, 1)
@@ -597,8 +627,12 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 
 	a.emitter.Send(Responded{TurnID: complete.ResponseID, Text: said, PendingWork: pending > 0 || a.Busy()})
 	if !complete.Interrupted {
+		a.heardBefore(heard, func() float64 { return a.queuedAheadOf(complete.AudioDurationMs) })
 		a.emitter.Send(Spoke{
 			TurnID:            complete.ResponseID,
+			SynthesisID:       complete.ResponseID,
+			Characters:        int64(utf8.RuneCountInString(said)),
+			Message:           &MessageSpan{End: utf8.RuneCountInString(said)},
 			AudioDurationMs:   complete.AudioDurationMs,
 			TimeToFirstByteMs: complete.TimeToFirstByteMs,
 		})
@@ -725,4 +759,15 @@ func (a *Agent) consumeNativePresence(p *pipeline) {
 			return
 		}
 	}
+}
+
+// queuedAheadOf is how many milliseconds of speech are queued at the edge ahead of the last
+// ownMs of it. A speech-to-speech model has no voice reading the queue's counts, so this is
+// their one reader.
+func (a *Agent) queuedAheadOf(ownMs float64) float64 {
+	counter, ok := a.options.Edge.(PlayoutCounter)
+	if !ok {
+		return 0
+	}
+	return queuedAhead(counter.PlayoutStats(), true, ownMs)
 }

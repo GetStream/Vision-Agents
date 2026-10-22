@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -280,6 +281,28 @@ func (b Bridge) Validate() error {
 	return nil
 }
 
+// BridgeHost is the host of a sip: or sips: URI alone, for logs: no user, password, port
+// or parameters. It is empty for anything that is not a readable SIP URI.
+func BridgeHost(uri string) string {
+	scheme, rest, ok := strings.Cut(uri, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") {
+		return ""
+	}
+	if i := strings.LastIndex(rest, "@"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	rest, _, _ = strings.Cut(rest, ";")
+	if strings.HasPrefix(rest, "[") {
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			return ""
+		}
+		return rest[:end+1]
+	}
+	host, _, _ := strings.Cut(rest, ":")
+	return host
+}
+
 // WithNumber is the bridge with the number as the user part of its URI. Stream finds the
 // trunk and its routing rule by the number in the To user, so a URI without it reaches
 // nothing.
@@ -342,6 +365,10 @@ type Outbound struct {
 	// Trunk is the customer's own SIP trunk the call is dialled through. It is set only
 	// for numbers with vendor sip_trunk; every other vendor dials through its own network.
 	Trunk *SIPTrunk
+	// Connected is told where each side sends its audio from once a call through a
+	// customer's own SIP trunk is set up, which only the router's own bridge sees. Nil
+	// tells nobody; other vendors never call it.
+	Connected func(sipbridge.MediaAddrs)
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to

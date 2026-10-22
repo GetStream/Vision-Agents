@@ -63,6 +63,12 @@ func (s *Session) recordLog(event Event) {
 		row.EventType = "joined"
 		row.Message = "Agent joined"
 		row.OccurredAt = e.At
+		if e.SFU.Edge != "" {
+			row.Details["sfu_edge"] = e.SFU.Edge
+		}
+		if e.SFU.Host != "" {
+			row.Details["sfu_host"] = e.SFU.Host
+		}
 	case agent.Left:
 		row.EventType = "left"
 		row.Message = "Agent left"

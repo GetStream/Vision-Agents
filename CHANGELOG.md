@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### A router's peers need the key encryption key to hand each other requests
+
+A router node now answers a request another node forwards to it only when the forwarding node proves it belongs to the deployment, with a credential derived from the key encryption keyring (`ROUTER_AUTH_KEK`, `ROUTER_AUTH_KEK_V<n>`). A node accepts the credential of every key it holds, so rotating a key needs no pause. A deployment of more than one node must set the keyring on every node: a node without one refuses every forwarded request and logs a warning naming `ROUTER_AUTH_KEK` at startup. While a deployment rolls out this version, nodes on it refuse what nodes still on the previous version forward, until the rollout ends (AI-1720, #1138).
+
 ### Voice is started and stopped on a session, on a call named after it
 
 A session is one conversation, and voice is something it turns on and off. Every session
@@ -634,9 +638,77 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+- An agent.yaml `connectors:` entry takes `sandbox: true`, which the Go SDK's folder sync (`Agent.Sync`) sends on that binding, so code in the agent's sandbox may call the connector's API with the binding's connection. Left out or false, no `sandbox` key is sent and the body is as before; a value that is not a boolean is refused (AI-1578, #1141).
 - Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601, #1100).
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).
 - The `anthropic` provider sends `ANTHROPIC_WORKSPACE_ID` as the `anthropic-workspace-id` header, so an Anthropic key that is not scoped to a workspace is accepted; with it unset, requests are sent as before.
+
+### `session.speech` reveals a reply by where each utterance is in its message
+
+A router that says where each utterance is in the reply's Chat message (`message_start` and
+`message_end` on `speaking`, `spoke` and `interrupted`) has `session.speech` reveal the message
+from one to the other over the utterance's audio, at the share of it the voice has got
+through, so `heard(...).chars` is in the message's own text rather than the voice's: a
+direction the voice acts, digits it is told the count of and a sentence held back no longer
+push the reveal ahead of the words being said. A gap between two utterances, such as a
+sentence held back, is passed when the next one starts, and a cut stops at the share of the cut
+utterance's place that was heard. A streamed utterance not yet measured goes at the message's
+characters to the voice's its `speaking` had. A router that sends no offsets is counted in the
+voice's characters as before (#1146).
+
+### The session socket says when each utterance starts being heard
+
+A new `speaking` frame comes when the call's track takes the first audible frame of an
+utterance of the agent's, so a page can reveal a reply as it is said rather than as the Chat
+channel has it written: `turn_id`, `synthesis_id`, `text` and `at`. `text` is what the voice
+had been sent for the utterance by then, which is all of a greeting or other line said as
+written and of a sentence a voice that takes one at a time was given, and the start of the
+reply for a streaming voice, which is still being sent the rest. A speech-to-speech model's is
+its transcript so far. An edge with no track of its own reports it once publishing the first
+chunk returns. `spoke` now carries the same `synthesis_id` and the `characters` synthesised
+(for a speech-to-speech model, its transcript's), and always comes after the utterance's
+`speaking`. An utterance the caller talks over is still reported `speaking` if any of it was
+heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged.
+
+`speaking` also carries `delay_ms`: for an utterance reported before the track got to it (one
+that finished being made behind speech still queued), how long after `at` it is expected to be
+heard, from the speech queued ahead of it at the edge. `interrupted` carries `synthesis_id` and
+`heard_ms` when any of the turn had been heard: the utterance the track was playing and how
+many milliseconds of it went out before the cut. Every character count on the session socket,
+`characters` included, is in Unicode code points.
+
+Each of the agent's spoken messages in the Chat channel already carries that same `turn_id`,
+now pinned by tests: one being written, settled, cut off, and a greeting (`say-...`) or other
+line said as written (#1128).
+
+The JS SDK's `session.speech` adds it up: `heard(message, now)` is `{ chars, done }`, the code points
+of the turn heard so far, exact once `spoke` has measured the playing utterance and estimated
+at the voice's rate before that, and `done` once it has played out or was cut off, at what the
+router says was heard. On a call, a reply known to be coming, from its first text on the socket
+or from `heard` being asked about the agent's message while it is still being written, is
+`{ chars: 0, done: false }` until its `speaking`, for at most `SPEECH_GRACE_MS` (5 s); one that
+turns out to say nothing is let go of at once, and one let go of stays let go of. Leaving the
+call or stopping the voice ends the holding. It reads the frames the session already receives,
+so `events()` is untouched (#1142).
+
+### Each utterance says where it is in the reply's message
+
+The voice is not sent the words the reply's Chat message holds: a voice that acts directions
+gets `[laughs]`, "last four 1234" goes to it as "last four digits, 1234", the space between
+two sentences is not sent, and a sentence held back is in the message as it is written but
+never said. Counting the voice's characters into the message drifts from the words being said
+and cuts words in half. `speaking` and `spoke` now carry `message_start` and `message_end`, the
+utterance's place in the message's text in Unicode code points, from one sentence to the next
+with no gap, and `interrupted` carries the cut utterance's beside `heard_ms`. A streaming
+voice's utterance grows as it is sent each sentence, so its `speaking` says how far it had been
+sent and its `spoke` the whole. They are left out where the router has no record of the
+utterance. The message no longer starts with the blank space a model may open a reply with, so
+the offsets count from its first word.
+
+A reply a sentence voice started saying before the model finished it was split in two in the
+Chat channel: the first message settled to the text so far, and a second one carried on and
+settled to the whole reply, its start said twice. It is now one message, settled once the
+model has finished and the voice has said some of it (#1145).
 
 ### A tool call waits for the person to sign in, and carries on once they have
 
@@ -692,6 +764,27 @@ answer with a summary, a 1 to 5 score and notes, so only the guide changes. It i
 create, update and patch; left out on an update, a patch or a folder sync it stays, and an
 empty string on an update or a patch removes it. An agent with none is reviewed exactly as
 before (AI-1655, #1111).
+
+### Every phone call logs where it ran, and `phonecheck` places a test call to show it
+
+The router logs the sites a phone call used: the SFU the agent joined (and any move to another),
+the Stream SIP host for placed and arriving calls, both sides' media addresses on calls through a
+customer's own SIP trunk, and, after the call ends, how many SFUs Stream used and where. The
+agent's SFU is in the `details` of the session's `joined` log row. A placed call writes a
+`call_placed` row with its Stream SIP host, vendor and vendor call id (and the trunk's host,
+`customer_trunk_host`, on a call through a customer's own trunk); a call through a customer's
+own SIP trunk also writes a `bridge_media` row with both sides' media addresses once it connects.
+An ended call writes a `call_sites` row with Stream's SFU count and places. The line "ending the
+session at its timeout" now says which timeout it was, `timeout=hangup` or `timeout=start`. No API
+changed.
+
+`acceleration/cmd/phonecheck` places a live outbound or inbound test call through a router, local or
+remote, with Twilio or Telnyx playing the person, and logs the site of every hop and the call's
+timings. On a call through a customer's own SIP trunk its `stream_sip` hop is Stream's media address
+from its SDP answer (usually Stream's SIP server), `observed`; otherwise it is looked up in DNS and
+marked `inferred`. `session_ms` is how long the agent's session lasted, `person_call_s` the call
+itself. It changes nothing at any vendor: the person side is set up by hand first, as its README
+says. See its README, or ask Claude to run one with the `phonecheck` skill.
 
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 
@@ -2459,6 +2552,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A call's Chat channel shows what the agent is doing with Stream's AI indicator, as a conversation held in writing already did: `ai_indicator.update` with `AI_STATE_THINKING` once the agent starts on a reply and while its tools run, `AI_STATE_EXTERNAL_SOURCES` while a search tool runs, and `AI_STATE_GENERATING` once its words show, each naming the reply's `message_id`, then `ai_indicator.clear` once the reply is heard or cut off and its tools are back, or the call ends. The voice transcript sent none, so `AIStateIndicator` in `stream-chat-react` and the other AI components never showed the agent thinking on a call. A reply the agent starts on is stored under an id made from its channel and turn, `voice-reply-<sha256>`, which the indicator names before the reply has a word in it (#1126).
+- `POST /v1/agents/runs` answers as soon as the agent has given its answer with nothing left to do, rather than after a further two seconds of quiet, so every run returns about 2 s sooner. A reply that calls a tool or hands work off still waits for the answer that follows it.
 - A voice agent's flow controller on Gemma or OpenAI is held to a JSON Schema of its own values, so a ruling such as `{"disposition":"continue"}` can no longer replace the decision with the fallback. Other models are asked for a JSON object as before, and a ruling they get wrong still falls back. `router_agent_flow_invalid_rulings_total{reason}` counts the rulings refused, by `decode`, `disposition` or `floor` (AI-1668, #1123).
 - A fork of a session that has ended (`POST /v1/agents/sessions/{id}/fork`, naming no config) runs on its agent config's `instructions`, `guardrail` and `review.instructions` as the config is now. It ran with no instructions and no guardrail, and was reviewed by Stream's default guide. A config deleted since gives the fork none of them, and the fork goes ahead as before. A fork of a running session, and a fork naming a config, are unchanged (AI-1662, #1120).
 - Resuming a scheduled task with no occurrence left, such as a one-shot reminder that failed or a repeat past its `until`, answers 400 `schedule_in_past` over the API and leaves the task as it was, as the agent's `update_scheduled_task` tool already did. The API marked such a task `completed` although it never delivered, or answered 409 `too_many_tasks` or 404 first. To run it again, give it a new schedule, then resume it. A paused one-shot resumed after its time is still completed with a `missed` run (AI-1639, #1119).
