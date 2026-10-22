@@ -12,7 +12,7 @@
 # records and lives in the chat repository for that reason. Running this service
 # on its own means running the router in api_key mode instead, where it
 # authenticates callers itself.
-FROM golang:1.27-bookworm AS build
+FROM golang:1.27.3-bookworm AS build
 
 WORKDIR /src
 
