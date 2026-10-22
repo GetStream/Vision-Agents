@@ -975,7 +975,7 @@ packages:
     description:
       path: "packages/stream_chat_flutter_ai"
       ref: "renefloor/flu-1043-aivoiceglowview-and-aivoicewaveview-show-what-a-voice-agent"
-      resolved-ref: ad222259868449bde29c740b307dbb394304ab27
+      resolved-ref: "9568436e68c772f79d3c0017b55566266136b246"
       url: "https://github.com/GetStream/stream-chat-flutter-ai.git"
     source: git
     version: "0.1.0"
