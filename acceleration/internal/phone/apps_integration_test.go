@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"strings"
 	"sync"
@@ -65,7 +66,7 @@ func (s *AppsSuite) SetupTest() {
 	s.deployment, s.own = chattest.NewServer(s.T()), chattest.NewServer(s.T())
 	s.apps = &testApps{deployment: s.deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}, blocked: map[string]bool{}}
 	s.customer = "customer-" + uuid.NewString()
-	s.e164 = "+1512" + uuid.NewString()[:7]
+	s.e164 = aNumber()
 
 	vendor := &stub{vendor: "twilio"}
 	s.vendor = vendor
@@ -82,6 +83,9 @@ func (s *AppsSuite) SetupTest() {
 		E164: s.e164, Vendor: vendor.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
 }
+
+// aNumber is a number nobody in the suite's database holds yet.
+func aNumber() string { return fmt.Sprintf("+1512%010d", rand.Int64N(10_000_000_000)) }
 
 func (s *AppsSuite) config() Config {
 	config, err := DefaultConfig()
@@ -130,7 +134,7 @@ func (s *AppsSuite) numberOn(vendor string) string {
 	s.Require().NoError(err)
 	s.service = service
 
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: e164, Vendor: other.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
@@ -211,7 +215,7 @@ func (s *AppsSuite) TestACallPlanFetchedOnAnswerCarriesTheTrunksPassword() {
 		Registry: registry, Store: s.store, Apps: s.apps, PublicURL: "https://router.example.test",
 	})
 	s.Require().NoError(err)
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: e164, Vendor: plivo.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
@@ -350,7 +354,7 @@ func (s *AppsSuite) TestAttachingATelnyxNumberWhosePasswordWasNotKeptChangesNoth
 	s.Require().NoError(err)
 	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps, Sealer: sealer})
 	s.Require().NoError(err)
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: e164, Vendor: telnyx.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
@@ -521,6 +525,36 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) TestANumberInAnotherFormIsNotBought() {
+	_, err := s.service.Buy(s.ctx, Purchase{
+		Vendor: s.vendor.vendor, E164: strings.TrimPrefix(aNumber(), "+"), Owner: routing.Owner{CustomerID: s.customer},
+	})
+
+	s.ErrorIs(err, store.ErrNotE164)
+	s.Zero(s.vendor.ordered, "the vendor is not paid for a number that would not be recorded")
+}
+
+func (s *AppsSuite) TestAnotherFormOfANumberReachesNothingAtTheVendor() {
+	// Another customer's row for the suite's number without its plus, as one could be written
+	// before every write checked the form. The vendor would read it as the suite's number.
+	other, variant := "customer-"+uuid.NewString(), strings.TrimPrefix(s.e164, "+")
+	_, err := s.store.DB().ExecContext(s.ctx, "INSERT INTO phone_numbers (e164, vendor, country, customer_id)"+
+		" VALUES (?, ?, 'US', ?)", variant, s.vendor.vendor, other)
+	s.Require().NoError(err)
+
+	s.ErrorIs(s.service.Release(s.ctx, other, variant), store.ErrNoNumber)
+	_, err = s.service.Attach(s.ctx, Attachment{CustomerID: other, E164: variant})
+	s.ErrorIs(err, store.ErrNoNumber)
+	_, err = s.service.Call(s.ctx, CallRequest{Owner: routing.Owner{CustomerID: other}, From: variant, To: "+15550001111"})
+	s.ErrorIs(err, store.ErrNoNumber)
+
+	s.Empty(s.vendor.released)
+	s.Zero(s.vendor.inbound)
+	s.Zero(s.vendor.dialed)
+	_, err = s.store.Number(s.ctx, s.customer, s.e164)
+	s.NoError(err, "the number stays with who held it")
 }
 
 func (s *AppsSuite) TestAnAppStreamBlockedCannotBuyANumber() {
@@ -818,7 +852,7 @@ func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
 	}
 	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
 	s.Require().NoError(err)
-	e164 := "+1512" + uuid.NewString()[:7]
+	e164 := aNumber()
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: e164, Vendor: telnyx.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
