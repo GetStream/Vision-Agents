@@ -2115,12 +2115,7 @@ func (c *Conversation) indicate(next indication) {
 
 // sendIndicator sends ai_indicator.update with state, or ai_indicator.clear without one.
 func (c *Conversation) sendIndicator(messageID, state string) {
-	event := getstream.EventRequest{Type: "ai_indicator.clear", UserID: &c.data.Agent,
-		Custom: map[string]any{"message_id": messageID}}
-	if state != "" {
-		event.Type = "ai_indicator.update"
-		event.Custom["ai_state"] = state
-	}
+	event := IndicatorEvent(c.data.Agent, messageID, state)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client, err := c.chat(ctx)
@@ -2137,18 +2132,45 @@ func (c *Conversation) sendIndicator(messageID, state string) {
 	}
 }
 
+// Stream's AI indicator states, as ai_state carries them.
+const (
+	AIStateThinking        = "AI_STATE_THINKING"
+	AIStateGenerating      = "AI_STATE_GENERATING"
+	AIStateExternalSources = "AI_STATE_EXTERNAL_SOURCES"
+)
+
+// IndicatorEvent is ai_indicator.update with state, or ai_indicator.clear without one, sent
+// as user. messageID is the reply it is about, left out while there is no message yet: a
+// client reads only ai_state.
+func IndicatorEvent(user, messageID, state string) getstream.EventRequest {
+	event := getstream.EventRequest{Type: "ai_indicator.clear", UserID: &user, Custom: map[string]any{}}
+	if messageID != "" {
+		event.Custom["message_id"] = messageID
+	}
+	if state != "" {
+		event.Type = "ai_indicator.update"
+		event.Custom["ai_state"] = state
+	}
+	return event
+}
+
+// SearchTool reports whether a tool, while it runs, is the agent checking external sources.
+func SearchTool(name string) bool {
+	return strings.Contains(name, "search")
+}
+
 // aiState maps a live reply to Stream's AI indicator states: generating once the answer
 // streams, checking external sources while a search runs, thinking otherwise.
 func aiState(m Message) string {
 	if m.State == "writing" {
-		return "AI_STATE_GENERATING"
+		return AIStateGenerating
 	}
 	for _, t := range m.Tools {
-		if t.Status == "running" && strings.Contains(t.Name, "search") {
-			return "AI_STATE_EXTERNAL_SOURCES"
+		if t.Status == "running" && SearchTool(t.Name) {
+			return AIStateExternalSources
 		}
 	}
-	return "AI_STATE_THINKING"
+	return AIStateThinking
 }
 
 func sameMemoryScope(a, b memory.Scope) bool {

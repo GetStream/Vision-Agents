@@ -58,6 +58,8 @@ type store struct {
 	limited map[string]bool
 	// uploads are the files stored on channels, in the order they came.
 	uploads []Upload
+	// events are the events sent to each channel, by channel id, in the order they came.
+	events map[string][]map[string]any
 }
 
 // Upload is one file stored on a channel: which endpoint took it ("image" or "file"), its
@@ -124,7 +126,7 @@ func NewServer(t *testing.T) *Server {
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
 		rules: map[string]map[string]any{}, calls: map[string][]string{}, hooks: map[string][]json.RawMessage{},
-		updates: map[string][]json.RawMessage{}, now: time.Now,
+		updates: map[string][]json.RawMessage{}, events: map[string][]map[string]any{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
@@ -435,6 +437,18 @@ func (s *Server) Delivered(id string) []map[string]any {
 	return delivered
 }
 
+// Events are the events sent to a channel, in the order they were sent, each as the client
+// sent it.
+func (s *Server) Events(id string) []map[string]any {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var sent []map[string]any
+	for _, event := range s.db.events[id] {
+		sent = append(sent, maps.Clone(event))
+	}
+	return sent
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)
@@ -566,6 +580,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/event"):
+		id := parts[len(parts)-2]
+		event, _ := body["event"].(map[string]any)
+		db.events[id] = append(db.events[id], event)
+		result["event"] = event
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
 		db.appReads++
 		app := db.appFor(r)

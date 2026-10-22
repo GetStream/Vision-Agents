@@ -51,6 +51,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -759,6 +760,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
 	})
 
+	// A model that loads the skill called policy on its first turn and answers once it is
+	// back, the way a moderator's run reads a skill before it judges.
+	reasoning.Register("checking", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Checking.", then: "Judged.", calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: harness.LoadSkillTool, Arguments: `{"name":"policy"}`,
+		}}}, nil
+	})
+
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
 	})
@@ -1047,7 +1056,13 @@ func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Ser
 
 // otherRouter is otherNodeDispatching with the router behind it, for a test that stops it.
 func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Server) {
-	logger := slog.New(slog.DiscardHandler)
+	return s.otherRouterSealedBy(workers, s.sealer, slog.New(slog.DiscardHandler))
+}
+
+// otherRouterSealedBy is otherRouter holding keyring rather than the suite's, which is
+// what its peers' credentials are checked against, and logging to logger. Nil is a node
+// with no keyring.
+func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1090,6 +1105,7 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 		ProxyDeclaresKind: s.appMode,
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
+		Secrets:           keyring,
 		Logger:            logger,
 	})
 	s.Require().NoError(err)

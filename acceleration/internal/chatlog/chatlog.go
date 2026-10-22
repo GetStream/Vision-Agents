@@ -14,6 +14,9 @@
 // Responded means the model finished, not that the caller heard it; the durable
 // transcript is stored when speech finishes, and an interruption is not stored as a
 // fully spoken reply.
+//
+// While the agent works on a reply, the channel carries Stream's AI indicator, as a
+// conversation in writing does, so a chat client shows it thinking before any words.
 package chatlog
 
 import (
@@ -47,6 +50,17 @@ const queueSize = 256
 // writeTimeout bounds a single write so a stuck network cannot wedge the writer.
 const writeTimeout = 10 * time.Second
 
+// indicatorTimeout bounds sending an AI indicator, which the writer waits on: a slow one
+// holds back the transcript behind it. It is what a conversation in writing allows one.
+const indicatorTimeout = 5 * time.Second
+
+// staleIndicator is how long the agent is shown thinking with nothing changing and no tool
+// running before the indicator is cleared anyway. Not every way a reply can end reaches the
+// transcript (a model switched mid-turn, delegated work that comes to nothing), and a
+// watcher would otherwise see it thinking for the rest of the call. A voice reply's first
+// words come within seconds, so this is long past any real one.
+const staleIndicator = 30 * time.Second
+
 // streamInterval is how often a reply still being written is shown. Deltas arrive a token
 // at a time, and showing each one would be a request per token.
 const streamInterval = 200 * time.Millisecond
@@ -77,7 +91,12 @@ const purposeField = "purpose"
 var purposes = []string{agent.PurposeGreeting, agent.PurposeCheckIn, agent.PurposeUpdate}
 
 // turnField names the turn a reply was written for, so a reader can match the stored reply
-// to the one it watched being written.
+// to the one it watched being written. It is the turn_id the session socket's speaking and
+// spoke name the reply's utterances by, so a page can reveal the message as it is heard.
+// Every message of the agent's that was said carries it: one being written, settled, cut
+// off, a line said as written, and each of the messages a reply spoken a sentence at a time
+// can leave. A synthesis id is not stamped: a message is written before the voice has any
+// of it, and one message may be several of a sentence voice's syntheses.
 const turnField = "turn_id"
 
 // interruptedTextField keeps what a reply the caller cut off was going to say. Its text is
@@ -118,6 +137,13 @@ const (
 	artifact
 	// timed is how long the stages of a turn took, to be shown on its reply.
 	timed
+	// responding is the agent starting on a reply.
+	responding
+	// unsaid is a reply the model finished with nothing to say.
+	unsaid
+	// toolStarted is a tool starting, and toolRan it coming back.
+	toolStarted
+	toolRan
 )
 
 // Options configures a Log. Its credentials are given, never read from the environment.
@@ -199,8 +225,15 @@ type message struct {
 	kind    kind
 	// source is what the message is written as, one of the SourceField values.
 	source string
-	// receiptID is the tool call an artifact card is for, which keeps its identity stable.
+	// receiptID is the tool call an artifact card or a tool event is for. It keeps a card's
+	// identity stable.
 	receiptID string
+	// search says a tool that started is a search.
+	search bool
+	// pending says the model finished a reply with tools or delegated work still to come.
+	pending bool
+	// continues is the turn whose tools or delegated work a reply being started delivers.
+	continues string
 	artifacts []conversation.ArtifactAttachment
 	// timings is what a timed message carries.
 	timings *timings
@@ -283,12 +316,22 @@ func (l *Log) Start(ctx context.Context) error {
 // said are ignored, so a caller can hand it every event without filtering.
 func (l *Log) Record(event agent.Event) {
 	switch typed := event.(type) {
-	case agent.ToolRan:
-		if typed.Err != nil || typed.ID == "" || typed.TurnID == "" || !conversation.ToolVisible(l.visible, typed.Tool) {
-			return
+	case agent.Responding:
+		if typed.TurnID != "" {
+			l.enqueue(message{turnID: typed.TurnID, continues: typed.Continues, kind: responding})
 		}
-		if artifacts := conversation.StoredArtifacts(typed.Result); len(artifacts) > 0 {
-			l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: artifact, source: SourceAgent, receiptID: typed.ID, artifacts: artifacts})
+	case agent.ToolStarted:
+		if typed.ID != "" {
+			l.enqueue(message{turnID: typed.TurnID, receiptID: typed.ID, kind: toolStarted, search: conversation.SearchTool(typed.Tool)})
+		}
+	case agent.ToolRan:
+		if typed.Err == nil && typed.ID != "" && typed.TurnID != "" && conversation.ToolVisible(l.visible, typed.Tool) {
+			if artifacts := conversation.StoredArtifacts(typed.Result); len(artifacts) > 0 {
+				l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: artifact, source: SourceAgent, receiptID: typed.ID, artifacts: artifacts})
+			}
+		}
+		if typed.ID != "" {
+			l.enqueue(message{turnID: typed.TurnID, receiptID: typed.ID, kind: toolRan})
 		}
 	case agent.Hearing:
 		if typed.Text == "" {
@@ -308,13 +351,17 @@ func (l *Log) Record(event agent.Event) {
 		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: piece, source: SourceAgent})
 	case agent.Responded:
 		if typed.Text == "" {
+			// Nothing will be said or spoken, so nothing else ends the reply.
+			if typed.TurnID != "" {
+				l.enqueue(message{turnID: typed.TurnID, kind: unsaid, pending: typed.PendingWork})
+			}
 			return
 		}
 		if typed.TurnID == "" {
 			l.enqueue(message{author: l.agent, text: typed.Text, kind: whole, source: SourceAgent})
 			return
 		}
-		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, purpose: typed.Purpose, kind: prepared, source: SourceAgent})
+		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, purpose: typed.Purpose, kind: prepared, source: SourceAgent, pending: typed.PendingWork})
 	case agent.Said:
 		if typed.Text == "" || typed.TurnID == "" {
 			return
@@ -456,6 +503,25 @@ type writer struct {
 	// Stream refused. Every tick would otherwise send it again, and Stream answers a 429
 	// by closing the connection, so a limited app spent a new connection on each.
 	quietUntil time.Time
+	// answering is the turn the agent is working on a reply to, from Responding until it has
+	// nothing left to do for it. replied says its reply was heard, cut off or came to nothing,
+	// and owed that the model asked for work that has not come back yet.
+	answering string
+	replied   bool
+	owed      bool
+	// tools are the tool calls running for answering and the turns it carries on from, by
+	// call id, true for a search. A new turn of the caller's lets go of them, so one whose
+	// end was never written is not shown for the rest of the call.
+	tools map[string]bool
+	// unstored is the id each reply the agent started on is stored under, by turn, until it
+	// has been; replyOrder bounds it, oldest first, since a reply may never be stored.
+	unstored   map[string]string
+	replyOrder []string
+	// indicated is the AI indicator watchers were last sent, and indicatedAt when it changed.
+	indicated   indication
+	indicatedAt time.Time
+	// now is the writer's clock.
+	now func() time.Time
 }
 
 func newWriter(l *Log) *writer {
@@ -469,11 +535,17 @@ func newWriter(l *Log) *writer {
 		listening:   map[string]*reply{},
 		recent:      map[string]*turnRecord{},
 		heardLines:  map[string]heardLine{},
+		tools:       map[string]bool{},
+		unstored:    map[string]string{},
+		now:         time.Now,
 	}
 }
 
 // handle takes one queued message.
 func (w *writer) handle(queued message) {
+	// After the writes, so the indicator never runs ahead of the messages it is about: a
+	// clear goes out once the reply is stored.
+	defer w.indicate(false)
 	switch queued.kind {
 	case artifact:
 		w.storeArtifacts(queued)
@@ -487,6 +559,9 @@ func (w *writer) handle(queued message) {
 	case prepared:
 		writing := w.ensure(queued)
 		writing.generated = queued.text
+		if w.answering == queued.turnID {
+			w.owed = queued.pending
+		}
 		if _, cut := w.interrupted[queued.turnID]; cut {
 			w.abandon(queued.turnID, queued.text)
 		}
@@ -511,7 +586,7 @@ func (w *writer) handle(queued message) {
 		key := listenKey(queued)
 		listening, started := w.listening[key]
 		if !started {
-			listening = &reply{author: queued.author, named: identity{line: queued.lineID}}
+			listening = &reply{author: queued.author, named: identity{id: queued.lineID}}
 			// A line already heard is being said again, grown: its message is written over.
 			kept := w.heardLines[queued.lineID]
 			listening.messageID, listening.heard = kept.messageID, kept.text
@@ -524,7 +599,7 @@ func (w *writer) handle(queued message) {
 		delete(w.listening, key)
 		if !started || listening.messageID == "" {
 			w.rememberHeard(queued.lineID, queued.text,
-				w.store(queued.author, queued.text, SourceSpeech, false, identity{line: queued.lineID}))
+				w.store(queued.author, queued.text, SourceSpeech, false, identity{id: queued.lineID}))
 			return
 		}
 		w.patch(listening, queued.text, false, SourceSpeech)
@@ -535,6 +610,24 @@ func (w *writer) handle(queued message) {
 		w.store(queued.author, queued.text, queued.source, false, identity{})
 	case timed:
 		w.arrived(queued.turnID, queued.timings)
+	case responding:
+		w.respond(queued.turnID, queued.continues)
+	case unsaid:
+		if w.answering == queued.turnID {
+			w.owed = queued.pending
+		}
+		w.done(queued.turnID)
+	case toolStarted:
+		if w.answering != "" {
+			w.tools[queued.receiptID] = queued.search
+		}
+	case toolRan:
+		delete(w.tools, queued.receiptID)
+		// What it was waiting on came back. A reply that carries on from it starts a turn of
+		// its own, which comes next if there is one.
+		if len(w.tools) == 0 {
+			w.owed = false
+		}
 	}
 }
 
@@ -593,7 +686,10 @@ func (w *writer) storeArtifacts(queued message) {
 // first revision is stored, so the channel has a message to update and to keep if it never
 // settles; the rest are ephemeral, which reach watchers without a write per token.
 func (w *writer) show() {
-	if time.Now().Before(w.quietUntil) {
+	// A reply's first show stores its message, and the tick is also what notices an
+	// indicator gone stale.
+	defer w.indicate(false)
+	if w.now().Before(w.quietUntil) {
 		return
 	}
 	for turnID, writing := range w.writing {
@@ -605,7 +701,7 @@ func (w *writer) show() {
 }
 
 func (w *writer) showOne(writing *reply, source string, key, id string) {
-	if writing.text == writing.shown || time.Now().Before(w.quietUntil) {
+	if writing.text == writing.shown || w.now().Before(w.quietUntil) {
 		return
 	}
 
@@ -624,7 +720,7 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 			})
 	}
 	if err != nil {
-		w.quietUntil = time.Now().Add(quietFor(err))
+		w.quietUntil = w.now().Add(quietFor(err))
 		w.log.logger.Error("could not show a message being written", key, id, "error", err)
 		return
 	}
@@ -679,6 +775,7 @@ func (w *writer) retract(key string) {
 // is what the model ended up with, or empty for a reply nobody finished, which is kept as
 // far as it got.
 func (w *writer) settle(turnID, text string) {
+	w.done(turnID)
 	writing, streamed := w.writing[turnID]
 	if !streamed {
 		// A reply that never streamed is just a line of the conversation.
@@ -726,6 +823,9 @@ func (w *writer) closeOut() {
 	for key := range w.listening {
 		w.retract(key)
 	}
+	// Nothing is being worked on once the call is over, whatever was not reported ending.
+	w.forget()
+	w.indicate(true)
 }
 
 func (w *writer) ensure(queued message) *reply {
@@ -744,6 +844,7 @@ func (w *writer) ensure(queued message) *reply {
 // line. spoken is what a native model reported after the cut, which is worth keeping as
 // interrupted rather than complete.
 func (w *writer) abandon(turnID, spoken string) {
+	w.done(turnID)
 	writing, started := w.writing[turnID]
 	delete(w.writing, turnID)
 	named := identity{turn: turnID}
@@ -791,6 +892,108 @@ func (w *writer) patchWith(writing *reply, text string, interrupted bool, source
 		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: set})
 	if err != nil {
 		w.log.logger.Error("could not close an interrupted reply", "error", err)
+	}
+}
+
+// respond takes turnID as the one the agent is working on a reply to. A reply to the
+// caller lets go of the tools before it; one delivering their results carries them on.
+func (w *writer) respond(turnID, continues string) {
+	if continues == "" {
+		clear(w.tools)
+	}
+	w.answering, w.replied, w.owed = turnID, false, false
+	if _, given := w.unstored[turnID]; given {
+		return
+	}
+	w.unstored[turnID] = replyID(w.log.channel, turnID)
+	w.replyOrder = append(w.replyOrder, turnID)
+	for len(w.replyOrder) > recentTurns {
+		delete(w.unstored, w.replyOrder[0])
+		w.replyOrder = w.replyOrder[1:]
+	}
+}
+
+// done notes that the reply to turnID was heard, cut off or came to nothing. The agent may
+// still be working on it, until its tools come back. A reply to a turn it has started on
+// since does not end that one.
+func (w *writer) done(turnID string) {
+	if w.answering == turnID {
+		w.replied = true
+	}
+}
+
+// forget lets go of the turn the agent was working on, and its tools.
+func (w *writer) forget() {
+	w.answering, w.replied, w.owed = "", false, false
+	clear(w.tools)
+}
+
+// replyID is the id a reply the agent started on is stored under, which its AI indicator
+// names before the reply has a word in it. It is the same for the same turn, as an
+// artifact card's is, so a store that timed out after landing is written over, not repeated.
+func replyID(channel, turnID string) string {
+	return fmt.Sprintf("voice-reply-%x", sha256.Sum256([]byte(channel+"\x00"+turnID)))
+}
+
+// indication is the AI indicator watchers were last sent: the reply's message, and its
+// state. Zero is cleared.
+type indication struct {
+	message string
+	state   string
+}
+
+// indicate brings Stream's AI indicator in line with what the agent is doing, as a
+// conversation in writing does: thinking once it starts on a reply and while its tools run,
+// checking external sources while a search runs, generating once the reply shows, and
+// cleared once there is nothing left to do for it. It sends only on a change, and nothing
+// while Stream has asked the writer to hold off: the next tick after sends what is true by
+// then. final sends anyway, since nothing comes after it. The indicator is a best-effort
+// signal, the message's own generating field stays authoritative, so a failed send is not
+// retried.
+func (w *writer) indicate(final bool) {
+	now := w.now()
+	next := indication{}
+	if w.answering != "" {
+		next = indication{message: replyID(w.log.channel, w.answering), state: conversation.AIStateThinking}
+		writing, written := w.writing[w.answering]
+		switch {
+		case written && writing.messageID != "":
+			next = indication{message: writing.messageID, state: conversation.AIStateGenerating}
+		case slices.Contains(slices.Collect(maps.Values(w.tools)), true):
+			next.state = conversation.AIStateExternalSources
+		}
+		// Nothing is left to do for it, or nothing has moved for a long time: no tool is
+		// running, no word is being written and the indicator has not changed.
+		finished := w.replied && !w.owed
+		stale := !written && next == w.indicated && now.Sub(w.indicatedAt) >= staleIndicator
+		if len(w.tools) == 0 && (finished || stale) {
+			w.forget()
+			next = indication{}
+		}
+	}
+	if next == w.indicated || (!final && now.Before(w.quietUntil)) {
+		return
+	}
+	// The last indicator is cleared when nothing replaces it, or when it named a message the
+	// next does not, as a conversation in writing clears a reply it moves on from.
+	if w.indicated.state != "" && (next.state == "" || w.indicated.message != next.message) {
+		w.sendIndicator(w.indicated.message, "")
+	}
+	if next.state != "" {
+		w.sendIndicator(next.message, next.state)
+	}
+	w.indicated, w.indicatedAt = next, now
+}
+
+// sendIndicator sends ai_indicator.update with state, or ai_indicator.clear without one, as
+// the agent.
+func (w *writer) sendIndicator(messageID, state string) {
+	ctx, cancel := context.WithTimeout(context.Background(), indicatorTimeout)
+	defer cancel()
+	event := conversation.IndicatorEvent(w.log.agent.ID, messageID, state)
+	if _, err := w.log.client.Chat().SendEvent(ctx, ChannelType, w.log.channel,
+		&getstream.SendEventRequest{Event: event}); err != nil {
+		w.log.logger.Warn("could not send the agent's AI indicator", "type", event.Type, "error", err)
 	}
 }
 
@@ -892,11 +1095,12 @@ func (w *writer) store(author User, text, source string, interrupted bool, named
 	return id
 }
 
-// identity is what a stored message is known by besides its words: the line a participant's
-// words were heard as, which becomes the message id, and the turn a reply was written for.
-// Either can be empty, and the message is then named by Stream and the turn left out.
+// identity is what a stored message is known by besides its words: its id, which is the line
+// a participant's words were heard as, and the turn a reply was written for. Either can be
+// empty, and the message is then named by Stream and the turn left out. A reply the agent
+// started on is stored under the id it was given then (respond).
 type identity struct {
-	line string
+	id   string
 	turn string
 	// purpose is why the agent said it unasked, kept so a reader can say so too.
 	purpose string
@@ -925,23 +1129,32 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 		custom[purposeField] = named.purpose
 	}
 	request := getstream.MessageRequest{Text: &text, UserID: &author.ID, Custom: custom}
-	if named.line != "" {
-		request.ID = &named.line
+	id, given := named.id, false
+	if id == "" && named.turn != "" {
+		// Only the reply's first message: a turn spoken in pieces can store another.
+		id, given = w.unstored[named.turn]
+	}
+	if id != "" {
+		request.ID = &id
 	}
 	response, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel,
 		&getstream.SendMessageRequest{Message: request})
 	if err != nil {
-		if named.line != "" && w.rewrite(ctx, author, named.line, text, custom) {
-			return named.line, nil
+		if id == "" || !w.rewrite(ctx, author, id, text, custom) {
+			return "", err
 		}
-		return "", err
+	} else {
+		id = response.Data.Message.ID
 	}
-	return response.Data.Message.ID, nil
+	if given {
+		delete(w.unstored, named.turn)
+	}
+	return id, nil
 }
 
 // rewrite writes over a line already stored under its id, which Chat refuses to store
 // twice: a store that timed out here and still landed there, or a line forgotten as heard
-// and said again. It reports whether there was one to write over.
+// and said again. A reply's id is reused only in the first of these. It reports whether there was one to write over.
 func (w *writer) rewrite(ctx context.Context, author User, line, text string, custom map[string]any) bool {
 	set := maps.Clone(custom)
 	set["text"] = text

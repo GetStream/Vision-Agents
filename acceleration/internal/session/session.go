@@ -850,8 +850,9 @@ const settleGap = 2 * time.Second
 
 // Settle waits for the agent to finish what it was given: nothing left to do, and quiet for a
 // moment, since one message can earn several turns. events is a watcher of this session, and
-// seen, when set, is handed each event as it passes.
-func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Event)) {
+// seen, when set, is handed each event as it passes. seen answering true says the event ends
+// the conversation, so Settle returns at once if the agent is not busy, without the gap.
+func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Event) bool) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	last := time.Now()
@@ -863,8 +864,8 @@ func (s *Session) Settle(ctx context.Context, events <-chan Event, seen func(Eve
 			if !open {
 				return
 			}
-			if seen != nil {
-				seen(event)
+			if seen != nil && seen(event) && !s.Busy() {
+				return
 			}
 			last = time.Now()
 		case <-ticker.C:
@@ -1156,6 +1157,8 @@ func turnIDOf(event Event) string {
 	case agent.Delegated:
 		return typed.TurnID
 	case agent.Interrupted:
+		return typed.TurnID
+	case agent.Speaking:
 		return typed.TurnID
 	case agent.Spoke:
 		return typed.TurnID
