@@ -51,6 +51,11 @@ def _parse_response(
 
         return response_500
 
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -79,6 +84,9 @@ def sync_detailed(
     their items are deleted, and so is everything it taught the memory store. Memories other sessions
     learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat
     is not deleted.
+
+    If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped:
+    deleting it again later deletes the rest.
 
     To end a call and keep the conversation, stop the session instead.
 
@@ -116,6 +124,9 @@ def sync(
     learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat
     is not deleted.
 
+    If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped:
+    deleting it again later deletes the rest.
+
     To end a call and keep the conversation, stop the session instead.
 
     Args:
@@ -146,6 +157,9 @@ async def asyncio_detailed(
     their items are deleted, and so is everything it taught the memory store. Memories other sessions
     learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat
     is not deleted.
+
+    If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped:
+    deleting it again later deletes the rest.
 
     To end a call and keep the conversation, stop the session instead.
 
@@ -180,6 +194,9 @@ async def asyncio(
     their items are deleted, and so is everything it taught the memory store. Memories other sessions
     learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat
     is not deleted.
+
+    If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped:
+    deleting it again later deletes the rest.
 
     To end a call and keep the conversation, stop the session instead.
 
