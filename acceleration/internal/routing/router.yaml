@@ -7,7 +7,9 @@
 # price is in US dollars and is whatever this deployment is billed, so it is config rather
 # than fact: check each vendor's pricing page, and for a self-hosted model divide the GPU
 # hour by the throughput you measured. A model sets whichever unit it is billed in and
-# leaves the rest at zero, and a model with no price reports a cost of zero.
+# leaves the rest at zero. A model with no price costs zero and is logged as billable work
+# with no price, unless its price says free: true or the model says local: true, which is
+# one this deployment runs itself.
 #
 # supports lists the optional terms a model can express: diarization, a speaking speed, a
 # domain filter. A request asking for one is only routed to a model that declared it, so a
@@ -137,6 +139,7 @@ stt:
     - provider: parakeet
       model: parakeet-tdt-0.6b-v3
       description: "Open weights on our own GPU, in 25 languages. No third party hears the audio."
+      local: true
       languages:
         [
           bg,
@@ -812,6 +815,7 @@ stt:
     - provider: mock
       model: mock-stt
       description: "Reports turns from the energy of the audio and transcribes a fixed sentence. For load tests."
+      local: true
       languages: [zxx]
       realtime: true
       data_policy:
@@ -1743,6 +1747,7 @@ tts:
     - provider: s2pro
       model: s2-pro
       description: "The same S2 Pro weights on our own GPUs."
+      local: true
       benchmark: { elo: 1122 }
       languages:
         [
@@ -1788,6 +1793,7 @@ tts:
     - provider: breeze
       model: breeze-tts-2
       description: "Expressive and performs vocal events, in two languages. On our own GPUs."
+      local: true
       benchmark: { elo: 1205 }
       languages: [en, zh]
       realtime: true
@@ -2009,6 +2015,7 @@ tts:
     - provider: mock
       model: mock-tts
       description: "Says nothing, at the length and pace real speech would take. For load tests."
+      local: true
       languages: [zxx]
       realtime: false
       data_policy:
@@ -2447,6 +2454,7 @@ llm:
     - provider: gemma
       model: gemma-4-26B-A4B-it
       description: "Open weights on our own GPUs: 26B with 4B active, billed by the GPU minute rather than the token."
+      local: true
       benchmark: { intelligence_index: 13 }
       context_window: 256000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
@@ -3115,6 +3123,7 @@ llm:
     - provider: mock
       model: mock-llm
       description: "Answers one fixed sentence, a word at a time, and bills nothing. For load tests."
+      local: true
       context_window: 128000
       languages: [zxx]
       realtime: false
@@ -3621,7 +3630,7 @@ detection:
       tier: low-latency
       supports: [confidence]
       price:
-        per_image: 0
+        free: true
 
     # YOLOv8 nano at 640 on Roboflow's serverless API, the model its SDK calls yolov8n-640.
     # 0.000125 credits an image at $6 an on-demand credit (roboflow.com/pricing, read

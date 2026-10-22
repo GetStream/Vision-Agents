@@ -451,11 +451,6 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 				// cost and nothing is what they should report.
 				continue
 			}
-			if modality == Detection && provider.Provider == "ultralytics" {
-				// Ultralytics' shared API bills nothing; a dedicated endpoint is billed by
-				// the hour, which no per-request rate describes.
-				continue
-			}
 			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
 				modality, provider.Name())
 		}
@@ -1166,7 +1161,7 @@ func (s *RoutingSuite) capturingStats(router *Router[*stubProvider]) *Recorder {
 	router.recorder.Close()
 	done := make(chan struct{})
 	close(done)
-	recorder := &Recorder{live: &live.Client{}, queue: make(chan queued, 16), done: done}
+	recorder := &Recorder{live: &live.Client{}, pricer: router.recorder.pricer, queue: make(chan queued, 16), done: done}
 	router.recorder = recorder
 	return recorder
 }
@@ -1598,79 +1593,6 @@ func (s *RoutingSuite) TestRegistryRejectsAFactoryThatBuildsNothing() {
 
 	_, err := registry.Build("empty", Spec{Model: "m"})
 	s.ErrorContains(err, "factory returned no provider")
-}
-
-func (s *RoutingSuite) TestCostIsZeroWithoutAPrice() {
-	s.Zero(Price{}.CostMicros(Usage{Characters: 1000, AudioMs: 60_000, InputTokens: 500, OutputTokens: 500}))
-}
-
-func (s *RoutingSuite) TestCostPricesCharacters() {
-	// A million characters at $50 per million is $50, which is 50 million micros.
-	price := Price{PerMillionChars: 50}
-
-	s.EqualValues(50_000_000, price.CostMicros(Usage{Characters: 1_000_000}))
-	s.EqualValues(50_000, price.CostMicros(Usage{Characters: 1_000}), "a thousand characters is five cents")
-}
-
-func (s *RoutingSuite) TestCostPricesAudioByTheHour() {
-	// An hour of audio at $0.36 per hour is 360000 micros; a minute is a sixtieth of that.
-	price := Price{PerAudioHour: 0.36}
-
-	s.EqualValues(360_000, price.CostMicros(Usage{AudioMs: 3_600_000}))
-	s.EqualValues(6_000, price.CostMicros(Usage{AudioMs: 60_000}))
-}
-
-func (s *RoutingSuite) TestCostPricesTokensByDirection() {
-	// DeepSeek Flash: $0.13 per million in, $0.26 per million out.
-	price := Price{PerMillionInputTokens: 0.13, PerMillionOutputTokens: 0.26}
-
-	s.EqualValues(130_000, price.CostMicros(Usage{InputTokens: 1_000_000}))
-	s.EqualValues(260_000, price.CostMicros(Usage{OutputTokens: 1_000_000}))
-	s.EqualValues(390_000, price.CostMicros(Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}),
-		"output is dearer than input, so the direction has to be tracked separately")
-}
-
-func (s *RoutingSuite) TestCostBillsCachedPromptTokensOnlyOnce() {
-	// $1 per million fresh, a tenth of that cached. Half of a million-token prompt was
-	// cached, so the bill is half a dollar plus five cents rather than the full dollar.
-	price := Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.1}
-
-	s.EqualValues(550_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 500_000}))
-	s.EqualValues(100_000, price.CostMicros(Usage{InputTokens: 1_000_000, CachedInputTokens: 1_000_000}),
-		"a prompt served entirely from cache costs only the cached rate")
-}
-
-func (s *RoutingSuite) TestCostIgnoresMoreCachedTokensThanPromptTokens() {
-	// A provider that reported nonsense should not produce a negative bill.
-	price := Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.1}
-
-	s.EqualValues(100_000, price.CostMicros(Usage{InputTokens: 100, CachedInputTokens: 1_000_000}))
-}
-
-func (s *RoutingSuite) TestCostAddsEveryUnitTheModelBillsFor() {
-	price := Price{PerMillionChars: 50, PerAudioHour: 0.36}
-
-	s.EqualValues(410_000, price.CostMicros(Usage{Characters: 1_000, AudioMs: 3_600_000}),
-		"an hour of audio plus a thousand characters")
-}
-
-func (s *RoutingSuite) TestCostPricesImagesByThePicture() {
-	// Qwen Image 3 on FAL: $0.04 a picture, whatever its size.
-	price := Price{PerImage: 0.04}
-
-	s.EqualValues(40_000, price.CostMicros(Usage{Images: 1, Pixels: 1024 * 1024}))
-	s.EqualValues(120_000, price.CostMicros(Usage{Images: 3, Pixels: 3 * 2048 * 2048}),
-		"three pictures cost three times one, however large they are")
-}
-
-func (s *RoutingSuite) TestCostPricesImagesByThePixelsThatCameBack() {
-	// $0.02 a megapixel, a million pixels to the megapixel.
-	price := Price{PerMegapixel: 0.02}
-
-	s.EqualValues(20_000, price.CostMicros(Usage{Images: 1, Pixels: 1_000_000}))
-	s.EqualValues(83_886, price.CostMicros(Usage{Images: 1, Pixels: 2048 * 2048}),
-		"a larger picture costs more even though it is still one picture")
-	s.Zero(price.CostMicros(Usage{Images: 0, Pixels: 0}), "nothing drawn is nothing billed")
 }
 
 func (s *RoutingSuite) TestTierDefaultsToLowLatency() {

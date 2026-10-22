@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -228,8 +229,11 @@ type Options struct {
 	Guardrail guardrail.Guardrail
 	// Store records what each turn cost the participant in waiting. Without it the
 	// timings are still emitted as Turn events, they are just not persisted.
-	Store  *store.Store
-	Live   *live.Client
+	Store *store.Store
+	Live  *live.Client
+	// Pricer prices what remembering and looking up knowledge cost. It is the process's,
+	// so work with no price is logged once per process rather than once per agent.
+	Pricer pricing.Pricer
 	Logger *slog.Logger
 }
 
@@ -662,7 +666,7 @@ func New(options Options) (*Agent, error) {
 			scope,
 			options.Incognito,
 			owner,
-			routing.NewRecorder(routing.Memory, options.Store, options.Live, logger),
+			routing.NewRecorder(routing.Memory, options.Store, options.Live, options.Pricer, logger),
 			logger,
 		)
 	}
@@ -675,7 +679,7 @@ func New(options Options) (*Agent, error) {
 			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
 			owner,
-			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, logger),
+			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, options.Pricer, logger),
 			logger,
 		)
 	}

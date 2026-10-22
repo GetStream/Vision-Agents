@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -40,7 +41,9 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is a prompt to draw and who pays for it.
@@ -86,6 +89,7 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -207,7 +211,7 @@ func (r *Router) draw(
 		return generation, err
 	}
 	generation.Images = result.Images
-	generation.CostMicros = config.Price.CostMicros(usage)
+	generation.CostMicros = r.Quote(config, usage).CostMicros
 	return generation, nil
 }
 

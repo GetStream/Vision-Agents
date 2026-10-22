@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
@@ -134,9 +135,9 @@ func (s *Session) SampleRate() int { return s.provider.SampleRate() }
 // Capabilities is what the model serving this session can be asked for.
 func (s *Session) Capabilities() sts.Capabilities { return s.provider.Capabilities() }
 
-// Price is what this session's provider charges, so a caller can report a cost without
-// reaching for the router's config.
-func (s *Session) Price() routing.Price { return s.config.Price }
+// Quote is what that usage of this session's provider costs, priced as its row is, so a
+// caller can report a cost without reaching for the router's prices.
+func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
 // STS exposes the underlying provider so callers can reach provider-specific features.
 func (s *Session) STS() sts.STS { return s.provider }

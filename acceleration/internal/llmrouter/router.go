@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -58,6 +59,8 @@ type Options struct {
 	Quota *quota.Limiter
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate routing.Gate
+	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	Pricer pricing.Pricer
 	// Models resolves the custom/<name> models customers serve themselves. Nil leaves
 	// none.
 	Models routing.ModelResolver
@@ -129,6 +132,7 @@ func New(options Options) (*Router, error) {
 		Live:     options.Live,
 		Models:   options.Models,
 		Gate:     options.Gate,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {

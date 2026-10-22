@@ -156,7 +156,9 @@ func (s *TTSRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *s
 }
 
 func (s *TTSRouterSuite) sessionOver(provider *stubTTS, config routing.ProviderConfig) (*Session, *stubTTS) {
-	recorder := routing.NewRecorder(routing.TTS, nil, nil, slog.Default())
+	prices, err := routing.Prices(routing.Config{routing.TTS: {Providers: []routing.ProviderConfig{config}}}, slog.Default())
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.TTS, nil, nil, prices, slog.Default())
 	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
 
 	s.T().Cleanup(func() {
@@ -1268,6 +1270,6 @@ func (s *TTSRouterSuite) TestAFatalErrorIsGradedWorseThanAContextualOne() {
 func (s *TTSRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
 	session, _ := s.newSession()
 
-	s.EqualValues(50_000, session.Price().CostMicros(routing.Usage{Characters: 1_000}),
+	s.EqualValues(50_000, session.Quote(routing.Usage{Characters: 1_000}).CostMicros,
 		"a thousand characters is five cents")
 }

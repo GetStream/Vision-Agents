@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -95,9 +96,9 @@ func (s *Session) Prompt() string { return s.provider.Prompt() }
 // Performs reports whether the voice acts bracketed directions rather than reading them.
 func (s *Session) Performs() bool { return s.provider.Performs() }
 
-// Price is what this session's provider charges, so a caller can report a cost without
-// reaching for the router's config.
-func (s *Session) Price() routing.Price { return s.config.Price }
+// Quote is what that usage of this session's provider costs, priced as its row is, so a
+// caller can report a cost without reaching for the router's prices.
+func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
 // TTS exposes the underlying provider so callers can reach provider-specific features.
 func (s *Session) TTS() tts.TTS { return s.provider }

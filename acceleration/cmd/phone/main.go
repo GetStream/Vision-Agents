@@ -41,6 +41,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -106,7 +107,7 @@ func run(command string, arguments []string) error {
 // listVendors says which vendors are known, which are implemented and which are ready to
 // use, which is the first question when nothing works.
 func listVendors() error {
-	registry, err := registry()
+	registry, _, err := registry()
 	if err != nil {
 		return err
 	}
@@ -640,7 +641,11 @@ func release(ctx context.Context, arguments []string) error {
 func build(ctx context.Context) (*phone.Service, func(), error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	registry, err := registry()
+	registry, config, err := registry()
+	if err != nil {
+		return nil, nil, err
+	}
+	prices, err := pricing.NewList("config", phone.PriceEntries(config), logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -677,7 +682,7 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 
 	var recorder *routing.Recorder
 	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
+		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, prices, logger)
 		closers = append(closers, recorder.Close)
 	}
 
@@ -702,12 +707,13 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 	return service, cleanup, nil
 }
 
-func registry() (*phone.Registry, error) {
+// registry is the vendors, and the config they were read from.
+func registry() (*phone.Registry, phone.Config, error) {
 	config, err := phone.LoadConfig(os.Getenv(phoneConfigEnvVar))
 	if err != nil {
-		return nil, err
+		return nil, phone.Config{}, err
 	}
-	return vendors.Registry(config), nil
+	return vendors.Registry(config), config, nil
 }
 
 func where(number phone.Available) string {

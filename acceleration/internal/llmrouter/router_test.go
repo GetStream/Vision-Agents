@@ -106,7 +106,9 @@ func (s *LLMRouterSuite) newSession() (*Session, *stubLLM) {
 
 func (s *LLMRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *stubLLM) {
 	provider := newStubLLM()
-	recorder := routing.NewRecorder(routing.LLM, nil, nil, slog.Default())
+	prices, err := routing.Prices(routing.Config{routing.LLM: {Providers: []routing.ProviderConfig{config}}}, slog.Default())
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.LLM, nil, nil, prices, slog.Default())
 	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, nil)
 
 	s.T().Cleanup(func() {
@@ -318,10 +320,10 @@ func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {
 func (s *LLMRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
 	session, _ := s.newSession()
 
-	s.EqualValues(3_000_000, session.Price().CostMicros(routing.Usage{
+	s.EqualValues(3_000_000, session.Quote(routing.Usage{
 		InputTokens:  1_000_000,
 		OutputTokens: 1_000_000,
-	}), "a million tokens each way at $1 in and $2 out is $3")
+	}).CostMicros, "a million tokens each way at $1 in and $2 out is $3")
 }
 
 func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {

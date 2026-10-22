@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/typesafe"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -287,7 +288,7 @@ func (s *FlowBenchmarkSuite) modelArms() []arm {
 			continue
 		}
 		s.T().Cleanup(func() { _ = session.Close() })
-		arms = append(arms, modelArm(target, session, session.Price().CostMicros))
+		arms = append(arms, modelArm(target, session, func(usage routing.Usage) int64 { return session.Quote(usage).CostMicros }))
 	}
 	return arms
 }
@@ -506,8 +507,9 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 	})
 	s.Require().NoError(err)
 
+	jev := pricing.Entry{Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: jevInputPerMillion, Per: 1_000_000}}}
 	price := func(used routing.Usage) int64 {
-		return routing.Price{PerMillionInputTokens: jevInputPerMillion}.CostMicros(used)
+		return jev.Quote(pricing.Quantities{pricing.InputTokens: used.InputTokens}).CostMicros
 	}
 
 	return []arm{
