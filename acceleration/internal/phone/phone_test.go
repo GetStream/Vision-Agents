@@ -1,8 +1,10 @@
 package phone
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -10,6 +12,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 type PhoneSuite struct {
@@ -632,6 +637,21 @@ func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
 	unreached := &VendorError{Vendor: "twilio", Path: "/x.json", Message: "no answer", Cause: cause}
 	s.Equal("twilio: /x.json: no answer: connection refused", unreached.Error())
 	s.ErrorIs(unreached, cause)
+}
+
+func (s *PhoneSuite) TestAFailedNumberPurchaseIsNeitherBillableNorUnpriced() {
+	config := s.config()
+	logs := &bytes.Buffer{}
+	prices, err := pricing.NewList("config", PriceEntries(config), slog.New(slog.NewTextHandler(logs, nil)))
+	s.Require().NoError(err)
+
+	for _, vendor := range append([]Vendor{{Vendor: SIPTrunkVendor}}, config.Vendors...) {
+		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: "number"}, nil)
+		s.Zero(quote.CostMicros, vendor.Vendor)
+		s.False(quote.Billable, vendor.Vendor)
+		s.False(quote.Unpriced, vendor.Vendor)
+	}
+	s.Empty(logs.String())
 }
 
 func (s *PhoneSuite) config() Config {

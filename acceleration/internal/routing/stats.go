@@ -146,12 +146,14 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	request := row(r.modality, config, entry)
+	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
+	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
 	if entry.CostMicros != 0 {
-		// Quoted outright by the vendor, so no rate is asked for.
-		request.CostMicros, request.Billable = entry.CostMicros, true
-	} else {
-		priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
-		request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
+		// Quoted outright by the vendor, such as a number's monthly charge, which no rate
+		// prices: what it charged is spend. Generated tokens keep their share of it.
+		request.CostMicros = entry.CostMicros
+		request.OutputCostMicros = min(priced.OutputCostMicros, entry.CostMicros)
+		request.Billable = priced.Billable || entry.CostMicros > 0
 	}
 
 	// A caller still streaming at shutdown records after Close; that stat is dropped.

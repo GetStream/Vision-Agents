@@ -30,7 +30,8 @@ func TestRecorderSuite(t *testing.T) {
 }
 
 // priced bills cache writes at their own rate, pixels by the megapixel, and half price for
-// work the vendor served at its flex tier. gifted is free.
+// work the vendor served at its flex tier. gifted is free. number is priced outright when it
+// is bought, as a phone number is.
 var (
 	priced = ProviderConfig{Provider: "vendor", Model: "priced", Price: Price{
 		PerMillionInputTokens:           2,
@@ -41,6 +42,7 @@ var (
 		ServiceTiers:                    map[string]float64{"flex": 0.5},
 	}}
 	gifted = ProviderConfig{Provider: "vendor", Model: "gifted", Price: Price{Free: true}}
+	number = ProviderConfig{Provider: "vendor", Model: "number", Price: Price{Free: true}}
 )
 
 func (s *RecorderSuite) SetupSuite() {
@@ -54,7 +56,7 @@ func (s *RecorderSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.prices, err = Prices(Config{LLM: {Providers: []ProviderConfig{priced, gifted}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.prices, err = Prices(Config{LLM: {Providers: []ProviderConfig{priced, gifted, number}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
 
@@ -108,8 +110,26 @@ func (s *RecorderSuite) TestARowWithNothingBeyondItsColumnsStoresNoMeters() {
 }
 
 func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsBillable() {
-	row := s.recorded(ProviderConfig{Provider: "vendor", Model: "number"}, Stat{CostMicros: 1_150_000, Success: true})
+	row := s.recorded(number, Stat{CostMicros: 1_150_000, Success: true})
 
 	s.EqualValues(1_150_000, row.CostMicros)
 	s.True(row.Billable)
+}
+
+func (s *RecorderSuite) TestAPurchaseThatFailedIsNotBillable() {
+	row := s.recorded(number, Stat{ErrorCode: "vendor_failed"})
+
+	s.Zero(row.CostMicros)
+	s.False(row.Billable)
+}
+
+func (s *RecorderSuite) TestACostQuotedOutrightKeepsTheOutputShare() {
+	small := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, CostMicros: 5_000, Success: true})
+	large := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 1_000}, CostMicros: 5_000, Success: true})
+
+	s.EqualValues(5_000, small.CostMicros)
+	s.EqualValues(1_200, small.OutputCostMicros, "100 generated tokens at their rate")
+	s.EqualValues(5_000, large.CostMicros)
+	s.EqualValues(5_000, large.OutputCostMicros, "the output share is never more than the cost")
+	s.True(small.Billable)
 }
