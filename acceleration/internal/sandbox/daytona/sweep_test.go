@@ -200,11 +200,12 @@ func (s *SweepSuite) live(session string) {
 	s.keys = append(s.keys, "w15sweep:"+s.prefix+":session:"+session)
 }
 
-// sweeper sweeps the test's prefix, with liveness read from directory.
+// sweeper sweeps the test's prefix, with liveness read from directory, and asks it again at once.
 func (s *SweepSuite) sweeper(directory *node.Directory) *Sweeper {
 	sweeper, err := NewSweeper(SweepOptions{APIKey: "key-1", APIURL: s.org.server.URL + "/api", Prefix: s.prefix,
 		Sessions: directory, Slots: concurrency.New(s.redis, nil), Every: 50 * time.Millisecond, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
+	sweeper.wait = func(context.Context) error { return nil }
 	return sweeper
 }
 
@@ -256,6 +257,34 @@ func (s *SweepSuite) TestAnotherEnvironmentsSecretIsKept() {
 	s.Require().NoError(s.sweeper(s.directory).Sweep(s.ctx))
 
 	s.Equal(other, s.org.names())
+}
+
+// A live session drops out of the directory while its claim is gone, until its node writes the
+// claim back.
+func (s *SweepSuite) TestASessionWhoseClaimCameBackKeepsItsSecret() {
+	s.org.add(s.named("session-lapsed", "github"), 2*time.Hour)
+	sweeper := s.sweeper(s.directory)
+	sweeper.wait = func(context.Context) error {
+		s.live("session-lapsed")
+		return nil
+	}
+
+	s.Require().NoError(sweeper.Sweep(s.ctx))
+
+	s.Equal([]string{s.named("session-lapsed", "github")}, s.org.names())
+}
+
+// A sweep asks again only after recheckAfter, so one that must end sooner deletes nothing.
+func (s *SweepSuite) TestASweepDeletesNothingBeforeItAsksAgain() {
+	s.org.add(s.named("session-ended", "github"), 2*time.Hour)
+	sweeper := s.sweeper(s.directory)
+	sweeper.wait = waitToRecheck
+	ctx, cancel := context.WithTimeout(s.ctx, time.Second)
+	defer cancel()
+
+	s.Error(sweeper.Sweep(ctx))
+
+	s.Len(s.org.names(), 1)
 }
 
 func (s *SweepSuite) TestANameThisRouterDidNotMakeIsKept() {
