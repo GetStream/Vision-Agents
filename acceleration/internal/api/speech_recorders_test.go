@@ -61,6 +61,17 @@ func (s *SpeechRecordersSuite) TestASpeechJobWithACallbackIsRefusedBeforeItIsQue
 	s.Zero(s.recordingRows(), "a refused job is not left queued")
 }
 
+func (s *SpeechRecordersSuite) TestASpeechJobWithAPriorityListOfLiveModelsAloneIsRefusedBeforeItIsQueued() {
+	// On 569e94d4d this was accepted, queued and failed: "routing: nothing in the priority
+	// list ... can serve this request".
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"text": "hello", "options": map[string]any{"providers": []string{s.live}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "routing: nothing in the priority list "+s.live+" can record speech")
+	s.Zero(s.recordingRows(), "a refused job is not left queued")
+}
+
 func (s *SpeechRecordersSuite) TestATextSpokenInlineOnAModelThatOnlyStreamsIsRefused() {
 	// On da97ee28 this was a 202 with status failed.
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",

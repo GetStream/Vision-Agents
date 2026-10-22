@@ -154,13 +154,28 @@ func (recording Recording) request() routing.Request {
 func (r *Recordings) Records(provider string) bool { return r.Builds(provider) }
 
 // Check refuses a recording that no candidate can record: a model of a vendor that only
-// streams, or a shortcut or priority list made only of them. It names the models that
-// can. One candidate that records is enough, since Record passes over the rest.
+// streams, a shortcut or priority list made only of them, or a priority list of live
+// models alone, which a recording never goes to (routing.Request.Realtime). It names the
+// models that can. One candidate that records is enough, since Record passes over the rest.
 func (r *Recordings) Check(ctx context.Context, recording Recording) error {
-	candidates, err := r.Candidates(ctx, recording.request())
+	request := recording.request()
+	candidates, err := r.Candidates(ctx, request)
 	if err != nil {
-		// Record refuses it in the words it always has.
-		return nil
+		// A priority list that resolves once live models are let back in held only those.
+		request.Realtime = nil
+		if _, live := r.Candidates(ctx, request); live != nil {
+			// Record refuses it in the words it always has.
+			return nil
+		}
+		var batchRecorders []string
+		for _, provider := range r.Config().Providers {
+			if !provider.Realtime && r.Records(provider.Provider) {
+				batchRecorders = append(batchRecorders, provider.Name())
+			}
+		}
+		return routing.Refused(stack.Wrap(fmt.Errorf("routing: nothing in the priority list %s can record speech: "+
+			"a recording keeps only a list's batch models, and these are models for live calls; batch models that record: %s",
+			strings.Join(request.Providers, ", "), strings.Join(batchRecorders, ", "))))
 	}
 	var streamed []string
 	for _, candidate := range candidates {
