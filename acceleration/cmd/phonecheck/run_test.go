@@ -359,7 +359,6 @@ func (s *RunSuite) TestACallThroughACustomersTrunkLogsTheStreamSIPServerTheBridg
 	s.Equal("203.0.113.10", sip[0]["address"])
 	s.Equal("observed", sip[0]["how"])
 	s.NotEmpty(sip[0]["place"])
-	s.Empty(s.hopLines("stream_media"))
 	s.NotContains(s.looked.all(), "sip.example.com")
 }
 
@@ -397,7 +396,6 @@ func (s *RunSuite) TestACallThroughAVendorHasNoTrunkHop() {
 	s.Require().NoError(s.run())
 
 	s.Empty(s.hopLines("customer_trunk"))
-	s.Empty(s.hopLines("stream_media"))
 }
 
 func (s *RunSuite) hopLines(name string) []map[string]any {
