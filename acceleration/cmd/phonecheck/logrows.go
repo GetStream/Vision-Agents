@@ -74,8 +74,8 @@ func readCallPlaced(ctx context.Context, r router, sessionID string) (callPlaced
 	}, true, nil
 }
 
-// readBridgeMedia is the Stream SIP server the router's bridge connected to on a call through
-// a customer's own SIP trunk, from the router's bridge_media row. Empty when there is no row.
+// readBridgeMedia is Stream's media address from its SDP answer, observed (usually Stream's
+// SIP server), on a call through a customer's own SIP trunk, from the router's bridge_media row. Empty when there is no row.
 func readBridgeMedia(ctx context.Context, r router, sessionID string) (string, error) {
 	d, _, err := readEvent(ctx, r, sessionID, "bridge_media")
 	return d["stream_media_addr"], err

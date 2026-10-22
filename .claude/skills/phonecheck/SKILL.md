@@ -38,7 +38,7 @@ skill asks what to test, sets it up, runs, reports and puts things back.
   Pipe every reply through `jq` and keep only the fields named here.
 - **Voice URLs: classify, never print.** A vendor's voice URL or connection setting can embed a
   password: an attached router number's Twilio voice URL holds the Stream SIP trunk's. Never
-  print or keep one you read. Keep only its class (see "Voice URLs" below).
+  print a voice URL; keep one only after the credential check in "Voice URLs" below passes.
 - **Encode numbers.** A `+` in a query must be encoded: `curl -G --data-urlencode 'PhoneNumber=+15550100002'`,
   and the same for Telnyx `filter[…]` keys. In a router path it stays as is.
 - **Ask with AskUserQuestion,** one step at a time, defaults first. Accept several answers at once.
@@ -55,7 +55,7 @@ skill asks what to test, sets it up, runs, reports and puts things back.
 Write `<scratchpad>/voice.jq` once:
 
 ```jq
-def risky: (. // "") | ascii_downcase | test("sip(:|%3a)|dial|@|%40");
+def risky: (. // "") | ascii_downcase | test("sip(:|%3a)|dial|@|%40|\\?.*(token|key|secret|password|auth)");
 def kind: (. // "") as $u | ($u | ascii_downcase) as $l
   | if $u == "" then "empty"
     elif ($l | test("sip(:|%3a)")) then "attached (points at Stream SIP)"
@@ -66,7 +66,8 @@ def kind: (. // "") as $u | ($u | ascii_downcase) as $l
 
 To look at a number, print only the class: `jq -L <scratchpad> 'include "voice"; … | (.voice_url | kind)'`.
 Only before changing a person number, save its old value straight into the state file, never
-to the screen. The check refuses a value with `sip:`, `<Dial>` or `@` in it:
+to the screen. The check refuses a value with `sip:`, `<Dial>` or `@` in it, or a query string naming a
+token, key, secret, password or auth:
 
 ```bash
 … | jq -L <scratchpad> -r 'include "voice"; .incoming_phone_numbers[0] | if (.voice_url | risky) then error("holds SIP credentials or a <Dial>") else "twilio <n> sid=\(.sid) old_voice_url=\(.voice_url // "") old_method=\(.voice_method)" end' >> <scratchpad>/phonecheck-state.md
@@ -189,7 +190,7 @@ to its database (migrations, and the router's own background work).
 
 Show ONE summary and wait for an explicit yes:
 
-- the calls, in order: each combination × runs, each about `-talk` plus 30 to 40 s, a few cents each;
+- the calls, in order: each combination × runs, each about `-talk` plus 10 s plus 35 to 65 s for the `call_sites` row, so a minute or more, a few cents each;
 - numbers to buy, vendor and monthly cost, and any mid-run release of a just-bought number;
 - the router address and the customer id every request uses;
 - account changes: hooks pointed at a tunnel URL (app-wide: while it is up the local router
@@ -252,10 +253,10 @@ and, locally, the lines of `<scratchpad>/router.log` with that run's `session_id
 main session. Per call, one short block:
 
 - **Hops:** agent SFU, caller SFU (and where Stream placed each side), router address, Stream
-  SIP host (on a trunk call, the address the router's bridge connected to, `observed`), the
+  SIP host (on a trunk call, Stream's media address from its SDP answer, `observed`), the
   customer's trunk when there is one, SFUs used, person side and `region_label`, each with `observed`, `inferred` or
   `reported`.
-- **Timings:** `connect_ms`, `session_ms` (the agent's session, until the router ended it), `person_call_s` (the call itself), `total_ms`, and when the `call_sites`
+- **Timings:** `connect_ms`, `session_ms` (from the agent on the call until its session and the person's call ended), `person_call_s` (the call itself), `total_ms`, and when the `call_sites`
   row came.
 - **Gaps:** anything missing, plainly: `person call not observed` (Telnyx outbound), no
   `call_sites` row, a host that did not resolve, a run skipped and why.

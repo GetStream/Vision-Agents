@@ -62,7 +62,7 @@ type sdkListener struct {
 func (l *sdkListener) take(number string) stream.CallHandler {
 	return func(_ context.Context, call stream.InboundCall) error {
 		if call.CalledNumber != number {
-			return fmt.Errorf("this worker is waiting on %s, not %s", number, call.CalledNumber)
+			return errors.New("this call was for another number than the one this worker waits on")
 		}
 		select {
 		case l.arrived <- call:

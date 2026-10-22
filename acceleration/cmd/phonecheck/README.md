@@ -187,12 +187,12 @@ One line per hop: `hop`, `host`, `address`, `place`, `how`. `how` says how we kn
 
 The hops are `agent_sfu`, `caller_sfu`, `router_address`, `stream_sip`, and, when the agent
 number is on a customer's own SIP trunk, `customer_trunk` (the trunk's host, as the router
-reports it).
+reports it; outbound calls only).
 
 `stream_sip` is the Stream SIP host as DNS answers it from `-sip-lookup-from`, so it is
 `inferred`. On a trunk call the router's own SIP bridge dials Stream, and the `bridge_media`
-row has the Stream SIP server it connected to. There `stream_sip` is that address, `observed`,
-and no DNS lookup is done. If the row is missing, `stream_sip` falls back to the DNS lookup and
+row has Stream's media address from its SDP answer, usually Stream's SIP server. There
+`stream_sip` is that address, `observed`, and no DNS lookup is done. If the row is missing, `stream_sip` falls back to the DNS lookup and
 the run warns `the router wrote no bridge_media row, so stream_sip is inferred from DNS`.
 
 Two sources name SFUs: `agent_sfu` is the SFU the agent joined, from the router's joined row;
@@ -213,14 +213,15 @@ Then one `call summary` line: `direction`, `provider`, `session_id`, `outcome`, 
 `router_address`, `sip_host`, `sfus_used`, `region_label` (and `vendor_call_id` outbound).
 `-log-format json` writes all of it as JSON on stderr.
 
-The timings, all counted from the end of the checks:
+The timings:
 
-- `connect_ms`: until the agent is on the call (outbound: the router places it; inbound: the
+- `connect_ms`: from the end of the checks until the agent is on the call (outbound: the router places it; inbound: the
   worker registers, the person dials, the worker answers).
-- `session_ms`: how long the agent's session lasted, until the router ended it, about 10 s
-  after the hang-up. It is longer than `-talk`.
+- `session_ms`: from when the agent is on the call until both the agent's session and the
+  person's call have ended. The router ends the session about 10 s after the hang-up, so it is
+  longer than `-talk`.
 - `person_call_s`: the call itself, start to end, from the vendor's call record.
-- `total_ms`: until the run is torn down. Most of it is the wait for the `call_sites` row,
+- `total_ms`: from the end of the checks until the run is torn down. Most of it is the wait for the `call_sites` row,
   which Stream triggers about 30 s after the call ends.
 
 The router's own lines for the call carry the same `session_id`. Filter its log by it:
@@ -233,7 +234,7 @@ grep session_id=<id> router.log
 
 - The agent number's own vendor leg is not logged.
 - The Stream SIP server is inferred from DNS, not seen on the call, except on a customer's
-  own SIP trunk, where `stream_sip` is the address the router's bridge connected to.
+  own SIP trunk, where `stream_sip` is Stream's media address from its SDP answer.
 - The region is only the label you passed, unless the vendor's call record reports one.
 - A Telnyx person answering an outbound call is not observed (`person call not observed`).
 

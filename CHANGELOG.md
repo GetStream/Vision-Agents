@@ -699,16 +699,20 @@ The router logs the sites a phone call used: the SFU the agent joined (and any m
 the Stream SIP host for placed and arriving calls, both sides' media addresses on calls through a
 customer's own SIP trunk, and, after the call ends, how many SFUs Stream used and where. The
 agent's SFU is in the `details` of the session's `joined` log row. A placed call writes a
-`call_placed` row with its Stream SIP host, vendor and vendor call id; a call through a customer's
+`call_placed` row with its Stream SIP host, vendor and vendor call id (and the trunk's host,
+`customer_trunk_host`, on a call through a customer's own trunk); a call through a customer's
 own SIP trunk also writes a `bridge_media` row with both sides' media addresses once it connects.
-An ended call writes a `call_sites` row with Stream's SFU count and places. No API changed.
+An ended call writes a `call_sites` row with Stream's SFU count and places. The line "ending the
+session at its timeout" now says which timeout it was, `timeout=hangup` or `timeout=start`. No API
+changed.
 
-`acceleration/cmd/phonecheck` places a live outbound or inbound test call through a router, local
-or remote, with Twilio or Telnyx playing the person, and logs the site of every hop and the call's
-timings. On a call through a customer's own SIP trunk its `stream_sip` hop is the Stream SIP
-server the router's bridge connected to, `observed`; otherwise it is looked up in DNS and marked
-`inferred`. `session_ms` is how long the agent's session lasted, `person_call_s` the call itself.
-It changes nothing at any vendor: the person side is set up by hand first, as its README says. See its README, or ask Claude to run one with the `phonecheck` skill.
+`acceleration/cmd/phonecheck` places a live outbound or inbound test call through a router, local or
+remote, with Twilio or Telnyx playing the person, and logs the site of every hop and the call's
+timings. On a call through a customer's own SIP trunk its `stream_sip` hop is Stream's media address
+from its SDP answer (usually Stream's SIP server), `observed`; otherwise it is looked up in DNS and
+marked `inferred`. `session_ms` is how long the agent's session lasted, `person_call_s` the call
+itself. It changes nothing at any vendor: the person side is set up by hand first, as its README
+says. See its README, or ask Claude to run one with the `phonecheck` skill.
 
 ### The router serves Prometheus metrics, and warns when the agent talks over itself
 

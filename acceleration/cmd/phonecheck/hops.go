@@ -22,8 +22,8 @@ type lookupFunc func(ctx context.Context, host string) ([]netip.Addr, error)
 
 // callHosts are the hosts a call passed through. CustomerTrunk and BridgeStreamSIPAddr are
 // empty unless the call went out through a customer's own SIP trunk. BridgeStreamSIPAddr is an
-// address, not a host: the Stream SIP server the router's SIP bridge actually connected to.
-// When set it is the stream_sip hop and StreamSIP is not looked up.
+// address, not a host: Stream's media address from its SDP answer, observed (usually Stream's
+// SIP server). When set it is the stream_sip hop and StreamSIP is not looked up.
 type callHosts struct {
 	AgentSFU, CallerSFU, Router, StreamSIP, CustomerTrunk, BridgeStreamSIPAddr string
 }
