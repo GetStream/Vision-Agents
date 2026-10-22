@@ -1047,7 +1047,13 @@ func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Ser
 
 // otherRouter is otherNodeDispatching with the router behind it, for a test that stops it.
 func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Server) {
-	logger := slog.New(slog.DiscardHandler)
+	return s.otherRouterSealedBy(workers, s.sealer, slog.New(slog.DiscardHandler))
+}
+
+// otherRouterSealedBy is otherRouter holding keyring rather than the suite's, which is
+// what its peers' credentials are checked against, and logging to logger. Nil is a node
+// with no keyring.
+func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1090,6 +1096,7 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 		ProxyDeclaresKind: s.appMode,
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
+		Secrets:           keyring,
 		Logger:            logger,
 	})
 	s.Require().NoError(err)

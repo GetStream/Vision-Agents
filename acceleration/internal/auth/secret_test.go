@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -80,4 +81,54 @@ func (s *KeyringSuite) TestTheCurrentVersionMustBeInTheKeyring() {
 func (s *KeyringSuite) TestAnEmptyKeyIsRefused() {
 	_, err := NewSealerWithKeyring(2, map[int]string{1: "", 2: "new-key"})
 	s.Error(err)
+}
+
+func (s *KeyringSuite) TestTwoProcessesHoldingOneKeyDeriveOneCredential() {
+	first, err := NewSealer("shared-key")
+	s.Require().NoError(err)
+	second, err := NewSealer("shared-key")
+	s.Require().NoError(err)
+
+	presented, _ := first.Derive("node-forward-v1")
+	_, accepted := second.Derive("node-forward-v1")
+	s.Equal([][]byte{presented}, accepted)
+	// What a peer is sent is not the key, nor the key the sealer encrypts with.
+	key := sha256.Sum256([]byte("shared-key"))
+	s.NotEqual(key[:], presented)
+	s.NotEqual([]byte("shared-key"), presented)
+}
+
+func (s *KeyringSuite) TestAnotherKeyDerivesAnotherCredential() {
+	ours, err := NewSealer("shared-key")
+	s.Require().NoError(err)
+	theirs, err := NewSealer("another-key")
+	s.Require().NoError(err)
+
+	presented, _ := theirs.Derive("node-forward-v1")
+	_, accepted := ours.Derive("node-forward-v1")
+	s.NotContains(accepted, presented)
+}
+
+func (s *KeyringSuite) TestAnotherPurposeDerivesAnotherCredential() {
+	sealer, err := NewSealer("shared-key")
+	s.Require().NoError(err)
+
+	forward, _ := sealer.Derive("node-forward-v1")
+	other, _ := sealer.Derive("node-forward-v2")
+	s.NotEqual(forward, other)
+}
+
+func (s *KeyringSuite) TestARotatedKeyringAcceptsTheCredentialOfEveryKeyItHolds() {
+	before, err := NewSealer("old-key")
+	s.Require().NoError(err)
+	rotated, err := NewSealerWithKeyring(2, map[int]string{1: "old-key", 2: "new-key"})
+	s.Require().NoError(err)
+	after, err := NewSealerWithKeyring(2, map[int]string{2: "new-key"})
+	s.Require().NoError(err)
+
+	older, _ := before.Derive("node-forward-v1")
+	newer, _ := after.Derive("node-forward-v1")
+	current, accepted := rotated.Derive("node-forward-v1")
+	s.Equal(newer, current, "a rotated keyring presents its current key's credential")
+	s.ElementsMatch([][]byte{older, newer}, accepted)
 }

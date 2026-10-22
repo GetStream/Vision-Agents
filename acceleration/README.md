@@ -107,7 +107,7 @@ the other commands that read them there.
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
-| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
+| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
@@ -1064,7 +1064,11 @@ both need `redis.addr`:
   request naming a session that is not here is handed to the node that is by gRPC. Peers
   are reached over h2c on the API's own port, so there is no second port to open between
   them, and the node answering runs its own handler: it authenticates and authorizes the
-  caller itself rather than taking a peer's word for either.
+  caller itself rather than taking a peer's word for either. Since anyone reaching that
+  port can speak gRPC to it, a peer presents a credential derived from the key encryption
+  keyring (`ROUTER_AUTH_KEK`, `ROUTER_AUTH_KEK_V<n>`), and a node accepts the one of any key
+  it holds, so a rotation needs no pause. A node with no keyring refuses every peer, and
+  every node holding one refuses it.
 
 That register also answers who is writing as an agent, which is what an arriving chat
 message names. Without it a message landing on the wrong node finds nothing running and
