@@ -84,8 +84,9 @@ type Manifest struct {
 	// email captured from the id_token must be the one the app's backend last said that user
 	// signs in with, or the grant is refused and nothing is stored. It needs a capture rule
 	// named email from the id_token (OpenID Connect Core 1.0 section 5.1's claim), so the
-	// scheme checks the token's iss, aud and exp. Left out of the JSON when false, so the JSON
-	// of every manifest stored before it stays as it was.
+	// scheme checks the token's iss, aud and exp. An email_verified capture, if any, must come
+	// from the id_token too. Left out of the JSON when false, so the JSON of every manifest
+	// stored before it stays as it was.
 	OwnerEmail bool `yaml:"owner_email,omitempty" json:"owner_email,omitempty"`
 	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
 	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
@@ -601,6 +602,12 @@ func (m Manifest) Validate() error {
 
 	if email := captures[OwnerEmailCapture]; m.OwnerEmail && (email.From != FromIDToken || email.Optional) {
 		fail("owner_email", "needs a capture rule named %s, from the id_token and not optional", OwnerEmailCapture)
+	}
+	// An email_verified the consent reads is the same id_token's word on that email, never the
+	// callback's (browser-controlled) or another source's. It may be optional: a provider that
+	// sends none leaves only the email to compare.
+	if verified, ok := captures[OwnerEmailVerified]; m.OwnerEmail && ok && verified.From != FromIDToken {
+		fail("owner_email", "a capture rule named %s must come from the id_token", OwnerEmailVerified)
 	}
 
 	for i, name := range m.Identity {

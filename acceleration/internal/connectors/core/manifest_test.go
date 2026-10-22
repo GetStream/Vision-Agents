@@ -335,6 +335,31 @@ func (s *ManifestSuite) TestOwnerEmailNeedsARequiredEmailFromTheIDToken() {
 	}
 }
 
+// The consent refuses an email_verified that is not true, so that flag is the id_token's
+// word too: from the callback the browser would set it.
+func (s *ManifestSuite) TestOwnerEmailVerifiedComesFromTheIDToken() {
+	email := "capture:\n  - name: email\n    from: id_token\n    path: $.email\n"
+	for name, verified := range map[string]string{
+		"left out": "",
+		"required": "  - name: email_verified\n    from: id_token\n    path: $.email_verified\n",
+		"optional": "  - name: email_verified\n    from: id_token\n    path: $.email_verified\n    optional: true\n",
+	} {
+		_, err := ParseManifest(minimal("owner_email: true\n" + email + verified))
+		s.NoError(err, name)
+	}
+
+	for name, verified := range map[string]string{
+		"token response": "  - name: email_verified\n    from: token_response\n    path: $.email_verified\n",
+		"callback":       "  - name: email_verified\n    from: callback_query\n    key: email_verified\n",
+	} {
+		_, err := ParseManifest(minimal("owner_email: true\n" + email + verified))
+		s.ErrorContains(err, "owner_email: a capture rule named email_verified must come from the id_token", name)
+
+		_, err = ParseManifest(minimal(email + verified))
+		s.NoError(err, "%s: without owner_email nothing reads it", name)
+	}
+}
+
 func (s *ManifestSuite) TestGoogleReadsTheAccountFromTheIDTokenSub() {
 	resolved, err := s.load("google").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
