@@ -42,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -262,6 +263,8 @@ type Options struct {
 	// RunsPerApp caps one app's headless runs in flight, counted in Live's Redis across every
 	// router (config runs.concurrent_per_app). 0 caps nothing, and neither does an absent Live.
 	RunsPerApp int64
+	// ImageHTTP fetches the images a run is handed by URL. Absent reaches only public hosts.
+	ImageHTTP *http.Client
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -371,6 +374,8 @@ type Server struct {
 	// runSlots counts each app's runs in flight against runsPerApp; nil counts none.
 	runSlots   *concurrency.Slots
 	runsPerApp int64
+	// imageHTTP fetches the images a run is handed by URL.
+	imageHTTP *http.Client
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -525,6 +530,11 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+	}
+	server.imageHTTP = options.ImageHTTP
+	if server.imageHTTP == nil {
+		// No proxy, which would dial on the client's behalf where the check cannot see.
+		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}

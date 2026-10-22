@@ -44,6 +44,12 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
 }
 
+func (s *SpecSuite) TestAConfigsReviewInstructionsAreWhatItsCallsAreReviewedBy() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", ReviewInstructions: "Score the upsell."})
+
+	s.Equal("Score the upsell.", spec.ReviewInstructions)
+}
+
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingVariation})
 

@@ -1669,7 +1669,7 @@ func (a *Agent) perform(action Action) {
 
 	case ActAnswer:
 		a.mu.Lock()
-		missed := a.missedLocked(action.Candidate.Participant)
+		missed := strings.TrimSpace(a.missedLocked(action.Candidate.Participant) + " " + action.Unanswered)
 		a.unheard = unheardReply{turnID: action.Candidate.ID, participant: action.Candidate.Participant.ID,
 			decidedAt: time.Now(), said: newestWords(strings.TrimSpace(missed+" "+action.Candidate.Said()), missedWords)}
 		a.mu.Unlock()

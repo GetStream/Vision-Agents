@@ -68,12 +68,27 @@ record() {
   [[ "$2" == ok ]] || failed=1
 }
 
+# first_key prints the first key of the first variable that holds one, trying NAME then NAME_1
+# the way the router's keypool does, and the first item of a comma list.
+first_key() {
+  local name pooled v
+  for name in "$@"; do
+    pooled="${name}_1"
+    for v in "${!name:-}" "${!pooled:-}"; do
+      v="${v%%,*}"; v="${v// /}"
+      [[ -z "$v" ]] || { echo "$v"; return; }
+    done
+  done
+}
+
 preflight() {
   local missing=() k
   for k in STREAM_API_KEY STREAM_API_SECRET ELEVENLABS_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY \
-    GEMMA_BASE_URL BASETEN_API_KEY INWORLD_API_KEY; do
+    GEMMA_BASE_URL INWORLD_API_KEY; do
     [[ -n "${!k:-}" ]] || missing+=("$k")
   done
+  [[ -n "$(first_key GEMMA_API_KEY BASETEN_API_KEY)" ]] || missing+=("GEMMA_API_KEY or BASETEN_API_KEY")
+  [[ -z "${BENCH_WAKE_URL:-}" || -n "$(first_key BASETEN_API_KEY)" ]] || missing+=("BASETEN_API_KEY (BENCH_WAKE_URL is a Baseten deployment)")
   if (( ${#missing[@]} )); then
     echo "missing from .env: ${missing[*]} (fetch with: rocky agents local secrets create_env -f <file>)"
     return 1
@@ -95,10 +110,12 @@ preflight() {
     || { echo "postgres and redis did not start, see $out/compose.log"; return 1; }
 
   # BENCH_WAKE_URL and BENCH_WAKE_MODEL name another self-hosted model to wake instead.
-  local t wake_url="${BENCH_WAKE_URL:-$GEMMA_BASE_URL}" wake_model="${BENCH_WAKE_MODEL:-google/gemma-4-26B-A4B-it}"
+  # The Gemma host takes the Gemma key; another host is a Baseten deployment and takes the Baseten key.
+  local t wake_url="${BENCH_WAKE_URL:-$GEMMA_BASE_URL}" wake_model="${BENCH_WAKE_MODEL:-google/gemma-4-26B-A4B-it}" wake_key
+  if [[ -n "${BENCH_WAKE_URL:-}" ]]; then wake_key=$(first_key BASETEN_API_KEY); else wake_key=$(first_key GEMMA_API_KEY BASETEN_API_KEY); fi
   for _ in $(seq 1 120); do
     t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$wake_url/chat/completions" \
-      -H "Authorization: Bearer $BASETEN_API_KEY" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $wake_key" -H 'Content-Type: application/json' \
       -d '{"model":"'"$wake_model"'","max_tokens":1,"messages":[{"role":"user","content":"Hi"}]}')
     echo "$wake_model $t"
     case "$t" in 200\ 0.*|200\ 1.*) return 0 ;; esac

@@ -45,7 +45,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(model.Close)
 	settings := config.Defaults()
-	settings.CodeSandbox.Broker, settings.CodeSandbox.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://proxy.stg.example:8091"
+	settings.CodeSandbox.Broker, settings.CodeSandbox.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://203.0.113.7:8091"
 	settings.CodeSandbox.ProxyCACert = "cert"
 
 	_, err = buildSessions(settings, &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, logger)

@@ -45,6 +45,26 @@ func TestAnImageReachesClaude(t *testing.T) {
 	require.Equal(t, "image_url", content[1].(map[string]any)["type"])
 }
 
+func TestTheWorkspaceIsNamedOnEveryRequest(t *testing.T) {
+	workspaces := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workspaces <- r.Header.Get("anthropic-workspace-id")
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "test", BaseURL: server.URL, WorkspaceID: "wrkspc_test"})
+	require.NoError(t, err)
+	defer provider.Close()
+
+	stream, err := provider.Create(t.Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	require.NoError(t, err)
+	_, err = llm.Collect(stream)
+	require.NoError(t, err)
+
+	require.Equal(t, "wrkspc_test", <-workspaces)
+}
+
 func TestAReasoningEffortIsRefusedBeforeItIsSent(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -51,6 +51,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -311,6 +312,9 @@ type RouterSuite struct {
 	// pluginHTTP is what the API reaches plugins with, for a suite whose stand-ins listen
 	// on loopback in each test. Nil is mcpTransport.
 	pluginHTTP *http.Client
+	// imageHTTP is what runs fetch their images with, for a suite whose images are served on
+	// loopback. Nil reaches only public hosts.
+	imageHTTP *http.Client
 	// events subscribes configs to their plugins' events.
 	events *pluginevents.Service
 
@@ -555,6 +559,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorLimiter:      connectorLimiter,
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		RunsPerApp:            s.runsPerApp,
+		ImageHTTP:             s.imageHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
@@ -747,8 +752,20 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("analysing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Noted.", analyses: true}, nil
 	})
+	// A guardrail judge that finds every turn against its policy.
+	reasoning.Register("judging", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: `{"violates": 1, "reason": "it is against the policy"}`}, nil
+	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
+	})
+
+	// A model that loads the skill called policy on its first turn and answers once it is
+	// back, the way a moderator's run reads a skill before it judges.
+	reasoning.Register("checking", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Checking.", then: "Judged.", calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: harness.LoadSkillTool, Arguments: `{"name":"policy"}`,
+		}}}, nil
 	})
 
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {

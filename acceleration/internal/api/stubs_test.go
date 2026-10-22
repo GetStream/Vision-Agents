@@ -118,8 +118,10 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
 			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "checking", Model: "checking-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
 	)
 	// Where a socket that names no target goes.
 	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}
@@ -144,6 +146,8 @@ type scriptedLLM struct {
 	mu    sync.Mutex
 	turns int
 	reply string
+	// then, when set, is what every turn after the first says instead of reply.
+	then  string
 	calls []llm.ToolCall
 	asked []llm.ResponseParams
 	sees  bool
@@ -162,7 +166,8 @@ type scriptedLLM struct {
 	// usage is what each reply reports the model read and wrote.
 	usage llm.Usage
 	// summarises answers a request for JSON as a reviewer would, with a summary that is the
-	// whole of what it was given to read. Any other request is answered with reply.
+	// whole of what it was given to read and notes that are the instructions it was given.
+	// Any other request is answered with reply.
 	summarises bool
 	// analyses answers a request for JSON as a review analyst would: one cause behind every
 	// call it was handed and one it made up, and a second cause behind made-up calls only.
@@ -179,6 +184,9 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	s.asked = append(s.asked, params)
 	first := s.turns == 1
 	reply := s.reply
+	if !first && s.then != "" {
+		reply = s.then
+	}
 	if s.echoes {
 		reply = params.Instructions
 	}
@@ -190,7 +198,7 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		reply = strings.Join(handed, "\n")
 	}
 	if s.summarises && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
-		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content})
+		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content, "notes": params.Instructions})
 		reply = string(summary)
 	}
 	if s.analyses && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {

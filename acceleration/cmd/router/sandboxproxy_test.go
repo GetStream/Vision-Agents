@@ -154,7 +154,7 @@ func TestTheDaytonaBrokerAsksNothingOfTheProxy(t *testing.T) {
 // CA's certificate, never its key.
 func TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy(t *testing.T) {
 	settings := config.Defaults().CodeSandbox
-	settings.Broker, settings.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://proxy.stg.example:8091"
+	settings.Broker, settings.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://203.0.113.7:8091"
 	settings.ProxyCACert, settings.ProxyCAKey = newCA(t)
 	var options session.ManagerOptions
 
@@ -171,7 +171,7 @@ func TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy(t *testing.T) {
 	require.NoError(t, sandboxBroker(settings, redis, &options))
 	require.Equal(t, egress.BrokerName, options.SandboxBroker)
 	require.NotNil(t, options.SandboxProxy.Store)
-	require.Equal(t, "http://proxy.stg.example:8091", options.SandboxProxy.URL)
+	require.Equal(t, "http://203.0.113.7:8091", options.SandboxProxy.URL)
 	require.Equal(t, []byte(settings.ProxyCACert), options.SandboxProxy.CACert)
 	require.NotContains(t, string(options.SandboxProxy.CACert), "PRIVATE KEY")
 }
@@ -189,7 +189,7 @@ func TestTheProxyReadsTheGrantsItsBrokerWrites(t *testing.T) {
 	t.Cleanup(redis.Close)
 	require.NoError(t, shard.Close())
 	settings := config.Defaults().CodeSandbox
-	settings.Broker, settings.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://proxy.stg.example:8091"
+	settings.Broker, settings.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://203.0.113.7:8091"
 	settings.ProxyAddr = ":8091"
 	settings.ProxyCACert, settings.ProxyCAKey = newCA(t)
 	var options session.ManagerOptions

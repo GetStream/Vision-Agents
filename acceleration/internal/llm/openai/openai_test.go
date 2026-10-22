@@ -216,6 +216,79 @@ func (s *OpenAISuite) send(tool llm.Tool) sentTool {
 	return request.Tools[0]
 }
 
+// sentText asks one question in the given shape and returns the text config the request
+// carried.
+func (s *OpenAISuite) sentText(model string, text llm.TextParams) map[string]any {
+	sent := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL, Model: model})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "rule"}},
+		Text:  text,
+	})
+	s.Require().NoError(err)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	var request struct {
+		Text map[string]any `json:"text"`
+	}
+	s.Require().NoError(json.Unmarshal(<-sent, &request))
+	return request.Text
+}
+
+// floorSchema is a schema-bound answer like the flow controller's.
+var floorSchema = &llm.JSONSchema{Name: "ruling", Schema: map[string]any{
+	"type":                 "object",
+	"properties":           map[string]any{"floor": map[string]any{"type": "string", "enum": []string{"stop"}}},
+	"required":             []string{"floor"},
+	"additionalProperties": false,
+}}
+
+func (s *OpenAISuite) TestGPT56LunaIsHeldToASchemaStrictly() {
+	text := s.sentText("gpt-5.6-luna", llm.TextParams{Format: llm.FormatJSONSchema, Schema: floorSchema})
+
+	s.Equal(map[string]any{
+		"type":   "json_schema",
+		"name":   "ruling",
+		"strict": true,
+		"schema": map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"floor": map[string]any{"type": "string", "enum": []any{"stop"}}},
+			"required":             []any{"floor"},
+			"additionalProperties": false,
+		},
+	}, text["format"])
+}
+
+func (s *OpenAISuite) TestEveryKnownFamilyTakesASchema() {
+	for family := range modelCapabilities {
+		provider, err := New(Options{APIKey: "k", Model: family})
+		s.Require().NoError(err)
+
+		s.Truef(provider.Capabilities().JSONSchema, "%s takes Structured Outputs", family)
+	}
+}
+
+func (s *OpenAISuite) TestAnUnknownModelIsAskedForAJSONObjectInsteadOfASchema() {
+	// An unrecognised family claims nothing it might not do, so it gets json_object, which
+	// is what a JSON request has always sent.
+	asObject := s.sentText("o9-preview", llm.TextParams{Format: llm.FormatJSONObject})
+	asSchema := s.sentText("o9-preview", llm.TextParams{Format: llm.FormatJSONSchema, Schema: floorSchema})
+
+	s.Equal(map[string]any{"type": "json_object"}, asObject["format"])
+	s.Equal(asObject, asSchema)
+}
+
 // TestAToolsOptionalArgumentsStayOptional is a tool offered as the caller described it. Left
 // to itself, the Responses API turns a tool into strict mode by making every property
 // required, so the model has to fill thread_ts with "" and Slack refuses the post.

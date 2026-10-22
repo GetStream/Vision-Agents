@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/GetStream/stream-chat-swift",
       "state" : {
-        "branch" : "add/ai-conversation-view",
-        "revision" : "7cd48cc6b206f3bdac42acf8a6d0768203521fe2"
+        "branch" : "develop",
+        "revision" : "2cdca0c9d17b03e8603f4e065964aac631dce08d"
       }
     },
     {

@@ -150,8 +150,17 @@ A `fixed` binding names `connection.connection_id` and pins each tool's `schema_
 A `session` binding may grant a tool by name alone.
 
 Test it in **Playground**. For a `session` binding the end user may have no connection yet.
-The reply then carries a `connector_authorization` card. **Connect** opens the consent
-popup; after consent the agent carries on by itself.
+The call then waits for them to sign in on its own `ai_tool_call` step, which is
+`awaiting_authorization` and carries an `authorization` with the `provider`, `title`, `url`,
+`handoff_token` and `expires_at`. The reply also carries a `connector_authorization` card, which
+the dashboard renders. **Connect** opens the consent popup, and once they consent the same call
+runs in the same reply. A `tool_approval` with only the `tool_call_id` and `allowed: false`
+declines it, and a consent that is refused, fails or is not finished in ten minutes ends it.
+Either way the model is told, and nothing runs. A native app opens
+`url#handoff_token=<handoff_token>` in its web authentication sheet, with its own scheme as the
+session's `return_url`. On iOS that is StreamChatAI's `AIToolAuthorizationView`, which
+`examples/voice_agents/swift_assistant` uses for Gmail and Linear. A spoken turn on a call has
+no reply to show it on, so by voice the binding answers that it is not available.
 
 For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
@@ -202,27 +211,51 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
 - `ROUTER_CODE_SANDBOX_BROKER=proxy` uses the router's egress proxy (`internal/sandbox/egress`)
   instead of Daytona Secrets. It needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` (the proxy
-  as a sandbox reaches it, `http://host:port`) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`. Every
-  router with this broker serves the proxy too, so it also needs `ROUTER_CODE_SANDBOX_PROXY_ADDR`
-  and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does not start. It needs no secret
-  prefix.
-- Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var, `HTTPS_PROXY`
-  with its own proxy credential, and the proxy's CA certificate at `/tmp/va-egress-ca.pem`
-  (`NODE_EXTRA_CA_CERTS`). Before any code runs, the router writes `/tmp/va-egress-ca-bundle.pem`:
-  the image's own roots and that CA (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`), so a
-  host reached directly is still verified. An image with no system roots file runs no code. The proxy puts
-  the token in place of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git
-  works too.
-- Network behind the proxy: the allow list is the proxy and the config's `allowed_domains` (or its
-  `network_allow_list` and the proxy's IP address). `NO_PROXY` holds the config's own domains, so
-  they go direct; a domain that matches a grant's host is left out, so its requests still go
-  through the proxy, and it is left out of the allow list too. The proxy refuses (403) any name
-  no grant covers. So a config domain that a grant's host also matches (for example `github.com`
-  in the config beside a grant for `api.github.com`) is reachable neither directly nor through the
-  proxy. A config with `network: true` and no
-  allow list is refused when a session with a sandbox binding starts: every request goes to the
-  proxy, which refuses hosts no grant names. So is a `network_allow_list` when the proxy URL names
-  a host, not an IP address.
+  as a sandbox reaches it, `http://<public IPv4 address>:port`: no path, query, user, or private,
+  loopback or link-local address) and `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`.
+  Every router with this broker serves the proxy too, so it also needs
+  `ROUTER_CODE_SANDBOX_PROXY_ADDR` and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does
+  not start. A host name, an IPv6 address or a non-public address in the public URL also stops the start. It needs no
+  secret prefix.
+- How egress is forced: Daytona's network allow list holds the proxy's address alone
+  (`<address>/32`). Daytona gets no domain allow list and no `OutboundProxyUrl`. The sandbox then
+  reaches the proxy and, of Daytona's own network, only the netleash gateway (172.20.0.1:18080,
+  which answers 403 without an `OutboundProxyUrl`), by TCP or UDP, and TLS passes as it is (live
+  probe and CIDR probe, 2026-10-22). Either Daytona setting brings in its netleash. Under a domain allow list, netleash
+  ends TLS itself and refuses the proxy's certificate for a granted host (staging E2E,
+  2026-10-22: `tls: bad certificate`).
+- Behind the proxy, the sandbox gets a placeholder (`va_ph_…`) in the env var. Every command and
+  run of code gets the proxy and the CA in its env, since netleash replaces the env vars a
+  sandbox is created with, but not those of one command or run (live probes, 2026-10-21):
+  - `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy` and `http_proxy` are
+    `http://sbx:<credential>@<proxy address>:<port>`; `NO_PROXY` and `no_proxy` are
+    `localhost,127.0.0.1,::1`;
+  - `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` name
+    `/tmp/va-egress-ca-bundle.pem`, and `NODE_EXTRA_CA_CERTS` names the proxy's CA certificate,
+    `/tmp/va-egress-ca.pem`.
+  Before any code runs, the router writes the bundle: the image's own roots and that CA.
+  Daytona's image is Debian 13, whose roots are `/etc/ssl/certs/ca-certificates.crt` (live
+  probe, 2026-10-21). An image with no roots file runs no code. The proxy puts the token in place
+  of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git works too.
+- DNS behind the proxy: the sandbox has none. The proxy looks up each host. A client that does
+  not read the proxy env vars (a raw socket, a DNS lookup) reaches nothing. Plain HTTP through
+  the proxy is refused.
+- The proxy does one of three things with a `CONNECT`:
+  - a host a grant covers: it ends TLS with its own CA and puts the token in;
+  - a host of `allowed_domains` only: it sends the bytes on as they are, with no token, and reads
+    none of them;
+  - any other host, a non-public address or a port other than 443: it refuses.
+  A host both cover is a grant's. A config with `network: true` and no `allowed_domains`, or with
+  a `network_allow_list`, is refused when a session with a sandbox grant starts: the proxy reaches
+  hosts by name only.
+- Known limit (accepted, Kanat 2026-10-22): the sandbox's proxy credential is in the env of every
+  command and run, so sandbox code can read it and send it out to a granted host or an allowed
+  domain. It is a proxy credential, never a token. It is the sandbox's own, it expires with the
+  sandbox's record, and it reaches only the sandbox's grants and allowed domains.
+- Sandbox code has root (`sudo` with no password, live probe 2026-10-21). No control inside the
+  sandbox protects anything: code can change its env, its CA files and its routes. The controls
+  are the token, which stays in the router; Daytona's network allow list, which lets the sandbox
+  reach the proxy alone (a route change as root: unverified); and the proxy's grant check.
 - A connection the proxy cannot get a token for just now (a provider outage) keeps its grant; a
   connection that needs a reconnect gives the sandbox nothing, and refuses a `required` binding.
 - Revocation through the proxy is immediate: it resolves the token on every request and keeps no

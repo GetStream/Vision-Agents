@@ -96,6 +96,33 @@ class WireTest {
     }
 
     @Test
+    fun `a tool result with pictures sends its output as parts, and one without as words`() {
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"20 degrees","error":""}""",
+            Command.ToolResult("c1", output = "20 degrees").encode(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"","error":"no such order"}""",
+            Command.ToolResult("c1", error = "no such order").encode(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":[{"type":"text","text":"the kitchen"},""" +
+                """{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo=","detail":"low"}}],""" +
+                """"error":""}""",
+            Command.ToolResult(
+                "c1",
+                output = "the kitchen",
+                images = listOf(ImageSource("data:image/png;base64,iVBORw0KGgo=", ImageSource.Detail.Low)),
+            ).encode(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}],""" +
+                """"error":""}""",
+            Command.ToolResult("c1", images = listOf(ImageSource("https://example.com/a.png"))).encode(),
+        )
+    }
+
+    @Test
     fun `timestamps are read however many fractional digits Go wrote`() {
         assertEquals(instant("2026-09-24T04:03:19Z"), instant("2026-09-24T04:03:19.000000000Z"))
         assertEquals(979138000, instant("2026-09-24T04:03:19.979138Z").nanosecondsOfSecond)

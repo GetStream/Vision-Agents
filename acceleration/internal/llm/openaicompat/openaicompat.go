@@ -104,6 +104,8 @@ type Options struct {
 	// ForcedCallsFillEveryArgument sends a request that must call with every argument of
 	// every tool required, for a model that otherwise writes only the required ones.
 	ForcedCallsFillEveryArgument bool
+	// Headers are sent with every request, for an endpoint that needs more than the key.
+	Headers map[string]string
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -159,6 +161,9 @@ func New(options Options) (*LLM, error) {
 		option.WithAPIKey(options.APIKey),
 		option.WithBaseURL(options.BaseURL),
 		option.WithHTTPClient(keys.WrapDoer(options.HTTPClient, keypool.Bearer)),
+	}
+	for name, value := range options.Headers {
+		clientOptions = append(clientOptions, option.WithHeader(name, value))
 	}
 
 	return &LLM{
@@ -541,7 +546,17 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 			OfAuto: param.NewOpt(request.ToolChoice),
 		}
 	}
-	if request.Text.Format == llm.FormatJSONObject {
+	if schema := l.options.Capabilities.Schema(request.Text); schema != nil {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   schema.Name,
+					Schema: schema.Schema,
+					Strict: param.NewOpt(true),
+				},
+			},
+		}
+	} else if request.Text.Format.JSON() {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}

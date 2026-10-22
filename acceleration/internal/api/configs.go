@@ -242,6 +242,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
+	config.ReviewInstructions = reviewOf(existing.ReviewInstructions, request.Body.Review)
 	// Field by field, as the doc says of an update: a block naming only the limit keeps
 	// enabled and the zone.
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
@@ -1682,6 +1683,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.ProgressiveTools = value(request.Tools.Progressive)
 	}
 	config.Scheduling = schedulingOf(request.Scheduling)
+	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
 }
 
@@ -1748,6 +1750,9 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = greetingFrom(config.Greeting, config.GreetingMode)
 	rendered.Guardrail = optional(config.Guardrail)
+	if config.ReviewInstructions != "" {
+		rendered.Review = &AgentReview{Instructions: optional(config.ReviewInstructions)}
+	}
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)
 	if config.Sandbox != "" {
 		box := Sandbox(config.Sandbox)
@@ -2028,6 +2033,7 @@ type AgentConfigRequest struct {
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
@@ -2065,6 +2071,7 @@ type AgentConfig struct {
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
 	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty" doc:"Absent when calls are reviewed by Stream's default guide."`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
@@ -2097,6 +2104,25 @@ type AgentTools struct {
 func (*AgentTools) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How an agent is offered its plugin, MCP server and connector tools."
 	return schema
+}
+
+// AgentReview is how a finished call under an agent is reviewed.
+type AgentReview struct {
+	Instructions *string `json:"instructions,omitempty" doc:"What the model reviewing a finished call judges it by, in place of Stream's default guide: what to summarise and how to score the call from 1 to 5. A score outside 1 to 5 is not kept. The reviewer is always told to answer with JSON holding a summary, a score and notes, so leave the answer's format out. Empty is the default guide. On an update or a patch, left out keeps the stored instructions and an empty string removes them."`
+}
+
+func (*AgentReview) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How a finished call under an agent is reviewed."
+	return schema
+}
+
+// reviewOf is the review instructions a request leaves stored: the request's, or stored
+// when it says nothing about them.
+func reviewOf(stored string, review *AgentReview) string {
+	if review == nil {
+		return stored
+	}
+	return override(stored, review.Instructions)
 }
 
 // AgentScheduling is an agent's scheduled-task settings.

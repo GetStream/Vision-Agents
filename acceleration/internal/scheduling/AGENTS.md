@@ -114,6 +114,16 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestAOneShotTheAgentResumesAfterItsTimeRecordsTheOccurrenceAsMissed`,
   `TestScheduledTasksSuite/TestAOneShotTheAgentResumesLateNamesTheMissedTimeInTheTasksZone`,
   `TestScheduledTasksSuite/TestResumingALateOneShotTwiceRecordsItsOccurrenceOnce`.
+- **Any other task with no occurrence left is refused on resume and left as it was**: a
+  failed one-shot, a one-shot paused after its occurrence failed, a repeat past its until.
+  The API answers 400 `schedule_in_past` before it reads the config or the limit; the tool
+  refuses with the same code.
+  `TestScheduledTasksSuite/TestAFailedOneShotIsRefusedOnResumeUntilItIsRescheduled`,
+  `TestScheduledTasksSuite/TestAFailedRepeatPastItsLastTimeIsRefusedOnResume`,
+  `TestScheduledTasksSuite/TestARepeatingTaskPausedPastItsLastTimeIsRefusedOnResume`,
+  `TestScheduledTasksSuite/TestAOneShotPausedAfterItsOccurrenceFailedIsRefusedOnResume`,
+  `TestScheduledTasksSuite/TestATaskWithNoOccurrenceLeftIsRefusedBeforeItsLimitOrItsConfigIsAsked`,
+  `TestScheduledTasksSuite/TestTheAgentCannotResumeAFailedOneShotPastItsTime`.
 - **A call rings once, and never more than 15 min late (S5).** Too late is `missed` without a
   call; nobody answering is `not_answered`, final.
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,

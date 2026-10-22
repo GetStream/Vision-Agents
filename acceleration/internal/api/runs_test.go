@@ -6,17 +6,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type RunsSuite struct {
 	RouterSuite
+	// images serves a PNG at /photo.png, a web page at /page and nothing anywhere else.
+	images *httptest.Server
+	// logged is what the router logged.
+	logged *lockedLog
 }
+
+// png is the start of a PNG, which is all the router reads to tell one.
+var pngStart = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 
 func TestRunsSuite(t *testing.T) {
 	runSuite(t, new(RunsSuite))
@@ -25,6 +34,20 @@ func TestRunsSuite(t *testing.T) {
 func (s *RunsSuite) SetupSuite() {
 	// One, so a test holds the whole of an app's allowance with a single run.
 	s.runsPerApp = 1
+	s.imageHTTP = &http.Client{}
+	s.images = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/photo.png":
+			_, _ = w.Write(pngStart)
+		case "/page":
+			_, _ = w.Write([]byte("<html><body>Not found</body></html>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	s.T().Cleanup(s.images.Close)
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -41,6 +64,30 @@ func (s *RunsSuite) TestARunAnswersWithWhatTheAgentSaidLast() {
 	s.Contains(run.FinalText, policy, "the run's instructions are added to them")
 	s.Equal("echo/echo-model", run.ModelRoute)
 	s.NotEmpty(run.SessionId)
+}
+
+func (s *RunsSuite) TestARunReturnsOnceItsAgentHasAnswered() {
+	config := s.config("echo/echo-model")
+
+	started := time.Now()
+	run := s.run(CreateRunRequest{ConfigId: config, Input: "hello"})
+
+	s.NotEmpty(run.FinalText)
+	s.Less(time.Since(started), time.Second, "an agent with nothing left to do is not waited on for a quiet gap")
+}
+
+func (s *RunsSuite) TestARunWaitsForTheAnswerAfterItsTools() {
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "agent-" + s.utils.uuid(), "llm": "checking/checking-model", "skills": []string{"policy"},
+	}, &config))
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/skills", map[string]any{
+		"config_id": config.Id, "name": "policy", "description": "the labels to judge by", "instructions": "Flag spam.",
+	}, nil))
+
+	run := s.run(CreateRunRequest{ConfigId: config.Id, Input: "hello"})
+
+	s.Equal("Judged.", run.FinalText, "the reply that asked for a tool does not end the run")
 }
 
 func (s *RunsSuite) TestAModeratorsRunEndsWithTheAnswerFormat() {
@@ -89,6 +136,9 @@ func (s *RunsSuite) TestARunsSpendIsBrokenDownByItsTags() {
 
 	s.run(CreateRunRequest{ConfigId: s.config("counted/counted-model"), Input: "count me", Tags: &tags})
 
+	// A model call's spend is recorded off the request path, so the run can answer first.
+	s.Require().Eventually(func() bool { return len(s.spend("group_by=review_item")) == 1 },
+		5*time.Second, 20*time.Millisecond)
 	for key, value := range tags {
 		buckets := s.spend("group_by=" + key)
 		s.Require().Len(buckets, 1, key)
@@ -168,6 +218,92 @@ func (s *RunsSuite) TestARunThatOutlastsItsTimeoutTimesOut() {
 
 	s.Equal(http.StatusGatewayTimeout, status)
 	s.Equal("timeout", failure.Code)
+}
+
+func (s *RunsSuite) TestARunsImagesReachTheModelAsTheBytesFetched() {
+	question := "what is in these? " + s.utils.uuid()
+
+	s.run(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: question,
+		Images: &[]ImageSource{{Url: s.images.URL + "/photo.png"}, {Url: "data:image/jpeg;base64,/9j/4AAQ"}}})
+
+	var seen []llm.ImagePart
+	for _, request := range s.vision.requests() {
+		for _, message := range request.Input {
+			asked := strings.Contains(message.Content, question)
+			var images []llm.ImagePart
+			for _, part := range message.Parts {
+				asked = asked || strings.Contains(part.Text, question)
+				if part.Image != nil {
+					images = append(images, *part.Image)
+				}
+			}
+			if asked {
+				seen = append(seen, images...)
+			}
+		}
+	}
+	s.Require().Len(seen, 2, "both images, in the order they were sent")
+	s.Equal(pngStart, seen[0].Data, "the model is handed the bytes checked, not a URL it might fail to fetch")
+	s.Equal("image/png", seen[0].MIME)
+	s.Empty(seen[0].URL)
+	s.Equal("image/jpeg", seen[1].MIME)
+}
+
+func (s *RunsSuite) TestARunLogsHowManyImagesItCarried() {
+	config := s.config("vision/vision-model")
+
+	withImages := s.run(CreateRunRequest{ConfigId: config, Input: "hello",
+		Images: &[]ImageSource{{Url: s.images.URL + "/photo.png"}, {Url: s.images.URL + "/photo.png"}}})
+	without := s.run(CreateRunRequest{ConfigId: config, Input: "hello"})
+
+	logged := s.logged.String()
+	s.Contains(logged, `msg="a run started" customer=`+s.customerID()+" session="+withImages.SessionId+" config="+config+" images=2")
+	s.Contains(logged, `msg="a run started" customer=`+s.customerID()+" session="+without.SessionId+" config="+config+" images=0")
+}
+
+func (s *RunsSuite) TestAnImageThatCannotBeFetchedIsUnavailable() {
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "hello",
+		Images: &[]ImageSource{{Url: s.images.URL + "/photo.png"}, {Url: s.images.URL + "/gone.png"}}})
+
+	s.Equal(http.StatusBadRequest, status, "the same image fails the same way, so it is no 503 to retry")
+	s.Equal(codeImageUnavailable, failure.Code)
+	s.Contains(failure.Message, "image 1", "the message names which image")
+}
+
+func (s *RunsSuite) TestAnImageURLThatIsNoImageIsUnavailable() {
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "hello",
+		Images: &[]ImageSource{{Url: s.images.URL + "/page"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeImageUnavailable, failure.Code)
+}
+
+func (s *RunsSuite) TestAnImageThatIsNoImageIsRefused() {
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "hello",
+		Images: &[]ImageSource{{Url: "ftp://example.com/a.png"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_request", failure.Code)
+}
+
+func (s *RunsSuite) TestARunWithTooManyImagesIsRefused() {
+	images := make([]ImageSource, maxRunImages+1)
+	for index := range images {
+		images[index] = ImageSource{Url: fmt.Sprintf("https://example.com/%d.png", index)}
+	}
+
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("vision/vision-model"), Input: "hello", Images: &images})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_request", failure.Code)
+}
+
+func (s *RunsSuite) TestAnAgentThatCannotSeeIsAConfigFailure() {
+	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello",
+		Images: &[]ImageSource{{Url: s.images.URL + "/photo.png"}}})
+
+	s.Equal(http.StatusBadRequest, status, "it fails the same way every time, so it is no 503 to retry")
+	s.Equal(codeInvalidConfig, failure.Code)
 }
 
 func (s *RunsSuite) TestARunWithNoInputIsRefused() {

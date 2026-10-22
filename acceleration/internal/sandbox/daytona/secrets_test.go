@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -98,6 +99,40 @@ func (s *SecretsSuite) granted(prefix string, config sandbox.Config, grants ...s
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box
+}
+
+// TestDaytonasBrokerSendsDaytonaWhatItDidBefore is the control: no per-run env and no proxy.
+// The expected bodies are a probe of base 98410fe9b; the network-only configs after the first,
+// of base 4588e625d.
+func (s *SecretsSuite) TestDaytonasBrokerSendsDaytonaWhatItDidBefore() {
+	box := s.granted("stg", sandbox.Config{AllowedDomains: []string{"pypi.org"}}, github)
+	s.Require().NoError(box.Write(s.ctx, "dir/f.txt", []byte("x")))
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	networks := []sandbox.Config{{}, {Network: true}, {NetworkAllowList: []string{"10.0.0.0/8"}}}
+	for _, config := range networks {
+		_, err := s.granted("stg", config, github).Run(s.ctx, "print(1)", nil)
+		s.Require().NoError(err)
+	}
+	created, err := json.Marshal(s.platform.requests()[1:])
+	s.Require().NoError(err)
+	s.Equal(`[{"domainAllowList":"api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
+		`"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false},`+
+		`{"labels":{"code-toolbox-language":"python"},"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false},`+
+		`{"labels":{"code-toolbox-language":"python"},"networkAllowList":"10.0.0.0/8","networkBlockAll":false,"public":false,`+
+		`"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}]`,
+		regexp.MustCompile(`va_stg_session-1_github_[0-9a-f]{8}`).ReplaceAllString(string(created), "SECRET"))
+
+	created, err = json.Marshal(s.platform.requests()[:1])
+	s.Require().NoError(err)
+	ran, err := json.Marshal(s.platform.executed()[:1])
+	s.Require().NoError(err)
+	s.Equal(`[{"domainAllowList":"pypi.org,api.github.com,uploads.github.com","labels":{"code-toolbox-language":"python"},`+
+		`"networkBlockAll":false,"public":false,"secrets":[{"GITHUB_TOKEN":"SECRET"}],"spot":false}]`,
+		regexp.MustCompile(`va_stg_session-1_github_[0-9a-f]{8}`).ReplaceAllString(string(created), "SECRET"))
+	s.Equal(`[{"authorization":"Bearer key-1","code":"print(1)","language":"python","path":"/toolbox/sandbox-2/process/code-run","timeout":30}]`,
+		string(ran))
+	s.Equal([]string{"{\"command\":\"mkdir -p 'dir'\"}\n"}, s.platform.rawCommands)
 }
 
 func (s *SecretsSuite) TestTheSandboxIsCreatedWithTheSecretMadeForItsGrant() {

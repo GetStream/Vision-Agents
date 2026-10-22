@@ -125,7 +125,7 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 // answerTo is what this request is answered with: the configured sentence, unless an
 // object was asked for, in which case a sentence would not parse.
 func (l *LLM) answerTo(params llm.ResponseParams) string {
-	if params.Text.Format != llm.FormatJSONObject {
+	if !params.Text.Format.JSON() {
 		return l.answer
 	}
 	if params.Purpose == "flow" {

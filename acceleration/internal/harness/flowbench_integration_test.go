@@ -451,7 +451,7 @@ func modelArm(target string, session llm.LLM, price func(routing.Usage) int64) a
 				// The same budget the controller runs with. A thinking model that spends it
 				// before the closing brace is a real failure mode and is scored as one.
 				MaxOutputTokens: 512,
-				Text:            llm.TextParams{Format: llm.FormatJSONObject},
+				Text:            llm.TextParams{Format: llm.FormatJSONSchema, Schema: flowSchema},
 			})
 			if err != nil {
 				return judgement{}, err
@@ -473,7 +473,7 @@ func modelArm(target string, session llm.LLM, price func(routing.Usage) int64) a
 					OutputTokens:      response.Usage.OutputTokens,
 				},
 			}
-			answer, err := parseFlow(response.OutputText)
+			answer, _, err := parseFlow(response.OutputText)
 			if err != nil {
 				// The fallbacks the controller itself takes, so the row says what a call
 				// would have done rather than leaving a hole in the table.

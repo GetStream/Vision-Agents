@@ -304,6 +304,12 @@ func (p policy) publicAddresses(ctx context.Context, host string) error {
 	return nil
 }
 
+// DialPublic opens a connection to address, a host and a port, only when every address the host
+// resolves to is public: the dial NewClient makes, for callers that carry bytes they do not read.
+func DialPublic(ctx context.Context, network, address string) (net.Conn, error) {
+	return defaultPolicy.dialPublic(ctx, network, address)
+}
+
 // IsPublic says whether traffic to a tenant-supplied host may go to ip. It is the check
 // NewClient makes at dial, for callers that open their own connections.
 func IsPublic(ip netip.Addr) bool { return isPublic(ip) }

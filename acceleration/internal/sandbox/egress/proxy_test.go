@@ -134,27 +134,26 @@ func (s *ProxySuite) TearDownTest() {
 	}
 }
 
-// newProxy is a proxy over store; change, when given, changes its options first.
+// newProxy is a proxy over store; change, when given, changes its options first. Its transport
+// and its tunnels to an allowed domain dial the test's hosts.
 func (s *ProxySuite) newProxy(store *egress.Store, change ...func(*egress.Options)) *egress.Proxy {
-	dial := &net.Dialer{}
+	dialer := &net.Dialer{}
+	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		s.mu.Lock()
+		s.addresses = append(s.addresses, address)
+		to := s.answer
+		s.mu.Unlock()
+		switch {
+		case to != "":
+		case strings.HasPrefix(address, "outside.test:"):
+			to = s.outside.server.Listener.Addr().String()
+		default:
+			to = s.granted.server.Listener.Addr().String()
+		}
+		return dialer.DialContext(ctx, network, to)
+	}
 	options := egress.Options{Store: store, Tokens: s.tokens, CACert: s.caCert, CAKey: s.caKey,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: s.upstream},
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				s.mu.Lock()
-				s.addresses = append(s.addresses, address)
-				to := s.answer
-				s.mu.Unlock()
-				switch {
-				case to != "":
-				case strings.HasPrefix(address, "outside.test:"):
-					to = s.outside.server.Listener.Addr().String()
-				default:
-					to = s.granted.server.Listener.Addr().String()
-				}
-				return dial.DialContext(ctx, network, to)
-			},
-		},
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: s.upstream}, DialContext: dial}, Dial: dial,
 		Logger: slog.New(slog.NewTextHandler(s.logs, nil))}
 	for _, change := range change {
 		change(&options)
@@ -445,6 +444,155 @@ func (s *ProxySuite) TestAHostOutsideTheGrantsIsRefusedAndNeverReached() {
 	s.Zero(s.asked)
 }
 
+// allow puts the test's record again with the grant for api.github.test and allowed.
+func (s *ProxySuite) allow(allowed ...string) {
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "api.github.test")},
+		Allowed: allowed})
+}
+
+// direct is code in the sandbox that trusts the hosts' own CA and not the router's: a tunnel
+// it can use is the host's, not one the proxy answers.
+func (s *ProxySuite) direct() *http.Client {
+	client := s.sandbox(s.credential)
+	client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: s.upstream}
+	return client
+}
+
+// TestAnAllowedDomainIsTunnelledAsItIs: the host's own certificate, the placeholder as the
+// sandbox sent it, no token asked for, and nothing of the request in the logs.
+func (s *ProxySuite) TestAnAllowedDomainIsTunnelledAsItIs() {
+	s.allow("outside.test")
+
+	response, body, err := s.send(s.direct(), s.request(http.MethodGet, "https://outside.test/echo", "Bearer "+s.placeholder, ""))
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal("hosts CA", response.TLS.PeerCertificates[0].Issuer.CommonName)
+	s.Equal([]string{"Bearer " + s.placeholder}, s.outside.authorizations())
+	s.Contains(body, s.placeholder)
+	s.Zero(s.asked)
+	s.Equal([]string{"outside.test:443"}, s.dialed())
+	s.NotContains(s.logs.String(), s.placeholder)
+	_, _, err = s.send(s.sandbox(s.credential), s.request(http.MethodGet, "https://outside.test/echo", "", ""))
+	s.ErrorContains(err, "certificate", "the router's CA signs nothing for an allowed domain")
+}
+
+// TestAHostBothGrantedAndAllowedIsAGrants: the proxy answers it and puts the token in.
+func (s *ProxySuite) TestAHostBothGrantedAndAllowedIsAGrants() {
+	s.allow("*.github.test", "api.github.test")
+
+	response, _ := s.get("Bearer " + s.placeholder)
+
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal([]string{"Bearer gho_first-token-of-the-connection"}, s.granted.authorizations())
+}
+
+// TestOnlyAnAllowedDomainOnPort443IsTunnelled: the allowed domains are read as grants' hosts
+// are, and another port, an IP literal or another host is refused and never dialed.
+func (s *ProxySuite) TestOnlyAnAllowedDomainOnPort443IsTunnelled() {
+	s.allow("outside.test", "*.pypi.test", "127.0.0.1")
+	status := func(target string) int { return s.connectStatus(target, basic("sbx", s.credential)).StatusCode }
+
+	s.Equal(http.StatusForbidden, status("outside.test:8443"))
+	s.Equal(http.StatusForbidden, status("evil.outside.test:443"))
+	s.Equal(http.StatusForbidden, status("outside.test.evil.test:443"))
+	s.Equal(http.StatusForbidden, status("127.0.0.1:443"))
+	s.Equal(http.StatusForbidden, status("*.pypi.test:443"))
+	s.Empty(s.dialed())
+	s.Equal(http.StatusOK, status("files.pypi.test:443"))
+	s.Equal(http.StatusOK, status("Outside.test:443"))
+	s.Equal([]string{"files.pypi.test:443", "outside.test:443"}, s.dialed())
+}
+
+// TestAnAllowedDomainResolvingToANonPublicAddressIsNotDialed is A11 for a tunnel: the dial the
+// router uses refuses it.
+func (s *ProxySuite) TestAnAllowedDomainResolvingToANonPublicAddressIsNotDialed() {
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.Dial = nil }))
+	s.T().Cleanup(s.proxy.Close)
+	s.allow("localhost")
+
+	s.Equal(http.StatusBadGateway, s.connectStatus("localhost:443", basic("sbx", s.credential)).StatusCode)
+	s.Contains(s.logs.String(), "resolved to a non-public address")
+}
+
+// TestATunnelToAnAllowedDomainKeepsTheTLSHelloAndEndsWithTheHost: the hello sent with the
+// CONNECT reaches the host, and the host closing the connection closes the sandbox's.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainKeepsTheTLSHelloAndEndsWithTheHost() {
+	s.allow("outside.test")
+	conn, err := net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	defer conn.Close()
+	s.Require().NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
+	eager := &eagerConn{Conn: conn, connect: fmt.Sprintf("CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\n"+
+		"Proxy-Authorization: %s\r\n\r\n", basic("sbx", s.credential))}
+	eager.reader = bufio.NewReader(conn)
+	client := tls.Client(eager, &tls.Config{ServerName: "outside.test", RootCAs: s.upstream})
+	s.Require().NoError(client.HandshakeContext(s.ctx))
+	_, err = io.WriteString(client, "GET /echo HTTP/1.1\r\nHost: outside.test\r\nConnection: close\r\n\r\n")
+	s.Require().NoError(err)
+
+	answer, err := io.ReadAll(client)
+
+	s.Require().NoError(err)
+	s.Contains(string(answer), "200 OK")
+	// TLS ended with the host's close_notify; the proxy then closes the sandbox's connection.
+	_, err = eager.reader.ReadByte()
+	s.ErrorIs(err, io.EOF)
+}
+
+// TestATunnelToAnAllowedDomainEndsWithTheSandbox: the host side sees the end when the sandbox
+// closes its connection, and the sandbox's bytes reach the host as they are.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	defer listener.Close()
+	s.answerAt(listener.Addr().String())
+	s.allow("outside.test")
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, _ := listener.Accept()
+		accepted <- conn
+	}()
+	conn, err := net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	defer conn.Close()
+	_, err = fmt.Fprintf(conn, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
+		basic("sbx", s.credential))
+	s.Require().NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	upstream := <-accepted
+	s.Require().NotNil(upstream)
+	defer upstream.Close()
+	_, err = io.WriteString(conn, "hello")
+	s.Require().NoError(err)
+	s.Require().NoError(upstream.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	got := make([]byte, 5)
+	_, err = io.ReadFull(upstream, got)
+	s.Require().NoError(err)
+	s.Equal("hello", string(got))
+
+	s.Require().NoError(conn.Close())
+
+	_, err = upstream.Read(got)
+	s.ErrorIs(err, io.EOF)
+}
+
+// TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
+// wildcard that names no domain, which no broker stores, takes nothing.
+func (s *ProxySuite) TestAHostWithATrailingDotIsTheHostWithout() {
+	status := func(target string) int { return s.connectStatus(target, basic("sbx", s.credential)).StatusCode }
+	s.allow("*.", "pypi.test")
+
+	s.Equal(http.StatusForbidden, status("evil.test.:443"))
+	s.Equal(http.StatusForbidden, status("evil.test:443"))
+	s.Equal(http.StatusForbidden, status(".:443"))
+	s.Empty(s.dialed())
+	s.Equal(http.StatusOK, status("PyPI.test.:443"))
+	s.Equal([]string{"pypi.test:443"}, s.dialed())
+}
+
 // TestAWildcardGrantTakesTheDomainAndTheNamesUnderItOnly: *. as core.SandboxRule reads it.
 func (s *ProxySuite) TestAWildcardGrantTakesTheDomainAndTheNamesUnderItOnly() {
 	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "*.github.test")}})
@@ -521,6 +669,19 @@ func (s *ProxySuite) TestAGrantThatEndsEndsItsOpenTunnelToo() {
 	s.Equal(http.StatusForbidden, deleted)
 	s.Len(s.granted.authorizations(), 1)
 	s.Equal(http.StatusProxyAuthRequired, s.connectStatus("api.github.test:443", basic("sbx", s.credential)).StatusCode)
+}
+
+// TestAGrantWithdrawnOnAnAllowedHostEndsItsOpenTunnel: the host stays allowed, so a new CONNECT
+// to it is a blind tunnel, but a tunnel the grant opened refuses its next request.
+func (s *ProxySuite) TestAGrantWithdrawnOnAnAllowedHostEndsItsOpenTunnel() {
+	s.allow("api.github.test")
+	client := s.sandbox(s.credential)
+	s.Require().Equal(http.StatusOK, s.again(client))
+
+	s.put(s.credential, egress.Record{Session: s.session, Allowed: []string{"api.github.test"}})
+
+	s.Equal(http.StatusForbidden, s.again(client))
+	s.Equal(http.StatusOK, s.connectStatus("api.github.test:443", basic("sbx", s.credential)).StatusCode)
 }
 
 // TestACredentialThatIsNotASandboxsIsAskedForOne is A14: none, one never issued, one in

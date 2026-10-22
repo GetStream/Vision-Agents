@@ -900,13 +900,22 @@ func (r respond) params(held options.LLM) (llm.ResponseParams, error) {
 		Metadata:           r.Metadata,
 	}
 	params.Text = llm.TextParams{
-		Format:    llm.TextFormat(fallback(r.Format, held.Format)),
+		Format:    socketFormat(fallback(r.Format, held.Format)),
 		Verbosity: fallback(r.Verbosity, held.Verbosity),
 	}
 	if len(params.Metadata) == 0 {
 		params.Metadata = held.Metadata
 	}
 	return params, nil
+}
+
+// socketFormat is the format a socket caller named. json_schema needs a schema a socket
+// cannot carry, so it is prose, as it was before the format existed.
+func socketFormat(name string) llm.TextFormat {
+	if format := llm.TextFormat(name); format != llm.FormatJSONSchema {
+		return format
+	}
+	return llm.FormatText
 }
 
 // fallback, firstSet and pick are what "the frame wins, then the socket's options, then
