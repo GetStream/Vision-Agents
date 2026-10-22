@@ -54,7 +54,7 @@ func runKeys(args []string, settings config.Config, logger *slog.Logger) error {
 	}
 	defer pgStore.Close()
 
-	sealer, err := loadKeyring(settings, "minting a key needs")
+	sealer, err := loadKeyring(ctx, settings, "minting a key needs")
 	if err != nil {
 		return err
 	}

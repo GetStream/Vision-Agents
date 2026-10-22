@@ -460,6 +460,26 @@ func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
 	s.True(config.Auth.ProxyDeclaresKind)
 }
 
+func (s *ConfigSuite) TestTheKMSKeyIsReadFromTheEnvironment() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Auth.KMSKey, "no KMS key unless one is named")
+
+	s.T().Setenv("ROUTER_AUTH_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/k")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal("projects/p/locations/l/keyRings/r/cryptoKeys/k", config.Auth.KMSKey)
+}
+
+func (s *ConfigSuite) TestAKMSKeyFromAFileIsExported() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("auth:\n  kms_key: projects/p/locations/l/keyRings/r/cryptoKeys/k\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.Require().NoError(err)
+	s.Equal("projects/p/locations/l/keyRings/r/cryptoKeys/k", os.Getenv("ROUTER_AUTH_KMS_KEY"))
+}
+
 func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

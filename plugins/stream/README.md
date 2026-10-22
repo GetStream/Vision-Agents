@@ -92,8 +92,8 @@ greeting:
   text: Thanks for calling, how can I help?
   mode: exact  # or variation, the model's own take on it every call
 sandbox: daytona
-plugins:
-  - gmail
+connectors:
+  - github
 keyterms:
   - Vision Agents
 tags:
@@ -104,6 +104,8 @@ Everything but the name is optional, and a setting the file leaves out leaves wh
 stored, so a model chosen in the dashboard survives a sync that says nothing about it. A key
 nobody knows is refused rather than dropped: a misspelled `llm` that went quietly would
 leave the agent running on a model the file does not name.
+`plugins` and `plugin_events` are refused too: connectors replaced them, so name each
+under `connectors` instead.
 
 A page in `knowledge/urls.yaml` written as a mapping may say `refresh_hours: 24` to be read
 again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenario`,
