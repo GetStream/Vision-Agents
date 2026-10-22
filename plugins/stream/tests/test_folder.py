@@ -6,7 +6,6 @@ from vision_agents.plugins.stream.folder import (
     ConnectorSettings,
     GreetingSettings,
     MCPServerSettings,
-    PluginSettings,
     ToolSettings,
     SandboxSettings,
     find,
@@ -224,75 +223,43 @@ class TestFolder:
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
 
-    def test_the_declaration_says_who_connects_each_plugin(self, tmp_path: Path):
-        root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nplugins:\n  - sentry\n  - name: google_calendar\n    user: true\n",
-        )
-
-        settings = load(root).settings
-
-        assert settings.plugins == [
-            PluginSettings(name="sentry"),
-            PluginSettings(name="google_calendar", user=True),
-        ]
-
-    def test_a_plugin_user_that_is_not_true_or_false_is_refused(self, tmp_path: Path):
-        root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nplugins:\n  - name: linear\n    user: alice\n",
-        )
-
-        with pytest.raises(ValueError, match="user"):
-            load(root)
-
-    def test_the_declaration_says_how_each_plugin_is_reached(self, tmp_path: Path):
-        root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nplugins:\n"
-            "  - name: linear\n    readonly: true\n    scopes: [read]\n"
-            "  - google_drive\n"
-            "  - name: calcom\n    toolsets: [bookings, availability]\n"
-            "    tools: [get_bookings]\n",
-        )
-
-        settings = load(root).settings
-
-        assert settings.plugins == [
-            PluginSettings(name="linear", readonly=True, scopes=["read"]),
-            PluginSettings(name="google_drive"),
-            PluginSettings(
-                name="calcom",
-                toolsets=["bookings", "availability"],
-                tools=["get_bookings"],
-            ),
-        ]
-
-    def test_a_plugin_setting_nobody_knows_is_refused(self, tmp_path: Path):
-        root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nplugins:\n  - name: linear\n    read_only: true\n",
-        )
-
-        with pytest.raises(ValueError, match="read_only"):
-            load(root)
-
-    def test_a_plugin_that_is_neither_an_id_nor_a_mapping_is_refused(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("declared", "key"),
+        [
+            ("plugins:\n  - sentry\n", "plugins"),
+            ("plugins:\n  - name: google_calendar\n    user: true\n", "plugins"),
+            ("plugins: sentry\n", "plugins"),
+            ("plugins: {}\n", "plugins"),
+            ('plugin_events: ""\n', "plugin_events"),
+            ("plugin_events:\n  - plugin: linear\n    event: issue\n", "plugin_events"),
+            ("plugin_events: linear\n", "plugin_events"),
+        ],
+    )
+    def test_plugins_are_refused_with_a_pointer_to_connectors(
+        self, tmp_path: Path, declared: str, key: str
     ):
         root = tmp_path / "triage"
-        write(root, "agent.yaml", "name: triage\nplugins:\n  - [sentry]\n")
+        write(root, "agent.yaml", "name: triage\n" + declared)
 
-        with pytest.raises(ValueError, match="plugins"):
+        with pytest.raises(
+            ValueError,
+            match=f"agent.yaml: `{key}` is no longer supported: use `connectors`",
+        ):
             load(root)
+
+    @pytest.mark.parametrize(
+        "declared",
+        ["plugins: []\n", "plugins:\n", "plugin_events: []\n", "plugin_events:\n"],
+    )
+    def test_an_empty_plugins_key_names_nothing_and_loads(
+        self, tmp_path: Path, declared: str
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n" + declared)
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
 
     @pytest.mark.parametrize(
         "declared",
@@ -518,20 +485,8 @@ class TestFolder:
         with pytest.raises(ValueError, match="unknown connectors setting: plugin"):
             load(root)
 
-    def test_a_connector_alias_cannot_be_a_plugin_or_mcp_server_name(
-        self, tmp_path: Path
-    ):
+    def test_a_connector_alias_cannot_be_an_mcp_server_name(self, tmp_path: Path):
         root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nplugins:\n  - linear\nconnectors:\n  - linear\n",
-        )
-        with pytest.raises(
-            ValueError, match='"linear" is named under both connectors and plugins'
-        ):
-            load(root)
-
         write(
             root,
             "agent.yaml",
@@ -569,7 +524,6 @@ class TestFolder:
 
         settings = load(root).settings
 
-        assert settings.plugins == []
         assert settings.connectors is not None
         by_name = {entry.name: entry for entry in settings.connectors}
         assert by_name["github"].tools is None
@@ -696,7 +650,6 @@ class TestFolder:
 
         assert settings.llm == ""
         assert settings.sandbox == ""
-        assert settings.plugins == []
         assert settings.tools is None
         assert settings.tags == {}
 
