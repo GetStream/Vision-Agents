@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -216,7 +217,22 @@ func (s *RoutingSuite) TestACustomersOwnModelIsPricedFromItsOwnConfig() {
 	quote := quoted(list, LLM, own, Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000})
 
 	s.EqualValues(3_000_000, quote.CostMicros)
-	s.True(quote.Billable)
+	s.EqualValues(2_000_000, quote.OutputCostMicros)
+	s.False(quote.Billable, "the customer pays their own host")
+	s.False(quote.Unpriced)
+}
+
+func (s *RoutingSuite) TestACustomersOwnModelWithNoRatesIsFree() {
+	logs := &bytes.Buffer{}
+	list, err := pricing.NewList("config", nil, slog.New(slog.NewTextHandler(logs, nil)))
+	s.Require().NoError(err)
+
+	quote := quoted(list, LLM, ProviderConfig{Provider: CustomProvider, Model: "mine"}, Usage{InputTokens: 1_000, OutputTokens: 1_000})
+
+	s.Zero(quote.CostMicros)
+	s.False(quote.Billable)
+	s.False(quote.Unpriced)
+	s.Empty(logs.String())
 }
 
 func (s *RoutingSuite) TestARowPricesTheMetersItStores() {

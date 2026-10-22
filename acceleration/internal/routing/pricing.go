@@ -141,10 +141,14 @@ func LocalItems(config Config) []pricing.Item {
 }
 
 // quote prices what one unit of work used. A customer's own model carries its price in its
-// config: its name is the customer's, so no list shared by every customer can hold it.
+// config: its name is the customer's, so no list shared by every customer can hold it. Its
+// cost is what the customer's host bills them, so it is shown but counts toward no spend,
+// and a model with no rate is free rather than unpriced.
 func quote(pricer pricing.Pricer, modality Modality, config ProviderConfig, attributes map[string]string, used pricing.Quantities) pricing.Quote {
 	if config.Provider == CustomProvider {
-		return entryOf(modality, config).Quote(used)
+		own := entryOf(modality, config).Quote(used)
+		own.Billable, own.Unpriced = false, false
+		return own
 	}
 	return pricer.Quote(ItemOf(modality, config, attributes), used)
 }
