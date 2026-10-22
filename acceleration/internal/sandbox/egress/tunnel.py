@@ -25,14 +25,18 @@ CONNECT_TIMEOUT = 10
 BACKLOG = 128
 # Seconds the proxy may stay silent once a client has stopped sending: the proxy's own idle
 # timeout for a tunnel, http.DefaultTransport's IdleConnTimeout (egress/proxy.go idleTimeout).
-IDLE_AFTER_EOF = 90
+# A test shortens it with VA_TUNNEL_IDLE_AFTER_EOF, which the router never sets.
+IDLE_AFTER_EOF = float(os.environ.get("VA_TUNNEL_IDLE_AFTER_EOF", 90))
 
 LISTEN, HOST, PORT, CA, PID = sys.argv[1:6]
 CONTEXT = ssl.create_default_context(cafile=CA)
 
 
 async def pipe(reader, writer, read):
-    """Copies reader to writer until reader ends, adding what it read to read[0]."""
+    """Copies reader to writer until reader ends, adding what it read to read[0].
+
+    Gives True if the reader was reset (RST) rather than ended.
+    """
     try:
         while True:
             data = await reader.read(CHUNK)
@@ -41,8 +45,11 @@ async def pipe(reader, writer, read):
             read[0] += len(data)
             writer.write(data)
             await writer.drain()
+    except ConnectionResetError:
+        return True
     except OSError:
         pass
+    return False
 
 
 async def handle(client_reader, client_writer):
@@ -75,7 +82,10 @@ async def handle(client_reader, client_writer):
     received = [0]
     reply = asyncio.ensure_future(pipe(upstream_reader, client_writer, received))
     reply.add_done_callback(close)
-    await pipe(client_reader, upstream_writer, [0])
+    # A client that was reset has gone: nothing is left to answer.
+    if await pipe(client_reader, upstream_writer, [0]):
+        close(reply)
+        return
     # A client that stops sending may still read the reply (a half-close). The TLS connection
     # cannot pass that on (asyncio's SSL transport has no write_eof), so it stays open while the
     # proxy still answers.

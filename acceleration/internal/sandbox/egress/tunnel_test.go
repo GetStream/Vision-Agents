@@ -359,6 +359,101 @@ func (s *TunnelSuite) TestAClientThatStopsSendingStillGetsTheReply() {
 	s.True(strings.HasSuffix(got, "answered"), got)
 }
 
+// holdOpen is a proxy that reads its request, never answers and tells when its connection ends.
+func (s *TunnelSuite) holdOpen() <-chan time.Time {
+	ended := make(chan time.Time, 1)
+	s.wire = newWire(s, s.serveTLS(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		ended <- time.Now()
+	}), s.rig.handler.ListenerTLS("127.0.0.1")))
+	return ended
+}
+
+// TestAProxyThatNeverAnswersAClientThatStoppedSendingIsClosedAfterTheIdleTime: the timer alone
+// frees the connection of a client that has gone (the router's proxy server has no idle limit).
+func (s *TunnelSuite) TestAProxyThatNeverAnswersAClientThatStoppedSendingIsClosedAfterTheIdleTime() {
+	s.T().Setenv("VA_TUNNEL_IDLE_AFTER_EOF", "1")
+	ended := s.holdOpen()
+	s.setUp()
+	conn, err := net.Dial("tcp", "127.0.0.1:"+s.port)
+	s.Require().NoError(err)
+	defer func() { _ = conn.Close() }()
+	start := time.Now()
+	_, err = conn.Write([]byte("GET http://stand.in/ HTTP/1.0\r\nHost: stand.in\r\n\r\n"))
+	s.Require().NoError(err)
+	s.Require().NoError(conn.(*net.TCPConn).CloseWrite())
+
+	select {
+	case at := <-ended:
+		s.GreaterOrEqual(at.Sub(start), 900*time.Millisecond, "not before the idle time")
+	case <-time.After(5 * time.Second):
+		s.Fail("the proxy's connection was still open 5 s after a 1 s idle time")
+	}
+}
+
+// TestAProxyThatKeepsAnsweringIsNotClosedAtTheIdleTime: a long download to a client that has
+// stopped sending stays open while bytes flow, and arrives whole.
+func (s *TunnelSuite) TestAProxyThatKeepsAnsweringIsNotClosedAtTheIdleTime() {
+	s.T().Setenv("VA_TUNNEL_IDLE_AFTER_EOF", "1")
+	s.wire = newWire(s, s.serveTLS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for range 8 {
+			_, _ = w.Write([]byte("tick "))
+			w.(http.Flusher).Flush()
+			time.Sleep(400 * time.Millisecond)
+		}
+	}), s.rig.handler.ListenerTLS("127.0.0.1")))
+	s.setUp()
+	conn, err := net.Dial("tcp", "127.0.0.1:"+s.port)
+	s.Require().NoError(err)
+	defer func() { _ = conn.Close() }()
+	_, err = conn.Write([]byte("GET http://stand.in/ HTTP/1.0\r\nHost: stand.in\r\n\r\n"))
+	s.Require().NoError(err)
+	s.Require().NoError(conn.(*net.TCPConn).CloseWrite())
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(10 * time.Second)))
+
+	got, err := io.ReadAll(conn)
+
+	s.Require().NoError(err)
+	s.True(strings.HasSuffix(string(got), strings.Repeat("tick ", 8)), string(got))
+}
+
+// TestAClientThatIsResetFreesTheProxysConnectionAtOnce: a reset is not a half-close, so nothing
+// waits for an answer (the idle time here is 60 s).
+func (s *TunnelSuite) TestAClientThatIsResetFreesTheProxysConnectionAtOnce() {
+	s.T().Setenv("VA_TUNNEL_IDLE_AFTER_EOF", "60")
+	ended := s.holdOpen()
+	s.setUp()
+	conn, err := net.Dial("tcp", "127.0.0.1:"+s.port)
+	s.Require().NoError(err)
+	_, err = conn.Write([]byte("GET http://stand.in/ HTTP/1.0\r\nHost: stand.in\r\n\r\n"))
+	s.Require().NoError(err)
+	time.Sleep(300 * time.Millisecond) // the forwarder has read the request and opened its connection
+	s.Require().NoError(conn.(*net.TCPConn).SetLinger(0))
+	s.Require().NoError(conn.Close())
+
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		s.Fail("the proxy's connection was still open 5 s after the client was reset")
+	}
+}
+
+// TestParallelChecksAllFindTheForwarderUp: of checks that start it together, the ones that lose
+// the port exit, and each must still find the winner up, however late it writes its pid.
+func (s *TunnelSuite) TestParallelChecksAllFindTheForwarderUp() {
+	var wg sync.WaitGroup
+	errs := make([]error, 30)
+	outs := make([]string, 30)
+	for i := range errs {
+		wg.Go(func() { outs[i], errs[i] = s.sh(s.mount.EachRun[0]) })
+	}
+	wg.Wait()
+
+	for i := range errs {
+		s.NoError(errs[i], outs[i])
+	}
+}
+
 // TestAnImageWithoutPython3FailsTheSetup: and Daytona runs no code after a failed setup.
 func (s *TunnelSuite) TestAnImageWithoutPython3FailsTheSetup() {
 	s.path = s.T().TempDir()
