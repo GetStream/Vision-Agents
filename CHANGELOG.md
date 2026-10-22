@@ -663,6 +663,16 @@ Each of the agent's spoken messages in the Chat channel already carries that sam
 now pinned by tests: one being written, settled, cut off, a greeting (`say-...`) or other line
 said as written, and each message of a reply a sentence voice leaves more than one of (#1128).
 
+The JS SDK's `session.speech` adds it up: `heard(message, now)` is `{ chars, done }`, the code points
+of the turn heard so far, exact once `spoke` has measured the playing utterance and estimated
+at the voice's rate before that, and `done` once it has played out or was cut off, at what the
+router says was heard. On a call, a reply known to be coming, from its first text on the socket
+or from `heard` being asked about the agent's message while it is still being written, is
+`{ chars: 0, done: false }` until its `speaking`, for at most `SPEECH_GRACE_MS` (5 s); one that
+turns out to say nothing is let go of at once, and one let go of stays let go of. Leaving the
+call or stopping the voice ends the holding. It reads the frames the session already receives,
+so `events()` is untouched (#TBD).
+
 ### A tool call waits for the person to sign in, and carries on once they have
 
 When the agent calls a connector bound as each person's own (`connection.type: session`) that
