@@ -555,6 +555,10 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
+	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
+	// was told to take back.
+	ordered  int
+	released []string
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -566,10 +570,14 @@ func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 }
 
 func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
+	s.ordered++
 	return Number{Vendor: s.vendor}, s.err
 }
 
-func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }
+func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
+	s.released = append(s.released, e164)
+	return s.err
+}
 
 func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
 	s.inbound = inbound
