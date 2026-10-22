@@ -237,7 +237,7 @@ plugin_events:
   and retries a refused one after 15.
 - The router is the client of the protocol, ChatGPT's role. `plugins/events.go` sends
   `server/discover` (refusing a server without `capabilities.events`), `events/subscribe`
-  and `events/unsubscribe`, and signs and verifies Standard Webhooks.
+  and `events/unsubscribe`; `internal/webhook` signs and verifies Standard Webhooks.
 - Each subscription has its own token and `whsec_` secret. The server delivers to
   `public_url` + `/v1/agents/plugins/events/<token>`, so `public_url` must be https and
   public for a real server: a local router needs a tunnel. The row is written before

@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
 
 type EventsSuite struct {
@@ -22,7 +23,7 @@ func TestEventsSuite(t *testing.T) {
 }
 
 func (s *EventsSuite) SetupTest() {
-	secret, err := NewWebhookSecret()
+	secret, err := webhook.NewSecret()
 	s.Require().NoError(err)
 	s.secret = secret
 }
@@ -79,64 +80,4 @@ func (s *EventsSuite) TestAServerWithoutEventsIsNotAskedToSubscribe() {
 		"issue.created", nil, Delivery{URL: "https://router.example/cb", Secret: s.secret}, server.Client())
 
 	s.ErrorIs(err, ErrNoEvents)
-}
-
-func (s *EventsSuite) TestTheSignatureIsStandardWebhooks() {
-	// The example in the Standard Webhooks specification, which its libraries test against.
-	signature, err := SignWebhook("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw", "msg_p5jXN8AQM9LWM0D4loKWxJek",
-		time.Unix(1614265330, 0), []byte(`{"test": 2432232314}`))
-
-	s.Require().NoError(err)
-	s.Equal("v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=", signature)
-}
-
-func (s *EventsSuite) TestADeliverySignedWithTheSecretIsAccepted() {
-	body := []byte(`{"eventId":"evt_1","name":"issue.created","data":{}}`)
-	header := s.signed("evt_1", time.Now(), body, s.secret)
-
-	s.NoError(VerifyWebhook(s.secret, header, body, time.Now()))
-}
-
-func (s *EventsSuite) TestADeliverySignedWithAnotherSecretIsRefused() {
-	other, err := NewWebhookSecret()
-	s.Require().NoError(err)
-	body := []byte(`{"eventId":"evt_1"}`)
-
-	s.ErrorIs(VerifyWebhook(s.secret, s.signed("evt_1", time.Now(), body, other), body, time.Now()), ErrBadSignature)
-}
-
-func (s *EventsSuite) TestABodyChangedAfterSigningIsRefused() {
-	header := s.signed("evt_1", time.Now(), []byte(`{"eventId":"evt_1"}`), s.secret)
-
-	s.ErrorIs(VerifyWebhook(s.secret, header, []byte(`{"eventId":"evt_2"}`), time.Now()), ErrBadSignature)
-}
-
-func (s *EventsSuite) TestAnOldSignatureIsRefused() {
-	body := []byte(`{"eventId":"evt_1"}`)
-	header := s.signed("evt_1", time.Now().Add(-time.Hour), body, s.secret)
-
-	s.ErrorIs(VerifyWebhook(s.secret, header, body, time.Now()), ErrBadSignature)
-}
-
-func (s *EventsSuite) TestEitherSignatureOfARotationIsEnough() {
-	old, err := NewWebhookSecret()
-	s.Require().NoError(err)
-	body := []byte(`{"eventId":"evt_1"}`)
-	now := time.Now()
-	stale, err := SignWebhook(old, "evt_1", now, body)
-	s.Require().NoError(err)
-	header := s.signed("evt_1", now, body, s.secret)
-	header.Set("webhook-signature", stale+" "+header.Get("webhook-signature"))
-
-	s.NoError(VerifyWebhook(s.secret, header, body, now))
-}
-
-func (s *EventsSuite) signed(id string, at time.Time, body []byte, secret string) http.Header {
-	signature, err := SignWebhook(secret, id, at, body)
-	s.Require().NoError(err)
-	header := http.Header{}
-	header.Set("webhook-id", id)
-	header.Set("webhook-timestamp", strconv.FormatInt(at.Unix(), 10))
-	header.Set("webhook-signature", signature)
-	return header
 }

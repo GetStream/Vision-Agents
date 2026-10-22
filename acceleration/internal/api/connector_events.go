@@ -33,7 +33,7 @@ const providerAppEventsPath = "/v1/connectors/events/"
 // maxConnectorEventBytes caps the body read before it is verified. Slack's pages name no
 // largest event (the Events API and request verification pages, opened October 6, 2026), so
 // this is the cap the router's other provider webhooks already use, channels.MaxDeliveryBytes
-// and plugins.MaxEventBytes (256 KiB). Unverified against Slack's largest event.
+// and webhook.MaxEventBytes (256 KiB). Unverified against Slack's largest event.
 const maxConnectorEventBytes = 256 << 10
 
 // signingSecretSuffix follows client.env in the variable that holds the operator's signing
