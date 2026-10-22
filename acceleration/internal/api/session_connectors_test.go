@@ -291,6 +291,54 @@ func (s *SessionConnectorsSuite) TestAForkOfASessionWhoseConfigWasDeletedGoesAhe
 	s.Equal(opened.Id, value(forked.ForkedFrom))
 }
 
+// TestAForkOfAnEndedSessionIsToldGuardedAndReviewedByItsConfig: the parent's row keeps none
+// of the config's prompts, so the fork reads them from the config with its bindings.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionIsToldGuardedAndReviewedByItsConfig() {
+	prompts := s.prompts()
+	parent := s.endedSession(s.promptedConfig(prompts))
+
+	s.Equal(prompts, s.forkPrompts(parent))
+}
+
+// TestAForkOfAnEndedSessionTakesItsConfigsPromptsAsTheyAreNow: what the parent was opened
+// with is gone with it, so the config edited since is what the fork is told.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionTakesItsConfigsPromptsAsTheyAreNow() {
+	config := s.promptedConfig(s.prompts())
+	parent := s.endedSession(config)
+	edited := s.prompts()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config, edited.config(), nil))
+
+	s.Equal(edited, s.forkPrompts(parent))
+}
+
+// TestAForkOfASessionWhoseConfigWasDeletedIsForkedAsAnUnpromptedOne: a config that is gone
+// tells the fork nothing, which then answers and is reviewed as one whose config has no prompts.
+func (s *SessionConnectorsSuite) TestAForkOfASessionWhoseConfigWasDeletedIsForkedAsAnUnpromptedOne() {
+	config := s.promptedConfig(s.prompts())
+	parent := s.endedSession(config)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	unprompted := s.forkPrompts(s.endedSession(s.promptedConfig(forkedPrompts{})))
+	s.Equal(forkedPrompts{answer: "Noted.", review: unprompted.review}, unprompted, "an unprompted fork is told nothing")
+	s.True(strings.HasPrefix(unprompted.review, "You are reviewing a recorded call"), "and is reviewed by the default guide")
+	s.Equal(unprompted, s.forkPrompts(parent))
+}
+
+// TestAForkOfARunningSessionKeepsTheInstructionsItWasOpenedWith: a live parent's spec carries
+// its prompts, so a config edited since does not reach the fork.
+func (s *SessionConnectorsSuite) TestAForkOfARunningSessionKeepsTheInstructionsItWasOpenedWith() {
+	prompts := s.prompts()
+	config := s.promptedConfig(prompts)
+	running := s.client.createSession(s.session(config, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config, s.prompts().config(), nil))
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+
+	s.Equal(prompts.instructions, value(forked.Instructions))
+}
+
 // TestASlackThreadSessionUsesTheAppsConnectionsOnly: everyone in the Slack thread writes in
 // its thread channel, so a session held there uses the app's connection and never one
 // person's, even one the request chose. The model's call goes through the app's binding. The
@@ -431,4 +479,76 @@ func (s *SessionConnectorsSuite) storedSelections(id string) string {
 			"SELECT connector_selections::text FROM agent_sessions WHERE id = ?", id).Scan(&stored) == nil
 	}, settleFor, 20*time.Millisecond)
 	return stored
+}
+
+// forkedPrompts is what a config tells a session, as the session shows it: its instructions,
+// its answer to a question its guardrail refuses, and what its review is judged by.
+type forkedPrompts struct {
+	instructions, answer, review string
+}
+
+// prompts are a config's prompts, unique to the test.
+func (s *SessionConnectorsSuite) prompts() forkedPrompts {
+	id := s.utils.uuid()
+	return forkedPrompts{
+		instructions: "Sell upgrade " + id,
+		answer:       "I cannot talk about upgrade " + id,
+		review:       "Score how well the agent sold upgrade " + id,
+	}
+}
+
+// config is the agent config's fields that hold the prompts. The guardrail's judge refuses
+// every turn with the answer.
+func (p forkedPrompts) config() map[string]any {
+	fields := map[string]any{}
+	if p.instructions != "" {
+		fields["instructions"] = p.instructions
+	}
+	if p.answer != "" {
+		fields["guardrail"] = "---\ntype: llm\ntarget: judging/judging-model\nmode: blocking\nrefusal: " + p.answer + "\n---\nNever discuss upgrades."
+	}
+	if p.review != "" {
+		fields["review"] = map[string]any{"instructions": p.review}
+	}
+	return fields
+}
+
+// promptedConfig is a text agent's config holding prompts, on the model that reviews.
+func (s *SessionConnectorsSuite) promptedConfig(prompts forkedPrompts) string {
+	fields := prompts.config()
+	fields["name"], fields["mode"], fields["llm"] = "prompted-"+s.utils.uuid(), "text", "summarising/summarising-model"
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", fields, &created))
+	return created.Id
+}
+
+// endedSession is a session of config, opened and stopped once its row is written.
+func (s *SessionConnectorsSuite) endedSession(config string) string {
+	opened := s.client.createSession(s.session(config, nil))
+	s.storedSelections(opened.Id)
+	s.client.stopSession(opened.Id)
+	return opened.Id
+}
+
+// forkPrompts forks parent onto the model that reviews, asks it a question, stops it, and
+// reads back what it was told. The review's output rule, which ends every review prompt,
+// is left off.
+func (s *SessionConnectorsSuite) forkPrompts(parent string) forkedPrompts {
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ModelOverwrites: &ModelOverwrites{Llm: pointerTo("summarising/summarising-model")}}, &forked))
+	watching := s.client.opens("/v1/agents/sessions/" + forked.Id + "/events")
+	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+forked.Id+"/respond",
+		RespondRequest{Text: "Is the upgrade worth it?", RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusOK, status, failure)
+	answer, _ := s.await(watching, "responded")["text"].(string)
+	s.client.stopSession(forked.Id)
+
+	var call Call
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+forked.Id, nil, &call) == http.StatusOK &&
+			call.ReviewNotes != nil
+	}, 2*settleFor, 10*time.Millisecond, "the fork is reviewed when it ends")
+	review := strings.TrimSuffix(*call.ReviewNotes, "\n\n"+`Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`)
+	return forkedPrompts{instructions: value(forked.Instructions), answer: answer, review: review}
 }
