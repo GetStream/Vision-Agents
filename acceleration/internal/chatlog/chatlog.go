@@ -94,9 +94,9 @@ var purposes = []string{agent.PurposeGreeting, agent.PurposeCheckIn, agent.Purpo
 // to the one it watched being written. It is the turn_id the session socket's speaking and
 // spoke name the reply's utterances by, so a page can reveal the message as it is heard.
 // Every message of the agent's that was said carries it: one being written, settled, cut
-// off, a line said as written, and each of the messages a reply spoken a sentence at a time
-// can leave. A synthesis id is not stamped: a message is written before the voice has any
-// of it, and one message may be several of a sentence voice's syntheses.
+// off, and a line said as written. A turn's reply is one message, however many syntheses a
+// voice taking a sentence at a time makes of it, so a synthesis id is not stamped: a
+// message is written before the voice has any of it.
 const turnField = "turn_id"
 
 // interruptedTextField keeps what a reply the caller cut off was going to say. Its text is
@@ -479,6 +479,10 @@ type reply struct {
 	// heard is what a line being said again was stored as when it was first heard, so its
 	// message goes back to that if the rest is not taken as said.
 	heard string
+	// spoke says the voice finished some of it before the model finished writing it, which
+	// a voice taking a sentence at a time does. It is settled once the model has, so the
+	// rest of the reply stays in the same message rather than starting another.
+	spoke bool
 }
 
 // writer is the state behind the queue. The writer goroutine is the only one that touches
@@ -564,6 +568,10 @@ func (w *writer) handle(queued message) {
 		}
 		if _, cut := w.interrupted[queued.turnID]; cut {
 			w.abandon(queued.turnID, queued.text)
+			return
+		}
+		if writing.spoke {
+			w.settle(queued.turnID, queued.text)
 		}
 	case spoken:
 		if _, cut := w.interrupted[queued.turnID]; cut {
@@ -572,11 +580,11 @@ func (w *writer) handle(queued message) {
 		writing, started := w.writing[queued.turnID]
 		text := queued.text
 		if started {
-			if writing.generated != "" {
-				text = writing.generated
-			} else if writing.text != "" {
-				text = writing.text
+			if writing.generated == "" && writing.text != "" {
+				writing.spoke = true
+				return
 			}
+			text = cmp.Or(writing.generated, writing.text)
 		}
 		w.settle(queued.turnID, text)
 	case interrupt:
@@ -615,6 +623,11 @@ func (w *writer) handle(queued message) {
 	case unsaid:
 		if w.answering == queued.turnID {
 			w.owed = queued.pending
+		}
+		// The model finished with nothing it stands by, so a reply some of which was already
+		// spoken is kept as far as it was written.
+		if writing, started := w.writing[queued.turnID]; started && writing.spoke {
+			w.settle(queued.turnID, "")
 		}
 		w.done(queued.turnID)
 	case toolStarted:

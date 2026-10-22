@@ -217,6 +217,7 @@ func (s *ChatLogSuite) TestALimitedAppIsNotAskedAgainOnEveryTick() {
 	s.Equal(1, sends, "a 429 says when to ask again, and Stream closes the connection on each")
 
 	chat.LiftRateLimit("/message")
+	writer.handle(message{author: s.log.agent, text: "hi there", turnID: "turn-1", kind: prepared})
 	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken})
 	s.Equal([]string{"hi there"}, chat.Messages(s.log.channel), "the finished reply is still stored")
 }
@@ -641,9 +642,10 @@ func (s *ChatLogSuite) TestAReplyCutOffKeepsItsTurn() {
 	s.Equal("turn-2", stored[1].Custom[turnField], "what a native model said before the cut")
 }
 
-func (s *ChatLogSuite) TestEveryMessageOfAReplySpokenSentenceBySentenceNamesItsTurn() {
-	// A voice that takes a sentence at a time reports each one spoken, and one finished
-	// before the model is leaves the rest of the reply to a message of its own.
+func (s *ChatLogSuite) TestAReplySpokenSentenceBySentenceIsOneMessage() {
+	// A voice that takes a sentence at a time reports each one spoken, the first of them
+	// before the model has finished. The page reveals the message by offsets into its text,
+	// so the rest of the reply has to stay in it.
 	stored := s.written(
 		agent.ResponseDelta{TurnID: "turn-1", Text: "One. "},
 		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0"},
@@ -652,10 +654,46 @@ func (s *ChatLogSuite) TestEveryMessageOfAReplySpokenSentenceBySentenceNamesItsT
 		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#1"},
 	)
 
-	s.Require().Len(stored, 2)
-	for _, message := range stored {
-		s.Equal("turn-1", message.Custom[turnField])
-	}
+	s.Require().Len(stored, 1)
+	s.Equal("One. Two.", stored[0].Text)
+	s.Equal("turn-1", stored[0].Custom[turnField])
+	s.Equal(false, stored[0].Custom[generatingField])
+}
+
+func (s *ChatLogSuite) TestASentenceSpokenBeforeTheModelFinishedLeavesTheReplyBeingWritten() {
+	stored := s.written(
+		agent.ResponseDelta{TurnID: "turn-1", Text: "One. "},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0"},
+		agent.ResponseDelta{TurnID: "turn-1", Text: "Two."},
+	)
+
+	s.Require().Len(stored, 1, "what is still being written is shown on the same message")
+	s.Equal(true, stored[0].Custom[generatingField], "the model has not finished it")
+}
+
+func (s *ChatLogSuite) TestAReplySpokenInPartWhoseModelStoodByNothingKeepsWhatWasWritten() {
+	stored := s.written(
+		agent.ResponseDelta{TurnID: "turn-1", Text: "One. "},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0"},
+		agent.Responded{TurnID: "turn-1"},
+	)
+
+	s.Require().Len(stored, 1)
+	s.Equal("One. ", stored[0].Text)
+	s.Equal(false, stored[0].Custom[generatingField], "it is not left saying it is still coming")
+}
+
+func (s *ChatLogSuite) TestAReplySpokenInPartAndCutOffBeforeTheModelFinishedIsOneInterruptedMessage() {
+	stored := s.written(
+		agent.ResponseDelta{TurnID: "turn-1", Text: "One. "},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0"},
+		agent.ResponseDelta{TurnID: "turn-1", Text: "Two."},
+		agent.Interrupted{TurnID: "turn-1"},
+	)
+
+	s.Require().Len(stored, 1)
+	s.Equal(true, stored[0].Custom[interruptedField])
+	s.Equal("turn-1", stored[0].Custom[turnField])
 }
 
 func (s *ChatLogSuite) TestAWrittenReplyNamesNoTurn() {
@@ -887,6 +925,7 @@ func (s *ChatLogSuite) TestTimingsAreOffUnlessAsked() {
 
 	writer := newWriter(s.log)
 	writer.handle(message{author: s.log.agent, text: "hi", turnID: "turn-1", kind: piece})
+	writer.handle(message{author: s.log.agent, text: "hi", turnID: "turn-1", kind: prepared})
 	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken})
 
 	s.Empty(writer.recent, "nothing is remembered for timings that were not asked for")
@@ -1346,6 +1385,7 @@ func (s *ChatLogSuite) TestAnEarlierReplyEndingDoesNotClearTheTurnAfterIt() {
 
 	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow "})
 	writer.show()
+	s.play(writer, agent.Responded{TurnID: "turn-1", Text: "Tomorrow"})
 	s.play(writer, agent.Responding{TurnID: "turn-2"}, agent.Spoke{TurnID: "turn-1"})
 
 	s.Equal([]string{
@@ -1433,8 +1473,8 @@ func (s *ChatLogSuite) TestAReplyStoredByAStoreThatTimedOutIsWrittenOver() {
 }
 
 func (s *ChatLogSuite) TestAReplySpokenInPiecesKeepsEveryPiece() {
-	// A voice that speaks a sentence at a time reports each as spoken, and words after the
-	// first are a message of their own rather than written over it.
+	// A voice that speaks a sentence at a time reports each as spoken, the first before the
+	// model has finished. Every piece is kept, in the one message the reply is.
 	chat := s.useChat()
 	writer := newWriter(s.log)
 
@@ -1442,7 +1482,7 @@ func (s *ChatLogSuite) TestAReplySpokenInPiecesKeepsEveryPiece() {
 	writer.show()
 	s.play(writer, agent.Spoke{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: " Two."})
 	writer.show()
-	s.play(writer, agent.Spoke{TurnID: "turn-1"})
+	s.play(writer, agent.Responded{TurnID: "turn-1", Text: "One. Two."}, agent.Spoke{TurnID: "turn-1"})
 
-	s.Equal([]string{"One.", " Two."}, chat.Messages(s.log.channel))
+	s.Equal([]string{"One. Two."}, chat.Messages(s.log.channel))
 }
