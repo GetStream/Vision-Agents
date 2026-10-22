@@ -74,6 +74,20 @@ func (s *HopsSuite) TestACustomersTrunkIsAHopOnlyWhenTheCallWentThroughOne() {
 		Addrs: []netip.Addr{netip.MustParseAddr("192.0.2.9")}, How: "reported"}, with[4])
 }
 
+func (s *HopsSuite) TestStreamsMediaAddressIsAnObservedHopOnlyWhenTheBridgeSawIt() {
+	without := s.hops("sip.example.com")
+	with := s.hopsOf(callHosts{
+		AgentSFU: "sfu.example.com", Router: "router.example.com", StreamSIP: "sip.example.com",
+		CustomerTrunk: "trunk.example.com", StreamMedia: "203.0.113.10",
+	})
+
+	s.NotContains(names(without), "stream_media")
+	s.Require().Len(with, 6)
+	s.Equal(hop{Name: "stream_media", Host: "203.0.113.10",
+		Addrs: []netip.Addr{netip.MustParseAddr("203.0.113.10")}, How: "observed"}, with[5])
+	s.Equal("inferred", with[3].How, "the SIP host is still only what DNS says")
+}
+
 func (s *HopsSuite) TestTheCallersSFUIsAHopNextToTheAgents() {
 	hops := s.hops("sip.example.com")
 

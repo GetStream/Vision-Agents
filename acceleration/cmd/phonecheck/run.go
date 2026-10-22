@@ -206,6 +206,10 @@ func (c *callRun) logSites(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	streamMedia, err := c.readStreamMedia(ctx, sessionID, placed)
+	if err != nil {
+		return err
+	}
 	sites, err := c.readSites(ctx, sessionID)
 	if err != nil {
 		return err
@@ -214,7 +218,7 @@ func (c *callRun) logSites(ctx context.Context) error {
 
 	hops := collectHops(ctx, c.logger, c.d.lookup, c.resolveSIP, callHosts{
 		AgentSFU: joined.SFUHost, CallerSFU: sites.Caller.SFU, Router: routerHost(c.cfg.Router), StreamSIP: sipHost,
-		CustomerTrunk: placed.CustomerTrunkHost,
+		CustomerTrunk: placed.CustomerTrunkHost, StreamMedia: streamMedia,
 	})
 	logHops(ctx, c.logger, c.d.locator, hops)
 	logStreamSFUs(c.logger, sites)
@@ -241,6 +245,22 @@ func (c *callRun) readPlaced(ctx context.Context, sessionID string) (callPlacedR
 		c.logger.Warn("the router wrote no call_placed row")
 	}
 	return placed, nil
+}
+
+// readStreamMedia reads where Stream sent its audio from, which only a call through a
+// customer's own SIP trunk has: there the router's own bridge dials Stream and sees it.
+func (c *callRun) readStreamMedia(ctx context.Context, sessionID string, placed callPlacedRow) (string, error) {
+	if placed.CustomerTrunkHost == "" {
+		return "", nil
+	}
+	addr, err := readStreamMedia(ctx, c.d.router, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("read the bridge's media addresses: %w", err)
+	}
+	if addr == "" {
+		c.logger.Warn("the router wrote no bridge_media row")
+	}
+	return addr, nil
 }
 
 // readSites waits for the call_sites row, which the router writes once Stream says the call ended.

@@ -181,13 +181,18 @@ Flags, shared by both:
 
 One line per hop: `hop`, `host`, `address`, `place`, `how`. `how` says how we know:
 
-- `observed`: the tool resolved it itself;
+- `observed`: seen on the call: the tool resolved it itself, or the router's SIP bridge saw it;
 - `inferred`: resolved from a place you chose, not seen on the call;
 - `reported`: the router or Stream said so.
 
-The hops are `agent_sfu`, `caller_sfu`, `router_address`, `stream_sip`, and `customer_trunk`
-when the agent number is on a customer's own SIP trunk (the trunk's host, as the router
-reports it).
+The hops are `agent_sfu`, `caller_sfu`, `router_address`, `stream_sip`, and, when the agent
+number is on a customer's own SIP trunk, `customer_trunk` (the trunk's host, as the router
+reports it) and `stream_media`.
+
+`stream_sip` is the Stream SIP host as DNS answers it from `-sip-lookup-from`, so it is
+`inferred`. On a trunk call the router's own SIP bridge dials Stream and sees where Stream
+sends its audio from in the SDP; that address is the `stream_media` hop, `observed`. Where the
+two differ, `stream_media` is where the call went.
 
 Two sources name SFUs: `agent_sfu` is the SFU the agent joined, from the router's joined row;
 `agent_current_sfu` and `caller_current_sfu` are Stream's participant stats. The `caller_sfu`
@@ -224,7 +229,8 @@ grep session_id=<id> router.log
 ## 7. Known limits
 
 - The agent number's own vendor leg is not logged.
-- The Stream SIP server is inferred from DNS, not seen on the call.
+- The Stream SIP server is inferred from DNS, not seen on the call, except Stream's media
+  address on a customer's own SIP trunk (`stream_media`).
 - The region is only the label you passed, unless the vendor's call record reports one.
 - A Telnyx person answering an outbound call is not observed (`person call not observed`).
 

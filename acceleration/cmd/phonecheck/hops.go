@@ -7,9 +7,10 @@ import (
 	"strings"
 )
 
-// hop is one place the call passed through. How says how we know: "observed" (we resolved
-// it ourselves), "inferred" (resolved from a chosen place, not seen on the call) or
-// "reported" (the router or Stream said so).
+// hop is one place the call passed through. How says how we know: "observed" (seen on the
+// call: we resolved it ourselves, or the router's SIP bridge saw it in the SDP), "inferred"
+// (resolved from a chosen place, not seen on the call) or "reported" (the router or Stream
+// said so).
 type hop struct {
 	Name  string
 	Host  string
@@ -19,10 +20,11 @@ type hop struct {
 
 type lookupFunc func(ctx context.Context, host string) ([]netip.Addr, error)
 
-// callHosts are the hosts a call passed through. CustomerTrunk is empty unless the call went
-// out through a customer's own SIP trunk.
+// callHosts are the hosts a call passed through. CustomerTrunk and StreamMedia are empty
+// unless the call went out through a customer's own SIP trunk. StreamMedia is an address,
+// not a host: where Stream sent its audio from, as the router's bridge saw it.
 type callHosts struct {
-	AgentSFU, CallerSFU, Router, StreamSIP, CustomerTrunk string
+	AgentSFU, CallerSFU, Router, StreamSIP, CustomerTrunk, StreamMedia string
 }
 
 // collectHops resolves each hop's host. resolveSIP looks the SIP host up from the place chosen
@@ -37,7 +39,21 @@ func collectHops(ctx context.Context, logger *slog.Logger, lookup, resolveSIP lo
 	if hosts.CustomerTrunk != "" {
 		hops = append(hops, resolved(ctx, logger, lookup, hop{Name: "customer_trunk", Host: hosts.CustomerTrunk, How: "reported"}))
 	}
+	if hosts.StreamMedia != "" {
+		hops = append(hops, parsed(logger, hop{Name: "stream_media", Host: hosts.StreamMedia, How: "observed"}))
+	}
 	return hops
+}
+
+// parsed is a hop whose host is already an address.
+func parsed(logger *slog.Logger, h hop) hop {
+	addr, err := netip.ParseAddr(h.Host)
+	if err != nil {
+		logger.Warn("a hop's address is not an address", "hop", h.Name, "host", h.Host)
+		return h
+	}
+	h.Addrs = []netip.Addr{addr}
+	return h
 }
 
 func resolved(ctx context.Context, logger *slog.Logger, lookup lookupFunc, h hop) hop {
