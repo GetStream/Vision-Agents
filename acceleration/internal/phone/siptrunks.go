@@ -44,10 +44,7 @@ const (
 	defaultSIPTransport = "tcp"
 )
 
-var (
-	e164Pattern    = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
-	countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
-)
+var countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
 
 // SIPTrunk is a customer's own SIP trunk as a call is dialled through it, password open.
 type SIPTrunk struct {
@@ -256,7 +253,7 @@ func (s *Service) AddTrunkNumber(ctx context.Context, request TrunkNumber) (stor
 	}
 	country := strings.ToUpper(request.Country)
 	var reasons []string
-	if !e164Pattern.MatchString(request.E164) {
+	if !store.IsE164(request.E164) {
 		reasons = append(reasons, fmt.Sprintf("e164 %q is not an E.164 number, e.g. +15551234567", request.E164))
 	}
 	if !countryPattern.MatchString(country) {

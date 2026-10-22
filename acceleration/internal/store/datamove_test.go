@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"strings"
@@ -675,7 +676,7 @@ func (s *DataMoveSuite) TestAMovedNumberLeavesItsBridgePasswordBehind() {
 		E164: "+15550000110", Vendor: "telnyx", Country: "US", CustomerID: "acme",
 	}))
 	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000110", NumberAttachment{
-		TrunkID: "trunk-1", CallType: "default", CallID: "call-1",
+		TrunkID: "trunk-1", RouteID: "route-1", CallType: "default", CallID: "call-1",
 		BridgeURI: "sip:trunk.example.com", BridgeUsername: "agent",
 		BridgePasswordSealed: []byte("sealed bridge"), BridgePasswordKEKVersion: 1,
 	}))
@@ -706,8 +707,143 @@ func (s *DataMoveSuite) TestAMovedNumberLeavesItsBridgePasswordBehind() {
 		"+15550000110").Scan(&sealed, &version))
 	s.Empty(sealed)
 	s.False(version.Valid, "the source password's key version does not come along")
+
+	// Nor does where its calls went, which a hook finds the number by.
+	routing := map[string]*sql.NullString{"stream_trunk_id": {}, "stream_route_id": {}, "stream_call_id": {},
+		"stream_call_type": {}, "bridge_uri": {}, "bridge_username": {}}
+	for column, value := range routing {
+		s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+			"SELECT "+column+" FROM phone_numbers WHERE e164 = ?", "+15550000110").Scan(value))
+		s.False(value.Valid, "%s came along as %q", column, value.String)
+	}
 	_, err = s.destination.AttachedBridge(s.ctx, "telnyx", "+15550000110")
-	s.ErrorIs(err, ErrNoStoredBridge, "it arrives needing to be attached again")
+	s.ErrorIs(err, ErrNoNumber, "it arrives needing to be attached again")
+}
+
+func (s *DataMoveSuite) TestAMovedNumberIsHeldWhereItArrives() {
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000111", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+
+	s.move("acme", "acme")
+	s.move("acme", "acme")
+
+	held, err := s.destination.Number(s.ctx, "acme", "+15550000111")
+	s.Require().NoError(err)
+	s.Equal("plivo", held.Vendor)
+}
+
+func (s *DataMoveSuite) TestANumberInAnotherFormIsNotImported() {
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000112", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+
+	// Each is a form a vendor reads as +15550000112.
+	for _, form := range []struct{ vendor, e164 string }{
+		{"plivo", "15550000112"}, {"bandwidth", "15550000112"}, {"bandwidth", "5550000112"},
+		{"didww", "15550000112"}, {"vonage", "15550000112"},
+	} {
+		err := s.destination.ImportRow(s.ctx, "other", "phone_numbers", s.importedNumber(form.e164, form.vendor))
+		s.ErrorIs(err, ErrNotE164, "%s %s", form.vendor, form.e164)
+	}
+	err := s.destination.ApplyChanges(s.ctx, "other", []DataChange{{
+		Table: "phone_numbers", Op: ChangeInsert, Payload: s.importedNumber("15550000112", "plivo"),
+	}})
+	s.ErrorIs(err, ErrNotE164, "nor replayed as a change")
+
+	held, err := s.destination.CustomerNumbers(s.ctx, "other", true)
+	s.Require().NoError(err)
+	s.Empty(held)
+	_, err = s.destination.Number(s.ctx, "acme", "+15550000112")
+	s.NoError(err, "the number stays with who held it")
+}
+
+func (s *DataMoveSuite) TestANumberAnotherCustomerHoldsIsNotImported() {
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000113", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+	_, err := s.destination.DB().ExecContext(s.ctx, "INSERT INTO phone_numbers (e164, vendor, country, customer_id)"+
+		" VALUES ('15550000114', 'plivo', 'US', 'acme')")
+	s.Require().NoError(err, "held in another form, before every write checked the form")
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+5550000120", Vendor: "bandwidth", Country: "US", CustomerID: "acme",
+	}))
+
+	// Bandwidth reads +15550000113 and +5550000113 as one number.
+	for _, number := range []struct{ vendor, e164 string }{
+		{"plivo", "+15550000113"}, {"bandwidth", "+15550000113"}, {"didww", "+15550000114"},
+		{"bandwidth", "+5550000113"}, {"bandwidth", "+15550000120"},
+	} {
+		err := s.destination.ImportRow(s.ctx, "other", "phone_numbers", s.importedNumber(number.e164, number.vendor))
+		s.ErrorIs(err, ErrNumberHeldElsewhere, "%s %s", number.vendor, number.e164)
+	}
+}
+
+func (s *DataMoveSuite) TestANumberIsReadByItsColumnsAsTheyAreNamed() {
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000119", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+
+	// A key in another case names no column, so it gives nothing back.
+	for _, number := range []struct {
+		vendor, e164 string
+		refused      error
+	}{
+		{"bandwidth", "+15550000119", ErrNumberHeldElsewhere}, {"plivo", "15550000119", ErrNotE164},
+	} {
+		var row map[string]any
+		s.Require().NoError(json.Unmarshal(s.importedNumber(number.e164, number.vendor), &row))
+		delete(row, "released_at")
+		row["Released_At"] = time.Now().UTC()
+		encoded, err := json.Marshal(row)
+		s.Require().NoError(err)
+
+		err = s.destination.ImportRow(s.ctx, "other", "phone_numbers", encoded)
+		s.ErrorIs(err, number.refused, "%s %s", number.vendor, number.e164)
+	}
+	held, err := s.destination.CustomerNumbers(s.ctx, "other", true)
+	s.Require().NoError(err)
+	s.Empty(held)
+}
+
+func (s *DataMoveSuite) TestANumberNobodyElseHoldsAtAVendorIsImported() {
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000115", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+	s.Require().NoError(s.destination.ReleaseNumber(s.ctx, "acme", "+15550000115", time.Time{}))
+	s.Require().NoError(s.destination.AddTrunkNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000116", Country: "US", CustomerID: "acme", SIPTrunkID: s.trunkOf(s.destination, "acme").ID,
+	}))
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000117", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+
+	for name, row := range map[string]json.RawMessage{
+		"one acme gave back":                       s.importedNumber("+15550000115", "plivo"),
+		"one acme has on its trunk":                s.importedNumber("+15550000116", "plivo"),
+		"another one at a vendor that keeps its 1": s.importedNumber("+5550000117", "plivo"),
+		"one given back, in any form":              s.importedNumber("15550000118", "plivo", "released_at", time.Now().UTC()),
+		"one acme holds, on a trunk": s.importedNumber("+15550000117", "sip_trunk",
+			"sip_trunk_id", s.trunkOf(s.destination, "other").ID),
+	} {
+		s.NoError(s.destination.ImportRow(s.ctx, "other", "phone_numbers", row), name)
+	}
+}
+
+// importedNumber is a number as an import file can carry it, under an id nothing here has,
+// with any further columns given as name and value pairs.
+func (s *DataMoveSuite) importedNumber(e164, vendor string, columns ...any) json.RawMessage {
+	row := map[string]any{
+		"id": rand.Int64N(1 << 50), "e164": e164, "vendor": vendor, "country": "US",
+		"capabilities": []string{"voice"}, "monthly_cost_micros": 0, "customer_id": "whoever",
+		"tags": map[string]string{}, "purchased_at": time.Now().UTC(), "released_at": nil,
+	}
+	for i := 0; i+1 < len(columns); i += 2 {
+		row[columns[i].(string)] = columns[i+1]
+	}
+	encoded, err := json.Marshal(row)
+	s.Require().NoError(err)
+	return encoded
 }
 
 func (s *DataMoveSuite) TestAnImportedNumberCannotPointAtAnotherCustomersTrunk() {
