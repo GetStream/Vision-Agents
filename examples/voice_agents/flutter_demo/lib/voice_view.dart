@@ -61,7 +61,10 @@ class _VoiceViewState extends State<VoiceView> {
       final voice = await VoiceSession.start(
         Demo.agents,
         agent: Demo.agentName,
-        options: SessionOptions(tools: Demo.tools, tts: 'inworld/inworld-tts-2-flash'),
+        options: SessionOptions(
+          tools: Demo.tools,
+          tts: 'inworld/inworld-tts-2-flash',
+        ),
       );
       if (!mounted) {
         await voice.end();
