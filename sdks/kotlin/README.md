@@ -102,6 +102,25 @@ Tools are answered inside `AgentSession` whether or not anybody collects `events
 conversation see while it runs, and `executor = AgentTool.Executor.Client` shows the call as
 waiting on the person's device.
 
+### A tool that shows the model a picture
+
+Declare it with `AgentTool.withPictures` and return a `ToolOutput` to answer with pictures beside
+the words, each a data URI or an https URL:
+
+```kotlin
+val snapshot = AgentTool.withPictures("photograph_room", "Take a photo of the room.") {
+    ToolOutput(
+        text = "the room, just now",
+        images = listOf(ImageSource("data:image/jpeg;base64," + Base64.encodeToString(jpeg, Base64.NO_WRAP))),
+    )
+}
+```
+
+On a call the router hands the pictures to the agent's `vision` skill. In a chat, which has no
+such worker, a model that sees images is shown them itself, with its next reply alone; one that
+reads only text is told the tool failed. One socket message holds at most 5 MB, so shrink a
+photo first.
+
 ### Finding a conversation again
 
 Lists come a page at a time. Pass a page's `nextCursor` back as `cursor`, with the same filters,

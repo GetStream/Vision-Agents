@@ -153,6 +153,29 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `a tool's pictures go back beside its words`() = runBlocking {
+        val photograph = AgentTool.withPictures("photograph_room", "Photograph the room.") {
+            ToolOutput("the kitchen", listOf(ImageSource("data:image/png;base64,iVBORw0KGgo=")))
+        }
+        val chat = agents.chat(SessionOptions(tools = listOf(photograph)))
+
+        router.script.send(
+            Script.Send("""{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}","request_id":"r1","turn_id":"t1"}"""),
+        )
+
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("c1"), answer["tool_call_id"])
+        assertEquals(
+            Json.parseToJsonElement(
+                """[{"type":"text","text":"the kitchen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]""",
+            ),
+            answer["output"],
+        )
+        assertEquals(JsonPrimitive(""), answer["error"])
+        chat.close()
+    }
+
+    @Test
     fun `a tool this device never declared is left for whoever owns it`() = runBlocking {
         val chat = agents.chat()
 

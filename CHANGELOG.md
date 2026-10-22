@@ -852,7 +852,7 @@ of what Juno sees.
 
 A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
 (`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
-whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
+whose `run` returns one, and in Kotlin by returning one from `AgentTool.withPictures`. Each picture is a data URI or an https URL, and the session socket
 carries them as `tool_result` parts, which the router already took. On a call it hands them to
 the agent's `vision` skill, so a tool can show the agent what a camera sees. In a written
 conversation, which has no vision worker, a conversation model that takes images is shown them
