@@ -10,10 +10,8 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/redis/rueidis"
@@ -80,25 +78,20 @@ func (s *ProxySuite) proxied(config sandbox.Config, proxy string, more ...sandbo
 	return box
 }
 
-// TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomains: Daytona holds the proxy URL with
-// the sandbox's credential, the allow list is the grants' hosts and the config's domains and
-// never the proxy's host, the sandbox's own env holds the placeholder alone, and every command
-// and run gets the CA env, which Daytona's netleash would replace in the sandbox's. The CA file
-// and its bundle come before any code, once per sandbox.
-func (s *ProxySuite) TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomains() {
-	const proxy = "http://proxy.stg.example:8091"
-	cases := []struct {
-		config  sandbox.Config
-		proxy   string
-		domains string
-	}{
-		{sandbox.Config{}, proxy, "api.github.com,uploads.github.com"},
-		{sandbox.Config{}, "http://203.0.113.7:8091", "api.github.com,uploads.github.com"},
-		{sandbox.Config{Network: true, AllowedDomains: []string{"pypi.org", "api.github.com", "github.com", "*.pythonhosted.org"}}, proxy,
-			"pypi.org,api.github.com,github.com,*.pythonhosted.org,uploads.github.com"},
+// TestTheSandboxReachesTheProxyAlone: Daytona's network allow list is the proxy's address
+// alone, with no domain list and no OutboundProxyUrl, which would bring Daytona's netleash in,
+// whatever domains the config allows. The sandbox's own env holds the placeholder alone, and
+// every command and run gets the proxy with the sandbox's credential and the CA env, which
+// netleash would replace in the sandbox's. The CA file and its bundle come before any code,
+// once per sandbox.
+func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
+	const proxy = "http://203.0.113.7:8091"
+	cases := []sandbox.Config{
+		{},
+		{Network: true, AllowedDomains: []string{"pypi.org", "api.github.com", "github.com", "*.pythonhosted.org"}},
 	}
-	for _, c := range cases {
-		box := s.proxied(c.config, c.proxy)
+	for _, config := range cases {
+		box := s.proxied(config, proxy)
 		s.Require().NoError(box.Write(s.ctx, "dir/f.txt", []byte("x")))
 		_, err := box.Run(s.ctx, "print(1)", nil)
 		s.Require().NoError(err)
@@ -107,31 +100,39 @@ func (s *ProxySuite) TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomai
 	}
 
 	for i, created := range s.platform.requests() {
-		c := cases[i]
 		s.Equal([]string{"GITHUB_TOKEN"}, slices.Collect(maps.Keys(created["env"].(map[string]any))), i)
 		s.Regexp(`^va_ph_[A-Z2-7]{26}$`, created["env"].(map[string]any)["GITHUB_TOKEN"])
-		s.Regexp(`^http://sbx:[A-Z2-7]{26}@`+regexp.QuoteMeta(strings.TrimPrefix(c.proxy, "http://"))+`$`, created["outboundProxyUrl"], i)
-		s.Equal(c.domains, valueOr(created, "domainAllowList"), i)
-		s.NotContains(created, "networkAllowList")
+		s.Equal("203.0.113.7/32", created["networkAllowList"], i)
+		s.NotContains(created, "domainAllowList", i)
+		s.NotContains(created, "outboundProxyUrl", i)
 		s.Equal(false, created["networkBlockAll"])
 		s.NotContains(created, "secrets")
 	}
 	s.Len(s.platform.requests(), len(cases))
 	bundle := "/tmp/va-egress-ca-bundle.pem"
 	runEnv := map[string]any{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle, "GIT_SSL_CAINFO": bundle,
-		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem"}
+		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1"}
+	withProxy := func(env map[string]any) map[string]any {
+		proxied := maps.Clone(runEnv)
+		for _, name := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
+			s.Regexp(`^http://sbx:[A-Z2-7]{26}@203\.0\.113\.7:8091$`, env[name], name)
+			proxied[name] = env[name]
+		}
+		return proxied
+	}
 	s.Len(s.platform.executed(), 2*len(cases))
 	for _, ran := range s.platform.executed() {
-		s.Equal(runEnv, ran["envs"], "every run")
+		envs, _ := ran["envs"].(map[string]any)
+		s.Equal(withProxy(envs), envs, "every run")
 	}
 	s.Len(s.platform.rawCommands, 2*len(cases))
 	for _, raw := range s.platform.rawCommands {
 		var command struct{ Envs map[string]any }
 		s.Require().NoError(json.Unmarshal([]byte(raw), &command))
-		s.Equal(runEnv, command.Envs, "every command")
+		s.Equal(withProxy(command.Envs), command.Envs, "every command")
 	}
 	s.Equal([]string{"/tmp/va-egress-ca.pem after 0 runs", "dir/f.txt after 0 runs", "/tmp/va-egress-ca.pem after 2 runs",
-		"dir/f.txt after 2 runs", "/tmp/va-egress-ca.pem after 4 runs", "dir/f.txt after 4 runs"}, s.platform.uploads,
+		"dir/f.txt after 2 runs"}, s.platform.uploads,
 		"once per sandbox, before its first file and run")
 	s.Equal(caCert, string(s.platform.files["/tmp/va-egress-ca.pem"]))
 	for i := range cases {
@@ -142,23 +143,23 @@ func (s *ProxySuite) TestTheSandboxGoesThroughTheProxyToItsGrantsAndAllowedDomai
 	}
 }
 
-// TestAGrantTheBrokerLeavesOutIsNotInTheAllowList: its host is not reachable, and its env var is
-// not set.
-func (s *ProxySuite) TestAGrantTheBrokerLeavesOutIsNotInTheAllowList() {
-	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091", disconnected)
+// TestAGrantTheBrokerLeavesOutHasNoEnvVar: the sandbox still reaches the proxy alone.
+func (s *ProxySuite) TestAGrantTheBrokerLeavesOutHasNoEnvVar() {
+	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091", disconnected)
 
 	_, err := box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
 	created := s.platform.requests()[0]
-	s.Equal("api.github.com,uploads.github.com", valueOr(created, "domainAllowList"))
+	s.Equal("203.0.113.7/32", created["networkAllowList"])
+	s.NotContains(created, "domainAllowList")
 	s.Equal([]string{"GITHUB_TOKEN"}, slices.Collect(maps.Keys(created["env"].(map[string]any))))
 }
 
 // TestASetupThatFailsRunsNoCode: a sandbox whose image has no roots to bundle the CA with runs
 // nothing, and the setup runs again before the next run.
 func (s *ProxySuite) TestASetupThatFailsRunsNoCode() {
-	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091")
+	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091")
 	s.platform.mu.Lock()
 	s.platform.commandExit = 1
 	s.platform.mu.Unlock()
@@ -176,17 +177,9 @@ func (s *ProxySuite) TestASetupThatFailsRunsNoCode() {
 	s.Len(s.platform.executed(), 1)
 }
 
-// valueOr is key's value in m, or "" without it.
-func valueOr(m map[string]any, key string) any {
-	if value, ok := m[key]; ok {
-		return value
-	}
-	return ""
-}
-
 // TestACAFileThatCouldNotBeWrittenIsWrittenBeforeTheNextRun: no code runs without it.
 func (s *ProxySuite) TestACAFileThatCouldNotBeWrittenIsWrittenBeforeTheNextRun() {
-	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091")
+	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091")
 	s.platform.mu.Lock()
 	s.platform.refuseUpload = true
 	s.platform.mu.Unlock()
@@ -206,7 +199,7 @@ func (s *ProxySuite) TestACAFileThatCouldNotBeWrittenIsWrittenBeforeTheNextRun()
 // TestClosingTheSandboxEndsItsProxyCredential: its record is gone, which the proxy answers
 // with a 407.
 func (s *ProxySuite) TestClosingTheSandboxEndsItsProxyCredential() {
-	box := s.proxied(sandbox.Config{}, "http://proxy.stg.example:8091")
+	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091")
 	_, err := box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
 	credential, _ := box.mount.Proxy.User.Password()

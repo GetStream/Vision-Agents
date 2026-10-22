@@ -218,17 +218,21 @@ func quoted(word string) string {
 // built from the config's base and setup.
 func (s *Sandbox) params() any {
 	domains := s.domains()
-	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated() && len(domains) == 0,
-		Secrets: s.mount.Secrets, EnvVars: s.mount.Env}
-	if s.mount.Proxy != nil {
-		proxy := s.mount.Proxy.String()
-		base.OutboundProxyUrl = &proxy
-	}
+	base := types.SandboxBaseParams{Language: types.CodeLanguagePython,
+		NetworkBlockAll: s.config.Isolated() && len(domains) == 0 && s.mount.Proxy == nil, Secrets: s.mount.Secrets, EnvVars: s.mount.Env}
 	if len(domains) > 0 {
 		joined := strings.Join(domains, ",")
 		base.DomainAllowList = &joined
 	}
-	if cidrs := s.config.NetworkAllowList; len(cidrs) > 0 {
+	cidrs := s.config.NetworkAllowList
+	if s.mount.Proxy != nil {
+		// Daytona's network allow list alone limits every TCP and UDP connection to its ranges and
+		// passes TLS as it is. A domain allow list or an OutboundProxyUrl would bring its netleash
+		// in, which under a domain list ends TLS itself and refuses the proxy's certificate for a
+		// granted host (live probe and staging run, 2026-10-22).
+		cidrs = []string{s.mount.Proxy.Hostname() + "/32"}
+	}
+	if len(cidrs) > 0 {
 		joined := strings.Join(cidrs, ",")
 		base.NetworkAllowList = &joined
 	}
@@ -292,19 +296,18 @@ func (s *Sandbox) Grants() []sandbox.Grant {
 
 // domains are the config's allowed domains and, unless the config opens the whole network or
 // lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
-// sandbox holds a secret or, behind an egress proxy, a placeholder for: a sandbox that may reach
-// nothing else still reaches its grants. Behind the proxy, Daytona's netleash refuses a CONNECT to
-// a host its allow list leaves out (live probe, 2026-10-21: 403). That it reaches the proxy itself, so that the
-// proxy's host is not in the list, is unverified until the staging E2E (AI-1663); Daytona refuses an IP address there.
+// sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
+// A sandbox behind a proxy reaches the proxy alone, and the proxy the domains.
 func (s *Sandbox) domains() []string {
+	if s.mount.Proxy != nil {
+		return nil
+	}
 	domains := slices.Clone(s.config.AllowedDomains)
 	if s.config.Network && len(domains) == 0 || len(s.config.NetworkAllowList) > 0 {
 		return domains
 	}
 	for _, grant := range s.grants {
-		_, secret := s.mount.Secrets[grant.Env]
-		_, placeholder := s.mount.Env[grant.Env]
-		if secret || placeholder {
+		if _, secret := s.mount.Secrets[grant.Env]; secret {
 			for _, host := range grant.Hosts {
 				if !slices.Contains(domains, host) {
 					domains = append(domains, host)

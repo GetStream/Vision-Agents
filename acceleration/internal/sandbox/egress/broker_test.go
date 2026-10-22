@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,28 +148,31 @@ func (s *BrokerSuite) TestTheSandboxReachesAGrantedHostWithTheTokenInPlaceOfItsP
 	s.NotContains(string(raw), s.token)
 }
 
-// TestTheProviderHoldsTheProxyCredentialAndEveryRunTrustsTheCA: the proxy URL with the
-// sandbox's credential goes to the provider alone, the sandbox's env holds the placeholder
-// alone, and every run's env has each common client trust the proxy's CA: Node in addition to
-// its own roots, from a file that holds the CA's certificate alone, and the rest from a bundle
-// of the sandbox's roots and it.
-func (s *BrokerSuite) TestTheProviderHoldsTheProxyCredentialAndEveryRunTrustsTheCA() {
+// TestEveryRunGoesThroughTheProxyAndTrustsTheCA: the sandbox may reach the proxy alone, and
+// every run's env sends each common client there with the sandbox's credential, keeps loopback
+// off it, and has each trust the proxy's CA: Node in addition to its own roots, from a file
+// that holds the CA's certificate alone, and the rest from a bundle of the sandbox's roots and
+// it. The sandbox's own env holds the placeholder alone.
+func (s *BrokerSuite) TestEveryRunGoesThroughTheProxyAndTrustsTheCA() {
 	credential, _ := s.mount.Proxy.User.Password()
 	s.Len(credential, 26, "128 random bits in base32")
-	s.Equal(strings.Replace(s.rig.proxy.URL, "http://", "http://sbx:"+credential+"@", 1), s.mount.Proxy.String())
+	proxy := strings.Replace(s.rig.proxy.URL, "http://", "http://sbx:"+credential+"@", 1)
+	s.Equal(proxy, s.mount.Proxy.String())
 	s.Equal([]string{"GITHUB_TOKEN"}, slices.Collect(maps.Keys(s.mount.Env)))
 	s.Regexp(`^va_ph_[A-Z2-7]{26}$`, s.mount.Env["GITHUB_TOKEN"])
-	bundle := "/tmp/va-egress-ca-bundle.pem"
+	bundle, loopback := "/tmp/va-egress-ca-bundle.pem", "localhost,127.0.0.1,::1"
 	s.Equal(map[string]string{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle,
-		"GIT_SSL_CAINFO": bundle, "NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem"}, s.mount.RunEnv)
+		"GIT_SSL_CAINFO": bundle, "NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "HTTPS_PROXY": proxy, "HTTP_PROXY": proxy,
+		"https_proxy": proxy, "http_proxy": proxy, "NO_PROXY": loopback, "no_proxy": loopback}, s.mount.RunEnv)
 	s.Equal(map[string][]byte{"/tmp/va-egress-ca.pem": s.rig.caCert}, s.mount.Files)
 	s.Len(s.mount.Setup, 1)
 }
 
 // TestTheBundleHoldsTheSandboxsRootsAndTheCA: a host of the config's allowed domains, which
-// the proxy tunnels to as it is, is verified with Daytona's netleash roots or else the image's
-// own, from the first file of them it has, and an image with none runs no code. The setup runs
-// in a shell here, under a directory standing for the sandbox's root.
+// the proxy tunnels to as it is, is verified with the image's own roots, from the first file of
+// them it has, and an image with none runs no code. Daytona's netleash CA, which nothing passes
+// through any more, is never trusted. The setup runs in a shell here, under a directory standing
+// for the sandbox's root.
 func (s *BrokerSuite) TestTheBundleHoldsTheSandboxsRootsAndTheCA() {
 	_, debian, _ := newCA(s.T(), "debian roots")
 	_, alpine, _ := newCA(s.T(), "alpine roots")
@@ -197,7 +201,7 @@ func (s *BrokerSuite) TestTheBundleHoldsTheSandboxsRootsAndTheCA() {
 	s.Equal([]string{"debian roots", "router sandbox CA"}, held)
 	held, err = setup(map[string][]byte{"/etc/daytona/netleash/ca.crt": netleash, "/etc/ssl/certs/ca-certificates.crt": debian})
 	s.Require().NoError(err)
-	s.Equal([]string{"netleash roots", "router sandbox CA"}, held)
+	s.Equal([]string{"debian roots", "router sandbox CA"}, held)
 	held, err = setup(map[string][]byte{"/etc/ssl/cert.pem": bytes.TrimSuffix(alpine, []byte("\n"))})
 	s.Require().NoError(err)
 	s.Equal([]string{"alpine roots", "router sandbox CA"}, held, "a roots file without a last newline")
@@ -437,7 +441,8 @@ func (s *BrokerSuite) TestADisconnectedConnectionIsRefusedAtTheProxy() {
 // TestAProxyURLItCannotUseIsRefused: the sandbox's own credential is the URL's user, and a
 // proxy reached over anything but http would take no Basic credential from it.
 func (s *BrokerSuite) TestAProxyURLItCannotUseIsRefused() {
-	for _, address := range []string{"", "https://proxy.test:8091", "http://user:pass@proxy.test:8091", "http://:8091", "proxy.test:8091"} {
+	for _, address := range []string{"", "https://proxy.test:8091", "http://user:pass@proxy.test:8091", "http://:8091", "proxy.test:8091",
+		"http://proxy.test:8091", "http://[2001:db8::7]:8091", "http://[::ffff:203.0.113.7]:8091", "http://user:pass@203.0.113.7:8091"} {
 		_, err := egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: address, CACert: s.rig.caCert, Session: "session-1",
 			Tokens: s.tokens})
 		s.Error(err, address)
@@ -646,15 +651,18 @@ func (r *rig) record(t *testing.T, key string) (egress.Record, bool) {
 	return record, true
 }
 
-// sandboxClient is an HTTP client set up from what the sandbox was created with alone: the
-// provider's egress sends it to the proxy with the sandbox's credential, as Daytona's netleash
-// does, and each run's env names the CA file.
+// sandboxClient is an HTTP client set up from what the sandbox was given alone: each run's env
+// names the proxy, with the sandbox's credential, and the CA file.
 func sandboxClient(t *testing.T, mount sandbox.Mount) *http.Client {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(mount.Files[mount.RunEnv["NODE_EXTRA_CA_CERTS"]]) {
 		t.Fatal("the sandbox's CA file holds no certificate")
 	}
-	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(mount.Proxy), TLSClientConfig: &tls.Config{RootCAs: roots}}}
+	proxy, err := url.Parse(mount.RunEnv["HTTPS_PROXY"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{RootCAs: roots}}}
 }
 
 // redisGate passes connections on to Redis until shut, which cuts every one and refuses the

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -341,8 +342,8 @@ type CodeSandbox struct {
 	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
 	ProxyCACert string `koanf:"proxy_ca_cert"`
 	ProxyCAKey  string `koanf:"proxy_ca_key"`
-	// ProxyPublicURL is the proxy as a sandbox reaches it, http://host:port, which the proxy
-	// broker needs, with ProxyCACert.
+	// ProxyPublicURL is the proxy as a sandbox reaches it, http://<IPv4 address>:port, which the
+	// proxy broker needs, with ProxyCACert.
 	ProxyPublicURL string `koanf:"proxy_public_url"`
 }
 
@@ -625,9 +626,9 @@ func (c Config) validate() error {
 			c.CodeSandbox.Broker)
 	}
 	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!proxyURL(c.CodeSandbox.ProxyPublicURL) || c.CodeSandbox.ProxyCACert == "") {
-		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://host:port) and " +
-			"proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox " +
-			"reaches the proxy")
+		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://<IPv4 address>:port: " +
+			"a sandbox reaches that address alone and has no DNS to look a host name up with) and proxy_ca_cert " +
+			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox reaches the proxy")
 	}
 	// Every router of a proxy broker serves the proxy, so no sandbox is sent to a proxy no
 	// router runs.
@@ -653,11 +654,17 @@ func (c Config) validate() error {
 	return c.validateShard()
 }
 
-// proxyURL says whether raw is an http URL with a host and no user: the sandbox's proxy URL
-// carries its own credential as the user.
+// proxyURL says whether raw is an http URL with an IPv4 address and no user: the sandbox's proxy
+// URL carries its own credential as the user. The sandbox may reach that address alone, through
+// Daytona's network allow list, which takes IP ranges, so it has no DNS to look a name up with,
+// and no IPv6 route (live probe, 2026-10-22).
 func proxyURL(raw string) bool {
 	parsed, err := url.Parse(raw)
-	return err == nil && parsed.Scheme == "http" && parsed.Hostname() != "" && parsed.User == nil
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil {
+		return false
+	}
+	address, err := netip.ParseAddr(parsed.Hostname())
+	return err == nil && address.Is4()
 }
 
 // validateShard refuses shard settings that would write a shard's calls where no reader
