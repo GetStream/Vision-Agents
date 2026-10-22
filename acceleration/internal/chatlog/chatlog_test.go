@@ -1,11 +1,13 @@
 package chatlog
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -224,7 +226,8 @@ func (s *ChatLogSuite) TestASavedArtifactIsStoredEvenWithoutASpokenReply() {
 	s.log.visible = []string{"save_*"}
 	s.log.Record(agent.ToolRan{ID: "tool-one", TurnID: "turn-one", Tool: "save_canvas", Result: `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-one","revision":2,"title":"Lilacs","sha256":"saved"}}`})
 	queued := s.queued()
-	s.Require().Len(queued, 1)
+	s.Require().NotEmpty(queued)
+	s.Require().Equal(artifact, queued[0].kind, "the card goes before the tool is done")
 	writer := newWriter(s.log)
 
 	writer.handle(queued[0])
@@ -257,7 +260,9 @@ func (s *ChatLogSuite) TestOnlyAShownToolsSuccessfulStoredReceiptMakesACard() {
 		s.log.Record(event)
 	}
 
-	s.Empty(s.queued())
+	for _, queued := range s.queued() {
+		s.NotEqual(artifact, queued.kind, "tool call %s", queued.receiptID)
+	}
 }
 
 func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
@@ -334,9 +339,12 @@ func (s *ChatLogSuite) TestANativePartialAfterInterruptIsKeptAsInterrupted() {
 }
 
 func (s *ChatLogSuite) TestSilenceIsNotStored() {
-	s.log.Record(agent.Responded{TurnID: "turn-1", Text: ""})
+	s.useChat()
+	writer := newWriter(s.log)
 
-	s.Empty(s.queued())
+	s.play(writer, agent.Responded{TurnID: "turn-1", Text: ""})
+
+	s.Empty(s.channel())
 }
 
 func (s *ChatLogSuite) TestSpeechIsStoredAsSpeech() {
@@ -1114,4 +1122,327 @@ func (s *ChatLogSuite) TestWhatIsHeldForTimingsIsBounded() {
 	s.Len(writer.recent, recentTurns)
 	s.Len(writer.turns, recentTurns)
 	s.Contains(writer.recent, fmt.Sprintf("reply-%d", 2*recentTurns-1))
+}
+
+// play hands the log events as a session does, and the writer what they queued.
+func (s *ChatLogSuite) play(writer *writer, events ...agent.Event) {
+	for _, event := range events {
+		s.log.Record(event)
+	}
+	for _, queued := range s.queued() {
+		writer.handle(queued)
+	}
+}
+
+// trail is what the writer asked Chat for, in order: "send" for a message stored, "update"
+// for one changed, and each AI indicator as its state, or "clear", then the turn whose reply
+// it names. Every update names one, which Stream's typed clients require.
+func (s *ChatLogSuite) trail(chat *chattest.Server, turns ...string) []string {
+	named := map[string]string{}
+	for _, turn := range turns {
+		named[replyID(s.log.channel, turn)] = turn
+	}
+	events := chat.Events(s.log.channel)
+	var trail []string
+	for _, asked := range chat.Requests("test") {
+		switch {
+		case strings.HasSuffix(asked.Path, "/event"):
+			event := events[0]
+			events = events[1:]
+			s.Equal(s.log.agent.ID, event["user_id"], "the indicator is the agent's")
+			custom, _ := event["custom"].(map[string]any)
+			id, _ := custom["message_id"].(string)
+			step := "clear"
+			if event["type"] == "ai_indicator.update" {
+				step, _ = custom["ai_state"].(string)
+				s.Require().NotEmpty(id, "an update names its message")
+			}
+			if id != "" {
+				step += " " + cmp.Or(named[id], id)
+			}
+			trail = append(trail, step)
+		case strings.HasSuffix(asked.Path, "/message"):
+			trail = append(trail, "send")
+		case asked.Method == http.MethodPut && strings.Contains(asked.Path, "/messages/"):
+			trail = append(trail, "update")
+		}
+	}
+	return trail
+}
+
+// clock stops the writer's time at a moment the test moves on by hand.
+func (s *ChatLogSuite) clock(writer *writer) *time.Time {
+	now := time.Now()
+	writer.now = func() time.Time { return now }
+	return &now
+}
+
+func (s *ChatLogSuite) TestAStreamedReplyIsShownThinkingThenGeneratingUntilItIsHeard() {
+	// Stream's AI components show what a reply is doing from the indicator, as they do for a
+	// conversation in writing. It clears only once the reply is stored as heard.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow "})
+	writer.show()
+	s.play(writer,
+		agent.ResponseDelta{TurnID: "turn-1", Text: "is sunny."},
+		agent.Responded{TurnID: "turn-1", Text: "Tomorrow is sunny."},
+		agent.Spoke{TurnID: "turn-1"})
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "send", "AI_STATE_GENERATING turn-1", "update", "clear turn-1"}, s.trail(chat, "turn-1"))
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Equal(replyID(s.log.channel, "turn-1"), stored[0].ID, "the reply is the message its indicator named while thinking")
+	s.Equal("Tomorrow is sunny.", stored[0].Text)
+}
+
+func (s *ChatLogSuite) TestAnInterruptedReplyClearsItsIndicator() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow "})
+	writer.show()
+	s.play(writer, agent.Interrupted{TurnID: "turn-1"})
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "send", "AI_STATE_GENERATING turn-1", "update", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestAReplyInterruptedBeforeAWordClearsItsIndicator() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.Interrupted{TurnID: "turn-1"})
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestAReplyThatNeverStreamedClearsItsIndicatorOnceItIsStored() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.Responded{TurnID: "turn-1", Text: "Yes."},
+		agent.Spoke{TurnID: "turn-1"})
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "send", "clear turn-1"}, s.trail(chat, "turn-1"))
+	s.Equal(replyID(s.log.channel, "turn-1"), s.channel()[0].ID)
+}
+
+func (s *ChatLogSuite) TestAReplyWithNothingToSayClearsItsIndicator() {
+	// Nothing is spoken, so no Spoke would ever clear it.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.Responded{TurnID: "turn-1"})
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestSpeechTheAgentIgnoresShowsNoIndicator() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	alice := stt.Participant{ID: "session-9", UserID: "alice"}
+
+	s.play(writer, agent.Hearing{Participant: alice, Text: "not you, sorry", LineID: "line-1"})
+	writer.show()
+	s.play(writer, agent.Decided{Kind: string(agent.ActIgnore), Participant: alice, LineID: "line-1"})
+
+	s.Empty(chat.Events(s.log.channel), "the agent never started on a reply")
+}
+
+func (s *ChatLogSuite) TestASearchIsShownAsCheckingExternalSources() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.Responded{TurnID: "turn-1", PendingWork: true},
+		agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "web_search"},
+		agent.ToolRan{ID: "call-1", TurnID: "turn-1", Tool: "web_search", Result: "{}"},
+		agent.Responding{TurnID: "turn-2", Continues: "turn-1"},
+		agent.ResponseDelta{TurnID: "turn-2", Text: "It is sunny."})
+	writer.show()
+	s.play(writer, agent.Responded{TurnID: "turn-2", Text: "It is sunny."}, agent.Spoke{TurnID: "turn-2"})
+
+	s.Equal([]string{
+		"AI_STATE_THINKING turn-1", "AI_STATE_EXTERNAL_SOURCES turn-1", "clear turn-1",
+		"AI_STATE_THINKING turn-2", "send", "AI_STATE_GENERATING turn-2", "update", "clear turn-2",
+	}, s.trail(chat, "turn-1", "turn-2"))
+}
+
+func (s *ChatLogSuite) TestTheAgentIsShownThinkingWhileAToolRunsAfterItsWordsAreHeard() {
+	// "One moment" is heard in full while the booking is still being made.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "One moment."})
+	writer.show()
+	s.play(writer,
+		agent.Responded{TurnID: "turn-1", Text: "One moment.", PendingWork: true},
+		agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "book_table"},
+		agent.Spoke{TurnID: "turn-1"})
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "send", "AI_STATE_GENERATING turn-1", "update", "AI_STATE_THINKING turn-1"},
+		s.trail(chat, "turn-1"))
+
+	s.play(writer, agent.ToolRan{ID: "call-1", TurnID: "turn-1", Tool: "book_table", Result: "{}"})
+
+	s.Equal("clear turn-1", s.trail(chat, "turn-1")[5])
+}
+
+func (s *ChatLogSuite) TestAReplyOfToolsAloneClearsOnceTheLastComesBack() {
+	// Pressing digits at a menu has nothing to say and no reply after it.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.Responded{TurnID: "turn-1", PendingWork: true},
+		agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "press_digits"},
+		agent.ToolStarted{ID: "call-2", TurnID: "turn-1", Tool: "press_digits"},
+		agent.ToolRan{ID: "call-1", TurnID: "turn-1", Tool: "press_digits"})
+	s.Equal([]string{"AI_STATE_THINKING turn-1"}, s.trail(chat, "turn-1"))
+
+	s.play(writer, agent.ToolRan{ID: "call-2", TurnID: "turn-1", Tool: "press_digits"})
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestAnIndicatorNothingEndsIsClearedOnceStale() {
+	// Work the model was told is running can come to nothing without a word.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	now := s.clock(writer)
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.Responded{TurnID: "turn-1", PendingWork: true})
+
+	*now = now.Add(staleIndicator - time.Second)
+	writer.show()
+	s.Equal([]string{"AI_STATE_THINKING turn-1"}, s.trail(chat, "turn-1"))
+
+	*now = now.Add(time.Second)
+	writer.show()
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestARunningToolKeepsTheIndicatorFromGoingStale() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	now := s.clock(writer)
+	s.play(writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.Responded{TurnID: "turn-1", PendingWork: true},
+		agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "run_code"})
+
+	*now = now.Add(2 * staleIndicator)
+	writer.show()
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1"}, s.trail(chat, "turn-1"), "the agent is still working")
+}
+
+func (s *ChatLogSuite) TestAnEarlierReplyEndingDoesNotClearTheTurnAfterIt() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow "})
+	writer.show()
+	s.play(writer, agent.Responding{TurnID: "turn-2"}, agent.Spoke{TurnID: "turn-1"})
+
+	s.Equal([]string{
+		"AI_STATE_THINKING turn-1", "send", "AI_STATE_GENERATING turn-1",
+		"clear turn-1", "AI_STATE_THINKING turn-2", "update",
+	}, s.trail(chat, "turn-1", "turn-2"))
+}
+
+func (s *ChatLogSuite) TestASearchWhoseEndWasLostIsNotShownForTheNextTurn() {
+	// The queue drops rather than blocks, so a tool's end can be lost.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.Responded{TurnID: "turn-1", PendingWork: true},
+		agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "web_search"},
+		agent.Responding{TurnID: "turn-2"})
+
+	s.Equal([]string{
+		"AI_STATE_THINKING turn-1", "AI_STATE_EXTERNAL_SOURCES turn-1", "clear turn-1", "AI_STATE_THINKING turn-2",
+	}, s.trail(chat, "turn-1", "turn-2"))
+}
+
+func (s *ChatLogSuite) TestClosingClearsAnIndicatorLeftUp() {
+	// A call can end while the agent is still thinking, and nothing would clear it after.
+	chat := s.useChat()
+	s.Require().NoError(s.log.Start(context.Background()))
+
+	s.log.Record(agent.Responding{TurnID: "turn-1"})
+	s.log.Close()
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestClosingWhileAReplyIsWrittenClearsIt() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow "})
+	writer.show()
+
+	writer.closeOut()
+
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "send", "AI_STATE_GENERATING turn-1", "update", "clear turn-1"}, s.trail(chat, "turn-1"))
+}
+
+func (s *ChatLogSuite) TestNoIndicatorIsSentWhileStreamHoldsOff() {
+	// Stream answers a 429 by closing the connection, so a limited app is not asked again
+	// until it says to.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	now := s.clock(writer)
+	writer.quietUntil = now.Add(time.Minute)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"})
+	s.Empty(chat.Events(s.log.channel))
+
+	*now = now.Add(time.Minute)
+	writer.show()
+	s.Equal([]string{"AI_STATE_THINKING turn-1"}, s.trail(chat, "turn-1"), "what is true by then goes out")
+
+	writer.quietUntil = now.Add(time.Minute)
+	s.play(writer, agent.Interrupted{TurnID: "turn-1"})
+	s.Len(chat.Events(s.log.channel), 1)
+	writer.closeOut()
+	s.Equal([]string{"AI_STATE_THINKING turn-1", "clear turn-1"}, s.trail(chat, "turn-1"), "nothing would clear it after the call")
+}
+
+func (s *ChatLogSuite) TestAReplyStoredByAStoreThatTimedOutIsWrittenOver() {
+	// The first store timed out here but landed in Chat, so the reply's id is already taken.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	s.play(writer, agent.Responding{TurnID: "turn-1"})
+	id, text := replyID(s.log.channel, "turn-1"), "Tomorrow"
+	_, err := chat.Client.Chat().SendMessage(context.Background(), ChannelType, s.log.channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &s.log.agent.ID}})
+	s.Require().NoError(err)
+
+	s.play(writer, agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow is"})
+	writer.show()
+	s.play(writer, agent.Responded{TurnID: "turn-1", Text: "Tomorrow is sunny."}, agent.Spoke{TurnID: "turn-1"})
+
+	s.Equal([]string{"Tomorrow is sunny."}, chat.Messages(s.log.channel))
+	s.Equal(false, s.channel()[0].Custom[generatingField])
+}
+
+func (s *ChatLogSuite) TestAReplySpokenInPiecesKeepsEveryPiece() {
+	// A voice that speaks a sentence at a time reports each as spoken, and words after the
+	// first are a message of their own rather than written over it.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(writer, agent.Responding{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: "One."})
+	writer.show()
+	s.play(writer, agent.Spoke{TurnID: "turn-1"}, agent.ResponseDelta{TurnID: "turn-1", Text: " Two."})
+	writer.show()
+	s.play(writer, agent.Spoke{TurnID: "turn-1"})
+
+	s.Equal([]string{"One.", " Two."}, chat.Messages(s.log.channel))
 }
