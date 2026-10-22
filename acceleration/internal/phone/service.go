@@ -736,10 +736,13 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 
 	committed = true
-	sipHost := BridgeHost(outbound.Bridge.URI)
-	s.logger.Info("placed a phone call", "session_id", sessionID,
-		"vendor_call_id", dialed.VendorCallID, "vendor", held.Vendor, "stream_sip_host", sipHost)
-	s.recordPlaced(ctx, request.Owner.CustomerID, sessionID, dialed, held.Vendor, sipHost)
+	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
+	if trunk != nil {
+		sites.customerTrunkHost = trunk.Host
+	}
+	s.logger.Info("placed a phone call", append([]any{"session_id", sessionID,
+		"vendor_call_id", dialed.VendorCallID, "vendor", held.Vendor}, sites.logged()...)...)
+	s.recordPlaced(ctx, request.Owner.CustomerID, sessionID, dialed, held.Vendor, sites)
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,
 		RouteID:     routeID,
@@ -765,14 +768,41 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}, nil
 }
 
-// recordPlaced keeps which Stream SIP host a placed call was sent to, found later by its
-// session id. The call is already ringing, so a failure is logged and goes no further.
+// placedSites is where a placed call was sent: the Stream SIP host, and the host of the
+// customer's own trunk when the call went out through one. Never the trunk's username or
+// password.
+type placedSites struct {
+	streamSIPHost, customerTrunkHost string
+}
+
+func (p placedSites) details() map[string]any {
+	details := map[string]any{"stream_sip_host": p.streamSIPHost}
+	if p.customerTrunkHost != "" {
+		details["customer_trunk_host"] = p.customerTrunkHost
+	}
+	return details
+}
+
+func (p placedSites) logged() []any {
+	logged := []any{"stream_sip_host", p.streamSIPHost}
+	if p.customerTrunkHost != "" {
+		logged = append(logged, "customer_trunk_host", p.customerTrunkHost)
+	}
+	return logged
+}
+
+// recordPlaced keeps where a placed call was sent, found later by its session id. The call
+// is already ringing, so a failure is logged and goes no further.
 func (s *Service) recordPlaced(
 	ctx context.Context,
 	customerID, sessionID string,
 	placed Dialed,
-	vendor, sipHost string,
+	vendor string,
+	sites placedSites,
 ) {
+	details := sites.details()
+	details["vendor"] = vendor
+	details["vendor_call_id"] = placed.VendorCallID
 	err := s.store.RecordAgentLog(context.WithoutCancel(ctx), &store.AgentLog{
 		CustomerID: customerID,
 		SessionID:  sessionID,
@@ -780,11 +810,7 @@ func (s *Service) recordPlaced(
 		Severity:   "info",
 		EventType:  "call_placed",
 		Message:    "Call placed",
-		Details: map[string]any{
-			"stream_sip_host": sipHost,
-			"vendor":          vendor,
-			"vendor_call_id":  placed.VendorCallID,
-		},
+		Details:    details,
 	})
 	if err != nil {
 		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)

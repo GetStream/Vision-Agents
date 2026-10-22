@@ -3,8 +3,11 @@
 package phone
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -637,9 +640,51 @@ func (s *AppsSuite) TestAPlacedCallWritesACallPlacedRow() {
 	s.NotEmpty(row.Details["stream_sip_host"])
 	s.Equal("twilio", row.Details["vendor"])
 	s.Equal(placed.VendorCallID, row.Details["vendor_call_id"])
+	s.NotContains(row.Details, "customer_trunk_host", "the call went out through a vendor, not a customer's trunk")
 	for key, value := range row.Details {
 		s.NotContains(value, s.vendor.dialed.Bridge.Password, key)
 	}
+}
+
+func (s *AppsSuite) TestACallThroughACustomersTrunkNamesTheTrunksHostOnly() {
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	var logged bytes.Buffer
+	service, err := NewService(ServiceOptions{
+		Registry: NewRegistry(s.config()), Store: s.store, Apps: s.apps, Sealer: sealer,
+		SIPTrunks: &stub{vendor: SIPTrunkVendor}, Logger: slog.New(slog.NewTextHandler(&logged, nil)),
+	})
+	s.Require().NoError(err)
+	password := "trunk-s3cret"
+	trunk, err := service.CreateSIPTrunk(s.ctx, s.customer, SIPTrunkSettings{
+		Name: "main", Host: "trunk.example.com", Username: "trunk-user", Password: &password,
+	})
+	s.Require().NoError(err)
+	// A trunk number must be digits only, and stay unique across runs.
+	e164 := fmt.Sprintf("+1555010%04d", time.Now().UnixNano()%10000)
+	_, err = service.AddTrunkNumber(s.ctx, TrunkNumber{
+		Owner: routing.Owner{CustomerID: s.customer}, TrunkID: trunk.ID, E164: e164, Country: "us",
+	})
+	s.Require().NoError(err)
+
+	placed, err := service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	rows := s.callPlacedRows(placed)
+	s.Require().Len(rows, 1)
+	row, err := s.store.AgentLog(s.ctx, s.customer, rows[0].ID)
+	s.Require().NoError(err)
+	s.Equal("trunk.example.com", row.Details["customer_trunk_host"])
+	s.Equal(SIPTrunkVendor, row.Details["vendor"])
+	for key, value := range row.Details {
+		s.NotContains(value, "trunk-user", key)
+		s.NotContains(value, password, key)
+	}
+	s.Contains(logged.String(), "customer_trunk_host=trunk.example.com")
+	s.NotContains(logged.String(), "trunk-user")
+	s.NotContains(logged.String(), password)
 }
 
 func (s *AppsSuite) TestACallTheVendorRefusedWritesNoCallPlacedRow() {
