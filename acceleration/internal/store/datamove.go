@@ -523,6 +523,18 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	return nil
 }
 
+// digitsKey is a number as most vendors read the one they are given, as SQL over a text
+// value: its digits. Plivo, DIDWW, Vonage and Bird drop the plus; Twilio, Telnyx and Sinch
+// read it as written, which its digits only widen.
+const digitsKey = `regexp_replace(%s, '[^0-9]', '', 'g')`
+
+// vendorKeys is a number as a vendor that reads it another way does. Bandwidth also drops
+// the 1 of an 11-digit number (bandwidth.digits), so +15551234567 and +5551234567 are one
+// number there.
+var vendorKeys = map[string]string{
+	"bandwidth": `regexp_replace(regexp_replace(%s, '[^0-9]', '', 'g'), '^1([0-9]{10})$', '\1')`,
+}
+
 // importableNumber refuses an imported number the customer would hold in a form other than
 // E.164, or that another customer holds. Every bought number is held in the deployment's one
 // account at its vendor, and releasing it there is what holding it here allows, so a number
@@ -551,14 +563,18 @@ func importableNumber(ctx context.Context, db bun.IDB, customerID string, row js
 	if vendor.String == "sip_trunk" {
 		return nil
 	}
-	// Compared by its digits too, so a number held in another form before every write
-	// checked the form is found as well.
+	// Compared as the vendor it would be given back at reads a number, so a number held in
+	// another form, before every write checked the form, is found as well.
+	key, found := vendorKeys[vendor.String]
+	if !found {
+		key = digitsKey
+	}
 	var held bool
-	if err := db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, fmt.Sprintf(`
 SELECT EXISTS (SELECT 1 FROM phone_numbers
-WHERE customer_id <> ? AND released_at IS NULL AND vendor <> 'sip_trunk'
-  AND regexp_replace(e164, '[^0-9]', '', 'g') = ?)`,
-		customerID, strings.TrimPrefix(e164.String, "+")).Scan(&held); err != nil {
+WHERE customer_id <> ? AND released_at IS NULL AND vendor <> 'sip_trunk' AND %s = %s)`,
+		fmt.Sprintf(key, "e164"), fmt.Sprintf(key, "?::text")),
+		customerID, e164.String).Scan(&held); err != nil {
 		return fmt.Errorf("store: who holds an imported number: %w", err)
 	}
 	if held {

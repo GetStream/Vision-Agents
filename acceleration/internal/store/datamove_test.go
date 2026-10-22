@@ -765,9 +765,14 @@ func (s *DataMoveSuite) TestANumberAnotherCustomerHoldsIsNotImported() {
 	_, err := s.destination.DB().ExecContext(s.ctx, "INSERT INTO phone_numbers (e164, vendor, country, customer_id)"+
 		" VALUES ('15550000114', 'plivo', 'US', 'acme')")
 	s.Require().NoError(err, "held in another form, before every write checked the form")
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+5550000120", Vendor: "bandwidth", Country: "US", CustomerID: "acme",
+	}))
 
+	// Bandwidth reads +15550000113 and +5550000113 as one number.
 	for _, number := range []struct{ vendor, e164 string }{
 		{"plivo", "+15550000113"}, {"bandwidth", "+15550000113"}, {"didww", "+15550000114"},
+		{"bandwidth", "+5550000113"}, {"bandwidth", "+15550000120"},
 	} {
 		err := s.destination.ImportRow(s.ctx, "other", "phone_numbers", s.importedNumber(number.e164, number.vendor))
 		s.ErrorIs(err, ErrNumberHeldElsewhere, "%s %s", number.vendor, number.e164)
@@ -814,9 +819,10 @@ func (s *DataMoveSuite) TestANumberNobodyElseHoldsAtAVendorIsImported() {
 	}))
 
 	for name, row := range map[string]json.RawMessage{
-		"one acme gave back":          s.importedNumber("+15550000115", "plivo"),
-		"one acme has on its trunk":   s.importedNumber("+15550000116", "plivo"),
-		"one given back, in any form": s.importedNumber("15550000118", "plivo", "released_at", time.Now().UTC()),
+		"one acme gave back":                       s.importedNumber("+15550000115", "plivo"),
+		"one acme has on its trunk":                s.importedNumber("+15550000116", "plivo"),
+		"another one at a vendor that keeps its 1": s.importedNumber("+5550000117", "plivo"),
+		"one given back, in any form":              s.importedNumber("15550000118", "plivo", "released_at", time.Now().UTC()),
 		"one acme holds, on a trunk": s.importedNumber("+15550000117", "sip_trunk",
 			"sip_trunk_id", s.trunkOf(s.destination, "other").ID),
 	} {
