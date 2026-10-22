@@ -103,7 +103,13 @@ class _AgentConversationState extends State<_AgentConversation> {
     ),
   );
 
-  late final _components = _Components(widget.chat);
+  /// Stream's components, with what the person can do under each finished reply: copy it
+  /// and rate it, and the composer without its attachment button. Made once, since new
+  /// builders rebuild every component that reads them.
+  late final _components = AIComponentBuilders(
+    replyActions: _replyActions,
+    composer: const _Composer(),
+  );
 
   @override
   void initState() {
@@ -119,6 +125,23 @@ class _AgentConversationState extends State<_AgentConversation> {
     super.dispose();
   }
 
+  /// What the person can do under a finished reply: copy it and rate it. Asking for a reply
+  /// again needs the router to replace one, which it does not yet.
+  Widget _replyActions(BuildContext context, AIReplyActionsProps props) {
+    final chat = widget.chat;
+    // Read here, from the chat, so the thumbs change as soon as the rating does.
+    return ListenableBuilder(
+      listenable: chat,
+      builder: (context, _) => AIReplyActionsView(
+        text: props.text,
+        actions: AIReplyActions(
+          rating: chat.ratings[props.message.id],
+          onRate: (rating) => chat.rate(props.message.id, rating),
+        ),
+      ),
+    );
+  }
+
   void _changed() {
     _composer.isGenerating = widget.chat.isAnswering;
     setState(() {});
@@ -128,8 +151,8 @@ class _AgentConversationState extends State<_AgentConversation> {
   Widget build(BuildContext context) {
     final chat = widget.chat;
     final workingOn = chat.workingOn;
-    return AIComponents(
-      factory: _components,
+    return AIComponentFactory(
+      builders: _components,
       child: Column(
         children: [
           Expanded(
@@ -208,34 +231,8 @@ class _Empty extends StatelessWidget {
   }
 }
 
-/// Stream's components, with what the person can do under each finished reply: copy it and
-/// rate it. Asking for a reply again needs the router to replace one, which it does not yet.
-class _Components extends AIComponentFactory {
-  const _Components(this.chat);
-
-  final AgentChat chat;
-
-  @override
-  Widget buildReplyActions(BuildContext context, AIReplyActionsProps props) {
-    // Read here, from the chat, so the thumbs change as soon as the rating does.
-    return ListenableBuilder(
-      listenable: chat,
-      builder: (context, _) => AIReplyActionsView(
-        text: props.text,
-        actions: AIReplyActions(
-          rating: chat.ratings[props.message.id],
-          onRate: (rating) => chat.rate(props.message.id, rating),
-        ),
-      ),
-    );
-  }
-
-  /// The composer without its attachment button: a question goes to the agent as text, and
-  /// dictating one stays.
-  @override
-  ChatComposerFactory get composer => const _Composer();
-}
-
+/// The composer without its attachment button: a question goes to the agent as text, and
+/// dictating one stays.
 class _Composer extends ChatComposerFactory {
   const _Composer();
 
