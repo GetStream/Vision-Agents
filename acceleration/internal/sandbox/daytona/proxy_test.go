@@ -132,9 +132,11 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 		s.Require().NoError(json.Unmarshal([]byte(raw), &command))
 		s.Equal(withProxy(command.Envs), command.Envs, "every command")
 	}
-	s.Equal([]string{"/tmp/va-egress-ca.pem after 0 runs", "dir/f.txt after 0 runs", "/tmp/va-egress-ca.pem after 2 runs",
-		"dir/f.txt after 2 runs"}, s.platform.uploads,
-		"once per sandbox, before its first file and run")
+	var uploads []string
+	for i := range cases {
+		uploads = append(uploads, "/tmp/va-egress-ca.pem after "+strconv.Itoa(2*i)+" runs", "dir/f.txt after "+strconv.Itoa(2*i)+" runs")
+	}
+	s.Equal(uploads, s.platform.uploads, "once per sandbox, before its first file and run")
 	s.Equal(caCert, string(s.platform.files["/tmp/va-egress-ca.pem"]))
 	for i := range cases {
 		s.Equal([]string{"upload", "command", "command", "upload"}, s.platform.steps[4*i:4*i+4],
