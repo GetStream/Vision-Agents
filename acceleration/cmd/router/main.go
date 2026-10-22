@@ -1313,7 +1313,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
-	stopSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, serve, logger)
+	stopSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
+		serve, logger)
 	if err != nil {
 		return err
 	}
