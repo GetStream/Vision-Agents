@@ -3,13 +3,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -36,6 +39,8 @@ func (s *PluginsSuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
+	// The built-ins, as a router start seeds them, for the tests of a config binding nessy.
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
 func (s *PluginsSuite) SetupTest() {
@@ -521,6 +526,163 @@ func (s *PluginsSuite) TestARefusedUseOfThePluginAPIWarnsOfNothing() {
 	s.Empty(deprecations(s.logged, plugins.PathClientSet, agent.Id))
 	s.Empty(deprecations(s.logged, plugins.PathClientDelete, agent.Id))
 	s.Empty(deprecations(s.logged, plugins.PathDisconnect, agent.Id))
+}
+
+// nessyConfig stores a config binding nessy, which nessy.yaml marks sensitive, in an app Stream
+// marks internal, the only kind that sees it, with the plugins given.
+func (s *PluginsSuite) nessyConfig(entries ...map[string]any) AgentConfig {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	var created AgentConfig
+	status, raw := s.serverClient.call(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena-" + s.utils.uuid(), "connectors": []map[string]any{sessionNessy("customers")}, "plugins": entries,
+	})
+	s.Require().Equal(http.StatusCreated, status, string(raw))
+	s.Require().NoError(json.Unmarshal(raw, &created))
+	return created
+}
+
+// A client set with user names the plugin, an entry that may send data out, so beside nessy it
+// is refused as an update naming it would be, and stores neither the client nor the entry.
+func (s *PluginsSuite) TestAClientNamingAPluginBesideNessyIsRefused() {
+	agent := s.nessyConfig()
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client",
+		SetPluginClientRequest{ClientId: "acme-client", User: pointerTo(true)})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and plugin "google_calendar" can send data out`)
+	_, err := s.store.PluginClient(s.T().Context(), s.customerID(), agent.Id, "google_calendar")
+	s.ErrorIs(err, store.ErrUnknownPluginClient)
+	s.Nil(s.storedPlugins(agent.Id))
+}
+
+// A client that names no plugin, without user or for one named read-only, adds nothing that
+// sends data out. The base, cc60bf611, answered 200 to both (ai1641/author-1.md, «Control probe»).
+func (s *PluginsSuite) TestAClientBesideNessyThatNamesNoNewPluginIsStored() {
+	agent := s.nessyConfig(map[string]any{"name": "linear", "readonly": true, "user": false})
+
+	for _, plugin := range []string{"google_calendar", "linear"} {
+		status := s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/"+plugin+"/client",
+			SetPluginClientRequest{ClientId: "acme-client", User: pointerTo(plugin == "linear")}, nil)
+
+		s.Equal(http.StatusOK, status, plugin)
+	}
+	config, err := s.store.AgentConfig(s.T().Context(), s.customerID(), agent.Id)
+	s.Require().NoError(err)
+	s.Equal([]store.PluginEntry{{Name: "linear", Readonly: true}}, config.Plugins)
+}
+
+// The app's login names the plugin on the config (store.AddConfigPlugin), so beside nessy it
+// is refused before the code is exchanged: no token is asked for or stored, and the login failed.
+func (s *PluginsSuite) TestAnAppLoginNamingAPluginBesideNessyIsRefused() {
+	agent := s.nessyConfig()
+	exchanged := false
+	tokens := s.tokenServer(&exchanged)
+	state := s.pendingLogin(agent.Id, "linear", "", tokens.URL)
+
+	status, failure := s.callback(state)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and plugin "linear" can send data out`)
+	s.False(exchanged)
+	s.Nil(s.storedPlugins(agent.Id))
+	conn := s.appLogin(agent.Id, "linear")
+	s.Equal(store.PluginFailed, conn.Status)
+	s.Empty(conn.AccessToken)
+}
+
+// Logins that name no new plugin are finished as before: the app's of a plugin named
+// read-only, the app's of a server the config names by URL, and an end user's. The base,
+// cc60bf611, answered 302, 302 and 200 (ai1641/author-1.md, «Control probe»).
+func (s *PluginsSuite) TestLoginsBesideNessyThatNameNoNewPluginAreFinished() {
+	agent := s.nessyConfig(map[string]any{"name": "linear", "readonly": true, "user": false})
+	exchanged := false
+	tokens := s.tokenServer(&exchanged)
+
+	for _, login := range []struct {
+		plugin, user string
+		status       int
+	}{{"linear", "", http.StatusFound}, {"tablejourney", "", http.StatusFound}, {"google_calendar", "alice", http.StatusOK}} {
+		status, _ := s.callback(s.pendingLogin(agent.Id, login.plugin, login.user, tokens.URL))
+
+		s.Equal(login.status, status, login.plugin)
+	}
+	s.True(exchanged)
+	config, err := s.store.AgentConfig(s.T().Context(), s.customerID(), agent.Id)
+	s.Require().NoError(err)
+	s.Equal([]store.PluginEntry{{Name: "linear", Readonly: true}}, config.Plugins)
+	conn := s.appLogin(agent.Id, "linear")
+	s.Equal(store.PluginConnected, conn.Status)
+}
+
+// TestAnAppLoginWithoutASensitiveConnectorNamesThePlugin is the control: the base,
+// cc60bf611, answered 302 and named linear (ai1641/author-1.md, «Control probe»).
+func (s *PluginsSuite) TestAnAppLoginWithoutASensitiveConnectorNamesThePlugin() {
+	agent := s.data.createAgentConfig()
+	exchanged := false
+	tokens := s.tokenServer(&exchanged)
+
+	status, _ := s.callback(s.pendingLogin(agent.Id, "linear", "", tokens.URL))
+
+	s.Equal(http.StatusFound, status)
+	s.Equal([]string{"linear"}, s.storedPlugins(agent.Id))
+}
+
+// The config an app login names is read before the code is exchanged, so a login on a config
+// that is gone asks for no token. The base, cc60bf611, answered the same 500 after exchanging
+// the code (ai1641/author-1.md, «Control probe»).
+func (s *PluginsSuite) TestAnAppLoginOnAConfigThatIsGoneExchangesNoCode() {
+	exchanged := false
+	tokens := s.tokenServer(&exchanged)
+
+	status, _ := s.callback(s.pendingLogin(s.utils.uuid(), "linear", "", tokens.URL))
+
+	s.Equal(http.StatusInternalServerError, status)
+	s.False(exchanged)
+}
+
+// tokenServer answers a code with a token, and records that it was asked.
+func (s *PluginsSuite) tokenServer(exchanged *bool) *httptest.Server {
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		*exchanged = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "a-token", "expires_in": 3600})
+	}))
+	s.T().Cleanup(tokens.Close)
+	return tokens
+}
+
+// pendingLogin stores a login started for the plugin, the app's when user is empty, and
+// returns its state.
+func (s *PluginsSuite) pendingLogin(configID, pluginID, user, tokenEndpoint string) string {
+	state := s.utils.uuid()
+	s.Require().NoError(s.store.UpsertPluginConnection(s.T().Context(), &store.PluginConnection{
+		CustomerID: s.customerID(), ConfigID: configID, PluginID: pluginID, UserID: user,
+		Status: store.PluginPending, OAuthState: state, CodeVerifier: "verifier", ClientID: "client",
+		TokenEndpoint: tokenEndpoint,
+	}))
+	return state
+}
+
+// appLogin is the app's own login of the plugin on the config.
+func (s *PluginsSuite) appLogin(configID, pluginID string) store.PluginConnection {
+	conns, err := s.store.PluginConnections(s.T().Context(), s.customerID(), configID)
+	s.Require().NoError(err)
+	at := slices.IndexFunc(conns, func(conn store.PluginConnection) bool { return conn.PluginID == pluginID })
+	s.Require().GreaterOrEqual(at, 0, pluginID)
+	return conns[at]
+}
+
+// callback is the browser arriving back from the provider, without following the redirect
+// to the dashboard.
+func (s *PluginsSuite) callback(state string) (int, string) {
+	browser := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := browser.Get(s.server.URL + plugins.CallbackPath + "?state=" + url.QueryEscape(state) + "&code=the-code")
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	var answered ErrorResponse
+	_ = json.NewDecoder(response.Body).Decode(&answered)
+	return response.StatusCode, answered.Error.Message
 }
 
 // storedPlugins are the names of the plugins the config is stored with.
