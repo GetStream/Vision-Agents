@@ -167,15 +167,10 @@ func (r *Recordings) Check(ctx context.Context, recording Recording) error {
 			// Record refuses it in the words it always has.
 			return nil
 		}
-		var batchRecorders []string
-		for _, provider := range r.Config().Providers {
-			if !provider.Realtime && r.Records(provider.Provider) {
-				batchRecorders = append(batchRecorders, provider.Name())
-			}
-		}
-		return routing.Refused(stack.Wrap(fmt.Errorf("routing: nothing in the priority list %s can record speech: "+
-			"a recording keeps only a list's batch models, and these are models for live calls; batch models that record: %s",
-			strings.Join(request.Providers, ", "), strings.Join(batchRecorders, ", "))))
+		// The first error says what else was wrong with the list, such as an unknown name.
+		return routing.Refused(stack.Wrap(fmt.Errorf("%w; a recording keeps only a list's batch models, "+
+			"and these are models for live calls; batch models that record: %s",
+			err, strings.Join(r.recorders(true), ", "))))
 	}
 	var streamed []string
 	for _, candidate := range candidates {
@@ -184,14 +179,21 @@ func (r *Recordings) Check(ctx context.Context, recording Recording) error {
 		}
 		streamed = append(streamed, candidate.Config.Name())
 	}
-	var recorders []string
+	// A priority list never goes to a live model, so naming one would send the caller
+	// to the refusal above.
+	return routing.Refused(stack.Wrap(fmt.Errorf("routing: %s can only stream speech, not record it; models that record: %s",
+		strings.Join(streamed, ", "), strings.Join(r.recorders(len(request.Providers) > 0), ", "))))
+}
+
+// recorders names the models that can record, the batch ones alone when batchOnly.
+func (r *Recordings) recorders(batchOnly bool) []string {
+	var names []string
 	for _, provider := range r.Config().Providers {
-		if r.Records(provider.Provider) {
-			recorders = append(recorders, provider.Name())
+		if (!batchOnly || !provider.Realtime) && r.Records(provider.Provider) {
+			names = append(names, provider.Name())
 		}
 	}
-	return routing.Refused(stack.Wrap(fmt.Errorf("routing: %s can only stream speech, not record it; models that record: %s",
-		strings.Join(streamed, ", "), strings.Join(recorders, ", "))))
+	return names
 }
 
 // Record selects a voice and speaks the whole text.

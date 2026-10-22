@@ -618,7 +618,8 @@ func (s *RecordingsSuite) TestAPriorityListOfModelsThatOnlyStreamIsRefused() {
 	_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"mock"}})
 
 	s.Require().ErrorIs(err, routing.ErrRequest)
-	s.ErrorContains(err, "mock/mock-tts can only stream speech, not record it")
+	s.EqualError(err, "routing: mock/mock-tts can only stream speech, not record it; models that record: "+
+		"cartesia/sonic-3.6, inworld/inworld-tts-2-batch, elevenlabs/eleven_v3")
 }
 
 func (s *RecordingsSuite) TestAPriorityListOfLiveModelsAloneIsRefusedNamingTheBatchModelsThatRecord() {
@@ -635,12 +636,22 @@ func (s *RecordingsSuite) TestAPriorityListOfLiveModelsAloneIsRefusedNamingTheBa
 			_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: providers})
 
 			s.Require().ErrorIs(err, routing.ErrRequest, "the caller's to change")
-			s.EqualError(err, "routing: nothing in the priority list "+strings.Join(providers, ", ")+" can record speech: "+
+			s.EqualError(err, "routing: nothing in the priority list "+strings.Join(providers, ", ")+" can serve this request; "+
 				"a recording keeps only a list's batch models, and these are models for live calls; "+
 				"batch models that record: cartesia/sonic-3.6, inworld/inworld-tts-2-batch, elevenlabs/eleven_v3")
 			s.Empty(s.built, "nothing is built")
 		})
 	}
+}
+
+func (s *RecordingsSuite) TestAPriorityListOfAnUnknownNameAndALiveModelIsRefusedNamingTheUnknownName() {
+	// Probed on 569e94d4d: Record failed it with the unknown target in the message.
+	_, err := s.recordOn(options.TTS{Target: "en-recorded", Providers: []string{"nope/nope", "cartesia/sonic-preview"}})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.EqualError(err, `routing: nothing in the priority list nope/nope, cartesia/sonic-preview can serve this request: `+
+		`routing: unknown target "nope/nope"; a recording keeps only a list's batch models, and these are models for live calls; `+
+		"batch models that record: cartesia/sonic-3.6, inworld/inworld-tts-2-batch, elevenlabs/eleven_v3")
 }
 
 func (s *RecordingsSuite) TestAPriorityListWithALiveModelAndABatchModelIsStillServedByTheBatchModel() {
