@@ -1,8 +1,12 @@
 package io.getstream.visionagents.android.core
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * One thing a client can do to a running conversation over its socket.
@@ -21,7 +25,8 @@ public sealed interface Command {
     public data class Interrupt(val requestId: String = "") : Command
 
     /**
-     * Answer a tool call. One of [output] or [error] says how it went.
+     * Answer a tool call. One of [output] or [error] says how it went, and [images] are pictures
+     * the call shows beside [output].
      *
      * [requestId] and [turnId] repeat the call's own, so the router can tell which request or
      * turn the answer belongs to.
@@ -32,6 +37,7 @@ public sealed interface Command {
         val error: String = "",
         val requestId: String = "",
         val turnId: String = "",
+        val images: List<ImageSource> = emptyList(),
     ) : Command
 
     /**
@@ -67,8 +73,9 @@ private fun Command.frame(): JsonObject = when (this) {
         put("type", "tool_result")
         put("tool_call_id", id)
         // The router treats the empty string as absent, so sending it and sending nothing
-        // are the same thing.
-        put("output", output)
+        // are the same thing. Pictures make the output an array of parts, which is how the
+        // router takes them.
+        if (images.isEmpty()) put("output", output) else put("output", parts(output, images))
         put("error", error)
         if (requestId.isNotEmpty()) put("request_id", requestId)
         if (turnId.isNotEmpty()) put("turn_id", turnId)
@@ -80,5 +87,24 @@ private fun Command.frame(): JsonObject = when (this) {
         if (summary.isNotEmpty()) put("summary", summary)
         if (requestId.isNotEmpty()) put("request_id", requestId)
         if (turnId.isNotEmpty()) put("turn_id", turnId)
+    }
+}
+
+/** A tool's output as the router reads one that is not just words. */
+private fun parts(text: String, images: List<ImageSource>): JsonArray = buildJsonArray {
+    if (text.isNotEmpty()) {
+        addJsonObject {
+            put("type", "text")
+            put("text", text)
+        }
+    }
+    images.forEach { image ->
+        addJsonObject {
+            put("type", "image_url")
+            putJsonObject("image_url") {
+                put("url", image.url)
+                image.detail?.let { put("detail", it.name.lowercase()) }
+            }
+        }
     }
 }

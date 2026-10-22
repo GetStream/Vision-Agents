@@ -325,6 +325,10 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, sende
 			found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
 			return true
 		}
+		// A connector call waiting for the person to sign in is declined the same way.
+		if !*command.Allowed && found.DeclineLogin(command.ToolCallID) {
+			return true
+		}
 		if !found.DecideCommandTool(command.ToolCallID, command.CommandID, command.TurnID, *command.Allowed, command.Summary) {
 			s.logger.Debug("a tool approval answered nothing",
 				"session", found.ID(), "call", command.ToolCallID)

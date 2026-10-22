@@ -663,6 +663,52 @@ Each of the agent's spoken messages in the Chat channel already carries that sam
 now pinned by tests: one being written, settled, cut off, a greeting (`say-...`) or other line
 said as written, and each message of a reply a sentence voice leaves more than one of (#1128).
 
+### A tool call waits for the person to sign in, and carries on once they have
+
+When the agent calls a connector bound as each person's own (`connection.type: session`) that
+the person has not connected, the call now waits for them to sign in, instead of telling them to
+press a button and ending the reply. Its `ai_tool_call` step is `awaiting_authorization` and
+carries an `authorization` with the `type` (`oauth`), `provider`, `provider_name`, `title`,
+`message`, sign-in `url`, `handoff_token` and `expires_at`. Once the person signs in, the same
+call runs in the same reply, on their account.
+
+A `tool_approval` that names only the `tool_call_id`, with `allowed` false, declines the sign-in.
+A consent refused at the provider, one that came back with another account, and one not
+finished in ten minutes end the call too, and `authorization.status` says which (`declined`,
+`failed` or `expired`). The agent is told either way. Stopping the reply ends the call too, with
+nothing run. The `connector_authorization` attachment is still written for the clients that
+render it.
+
+The reply stays open while the call waits, and a new message is refused meanwhile, as during
+any reply. A client that renders neither the step nor the card should let the person stop it.
+A client that read `authorization_required` from the call's `tool_ran` now gets that frame
+only once the sign-in ends.
+
+This also fixes the chat that carried on after a login. Its follow-up made the same call again,
+and the agent answered it with the earlier "not connected" rather than running it.
+
+Swift has `SessionOptions.returnURL` and `AgentSession.declineLogin`, and Stream's
+`AIToolAuthorizationView` shows the sign-in in a web authentication sheet when the
+`AIToolApprover` has an `AIToolAuthorizer`. The Swift assistant connects Linear and Gmail this
+way, so its Gmail button is gone, and so are its backend's routes to start, read and delete the
+Gmail connection (#1114).
+
+### A run takes images
+
+`POST /v1/agents/runs` takes optional `images`, up to 8 `{url, detail}` like a response's, that go
+with the input in the order sent, so the input can refer to them by their place in the list. The
+agent's vision skill looks at them, or its conversation model when that can see. An image that
+is no HTTP(S) URL or image data URI, or more than 8, is a 400 `invalid_request`; an agent that
+can see neither way is a 400 `invalid_config`, not a 503 `model_failed`, since retrying fails
+the same way every time. The router fetches each image URL before the run starts, from
+public hosts only, and hands the model the bytes, so a run never answers without seeing an image
+it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG,
+PNG, WebP or GIF is a 400 `image_unavailable` naming the image. A run without images is
+unchanged. An `agent_moderator` run's answer format now lets a `match` cite one of its case's
+own image references (`image:0`, a place in `images`) as evidence instead of a quote, and asks
+for `uncertain` on a label that depends on an image the agent could not see; the JSON shape is
+unchanged (#1133).
+
 ### An agent config sets the guide its calls are reviewed by
 
 `AgentConfig` takes an optional `review` with `instructions`: what the model reviewing a
@@ -877,7 +923,7 @@ of what Juno sees.
 
 A tool may now answer with pictures beside its words: in Go by returning a `tools.Output`
 (`Text`, `Images`), in Swift by returning a `ToolOutput` (`text`, `images`) from an `AgentTool`
-whose `run` returns one. Each picture is a data URI or an https URL, and the session socket
+whose `run` returns one, and in Kotlin by returning one from `AgentTool.withPictures`. Each picture is a data URI or an https URL, and the session socket
 carries them as `tool_result` parts, which the router already took. On a call it hands them to
 the agent's `vision` skill, so a tool can show the agent what a camera sees. In a written
 conversation, which has no vision worker, a conversation model that takes images is shown them
@@ -2438,6 +2484,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `POST /v1/agents/runs` answers as soon as the agent has given its answer with nothing left to do, rather than after a further two seconds of quiet, so every run returns about 2 s sooner. A reply that calls a tool or hands work off still waits for the answer that follows it.
 - A voice agent's flow controller on Gemma or OpenAI is held to a JSON Schema of its own values, so a ruling such as `{"disposition":"continue"}` can no longer replace the decision with the fallback. Other models are asked for a JSON object as before, and a ruling they get wrong still falls back. `router_agent_flow_invalid_rulings_total{reason}` counts the rulings refused, by `decode`, `disposition` or `floor` (AI-1668, #1123).
 - A fork of a session that has ended (`POST /v1/agents/sessions/{id}/fork`, naming no config) runs on its agent config's `instructions`, `guardrail` and `review.instructions` as the config is now. It ran with no instructions and no guardrail, and was reviewed by Stream's default guide. A config deleted since gives the fork none of them, and the fork goes ahead as before. A fork of a running session, and a fork naming a config, are unchanged (AI-1662, #1120).
 - Resuming a scheduled task with no occurrence left, such as a one-shot reminder that failed or a repeat past its `until`, answers 400 `schedule_in_past` over the API and leaves the task as it was, as the agent's `update_scheduled_task` tool already did. The API marked such a task `completed` although it never delivered, or answered 409 `too_many_tasks` or 404 first. To run it again, give it a new schedule, then resume it. A paused one-shot resumed after its time is still completed with a `missed` run (AI-1639, #1119).
