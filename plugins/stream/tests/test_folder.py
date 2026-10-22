@@ -243,7 +243,7 @@ class TestFolder:
 
         with pytest.raises(
             ValueError,
-            match=f"`{key}` is no longer supported: use `connectors`",
+            match=f"agent.yaml: `{key}` is no longer supported: use `connectors`",
         ):
             load(root)
 
