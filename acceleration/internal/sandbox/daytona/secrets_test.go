@@ -36,7 +36,8 @@ func TestSecretsBrokerContract(t *testing.T) {
 		}
 		held := stub
 		return brokertest.Subject{
-			Broker: secrets,
+			Broker:    secrets,
+			Elsewhere: true,
 			Held: func(name string) (string, []string, bool) {
 				held.mu.Lock()
 				defer held.mu.Unlock()

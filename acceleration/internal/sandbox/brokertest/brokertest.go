@@ -36,12 +36,14 @@ type Subject struct {
 	// copy: Held is what a request gets now, so a credential that cannot be had just now
 	// reaches no request, and a refresh the provider refused still sends the newest.
 	Live bool
+	// Elsewhere is a broker whose egress runs outside this process, in the provider's network
+	// (Daytona), so no test here can push through it. Only such a subject may leave Push nil.
+	Elsewhere bool
 	// Push is git in the sandbox the broker's last Prepare made: it commits a file holding
 	// content and pushes it to https://github.com/octo/hello.git with ref, the value of a
 	// grant's env var, as Basic auth's password. It returns the Authorization of each request
 	// github.com got, the file as github.com keeps it, and every other header value and the URL of
-	// each request. Nil for a broker whose egress no test
-	// here runs.
+	// each request. Nil only when Elsewhere.
 	Push func(ref, content string) (authorizations []string, pushed string, elsewhere []string)
 }
 
@@ -340,13 +342,14 @@ func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried(
 // placeholder is pushed with the placeholder as it is: the body is never rewritten.
 func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
 	subject := s.subject("session-1")
-	if subject.Push == nil {
+	if subject.Elsewhere {
 		// Daytona: its egress runs in Daytona's network, which no test here reaches. What a test
 		// here can check is the run_code description (daytona/secrets_test.go). Daytona replaces
 		// the placeholder in git's Base64 Basic header: live staging E2E, 2026-10-22, session
 		// 01a16514-923c-7843-9214-40a94453f194.
 		s.T().Skip("the broker's egress runs outside this process: the live E2E checks git")
 	}
+	s.Require().NotNil(subject.Push, "a broker whose egress runs here must push through it")
 	github := grant("github", "GITHUB_TOKEN")
 	github.Hosts = append(github.Hosts, "github.com")
 	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{github})
