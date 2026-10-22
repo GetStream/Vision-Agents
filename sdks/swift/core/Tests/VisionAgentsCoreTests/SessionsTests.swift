@@ -63,6 +63,18 @@ import Testing
         #expect(body["start_voice"] == nil)
         #expect(body["greeting"] == .object(["text": .string("Hello."), "mode": .string("variation")]))
     }
+
+    @Test func aSessionSaysWhereItsSignInsGoBackTo() async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions(agent: "myagent")
+        options.returnURL = URL(string: "com.example.app:/connected")
+
+        _ = try await agents.createSession(options)
+
+        #expect(try await server.request().body["return_url"] == .string("com.example.app:/connected"))
+    }
 }
 
 /// A real HTTP peer that answers one request with a session carrying what it was sent, or with

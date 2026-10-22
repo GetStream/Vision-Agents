@@ -56,7 +56,7 @@ func run(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	visible := []string{"search", "web_search", "get_location", "list_events", "add_reminder", "send_email", "gmail__*"}
+	visible := []string{"search", "web_search", "get_location", "list_events", "add_reminder", "send_email", "gmail__*", "linear__*"}
 	skills := []string{"think", "recall", "explain", "vision"}
 	patched, err := client.PatchAgentConfigWithResponse(ctx, config.Id,
 		acceleration.PatchAgentConfigJSONRequestBody{VisibleTools: &visible, Skills: &skills})

@@ -418,11 +418,98 @@ func (s *InworldSocketSuite) TestALostConnectionSettlesWhatWasInFlight() {
 	s.Require().NoError(conn.Close())
 
 	events := s.collect(provider, func(event tts.Event) bool {
-		_, done := event.(tts.SynthesisComplete)
+		_, done := event.(tts.Error)
 		return done
 	})
-	complete := events[len(events)-1].(tts.SynthesisComplete)
+	var completed bool
+	for _, event := range events {
+		if complete, ok := event.(tts.SynthesisComplete); ok {
+			completed = true
+			s.Equal("u1", complete.SynthesisID)
+			s.True(complete.Interrupted, "work cut short by a dropped connection is not work completed")
+		}
+	}
+	s.True(completed)
+	s.True(events[len(events)-1].(tts.Error).Fatal, "lost speech must still fail the session")
+}
 
-	s.Equal("u1", complete.SynthesisID)
-	s.True(complete.Interrupted, "work cut short by a dropped connection is not work completed")
+func (s *InworldSocketSuite) TestAnIdleEOFReconnectsAndTheNextUtteranceIsAudible() {
+	fake := newFakeInworld()
+	provider, conn := s.connect(fake, Options{})
+	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.Connected); return ok })
+
+	// This is the benchmark failure: the previous reply has closed, and the
+	// server drops TCP without a WebSocket close frame while the caller speaks.
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "previous", Text: "hello", Final: true}))
+	s.frames(conn, 3)
+	s.Require().NoError(closed(conn, "previous"))
+	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.SynthesisComplete); return ok })
+	s.Require().NoError(conn.Close())
+	events := s.collect(provider, func(event tts.Event) bool {
+		_, connected := event.(tts.Connected)
+		_, failed := event.(tts.Error)
+		return connected || failed
+	})
+	s.Require().IsType(tts.Connected{}, events[len(events)-1])
+
+	replacement := fake.accept()
+	s.Require().NotNil(replacement)
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "next", Text: "still here", Final: true}))
+	frames := s.frames(replacement, 3)
+	s.NotNil(frames[0].Create)
+	s.Equal("next", frames[0].ContextID)
+	s.Equal("still here", frames[1].SendText.Text)
+	s.NotNil(frames[2].FlushContext)
+	s.Require().NoError(speak(replacement, "next", []int16{1000, 2000, -1000}))
+	s.Require().NoError(closed(replacement, "next"))
+	events = s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.SynthesisComplete); return ok })
+	var heard bool
+	for _, event := range events {
+		switch typed := event.(type) {
+		case tts.AudioChunk:
+			heard = true
+			s.Equal("next", typed.SynthesisID)
+			s.Equal([]int16{1000, 2000, -1000}, typed.Audio.Samples)
+		case tts.Error:
+			s.Fail("idle recovery emitted a fatal measurement error", typed.Error())
+		}
+	}
+	s.True(heard)
+	s.False(events[len(events)-1].(tts.SynthesisComplete).Interrupted)
+}
+
+func (s *InworldSocketSuite) TestAnIdleEOFFailsWhenTheVoiceCannotReconnect() {
+	fake := newFakeInworld()
+	provider, conn := s.connect(fake, Options{HandshakeTimeout: time.Second})
+	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.Connected); return ok })
+	s.Require().NoError(fake.server.Listener.Close())
+	s.Require().NoError(conn.Close())
+	events := s.collect(provider, func(event tts.Event) bool {
+		_, connected := event.(tts.Connected)
+		_, failed := event.(tts.Error)
+		return connected || failed
+	})
+	s.Require().IsType(tts.Error{}, events[len(events)-1])
+	failure := events[len(events)-1].(tts.Error)
+	s.True(failure.Fatal)
+	s.ErrorContains(failure.Err, "reopen after websocket: close 1006")
+}
+
+func (s *InworldSocketSuite) TestAnEOFWhileTheAudioTailIsPendingRemainsAFailure() {
+	fake := newFakeInworld()
+	provider, conn := s.connect(fake, Options{})
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "tail", Text: "not finished", Final: true}))
+	s.frames(conn, 3)
+	s.Require().NoError(flushed(conn, "tail"))
+	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.SynthesisComplete); return ok })
+	// flushCompleted settles accounting before the server's final audio. Only
+	// contextClosed makes it safe to call this connection idle.
+	s.Require().NoError(conn.Close())
+	events := s.collect(provider, func(event tts.Event) bool {
+		_, connected := event.(tts.Connected)
+		_, failed := event.(tts.Error)
+		return connected || failed
+	})
+	s.Require().IsType(tts.Error{}, events[len(events)-1])
+	s.True(events[len(events)-1].(tts.Error).Fatal)
 }

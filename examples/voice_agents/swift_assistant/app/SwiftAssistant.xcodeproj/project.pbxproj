@@ -323,7 +323,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
 			requirement = {
-				branch = "add/ai-conversation-view";
+				branch = develop;
 				kind = branch;
 			};
 		};
