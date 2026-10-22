@@ -497,10 +497,15 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 		}
 		// Counted from now: what a pause slept through is never replayed.
 		next, ok := schedule.Next(time.Now())
-		// A one-shot whose time has gone takes no place and runs on nothing: it
-		// is only closed, with the occurrence it slept through on record.
-		missed := scheduling.SleptThrough(task)
-		if !ok && missed != nil {
+		if !ok {
+			// A one-shot whose time came while it was paused takes no place and runs
+			// on nothing: it is only closed, with the occurrence it slept through on
+			// record. Any other task with nothing left to run is left as it is.
+			missed := scheduling.SleptThrough(task)
+			if missed == nil {
+				return nil, scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
+					Message: "that task has no occurrence left; give it a new schedule, then resume it"})
+			}
 			if err := s.store.InsertScheduledTaskRun(ctx, missed); err != nil {
 				return nil, err
 			}
@@ -522,11 +527,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			if active >= maxActive {
 				return nil, errTooManyScheduledTasks
 			}
-			if ok {
-				task.State, task.NextRunAt = store.ScheduledTaskActive, &next
-			} else {
-				task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
-			}
+			task.State, task.NextRunAt = store.ScheduledTaskActive, &next
 		}
 		task.ConsecutiveFailures = 0
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
@@ -801,13 +802,16 @@ func (s *Server) registerScheduledTasks(api huma.API) {
 		Summary:     "Resume a scheduled task",
 		Description: "The next occurrence is counted from now, so missed occurrences are never replayed, " +
 			"and a run of failures is forgiven. A one-shot whose time came while it was paused is completed, " +
-			"its occurrence listed in its runs as missed (error task_paused). A completed task cannot be " +
-			"resumed (409).",
+			"its occurrence listed in its runs as missed (error task_paused). Any other task with no " +
+			"occurrence left, such as a failed one-shot or a repeat past its until, is refused " +
+			"(400 schedule_in_past) and left as it was: give it a new schedule, then resume it. A completed " +
+			"task cannot be resumed (409).",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The task, running again"},
+			"400": errorResponse("The task has no occurrence left (schedule_in_past), or the request is malformed"),
 			"409": errorResponse("The task is completed, or the user is at their active-task limit"),
 		},
-		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors:     []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 		Extensions: map[string]any{clientAccessibleExtension: true},
 	}, s.resumeScheduledTask)
 	huma.Register(api, huma.Operation{

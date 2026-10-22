@@ -351,7 +351,9 @@ func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
 func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	if _, ok := operation.Responses["422"]; ok {
 		delete(operation.Responses, "422")
-		operation.Responses["400"] = &huma.Response{}
+		if _, declared := operation.Responses["400"]; !declared {
+			operation.Responses["400"] = &huma.Response{}
+		}
 	}
 	// Any operation can fail in a way that is not the caller's.
 	if _, ok := operation.Responses["500"]; !ok {
