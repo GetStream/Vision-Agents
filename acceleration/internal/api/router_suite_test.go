@@ -311,6 +311,9 @@ type RouterSuite struct {
 	// pluginHTTP is what the API reaches plugins with, for a suite whose stand-ins listen
 	// on loopback in each test. Nil is mcpTransport.
 	pluginHTTP *http.Client
+	// imageHTTP is what runs fetch their images with, for a suite whose images are served on
+	// loopback. Nil reaches only public hosts.
+	imageHTTP *http.Client
 	// events subscribes configs to their plugins' events.
 	events *pluginevents.Service
 
@@ -555,6 +558,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorLimiter:      connectorLimiter,
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		RunsPerApp:            s.runsPerApp,
+		ImageHTTP:             s.imageHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
