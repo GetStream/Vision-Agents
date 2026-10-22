@@ -112,6 +112,10 @@ def sync_detailed(
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+    The router fetches each URL before the run starts, from public hosts only, and hands the model the
+    bytes it fetched, so no run answers without seeing an image it was given: one that does not answer
+    200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
+    naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
     which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
     app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
@@ -157,6 +161,10 @@ def sync(
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+    The router fetches each URL before the run starts, from public hosts only, and hands the model the
+    bytes it fetched, so no run answers without seeing an image it was given: one that does not answer
+    200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
+    naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
     which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
     app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
@@ -197,6 +205,10 @@ async def asyncio_detailed(
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+    The router fetches each URL before the run starts, from public hosts only, and hands the model the
+    bytes it fetched, so no run answers without seeing an image it was given: one that does not answer
+    200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
+    naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
     which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
     app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
@@ -240,6 +252,10 @@ async def asyncio(
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
+    The router fetches each URL before the run starts, from public hosts only, and hands the model the
+    bytes it fetched, so no run answers without seeing an image it was given: one that does not answer
+    200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
+    naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
     which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
     app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429

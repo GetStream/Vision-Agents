@@ -645,7 +645,11 @@ with the input in the order sent, so the input can refer to them by their place 
 agent's vision skill looks at them, or its conversation model when that can see. An image that
 is no HTTP(S) URL or image data URI, or more than 8, is a 400 `invalid_request`; an agent that
 can see neither way is a 400 `invalid_config`, not a 503 `model_failed`, since retrying fails
-the same way every time. A run without images is unchanged. An `agent_moderator` run's answer
+the same way every time. The router fetches each image URL before the run starts, from
+public hosts only, and hands the model the bytes, so a run never answers without seeing an image
+it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG,
+PNG, WebP or GIF is a 400 `image_unavailable` naming the image. A run without images is
+unchanged. An `agent_moderator` run's answer
 format now lets a `match` cite one of its case's own image references (`image:0`, a place in
 `images`) as evidence instead of a quote, and asks for `uncertain` on a label that depends on an
 image the agent could not see; the JSON shape is unchanged (#1133).

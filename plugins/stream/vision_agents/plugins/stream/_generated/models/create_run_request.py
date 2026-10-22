@@ -25,8 +25,9 @@ class CreateRunRequest:
         input_ (Any): What the agent works on: a string, or any JSON value. It is handed to the agent as data, never as
             instructions.
         images (list[ImageSource] | Unset): Images that go with the input, in order, so the input can refer to them by
-            their place in this list. At most 8. An agent with no vision skill and a conversation model that cannot see
-            refuses them with a 400 invalid_config.
+            their place in this list. At most 8. Each URL is fetched before the run, and one that cannot be fetched or is
+            not a JPEG, PNG, WebP or GIF of at most 5 MB is a 400 image_unavailable. An agent with no vision skill and a
+            conversation model that cannot see refuses them with a 400 invalid_config.
         instructions (str | Unset): What the agent is told for this run alone, added to its config's instructions.
         tags (CreateRunRequestTags | Unset): Cost labels, carried onto every request the run makes alongside the
             config's own.
