@@ -656,6 +656,32 @@ func (s *StoreSuite) TestANumberSomebodyElseHoldsCannotBeReleased() {
 	s.ErrorContains(err, "is not a number globex holds")
 }
 
+func (s *StoreSuite) TestANumberIsRecordedOnlyInE164Form() {
+	for _, e164 := range []string{"", "15125551234", "5125551234", "+1 512 555 1234", "+05125551234"} {
+		err := s.store.RecordNumber(s.ctx, &PhoneNumber{
+			E164: e164, Vendor: "plivo", Country: "US", CustomerID: "acme",
+		})
+		s.ErrorIs(err, ErrNotE164, "%q", e164)
+	}
+
+	held, err := s.store.CustomerNumbers(s.ctx, "acme", true)
+	s.Require().NoError(err)
+	s.Empty(held)
+}
+
+func (s *StoreSuite) TestANumberWrittenInAnotherFormIsNotHeld() {
+	// Written straight to the table, the way a row could be before every write checked
+	// the form: the vendor reads it as +15125551234.
+	_, err := s.store.db.ExecContext(s.ctx,
+		"INSERT INTO phone_numbers (e164, vendor, country, customer_id) VALUES ('15125551234', 'plivo', 'US', 'globex')")
+	s.Require().NoError(err)
+
+	_, err = s.store.Number(s.ctx, "globex", "15125551234")
+
+	s.ErrorIs(err, ErrNoNumber)
+	s.ErrorContains(err, "is not a number globex holds")
+}
+
 func (s *StoreSuite) TestANumberRemembersWhichTrunkItsCallsArriveOn() {
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
 		E164: "+15125551234", Vendor: "twilio", Country: "US",

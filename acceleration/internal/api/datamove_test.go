@@ -3,7 +3,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -120,6 +122,52 @@ func (s *DataMoveSuite) TestImportingAnExportWritesTheRowsItCarried() {
 	s.Equal(int64(1), written.Tables["agent_configs"])
 	s.Equal(int64(len(exported)-1), written.Rows, "every line but the cursor was a row")
 	s.Require().NotNil(written.Cursor)
+}
+
+func (s *DataMoveSuite) TestAnImportCannotClaimAnotherAppsNumberInAnotherForm() {
+	ctx := context.Background()
+	other, e164 := s.utils.uuid(), s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "plivo", Country: "US", CustomerID: other,
+	}))
+
+	// Plivo reads the number without its plus as the other app's.
+	variant := strings.TrimPrefix(e164, "+")
+	row, err := json.Marshal(map[string]any{
+		"id": rand.Int64N(1 << 50), "e164": variant, "vendor": "plivo", "country": "US",
+		"capabilities": []string{"voice"}, "monthly_cost_micros": 0, "customer_id": other,
+		"tags": map[string]string{}, "purchased_at": time.Now().UTC(),
+	})
+	s.Require().NoError(err)
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import",
+		ndjson([]dataLine{{Table: "phone_numbers", Row: row}}))
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "E.164")
+
+	status, _ = s.serverClient.call(http.MethodDelete, "/v1/phone/numbers/"+variant, nil)
+	s.Equal(http.StatusNotFound, status)
+	held, err := s.store.CustomerNumbers(ctx, other, false)
+	s.Require().NoError(err)
+	s.Len(held, 1, "the number stays with the app that holds it")
+}
+
+func (s *DataMoveSuite) TestARefusedNumberDoesNotSayWhoHoldsIt() {
+	other, e164 := s.utils.uuid(), s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(context.Background(), &store.PhoneNumber{
+		E164: e164, Vendor: "plivo", Country: "US", CustomerID: other,
+	}))
+
+	row, err := json.Marshal(map[string]any{
+		"id": rand.Int64N(1 << 50), "e164": e164, "vendor": "bandwidth", "country": "US",
+		"capabilities": []string{"voice"}, "monthly_cost_micros": 0, "customer_id": other,
+		"tags": map[string]string{}, "purchased_at": time.Now().UTC(),
+	})
+	s.Require().NoError(err)
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import",
+		ndjson([]dataLine{{Table: "phone_numbers", Row: row}}))
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "this number cannot be imported")
+	s.NotContains(failure, "app")
 }
 
 func (s *DataMoveSuite) TestSomethingThatIsNotAnExportIsRefused() {

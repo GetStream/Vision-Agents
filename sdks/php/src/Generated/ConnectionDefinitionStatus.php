@@ -10,7 +10,8 @@ namespace GetStream\VisionAgents\Generated;
  * current when the connection reads its connector's latest revision, outdated when a later one
  * exists, and broken when a later one marked it as not working: the connection is given no
  * credential until it moves to the latest revision, by a consent that connects it again or,
- * for a bearer or api_key connection, by saving its token or key again.
+ * for a bearer or api_key connection, by saving its token or key again, and for a none
+ * connection by saving its empty credentials again.
  */
 enum ConnectionDefinitionStatus: string
 {

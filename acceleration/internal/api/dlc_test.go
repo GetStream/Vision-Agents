@@ -179,7 +179,7 @@ func (s *DLCSuite) spend(field string, amount int) {
 }
 
 func (s *DLCSuite) TestAUseCaseIsApprovedByStreamAndThenByTheVendor() {
-	number := store.PhoneNumber{CustomerID: s.customerID(), E164: "+1555" + s.utils.uuid()[29:], Vendor: "telnyx"}
+	number := store.PhoneNumber{CustomerID: s.customerID(), E164: s.utils.number(), Vendor: "telnyx"}
 	s.Require().NoError(s.store.RecordNumber(context.Background(), &number))
 	sent := s.submitted()
 	s.Equal(UseCaseStatus(dlc.Submitted), sent.Status)

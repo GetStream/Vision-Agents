@@ -225,6 +225,7 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `ROUTER_CODE_SANDBOX_PROXY_ADDR` and `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`; without them it does
   not start. A host name, an IPv6 address or a non-public address in the public URL also stops the start. It needs no
   secret prefix.
+- An `https` `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` runs a TLS tunnel in the sandbox (`internal/sandbox/egress/AGENTS.md`): the proxy env vars name `127.0.0.1:3128`, and the image needs `python3`.
 - How egress is forced: Daytona's network allow list holds the proxy's address alone
   (`<address>/32`). Daytona gets no domain allow list and no `OutboundProxyUrl`. The sandbox then
   reaches the proxy and, of Daytona's own network, only the netleash gateway (172.20.0.1:18080,

@@ -22,6 +22,9 @@ final readonly class Provider
         // What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none.
         public ?string $description = null,
         public ?ProviderPrice $price = null,
+        // The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, simil...
+        /** @var list<string>|null */
+        public ?array $supports = null,
         // This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1....
         public ?float $usageShare = null,
     ) {
@@ -42,6 +45,7 @@ final readonly class Provider
             benchmark: array_key_exists('benchmark', $data) && $data['benchmark'] !== null ? ProviderBenchmark::fromArray(Json::object($data, 'benchmark')) : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             price: array_key_exists('price', $data) && $data['price'] !== null ? ProviderPrice::fromArray(Json::object($data, 'price')) : null,
+            supports: array_key_exists('supports', $data) && $data['supports'] !== null ? Json::strings($data, 'supports') : null,
             usageShare: array_key_exists('usage_share', $data) && $data['usage_share'] !== null ? Json::float($data, 'usage_share') : null,
         );
     }
@@ -68,6 +72,9 @@ final readonly class Provider
         }
         if ($this->price !== null) {
             $out['price'] = $this->price->toArray();
+        }
+        if ($this->supports !== null) {
+            $out['supports'] = $this->supports;
         }
         if ($this->usageShare !== null) {
             $out['usage_share'] = $this->usageShare;

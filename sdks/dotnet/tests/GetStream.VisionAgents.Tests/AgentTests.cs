@@ -112,6 +112,29 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task AReviewGuideIsPatchedAndReadBack()
+    {
+        const string guide = "Score how fast the refund was settled.";
+        await using var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/configs", 200, new[] { Fixtures.Config("support", "cfg-9") });
+        router.On("PATCH", "/v1/agents/configs/cfg-9", 200, new
+        {
+            id = "cfg-9",
+            name = "support",
+            mode = "voice",
+            created_at = "2026-09-24T10:00:00Z",
+            updated_at = "2026-09-24T10:00:00Z",
+            review = new { instructions = guide },
+        });
+        using var client = Fixtures.Client(router);
+
+        var config = await client.Agent("support").UpdateConfigAsync(new AgentConfigPatch { Review = new AgentReview { Instructions = guide } }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("""{"review":{"instructions":"Score how fast the refund was settled."}}""", router.Only("PATCH", "/v1/agents/configs/cfg-9").Body!.ToJsonString());
+        Assert.Equal(guide, config.Review?.Instructions);
+    }
+
+    [Fact]
     public void AnIncognitoConversationAsksForNoTranscript()
     {
         using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
