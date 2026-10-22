@@ -151,6 +151,25 @@ func (s *DataMoveSuite) TestAnImportCannotClaimAnotherAppsNumberInAnotherForm() 
 	s.Len(held, 1, "the number stays with the app that holds it")
 }
 
+func (s *DataMoveSuite) TestARefusedNumberDoesNotSayWhoHoldsIt() {
+	other, e164 := s.utils.uuid(), s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(context.Background(), &store.PhoneNumber{
+		E164: e164, Vendor: "plivo", Country: "US", CustomerID: other,
+	}))
+
+	row, err := json.Marshal(map[string]any{
+		"id": rand.Int64N(1 << 50), "e164": e164, "vendor": "bandwidth", "country": "US",
+		"capabilities": []string{"voice"}, "monthly_cost_micros": 0, "customer_id": other,
+		"tags": map[string]string{}, "purchased_at": time.Now().UTC(),
+	})
+	s.Require().NoError(err)
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import",
+		ndjson([]dataLine{{Table: "phone_numbers", Row: row}}))
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "this number cannot be imported")
+	s.NotContains(failure, "app")
+}
+
 func (s *DataMoveSuite) TestSomethingThatIsNotAnExportIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import", "not an export at all")
 
