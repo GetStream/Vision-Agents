@@ -70,7 +70,7 @@ func TestSitesOfStatsKeepsWhereStreamPlacedASide(t *testing.T) {
 	}, sites.details())
 }
 
-func TestCallStatsStopBeingAskedOnceEverySessionHasAnSFU(t *testing.T) {
+func TestCallStatsStopBeingAskedOnceBothSidesHaveAnSFU(t *testing.T) {
 	asked := 0
 	read := answering(&asked,
 		agentAndCaller("sfu-a.example.com", "sfu-c.example.com"),
@@ -117,6 +117,33 @@ func TestCallStatsWithoutTheCallerAreAskedAgain(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, asked)
 	require.Equal(t, "sfu-c.example.com", sites.Caller.SFU)
+}
+
+func TestCallStatsWithoutTheAgentAreAskedAgain(t *testing.T) {
+	asked := 0
+	callerOnly := agentAndCaller("", "sfu-c.example.com")
+	callerOnly.Participants = callerOnly.Participants[1:]
+	read := answering(&asked, callerOnly, agentAndCaller("sfu-a.example.com", "sfu-c.example.com"))
+
+	sites, err := fetchCallSites(context.Background(), read, noWaits)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, asked)
+	require.Equal(t, "sfu-a.example.com", sites.Agent.SFU)
+}
+
+func TestCallStatsWithoutTheAgentGiveWhatIsThereWithinTheBound(t *testing.T) {
+	asked := 0
+	callerOnly := agentAndCaller("", "sfu-c.example.com")
+	callerOnly.Participants = callerOnly.Participants[1:]
+	callerOnly.Counts.SfusUsed = 1
+	read := answering(&asked, callerOnly)
+
+	sites, err := fetchCallSites(context.Background(), read, noWaits)
+
+	require.NoError(t, err)
+	require.Equal(t, len(noWaits), asked)
+	require.Equal(t, callSites{SFUsUsed: 1, Caller: sideSite{SFU: "sfu-c.example.com"}}, sites)
 }
 
 func TestCallStatsThatNeverFillGiveTheLastAnswerWithinTheBound(t *testing.T) {

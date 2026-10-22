@@ -67,10 +67,12 @@ func siteOf(session getstream.CallStatsParticipantSession) sideSite {
 	return site
 }
 
-// everySessionHasAnSFU says the stats are ready: the caller is listed, and every session
-// names its SFU. Stream fills both in some time after the call ends.
-func everySessionHasAnSFU(stats *getstream.QueryCallSessionParticipantStatsResponse) bool {
-	if !slices.ContainsFunc(stats.Participants, isCaller) {
+// statsReady says the stats are ready: the agent and the caller are both listed, each with
+// an SFU, and no session is still without one. Stream fills them in some time after the
+// call ends, and may list one side before the other.
+func statsReady(stats *getstream.QueryCallSessionParticipantStatsResponse) bool {
+	sites := sitesOf(stats)
+	if sites.Agent.SFU == "" || sites.Caller.SFU == "" {
 		return false
 	}
 	for _, participant := range stats.Participants {
@@ -134,8 +136,8 @@ func streamCallStats(ctx context.Context, client *getstream.Stream, callType, ca
 // stats in some time after the call ends, so the first read waits and later ones try again.
 var defaultCallStatsWaits = []time.Duration{5 * time.Second, 10 * time.Second, 10 * time.Second, 10 * time.Second}
 
-// fetchCallSites reads a call's stats until every session in them names its SFU, waiting
-// before each try. Stats that never fill give the last answer; no answer at all gives the
+// fetchCallSites reads a call's stats until they are ready (statsReady), waiting before
+// each try. Stats that never fill give the last answer; no answer at all gives the
 // last error.
 func fetchCallSites(
 	ctx context.Context,
@@ -159,7 +161,7 @@ func fetchCallSites(
 			continue
 		}
 		last = stats
-		if everySessionHasAnSFU(stats) {
+		if statsReady(stats) {
 			break
 		}
 	}

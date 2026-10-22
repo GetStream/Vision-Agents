@@ -62,8 +62,8 @@ go run ./cmd/phone hooks -remove https://<random>.trycloudflare.com
 ```
 
 Stream sends `call.session_ended` about 30 s after the agent leaves. The router then reads
-Stream's participant stats 5 s later, and again for up to 35 s in all until every session's
-SFU is named, so the `call_sites` row appears about 35 to 65 s after hang-up. The tool waits up
+Stream's participant stats 5 s later, and again for up to 35 s in all until both the agent
+and the caller are listed with their SFU, so the `call_sites` row appears about 35 to 65 s after hang-up. The tool waits up
 to 90 s for it and logs `call_sites row after N s` when it arrives.
 
 Inbound also needs:
