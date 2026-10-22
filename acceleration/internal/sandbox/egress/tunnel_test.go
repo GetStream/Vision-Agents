@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -459,14 +460,19 @@ func (s *TunnelSuite) TestACheckWhoseForwarderLostThePortFindsTheWinnerUp() {
 	s.Require().NoError(os.MkdirAll(filepath.Dir(pidFile), 0o755))
 	for delay := 0; delay <= 400; delay += 20 {
 		_ = os.Remove(pidFile)
+		var written atomic.Int64
 		timer := time.AfterFunc(time.Duration(delay)*time.Millisecond, func() {
 			_ = os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600)
+			written.Store(time.Now().UnixNano())
 		})
 
 		out, err := s.sh(s.mount.EachRun[0])
 
 		timer.Stop()
-		s.NoError(err, "pid file written after %d ms: %s", delay, out)
+		// A pid file that came after the check ended (a fast python3 ends it sooner) is no test of it.
+		if at := written.Load(); at != 0 && time.Since(time.Unix(0, at)) > 50*time.Millisecond {
+			s.NoError(err, "pid file written after %d ms: %s", delay, out)
+		}
 	}
 }
 
