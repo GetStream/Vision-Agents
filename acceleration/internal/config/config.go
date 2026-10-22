@@ -642,9 +642,15 @@ func (c Config) validate() error {
 	}
 	// An https URL a sandbox cannot use is served as plain HTTP by the listener, which would
 	// leave a router running a different proxy from the one its settings say.
-	if c.CodeSandbox.ProxyAddr != "" && strings.HasPrefix(c.CodeSandbox.ProxyPublicURL, "https://") && !validProxy {
-		return fmt.Errorf("config: code_sandbox.proxy_public_url (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) is %q, an https URL that is not "+
-			"https://<public IPv4 address>:port, so the proxy would be served in plain HTTP: fix it or use http", c.CodeSandbox.ProxyPublicURL)
+	if raw := c.CodeSandbox.ProxyPublicURL; c.CodeSandbox.ProxyAddr != "" && len(raw) >= len("https://") &&
+		strings.EqualFold(raw[:len("https://")], "https://") && !validProxy {
+		// The URL may carry a credential as its user, so the error names the host alone.
+		host := "unparseable"
+		if parsed, err := url.Parse(raw); err == nil {
+			host = parsed.Host
+		}
+		return fmt.Errorf("config: code_sandbox.proxy_public_url (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) has host %q, an https URL that is not "+
+			"https://<public IPv4 address>:port, so the proxy would be served in plain HTTP: fix it or use http", host)
 	}
 	// Every router of a proxy broker serves the proxy, so no sandbox is sent to a proxy no
 	// router runs.
