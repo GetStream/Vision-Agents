@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -522,13 +523,34 @@ func (s *ConverseSuite) TestAQueuedTurnIsDroppedOnceTheSameWordsAreAnsweredInFul
 	s.Require().Equal(ActQueue, queued.Kind)
 
 	ready := s.settle("okay wait make it six people please", s.quiet())
+	dropped := testutil.ToFloat64(staleQueuedTurns)
 	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
-	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Empty(answered[0].Unanswered, "the longer turn says them already")
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped, "a revision is not a turn said more after")
 
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the queued words were answered as part of the longer turn")
+}
+
+func (s *ConverseSuite) TestAQueuedTurnRestatedShorterIsDroppedWithoutBeingOwed() {
+	// The transcriber went back over the run of speech and kept less of it: the same words,
+	// not more said after them, so they are dropped as a revision always was.
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	s.queueSettledTurn("okay wait make it six", 0, harness.Continue)
+
+	ready := s.settle("okay wait", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Empty(answered[0].Unanswered)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting)
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
 }
 
 func (s *ConverseSuite) TestAReplacementThenFinalCorrectionReplacesAQueuedOverlap() {
@@ -552,6 +574,7 @@ func (s *ConverseSuite) TestAReplacementThenFinalCorrectionReplacesAQueuedOverla
 
 	answered := s.answerFinal(corrected, utterance)
 	s.Equal(corrected, answered.Text)
+	s.Empty(answered.Unanswered, "a correction of the queued words is not more said after them")
 	s.assertCorrectedReplacedQueue(corrected)
 }
 
@@ -582,6 +605,7 @@ func (s *ConverseSuite) TestTwoReplacementsThenFinalCorrectionReplacesAQueuedOve
 
 	answered := s.answerFinal(corrected, utterance)
 	s.Equal(corrected, answered.Text)
+	s.Empty(answered.Unanswered, "a correction of the queued words is not more said after them")
 	s.assertCorrectedReplacedQueue(corrected)
 }
 
@@ -616,6 +640,7 @@ func (s *ConverseSuite) TestAFinalCorrectionOfAQueuedUtteranceIsNotSwallowedAsTh
 	}, s.quiet())
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
 	s.Equal(corrected, answered[0].Text)
+	s.Empty(answered[0].Unanswered, "a correction of the queued words is not more said after them")
 
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the corrected final replaced the queued hypothesis")
@@ -641,7 +666,8 @@ func (s *ConverseSuite) assertRevisedQueueIsNotReplayed(decision harness.Floor) 
 		Text:        corrected,
 	}, s.quiet())
 
-	s.answerFinal(corrected, utterance)
+	answered := s.answerFinal(corrected, utterance)
+	s.Empty(answered.Unanswered, "a correction of the queued words is not more said after them")
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the accepted correction replaces a queued Continue or Shorten turn")
 }
@@ -666,11 +692,11 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesASeparateNumberedUtteranceWithThe
 		Disposition: harness.Respond,
 		Floor:       harness.Continue,
 	}, s.quiet())
-	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal(queuedText, answered[0].Unanswered, "a new utterance is not a correction of the queued one, so it is owed")
 
-	action, waiting := s.converse.Waiting(s.quiet())
-	s.Require().True(waiting, "a new utterance is not a correction of the queued one")
-	s.Equal(queuedText, action.Candidate.Text)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the queued words were answered with the newer ones")
 }
 
 func (s *ConverseSuite) TestAQueuedTurnKeepsItsParticipantWhenUtteranceNumbersMatch() {
@@ -830,12 +856,13 @@ func (s *ConverseSuite) TestAnsweringAnOlderQueueDoesNotMakeANewerAnsweredUttera
 	later := s.held()
 	asked := s.converse.Settled(later, s.quiet())
 	s.Require().Equal(ActAsk, asked.Kind)
-	answered := s.converse.Ruled(harness.Decided{
+	// Let go of rather than answered: an answer would take the queued turn in with it.
+	ignored := s.converse.Ruled(harness.Decided{
 		CandidateID: later.ID,
-		Disposition: harness.Respond,
+		Disposition: harness.Ignore,
 		Floor:       harness.Continue,
 	}, s.quiet())
-	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal([]ActionKind{ActIgnore}, kinds(ignored))
 
 	queued, waiting := s.converse.Waiting(s.quiet())
 	s.Require().True(waiting)
@@ -1043,22 +1070,171 @@ func (s *ConverseSuite) TestAnAnsweredNumberedQueueDeduplicatesItsFinalButNotThe
 	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
 }
 
-func (s *ConverseSuite) TestAQueuedTurnSurvivesDifferentWordsBeingAnswered() {
+func (s *ConverseSuite) TestAQueuedTurnIsAnsweredWithDifferentWordsTheCallerSaidAfter() {
 	// A transcriber that sends only what is new would make the later turn the only copy of
-	// its own words, not of the queued ones, so those are still owed.
+	// its own words, not of the queued ones, so those are still owed: with the later turn,
+	// not on their own after it.
 	s.build(DuplexOptions{})
+	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.overhears("okay wait make it six", s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
 
 	ready := s.settle("what time do you close", s.quiet())
-	s.converse.Ruled(harness.Decided{
+	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
 
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal("what time do you close", answered[0].Text)
+	s.Equal("okay wait make it six", answered[0].Unanswered)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the queued turn was answered with the newer one")
+	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func (s *ConverseSuite) TestAWordOfAssentAfterAQueuedTurnIsAnsweredWithIt() {
+	queued := s.queueSettledTurn("a table for four at seven", 0, harness.Continue)
+
+	ready := s.settle("okay", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal(queued.Text, answered[0].Unanswered, "a short answer is not all the caller is owed")
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting)
+}
+
+func (s *ConverseSuite) TestAQueuedTurnIsAnsweredWithTheTurnThatInterrupts() {
+	queued := s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+
+	ready := s.settle("wait make it six", s.talking())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Stop,
+	}, s.talking())
+
+	s.Require().Equal([]ActionKind{ActInterrupt, ActAnswer}, kinds(answered))
+	s.Equal(queued.Text, answered[1].Unanswered)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting)
+}
+
+func (s *ConverseSuite) TestQueuedWordsAnsweredWithANewerTurnAreHeardWhenSaidAgain() {
+	queued := s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+	ready := s.settle("wait make it six", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal(queued.Text, answered[0].Unanswered)
+
+	s.converse.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "peanut allergy too"}, s.quiet())
+
+	again := s.held()
+	s.Equal("peanut allergy too", again.Text, "the caller saying it again is a turn of its own")
+	s.NotEqual(queued.ID, again.ID)
+}
+
+func (s *ConverseSuite) TestOnlyTheQueuedWordsNotYetAnsweredAreAnsweredWithANewerTurn() {
+	// A transcriber that keeps a run open after its answer sends the answered words again
+	// in front of the new ones.
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "a table on the patio.",
+	}, s.quiet())
+	first := s.held()
+	s.Require().Equal(ActAsk, s.converse.Settled(first, s.quiet()).Kind)
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(s.converse.Ruled(harness.Decided{
+		CandidateID: first.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())))
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "a table on the patio. Peanut allergy too.",
+	}, s.quiet())
+	grown := s.held()
+	s.Require().Equal("Peanut allergy too.", grown.Said())
+	s.Require().Equal(ActAsk, s.converse.Settled(grown, s.talking()).Kind)
+	s.Require().Equal([]ActionKind{ActQueue}, kinds(s.converse.Ruled(harness.Decided{
+		CandidateID: grown.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.talking())))
+
+	newer := s.answerFinal("wait make it six", 2)
+
+	s.Equal("Peanut allergy too.", newer.Unanswered)
+}
+
+func (s *ConverseSuite) TestAQueuedTurnIsKeptWhenTheNewerTurnIsNotAnswered() {
+	// Only an answer takes the queued words in. A turn waited on answers nothing yet.
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	queued := s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+
+	ready := s.settle("and one more", s.quiet())
+	waited := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Wait, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActWait}, kinds(waited))
+	// Let go of once put again, which leaves the caller no longer talking. An ignored turn
+	// answers nothing either.
+	s.ignoreNextSettled()
+
 	action, waiting := s.converse.Waiting(s.quiet())
 	s.Require().True(waiting)
-	s.Equal(queued.Candidate.ID, action.Candidate.ID)
+	s.Equal(queued.ID, action.Candidate.ID)
+	s.Empty(action.Unanswered)
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func (s *ConverseSuite) TestATurnQueuedBehindAnotherIsNotCountedAsFolded() {
+	// The newer turn is queued in its place, which is how it has always been: one queued
+	// turn, the last. Nothing was answered, so nothing was taken in.
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+
+	newer := s.queueSettledTurn("and a high chair", 0, harness.Continue)
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(newer.ID, action.Candidate.ID)
+	s.Empty(action.Unanswered)
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func (s *ConverseSuite) TestAnotherParticipantsQueuedTurnIsStillAnsweredOnItsOwn() {
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	queued := s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+	bob := stt.Participant{ID: "bob", UserID: "bob", Name: "Bob"}
+
+	s.converse.Observe(stt.Transcript{Participant: bob, Mode: stt.ModeFinal, Text: "is anyone there"}, s.quiet())
+	ready := s.held()
+	s.Require().Equal(ActAsk, s.converse.Settled(ready, s.quiet()).Kind)
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Empty(answered[0].Unanswered, "bob never said it")
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(queued.ID, action.Candidate.ID)
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func (s *ConverseSuite) TestAQueuedTurnNobodySaidMoreAfterIsAnsweredAsBefore() {
+	// Every expected value is what base 4588e625 did with the same turn.
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	queued := s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+
+	action, waiting := s.converse.Waiting(s.quiet())
+
+	s.Require().True(waiting)
+	s.Equal(ActAnswer, action.Kind)
+	s.Equal("the agent has stopped talking, so the turn that was waiting can be answered", action.Reason)
+	s.Equal(queued.ID, action.Candidate.ID)
+	s.Equal("peanut allergy too", action.Text)
+	s.Empty(action.Clarify)
+	s.Empty(action.Unanswered)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the turn was never heard")
+	s.Equal("peanut allergy too", s.heard()[0].Text)
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
 }
 
 func (s *ConverseSuite) TestAQueuedTurnTheCallerKeepsAddingToIsNotAnsweredOnItsOwn() {
@@ -1153,17 +1329,62 @@ func (s *ConverseSuite) TestATurnQueuedInALineHeardSinceIsNotHeardAgain() {
 		Participant: caller, Mode: stt.ModeReplacement, Utterance: 8, Text: "and a high chair",
 	}, s.quiet())
 	asked := s.converse.Settled(s.held(), s.quiet())
-	s.converse.Ruled(harness.Decided{
+	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: asked.Candidate.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
 
-	action, waiting := s.converse.Waiting(s.quiet())
-	s.Require().True(waiting)
-	s.Equal(queued.LineID, action.LineID)
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal(queued.LineID, answered[0].LineID)
+	s.Equal("make it six", answered[0].Unanswered)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting)
 	s.eventually(func() bool { return len(s.heard()) == 1 }, "the line was never heard")
 	s.Equal("make it six and a high chair", s.heard()[0].Text)
 	s.Never(func() bool { return len(s.heard()) > 1 }, 50*time.Millisecond, 5*time.Millisecond,
 		"the queued words were heard a second time")
+
+	// The next line is the caller's next words alone.
+	next := s.settle("and a booster seat", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: next.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the next line was never heard")
+	s.Equal("and a booster seat", s.heard()[1].Text)
+	s.NotEqual(queued.LineID, s.heard()[1].LineID)
+}
+
+func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardBeforeTheTurnAnsweredWithIt() {
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it six",
+	}, s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 8, Text: "hang on, the door",
+	}, s.quiet())
+	asked := s.converse.Settled(s.held(), s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: asked.Candidate.ID, Disposition: harness.Ignore, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 9, Text: "and a high chair",
+	}, s.quiet())
+	asked = s.converse.Settled(s.held(), s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: asked.Candidate.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Equal("make it six", answered[0].Unanswered)
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the queued words were never heard")
+	heard := s.heard()
+	s.Equal("make it six", heard[0].Text, "the queued words are heard first, as they were said")
+	s.NotEqual(queued.LineID, heard[0].LineID, "it was heard under the line let go of")
+	s.Equal("and a high chair", heard[1].Text)
+	s.Equal(answered[0].LineID, heard[1].LineID)
+	s.NotEqual(heard[0].LineID, heard[1].LineID)
 }
 
 // hearings is every Hearing reported so far.

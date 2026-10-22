@@ -67,6 +67,11 @@ var (
 		Name:      "agent_stale_replies_dropped_total",
 		Help:      "Replies to a caller's turn dropped before any of their audio went out, because the same caller said more",
 	})
+	staleQueuedTurns = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_stale_queued_turns_dropped_total",
+		Help:      "Caller turns queued behind a reply and dropped, their words folded into the answer to a newer turn of the same caller",
+	})
 	// kind is the turn kind (turns.go), a fixed set.
 	talkedOver = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",

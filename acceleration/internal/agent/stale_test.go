@@ -570,3 +570,85 @@ func (s *AgentSuite) dropLogged() []map[string]any {
 	s.eventually(func() bool { return len(s.logs.records(line)) > 0 }, "the drop was never logged")
 	return s.logs.records(line)
 }
+
+// queuesBehindAReply has the caller's first words answered by a reply that is going out, and
+// what they say over it queued until it ends. It returns the reply's turn.
+func (s *AgentSuite) queuesBehindAReply(first, over string) string {
+	s.model.reply = nil
+	s.speak(nash)
+	s.says(nash, first)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
+	reply := s.model.requests()[0].ID
+	s.heardSomeOf(reply)
+	s.flow.then = []string{`{"disposition":"respond","floor":"continue"}`}
+	s.says(nash, over)
+	s.eventually(func() bool { return countOf[OverlapDecided](s.reported()) == 1 }, "the words over the reply were never queued")
+	return reply
+}
+
+func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorrection() {
+	// Voicebench restaurant.interrupt on v0.6.115: "peanut allergy" was queued over the reply,
+	// the caller corrected it once the reply was cut, and after answering the correction the
+	// agent answered the queued words on their own and asked about the allergy again.
+	s.logs = &logLines{}
+	s.join(true)
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	reply := s.queuesBehindAReply("A table for four at seven please.", "Peanut allergy too.")
+	s.mutters(nash, "Wait.")
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) >= 3 }, "the caller was never heard going on")
+	s.model.writes(reply, "Seven works.")
+	s.model.finishes(reply)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			decided, ok := event.(Decided)
+			return ok && decided.Kind == string(ActHold)
+		})
+	}, "the queued turn did not wait on the caller still talking")
+
+	correction := "Wait. Make it six, and one of us is gluten free instead."
+	s.says(nash, correction)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was never answered")
+	newer := s.model.requests()[1]
+	s.Equal(correction, newer.Input[len(newer.Input)-1].Content)
+	s.Contains(newer.Instructions, missedNote("Peanut allergy too."), "the queued words are owed with the correction")
+	for _, message := range newer.Input {
+		s.NotEqual("Peanut allergy too.", message.Content, "the queued words reach the model in the note, not the history")
+	}
+	s.model.writes(newer.ID, "Six at seven, gluten free and a peanut allergy noted.")
+	s.model.finishes(newer.ID)
+
+	s.Never(func() bool { return len(s.model.requests()) > 2 }, 200*time.Millisecond, 5*time.Millisecond,
+		"the queued words were answered again on their own")
+	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+	logged := s.logs.records("dropped a queued turn the caller has said more after")
+	s.Require().Len(logged, 1)
+	s.Equal("nash", logged[0]["participant"])
+	s.Contains(logged[0]["turn"], "turn-")
+	s.Contains(logged[0], "age_ms")
+}
+
+func (s *AgentSuite) TestAQueuedTurnNobodySaidMoreAfterIsAskedAsBefore() {
+	// Every expected value is what base 4588e625 did with the same turns.
+	s.join(true)
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	reply := s.queuesBehindAReply("A table for four at seven please.", "Peanut allergy too.")
+
+	s.model.writes(reply, "Seven works.")
+	s.model.finishes(reply)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the queued turn was never answered")
+	queued := s.model.requests()[1]
+	s.Equal([]string{"A table for four at seven please.", "Seven works.", "Peanut allergy too."},
+		contents(queued.Input))
+	s.Equal(s.model.requests()[0].Instructions, queued.Instructions)
+	s.NotContains(queued.Instructions, "not yet answered")
+	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func contents(messages []llm.Message) []string {
+	var kept []string
+	for _, message := range messages {
+		kept = append(kept, message.Content)
+	}
+	return kept
+}
