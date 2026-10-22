@@ -638,6 +638,36 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).
 - The `anthropic` provider sends `ANTHROPIC_WORKSPACE_ID` as the `anthropic-workspace-id` header, so an Anthropic key that is not scoped to a workspace is accepted; with it unset, requests are sent as before.
 
+### A tool call waits for the person to sign in, and carries on once they have
+
+When the agent calls a connector bound as each person's own (`connection.type: session`) that
+the person has not connected, the call now waits for them to sign in, instead of telling them to
+press a button and ending the reply. Its `ai_tool_call` step is `awaiting_authorization` and
+carries an `authorization` with the `type` (`oauth`), `provider`, `provider_name`, `title`,
+`message`, sign-in `url`, `handoff_token` and `expires_at`. Once the person signs in, the same
+call runs in the same reply, on their account.
+
+A `tool_approval` that names only the `tool_call_id`, with `allowed` false, declines the sign-in.
+A consent refused at the provider, one that came back with another account, and one not
+finished in ten minutes end the call too, and `authorization.status` says which (`declined`,
+`failed` or `expired`). The agent is told either way. Stopping the reply ends the call too, with
+nothing run. The `connector_authorization` attachment is still written for the clients that
+render it.
+
+The reply stays open while the call waits, and a new message is refused meanwhile, as during
+any reply. A client that renders neither the step nor the card should let the person stop it.
+A client that read `authorization_required` from the call's `tool_ran` now gets that frame
+only once the sign-in ends.
+
+This also fixes the chat that carried on after a login. Its follow-up made the same call again,
+and the agent answered it with the earlier "not connected" rather than running it.
+
+Swift has `SessionOptions.returnURL` and `AgentSession.declineLogin`, and Stream's
+`AIToolAuthorizationView` shows the sign-in in a web authentication sheet when the
+`AIToolApprover` has an `AIToolAuthorizer`. The Swift assistant connects Linear and Gmail this
+way, so its Gmail button is gone, and so are its backend's routes to start, read and delete the
+Gmail connection (#1114).
+
 ### An agent config sets the guide its calls are reviewed by
 
 `AgentConfig` takes an optional `review` with `instructions`: what the model reviewing a

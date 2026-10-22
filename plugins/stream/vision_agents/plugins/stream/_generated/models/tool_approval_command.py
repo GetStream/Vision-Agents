@@ -16,7 +16,8 @@ T = TypeVar("T", bound="ToolApprovalCommand")
 @_attrs_define
 class ToolApprovalCommand:
     """A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is
-    shown; the call still needs a tool_result.
+    shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a
+    connector call waits for (awaiting_authorization) instead, and the router answers that call itself.
 
         Attributes:
             allowed (bool):

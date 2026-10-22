@@ -14,7 +14,6 @@ struct ChatScreen: View {
     /// Says which session a new conversation became, once it is first written or talked to.
     let onStarted: (String) -> Void
 
-    @Environment(GmailAccount.self) private var gmail
     @State private var chat: AgentChat?
     @State private var failure: String?
     /// What the person just asked, shown at once with its photos until Stream's copy of their
@@ -82,11 +81,6 @@ struct ChatScreen: View {
                 viewModel: composer,
                 onMessageSend: { send($0) },
                 onStopGenerating: { chat?.stop() })
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                GmailButton(gmail: gmail)
-            }
         }
         .fullScreenCover(isPresented: $isVoiceShown) {
             if let chat {
@@ -222,6 +216,7 @@ struct ChatScreen: View {
                 var options = SessionOptions(agent: Assistant.agentName)
                 options.llm = Assistant.chatModel
                 options.tools = Assistant.tools
+                options.returnURL = Assistant.returnURL
                 session = try await Assistant.agents.chat(options)
             }
             let opened = try await AgentChat.open(session)
@@ -235,10 +230,17 @@ struct ChatScreen: View {
         }
     }
 
-    /// Answers the questions of the tools that ask first, as the person signed in here.
+    /// Answers the questions of the tools that ask first, and the sign-ins the agent's
+    /// connectors wait for, as the person signed in here. A sign-in opens in a web
+    /// authentication sheet, which the router hands back to this app once the provider has
+    /// answered; "Not now" ends the call without it.
     private func approver(for session: AgentSession) -> AIToolApprover {
-        AIToolApprover(userID: Assistant.user.id, clientID: AIClientIdentity.installID) {
-            call, allowed in
+        AIToolApprover(
+            userID: Assistant.user.id, clientID: AIClientIdentity.installID,
+            authorizer: AIToolAuthorizer(callbackScheme: Assistant.callbackScheme) { call in
+                try await session.declineLogin(call.id)
+            }
+        ) { call, allowed in
             try await session.decide(call.id, allowed: allowed)
         }
     }
