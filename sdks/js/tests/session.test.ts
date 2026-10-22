@@ -447,6 +447,34 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("follows the voice off the socket without taking anything from events()", async () => {
+    const [session, connection] = await opened();
+    const told: (string | undefined)[] = [];
+    session.speech.subscribe(() => told.push(session.speech.get()?.synthesisId));
+
+    const frames = [
+      { type: "response_delta", turn_id: "turn-1", text: "Hello there." },
+      { type: "speaking", turn_id: "turn-1", synthesis_id: "turn-1", text: "Hello there.", at: "2026-10-22T09:30:00Z" },
+      { type: "spoke", turn_id: "turn-1", synthesis_id: "turn-1", characters: 12, audio_duration_ms: 900 },
+    ];
+    for (const frame of frames) {
+      connection.send(frame);
+    }
+
+    const read: string[] = [];
+    for await (const event of session.events()) {
+      read.push(event.kind);
+      if (read.length === frames.length) {
+        break;
+      }
+    }
+    assert.deepEqual(read, ["response_delta", "speaking", "spoke"], "every event is still the caller's");
+    // Held while its text came first, on a voice session; then heard, then measured.
+    assert.deepEqual(told, [undefined, "turn-1", "turn-1"]);
+    assert.equal(session.speech.heard("turn-1", performance.now() + 900)?.done, true);
+    await session.close();
+  });
+
   it("sends what the caller asked the conversation to do", async () => {
     const [session, connection] = await opened();
 
@@ -476,6 +504,34 @@ describe("Session", () => {
     assert.equal(router.last.method, "POST");
     assert.equal(router.last.path, "/v1/agents/sessions/sess_1/voice");
     assert.equal(session.voice.started, true);
+    await session.close();
+  });
+
+  it("holds no reply for a voice once the agent is off the call", async () => {
+    const [session, connection] = await opened();
+    const row = { id: "sess_1", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" };
+    router.serve("DELETE", "/v1/agents/sessions/sess_1/voice", { body: row });
+    router.serve("POST", "/v1/agents/sessions/sess_1/voice", { body: { ...row, call_id: "sess_1" } });
+    const deltas = (async () => {
+      const kinds: string[] = [];
+      for await (const event of session.events()) {
+        kinds.push(event.kind);
+        if (kinds.length === 3) {
+          return kinds;
+        }
+      }
+      return kinds;
+    })();
+
+    connection.send({ type: "speaking", turn_id: "turn-0", synthesis_id: "turn-0", text: "Hi." });
+    await session.voice.stop();
+    connection.send({ type: "response_delta", turn_id: "turn-1", text: "In writing now." });
+    await session.voice.start();
+    connection.send({ type: "response_delta", turn_id: "turn-2", text: "Back on the call." });
+    await deltas;
+
+    assert.equal(session.speech.heard("turn-1"), undefined, "a reply in writing is shown as it is");
+    assert.deepEqual(session.speech.heard("turn-2"), { chars: 0, done: false });
     await session.close();
   });
 

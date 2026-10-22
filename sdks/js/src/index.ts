@@ -108,6 +108,15 @@ export {
 } from "./session.js";
 
 export {
+  DEFAULT_CHARS_PER_MS,
+  SPEECH_GRACE_MS,
+  Speech,
+  type HeardSpeech,
+  type SpeechOptions,
+  type SpeechSnapshot,
+} from "./speech.js";
+
+export {
   Agent,
   USER_KEY,
   daytona,
