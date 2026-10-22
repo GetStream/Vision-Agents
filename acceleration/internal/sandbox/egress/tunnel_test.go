@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"maps"
@@ -157,6 +158,8 @@ func (s *TunnelSuite) get() (int, error) {
 	request.Header.Set("Authorization", "Bearer "+s.mount.Env["GITHUB_TOKEN"])
 	response, err := client.Do(request)
 	if err != nil {
+		var timeout net.Error
+		s.False(errors.As(err, &timeout) && timeout.Timeout(), "the forwarder left the connection open: %v", err)
 		return 0, err
 	}
 	_ = response.Body.Close()
