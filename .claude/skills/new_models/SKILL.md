@@ -75,6 +75,10 @@ Routing a vendor and having code for it are different questions. Check
 is the cheapest thing on the list, because the client already exists and the work is config.
 Anthropic was in exactly that state — `internal/llm/anthropic` with nothing routed to it.
 
+When you report a price, report the cached-input rate too if the vendor has one: an entry with
+no `per_million_cached_input_tokens` bills cached tokens at its input rate. A model the
+deployment runs itself has no price; its entry says `local: true`.
+
 ## 4. Report
 
 Report every model that clears the bar, ordered by how much it would improve what we route.
