@@ -262,6 +262,7 @@ from .llm_options_format import LlmOptionsFormat
 from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
+from .manage_status import ManageStatus
 from .mcp_server import McpServer
 from .mcp_server_branding import McpServerBranding
 from .modality import Modality
@@ -734,6 +735,7 @@ __all__ = (
     "LlmOptionsMetadata",
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
+    "ManageStatus",
     "McpServer",
     "McpServerBranding",
     "Modality",

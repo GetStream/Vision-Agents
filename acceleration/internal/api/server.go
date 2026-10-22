@@ -175,6 +175,9 @@ type Options struct {
 	Gate *dlc.Gate
 	// OpsKey is what Stream staff's review paths are reached with. Empty turns them off.
 	OpsKey string
+	// ManageKey is what Stream staff's billing paths, under /v1/manage, are reached with.
+	// Empty turns them off: they answer 404 not_configured.
+	ManageKey string
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
@@ -345,6 +348,7 @@ type Server struct {
 	dlc                *dlc.Service
 	gate               *dlc.Gate
 	opsKey             string
+	manageKey          string
 	authenticator      auth.Authenticator
 	authMode           auth.Mode
 	dataRetention      time.Duration
@@ -540,6 +544,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dlc:          options.DLC,
 		gate:         options.Gate,
 		opsKey:       options.OpsKey,
+		manageKey:    options.ManageKey,
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
 		draining:     make(chan struct{}),

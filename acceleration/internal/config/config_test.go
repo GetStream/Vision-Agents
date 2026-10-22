@@ -367,6 +367,27 @@ func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
 	s.True(config.Auth.ProxyDeclaresKind)
 }
 
+func (s *ConfigSuite) TestTheManageKeyIsNeverTheOpsKey() {
+	s.T().Setenv("ROUTER_AUTH_OPS_KEY", "one-staff-key")
+	s.T().Setenv("ROUTER_AUTH_MANAGE_KEY", "one-staff-key")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "auth.manage_key")
+	s.ErrorContains(err, "auth.ops_key")
+	s.NotContains(err.Error(), "one-staff-key", "the error names the settings, never the key")
+}
+
+func (s *ConfigSuite) TestAManageKeyOfItsOwnIsTaken() {
+	s.T().Setenv("ROUTER_AUTH_OPS_KEY", "the-ops-key")
+	s.T().Setenv("ROUTER_AUTH_MANAGE_KEY", "the-manage-key")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal("the-manage-key", config.Auth.ManageKey)
+}
+
 func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

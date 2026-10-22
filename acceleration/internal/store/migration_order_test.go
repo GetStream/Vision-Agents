@@ -361,6 +361,51 @@ func (s *MigrationOrderSuite) TestTheAuditCheckKeepsEveryRowAndTakesToolReapprov
 	s.Require().ErrorContains(audit(AuditToolReapproved), "connector_audit_action_check")
 }
 
+// The versions around audit_log's management source and price_list resource (T2 A): the
+// migration before it, and its own.
+const (
+	beforeAuditManage  int64 = 20261110100000
+	auditManageVersion int64 = 20261110120000
+)
+
+// TestTheAuditLogKeepsEveryRowAndTakesTheManagementAPI: a database holding a row of every
+// resource type and source the CHECKs allowed migrates, keeps them all, and takes price_list
+// and manage and nothing else new. Its Down keeps the new rows and refuses new ones.
+func (s *MigrationOrderSuite) TestTheAuditLogKeepsEveryRowAndTakesTheManagementAPI() {
+	db := s.open()
+	s.upTo(db, beforeAuditManage)
+	audit := func(resource, source string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO audit_log (id, customer_id, resource_type, resource_id, "+
+			"action, source, created_at) VALUES (?, '', ?, 'resource', 'created', ?, now())", newID(), resource, source)
+		return err
+	}
+	rows := func() int {
+		var count int
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM audit_log").Scan(&count))
+		return count
+	}
+	for _, resource := range []string{"agent_config", "skill", "knowledge", "knowledge_url", "router_config", "plugin", "policy"} {
+		s.Require().NoError(audit(resource, "api"), resource)
+	}
+	for _, source := range []string{"dashboard", "cli", "sdk"} {
+		s.Require().NoError(audit("policy", source), source)
+	}
+	s.Require().ErrorContains(audit("price_list", "api"), "audit_log_resource_type_check")
+	s.Require().ErrorContains(audit("policy", "manage"), "audit_log_source_check")
+
+	s.upTo(db, auditManageVersion)
+
+	s.Equal(10, rows())
+	s.Require().NoError(audit("price_list", "manage"))
+	s.Require().ErrorContains(audit("limit", "manage"), "audit_log_resource_type_check")
+	s.Require().ErrorContains(audit("policy", "staff"), "audit_log_source_check")
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforeAuditManage))
+	s.Equal(11, rows())
+	s.Require().ErrorContains(audit("price_list", "api"), "audit_log_resource_type_check")
+	s.Require().ErrorContains(audit("policy", "manage"), "audit_log_source_check")
+}
+
 func (s *MigrationOrderSuite) auditRows(db *Store) int {
 	var rows int
 	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_audit").Scan(&rows))

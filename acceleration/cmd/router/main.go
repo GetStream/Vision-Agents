@@ -1096,6 +1096,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
 		}
 	}
+	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
 
 	options := api.Options{
 		Routers:               routers,
@@ -1124,6 +1125,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		DLC:                   registrations,
 		Gate:                  dlcGate,
 		OpsKey:                settings.Auth.OpsKey,
+		ManageKey:             settings.Auth.ManageKey,
 		Dispatch:              workers,
 		Quota:                 limiter,
 		RunsPerApp:            settings.Runs.ConcurrentPerApp,

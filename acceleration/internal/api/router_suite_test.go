@@ -130,6 +130,9 @@ const (
 // suiteOpsKey is what Stream staff's review paths are reached with.
 const suiteOpsKey = "suite-ops-key"
 
+// suiteManageKey is what the management API, /v1/manage, is reached with.
+const suiteManageKey = "suite-manage-key"
+
 // RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
 // suites to embed. A suite picks the app its clients call in its SetupTest:
 // s.useFixture("standard") for the app most tests share, or s.useApp(s.data.createApp())
@@ -333,6 +336,9 @@ type RouterSuite struct {
 	registrar dlc.Registrar
 	// gate is what every text and call passes.
 	gate *dlc.Gate
+	// manageOff builds the router with no manage key, as a deployment that never set
+	// ROUTER_AUTH_MANAGE_KEY has, for a suite about that to set before it starts the harness.
+	manageOff bool
 
 	utils testUtils
 	data  testData
@@ -513,6 +519,10 @@ func (s *RouterSuite) SetupSuite() {
 	if s.connectorsOff {
 		connectorSecrets, serverTransports, connectorLimiter = nil, nil, nil
 	}
+	manageKey := suiteManageKey
+	if s.manageOff {
+		manageKey = ""
+	}
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
 		Streams:   streams,
@@ -534,6 +544,7 @@ func (s *RouterSuite) SetupSuite() {
 		DLC:               s.registrations(listener, logger),
 		Gate:              s.gate,
 		OpsKey:            suiteOpsKey,
+		ManageKey:         manageKey,
 		Secrets:           s.sealer,
 		Knowledge:         s.knowledgeWriter(),
 		KnowledgeURLs:     s.pages(redisAddr),
