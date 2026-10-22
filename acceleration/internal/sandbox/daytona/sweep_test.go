@@ -202,8 +202,12 @@ func (s *SweepSuite) live(session string) {
 
 // sweeper sweeps the test's prefix, with liveness read from directory, and asks it again at once.
 func (s *SweepSuite) sweeper(directory *node.Directory) *Sweeper {
+	return s.sweeperEvery(directory, 50*time.Millisecond)
+}
+
+func (s *SweepSuite) sweeperEvery(directory *node.Directory, every time.Duration) *Sweeper {
 	sweeper, err := NewSweeper(SweepOptions{APIKey: "key-1", APIURL: s.org.server.URL + "/api", Prefix: s.prefix,
-		Sessions: directory, Slots: concurrency.New(s.redis, nil), Every: 50 * time.Millisecond, Logger: slog.New(slog.DiscardHandler)})
+		Sessions: directory, Slots: concurrency.New(s.redis, nil), Every: every, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	sweeper.wait = func(context.Context) error { return nil }
 	return sweeper
@@ -341,6 +345,19 @@ func (s *SweepSuite) TestTheNextTickSweepsAfterAListError() {
 
 	s.Eventually(func() bool { return len(s.org.names()) == 0 }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(2, s.org.called("GET /api/secret/paginated"))
+}
+
+// Run sweeps when the router starts, and then once an hour by default.
+func (s *SweepSuite) TestRunSweepsAtOnceAndThenHourly() {
+	s.org.add(s.named("session-ended", "github"), 2*time.Hour)
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+
+	go s.sweeperEvery(s.directory, 0).Run(ctx)
+
+	s.Eventually(func() bool { return len(s.org.names()) == 0 }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	s.Equal(1, s.org.called("GET /api/secret/paginated"))
 }
 
 func (s *SweepSuite) TestASessionWhoseLivenessCannotBeReadKeepsItsSecret() {
