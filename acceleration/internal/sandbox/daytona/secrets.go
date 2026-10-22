@@ -148,11 +148,6 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 	return nil
 }
 
-// Basic is false: Daytona replaces a placeholder only where a header carries it verbatim, and
-// git's Basic auth carries it Base64-encoded. GitHub refuses the token as «Authorization:
-// Bearer» from git (401 to git-receive-pack, 2026-10-22T03:53:09Z), so git gets no token.
-func (s *Secrets) Basic() bool { return false }
-
 func (s *Secrets) Close(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

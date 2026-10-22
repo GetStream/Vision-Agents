@@ -241,9 +241,6 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 	return nil
 }
 
-// Basic is true: the proxy replaces a placeholder that is Basic auth's password (placed, rewrite.go).
-func (b *Broker) Basic() bool { return true }
-
 func (b *Broker) Close(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
