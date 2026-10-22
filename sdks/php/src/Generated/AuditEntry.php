@@ -29,7 +29,7 @@ final readonly class AuditEntry
         public AuditSource|string $source,
         // Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on st...
         public ?string $actorId = null,
-        // Their name, as their client named them. Never an email address: the router keeps none.
+        // Their name, as their client named them. Never an email address: the only one the router keeps is the one a...
         public ?string $actorName = null,
         // The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
         public ?string $agentId = null,

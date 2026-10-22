@@ -43,6 +43,9 @@ final readonly class SyncAgentRequest
         // The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base a...
         /** @var list<KnowledgeUrlDeclaration>|null */
         public ?array $knowledgeUrls = null,
+        // The connectors agent.yaml names that the client left out of connectors, because the app has no connection b...
+        /** @var list<LeftOutConnector>|null */
+        public ?array $leftOutConnectors = null,
         public ?string $llm = null,
         // MCP servers outside the plugin catalog, opened by their URL with no login.
         /** @var list<McpServer>|null */
@@ -54,8 +57,11 @@ final readonly class SyncAgentRequest
         // Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        public AgentRole|string|null $role = null,
         public Sandbox|string|null $sandbox = null,
         public ?SandboxOptions $sandboxOptions = null,
+        // Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out k...
+        public ?AgentScheduling $scheduling = null,
         public ?string $search = null,
         // The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulat...
         /** @var list<SimulationDeclaration>|null */
@@ -98,13 +104,16 @@ final readonly class SyncAgentRequest
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledge: array_key_exists('knowledge', $data) && $data['knowledge'] !== null ? array_map(KnowledgeDocument::fromArray(...), Json::objects($data, 'knowledge')) : null,
             knowledgeUrls: array_key_exists('knowledge_urls', $data) && $data['knowledge_urls'] !== null ? array_map(KnowledgeUrlDeclaration::fromArray(...), Json::objects($data, 'knowledge_urls')) : null,
+            leftOutConnectors: array_key_exists('left_out_connectors', $data) && $data['left_out_connectors'] !== null ? array_map(LeftOutConnector::fromArray(...), Json::objects($data, 'left_out_connectors')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
+            scheduling: array_key_exists('scheduling', $data) && $data['scheduling'] !== null ? AgentScheduling::fromArray(Json::object($data, 'scheduling')) : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             simulations: array_key_exists('simulations', $data) && $data['simulations'] !== null ? array_map(SimulationDeclaration::fromArray(...), Json::objects($data, 'simulations')) : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? array_map(SkillRequest::fromArray(...), Json::objects($data, 'skills')) : null,
@@ -165,6 +174,9 @@ final readonly class SyncAgentRequest
         if ($this->knowledgeUrls !== null) {
             $out['knowledge_urls'] = array_map(static fn (KnowledgeUrlDeclaration $each): array => $each->toArray(), $this->knowledgeUrls);
         }
+        if ($this->leftOutConnectors !== null) {
+            $out['left_out_connectors'] = array_map(static fn (LeftOutConnector $each): array => $each->toArray(), $this->leftOutConnectors);
+        }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
         }
@@ -180,11 +192,17 @@ final readonly class SyncAgentRequest
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
         }
+        if ($this->role !== null) {
+            $out['role'] = Json::enumValue($this->role);
+        }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
         }
         if ($this->sandboxOptions !== null) {
             $out['sandbox_options'] = $this->sandboxOptions->toArray();
+        }
+        if ($this->scheduling !== null) {
+            $out['scheduling'] = $this->scheduling->toArray();
         }
         if ($this->search !== null) {
             $out['search'] = $this->search;

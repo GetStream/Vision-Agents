@@ -10,7 +10,7 @@ namespace GetStream\VisionAgents\Generated;
  * The kind of failure, which decides the status it is answered with: invalid_request 400,
  * authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable
  * 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited
- * 429, internal 500, unavailable 503.
+ * 429, internal 500, unavailable 503, timeout 504.
  */
 enum ErrorType: string
 {
@@ -27,4 +27,5 @@ enum ErrorType: string
     case RateLimited = 'rate_limited';
     case Internal = 'internal';
     case Unavailable = 'unavailable';
+    case Timeout = 'timeout';
 }

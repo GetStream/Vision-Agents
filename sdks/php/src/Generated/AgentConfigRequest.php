@@ -43,8 +43,13 @@ final readonly class AgentConfigRequest
         // Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from t...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        // How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
+        public ?AgentReview $review = null,
+        public AgentRole|string|null $role = null,
         public Sandbox|string|null $sandbox = null,
         public ?SandboxOptions $sandboxOptions = null,
+        // Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an updat...
+        public ?AgentScheduling $scheduling = null,
         // What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves t...
         public ?string $search = null,
         // Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built...
@@ -93,8 +98,11 @@ final readonly class AgentConfigRequest
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
+            role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
+            scheduling: array_key_exists('scheduling', $data) && $data['scheduling'] !== null ? AgentScheduling::fromArray(Json::object($data, 'scheduling')) : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
@@ -163,11 +171,20 @@ final readonly class AgentConfigRequest
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
         }
+        if ($this->review !== null) {
+            $out['review'] = $this->review->toArray();
+        }
+        if ($this->role !== null) {
+            $out['role'] = Json::enumValue($this->role);
+        }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
         }
         if ($this->sandboxOptions !== null) {
             $out['sandbox_options'] = $this->sandboxOptions->toArray();
+        }
+        if ($this->scheduling !== null) {
+            $out['scheduling'] = $this->scheduling->toArray();
         }
         if ($this->search !== null) {
             $out['search'] = $this->search;

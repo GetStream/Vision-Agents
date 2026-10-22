@@ -41,6 +41,7 @@ impl AgentRef {
     pub async fn config(&self) -> Result<Option<types::AgentConfig>> {
         let query = ListAgentConfigsQuery {
             name: Some(self.name.clone()),
+            role: None,
         };
         let stored = self.client.list_agent_configs(&query).await?;
         Ok(stored.into_iter().find(|config| config.name == self.name))

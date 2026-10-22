@@ -205,6 +205,47 @@ async fn an_agents_config_is_patched_with_only_what_was_set() {
 }
 
 #[tokio::test]
+async fn a_review_guide_is_patched_and_read_back() {
+    let server = Server::start().await;
+    let guide = "Score how fast the refund was settled.";
+    let mut reviewed = config("cfg-1", "docs");
+    reviewed["review"] = json!({"instructions": guide});
+    server.route(
+        Method::GET,
+        "/v1/agents/configs",
+        200,
+        json!([config("cfg-1", "docs")]),
+    );
+    server.route(Method::PATCH, "/v1/agents/configs/cfg-1", 200, reviewed);
+
+    let patched = server
+        .client()
+        .agent("docs")
+        .update_config(&types::AgentConfigPatch {
+            review: Some(types::AgentReview {
+                instructions: Some(guide.into()),
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server
+            .request(Method::PATCH, "/v1/agents/configs/cfg-1")
+            .body,
+        json!({"review": {"instructions": guide}})
+    );
+    assert_eq!(
+        patched
+            .review
+            .and_then(|review| review.instructions)
+            .as_deref(),
+        Some(guide)
+    );
+}
+
+#[tokio::test]
 async fn an_inbound_call_is_answered_by_opening_the_session_it_names_with_voice() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));

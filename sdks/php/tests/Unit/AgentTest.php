@@ -9,6 +9,7 @@ use GetStream\VisionAgents\Edge;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder;
 use GetStream\VisionAgents\Generated\AgentConfigPatch;
+use GetStream\VisionAgents\Generated\AgentReview;
 use GetStream\VisionAgents\Generated\Sandbox;
 use GetStream\VisionAgents\Harness;
 use GetStream\VisionAgents\Inbound\InboundCall;
@@ -109,6 +110,18 @@ final class AgentTest extends TestCase
             ['guardrail' => 'No refunds.', 'visible_tools' => ['athena_*']],
             $this->router->to('PATCH', '/v1/agents/configs/cfg_9')[0]->json(),
         );
+    }
+
+    public function testUpdateConfigSendsAReviewGuideAndReadsItBack(): void
+    {
+        $guide = 'Score how fast the refund was settled.';
+        $this->router->answer('GET', '/v1/agents/configs', 200, [Rows::config('cfg_9', 'support')]);
+        $this->router->answer('PATCH', '/v1/agents/configs/cfg_9', 200, Rows::config('cfg_9', 'support') + ['review' => ['instructions' => $guide]]);
+
+        $config = $this->router->client()->agent('support')->updateConfig(new AgentConfigPatch(review: new AgentReview(instructions: $guide)));
+
+        self::assertSame(['review' => ['instructions' => $guide]], $this->router->to('PATCH', '/v1/agents/configs/cfg_9')[0]->json());
+        self::assertSame($guide, $config->review?->instructions);
     }
 
     public function testUpdateConfigOfAnAgentNothingIsStoredUnderIsRefused(): void
