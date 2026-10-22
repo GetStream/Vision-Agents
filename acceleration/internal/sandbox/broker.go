@@ -97,9 +97,4 @@ type CredentialBroker interface {
 	// Close removes everything Prepare left with the provider. Safe to call twice, and
 	// Prepare may run again after it.
 	Close(ctx context.Context) error
-	// Basic reports whether the egress also replaces a placeholder sent as Basic auth's
-	// password, which is how git sends one over HTTPS. Daytona Secrets does not: it replaces
-	// only a header that carries the placeholder verbatim
-	// (https://www.daytona.io/docs/en/secrets.md, «Transformed placeholders»).
-	Basic() bool
 }

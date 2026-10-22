@@ -120,9 +120,6 @@ type Sandbox interface {
 // Granted is a sandbox whose code may call connectors' APIs through grants.
 type Granted interface {
 	Grants() []Grant
-	// Basic is its broker's CredentialBroker.Basic: whether git over HTTPS may send a grant's
-	// placeholder.
-	Basic() bool
 }
 
 // gitHost is the host git clones and pushes to for a GitHub grant
@@ -149,13 +146,10 @@ func Tool(box Sandbox) llm.Tool {
 			}
 			// The user name is GitHub's for a token
 			// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
-			if granted.Basic() {
-				description += fmt.Sprintf(" git over HTTPS takes it as the password in the remote's URL, such as "+
-					"https://x-access-token:$%s@%s/<owner>/<repo>.git.", grant.Env, gitHost)
-			} else {
-				description += fmt.Sprintf(" git over HTTPS cannot use $%s: git sends it Base64-encoded, which only "+
-					"the router's code_sandbox.broker: proxy replaces.", grant.Env)
-			}
+			// Both brokers replace it there: live staging E2E, 2026-10-22, session
+			// 01a16514-923c-7843-9214-40a94453f194 (Daytona) and the proxy's A15.
+			description += fmt.Sprintf(" git over HTTPS takes it as the password in the remote's URL, such as "+
+				"https://x-access-token:$%s@%s/<owner>/<repo>.git.", grant.Env, gitHost)
 		}
 	}
 	return llm.Tool{

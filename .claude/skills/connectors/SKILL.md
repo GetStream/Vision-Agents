@@ -196,14 +196,19 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   host».
 - Daytona substitutes `Authorization: Basic <placeholder>` and `Basic user:<placeholder>` to a
   granted host when the value is not Base64-encoded (live Basic-auth check, staging 2026-10-21).
-  It does not substitute a Base64-encoded Basic header (Daytona docs). So git, which sends
-  Base64 Basic, still does not work through the Daytona broker.
-- Git over HTTPS needs `code_sandbox.broker: proxy`. GitHub refuses the token as `Authorization:
-  Bearer` from git (401 to `git-receive-pack`, probe 2026-10-22T03:53:09Z; Basic
-  `x-access-token:<token>` was taken), and Daytona substitutes no Base64 Basic, so under the
-  Daytona broker github.com gets no token. `run_code`'s description tells the model so. GitHub
-  revision 7 grants github.com (AI-1576); a connection on revision 6 keeps its two API hosts
-  until it is reconnected.
+  It also substitutes inside a Base64-encoded Basic header, which is how git sends it (live
+  staging E2E, 2026-10-22, session `01a16514-923c-7843-9214-40a94453f194`: `git ls-remote` of a public repo with
+  `Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)` exited 0, with a fake placeholder it
+  got 502). Daytona's docs say it does not («Transformed placeholders»); the live result wins.
+- Git over HTTPS under both brokers: `run_code` tells the model `git clone https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git`.
+  Shown live under Daytona: `git ls-remote` of a public repo with `x-access-token:<placeholder>` as Basic
+  auth (see above). `unverified` under Daytona: `git clone` (upload-pack POST), `git push`
+  (receive-pack), a private repo, a user name other than `x-access-token`. The proxy broker's
+  tests cover its push (`brokertest` A15).
+  GitHub refuses the token as `Authorization: Bearer` from git (401 to `git-receive-pack`, probe
+  2026-10-22T03:53:09Z; Basic `x-access-token:<token>` was taken), so `run_code`'s description
+  gives git the URL form. GitHub revision 7 grants github.com (AI-1576); a connection on
+  revision 6 keeps its two API hosts until it is reconnected.
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
   grants, the connector limiter and the audit. That is intended.
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
