@@ -113,14 +113,27 @@ type AudioChunk struct {
 
 func (AudioChunk) isSTSEvent() {}
 
-// Usage is what one response cost, where the model says. The audio tokens are a subset of
-// the totals rather than an addition to them.
+// Usage is what one response cost, where the model says. The modality counts are a subset of
+// the totals rather than an addition to them, and each cached count is a part of its
+// modality's input, as CachedInputTokens is of InputTokens. A vendor that bills each
+// modality at its own rate reports them; one that does not leaves them at zero and is
+// priced on the totals.
 type Usage struct {
 	InputTokens       int64
 	CachedInputTokens int64
-	OutputTokens      int64
-	InputAudioTokens  int64
-	OutputAudioTokens int64
+	// OutputTokens is everything generated, thinking included.
+	OutputTokens           int64
+	InputTextTokens        int64
+	InputAudioTokens       int64
+	InputImageTokens       int64
+	CachedInputTextTokens  int64
+	CachedInputAudioTokens int64
+	CachedInputImageTokens int64
+	OutputTextTokens       int64
+	OutputAudioTokens      int64
+	// ReasoningTokens is the part of the output spent thinking, shown and never priced on
+	// its own: the output tokens include it.
+	ReasoningTokens int64
 }
 
 // ResponseComplete settles one reply. It is the natural unit of billable work, the way

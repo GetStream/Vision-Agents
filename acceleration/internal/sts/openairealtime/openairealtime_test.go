@@ -393,7 +393,8 @@ func (s *RealtimeSuite) TestXAIUsageIsReadFromTheTopOfResponseDone() {
 	provider.handleMessage(created("resp_1"))
 	provider.handleMessage(finished)
 
-	s.Equal(sts.Usage{InputTokens: 7, OutputTokens: 119, OutputAudioTokens: 112}, s.settled(provider))
+	s.Equal(sts.Usage{InputTokens: 7, OutputTokens: 119, InputTextTokens: 7, OutputTextTokens: 7, OutputAudioTokens: 112},
+		s.settled(provider))
 }
 
 func (s *RealtimeSuite) TestOpenAIUsageIsStillReadFromTheResponse() {
@@ -408,6 +409,32 @@ func (s *RealtimeSuite) TestOpenAIUsageIsStillReadFromTheResponse() {
 
 	s.Equal(sts.Usage{InputTokens: 12, CachedInputTokens: 4, OutputTokens: 30, InputAudioTokens: 8, OutputAudioTokens: 24},
 		s.settled(provider))
+}
+
+// TestTheUsageIsSplitByModality uses a spoken turn as gpt-realtime-2.1 reported it: most of
+// the prompt is the instructions, as text, and served from the cache.
+func (s *RealtimeSuite) TestTheUsageIsSplitByModality() {
+	provider := s.newProvider(OpenAI)
+
+	var finished serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(`{"type":"response.done","response":{"id":"resp_1","status":"completed",`+
+		`"usage":{"input_tokens":828,"output_tokens":271,"input_token_details":{"text_tokens":795,"audio_tokens":33,`+
+		`"image_tokens":0,"cached_tokens":768,"cached_tokens_details":{"text_tokens":768,"audio_tokens":0,"image_tokens":0}},`+
+		`"output_token_details":{"text_tokens":95,"audio_tokens":176,"reasoning_tokens":43}}}}`), &finished))
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(finished)
+
+	s.Equal(sts.Usage{
+		InputTokens:           828,
+		CachedInputTokens:     768,
+		OutputTokens:          271,
+		InputTextTokens:       795,
+		InputAudioTokens:      33,
+		CachedInputTextTokens: 768,
+		OutputTextTokens:      95,
+		OutputAudioTokens:     176,
+		ReasoningTokens:       43,
+	}, s.settled(provider))
 }
 
 func (s *RealtimeSuite) TestACancelThatFoundNothingIsNotAnError() {
