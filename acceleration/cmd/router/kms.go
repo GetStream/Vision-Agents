@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
@@ -49,7 +50,11 @@ type cloudKMS struct {
 // newKEKUnwrapper opens a Cloud KMS client for key, the CryptoKey auth.kms_key names. The
 // caller closes it.
 func newKEKUnwrapper(ctx context.Context, key string) (*cloudKMS, error) {
-	client, err := kms.NewKeyManagementClient(ctx, kmsClientOptions...)
+	// The client's own logger is silenced: with GOOGLE_SDK_GO_LOGGING_LEVEL=debug it logs the
+	// Decrypt request and response, which carry the ciphertext and the plaintext key
+	// (executeRPC in cloud.google.com/go/kms v1.26.0, apiv1/helpers.go).
+	options := append([]option.ClientOption{option.WithLogger(slog.New(slog.DiscardHandler))}, kmsClientOptions...)
+	client, err := kms.NewKeyManagementClient(ctx, options...)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("auth.kms_key: open a Cloud KMS client: %w", err))
 	}

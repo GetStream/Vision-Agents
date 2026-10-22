@@ -436,13 +436,19 @@ func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLook
 	}
 }
 
+// errAPIKeyNeedsKeyring is the refusal of an api_key start with no keyring: the one
+// loadKeyring gave before newAuthenticator took the keyring from newSecretSealer.
+var errAPIKeyNeedsKeyring = errors.New("auth.mode=" + string(auth.APIKey) + " needs a key encryption " +
+	"keyring to seal the secrets it holds: set " + authKEKEnvVar + "_V1 (" + authKEKEnvVar + " is version 1)")
+
 // newAuthenticator builds the authenticator the deployment's mode asks for.
 //
 // api_key needs both a store to look keys up in and the key that unseals their secrets, and
 // says which is missing rather than starting and refusing every request for a reason only
 // visible in a 401.
 //
-// secrets is the keyring newSecretSealer built, so a start unwraps its keys once.
+// secrets is the keyring newSecretSealer built, so a start unwraps its keys once; nil
+// refuses api_key, and the keyring is never read again here.
 func newAuthenticator(ctx context.Context, settings config.Config, configs *appconfig.Store, secrets *auth.Sealer, logger *slog.Logger) (auth.Authenticator, error) {
 	mode, err := auth.ParseMode(settings.Auth.Mode)
 	if err != nil {
@@ -471,12 +477,9 @@ func newAuthenticator(ctx context.Context, settings config.Config, configs *appc
 			auth.APIKey)
 	}
 	if secrets == nil {
-		// newSecretSealer leaves it nil only when no key is set, and then this refuses,
-		// naming the variable to set.
-		secrets, err = loadKeyring(ctx, settings, "auth.mode="+string(auth.APIKey)+" needs")
-		if err != nil {
-			return nil, err
-		}
+		// newSecretSealer leaves it nil only when no key is set, so this is the refusal
+		// the keyring would give, without opening a second KMS client for it.
+		return nil, errAPIKeyNeedsKeyring
 	}
 
 	return auth.New(mode, configs.Lookup(secrets))

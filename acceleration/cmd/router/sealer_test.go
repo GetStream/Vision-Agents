@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -352,8 +353,7 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyUnwrapsOnlyUnderItsOwnVersion() {
 
 	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V2_WRAPPED: unwrap")
-	s.NotContains(err.Error(), wrapped)
-	s.NotContains(err.Error(), "first-key")
+	s.requireNoCiphertextOrKey(err, wrapped)
 }
 
 func (s *ConnectorSealerSuite) TestAWrappedKeyThatUnwrapsToNothingIsRefused() {
@@ -477,6 +477,17 @@ func (s *ConnectorSealerSuite) TestAKeyCloudKMSUnwrapsOpensWhatThePlainOneSealed
 		"the KMS client is closed once the keyring is read")
 }
 
+// requireNoCiphertextOrKey fails when err shows the wrapped key in any form it could be
+// appended in, base64, raw or hex, or the key itself.
+func (s *ConnectorSealerSuite) requireNoCiphertextOrKey(err error, wrapped string) {
+	raw, decodeErr := base64.StdEncoding.DecodeString(wrapped)
+	s.Require().NoError(decodeErr)
+	s.NotContains(err.Error(), wrapped)
+	s.NotContains(err.Error(), string(raw))
+	s.NotContains(err.Error(), hex.EncodeToString(raw))
+	s.NotContains(err.Error(), "first-key")
+}
+
 func (s *ConnectorSealerSuite) TestACloudKMSRefusalFailsStartupWithoutTheKey() {
 	fake := s.startFakeCloudKMS()
 	fake.refusal = status.Error(codes.PermissionDenied, "permission cloudkms.cryptoKeyVersions.useToDecrypt denied")
@@ -487,8 +498,7 @@ func (s *ConnectorSealerSuite) TestACloudKMSRefusalFailsStartupWithoutTheKey() {
 	_, err := newSecretSealer(s.T().Context(), s.settings)
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: unwrap: cloud kms: decrypt with "+testKMSKey)
 	s.ErrorContains(err, "useToDecrypt denied")
-	s.NotContains(err.Error(), wrapped)
-	s.NotContains(err.Error(), "first-key")
+	s.requireNoCiphertextOrKey(err, wrapped)
 }
 
 func (s *ConnectorSealerSuite) TestAKeyCloudKMSWrappedForAnotherVersionFailsStartup() {
@@ -500,8 +510,35 @@ func (s *ConnectorSealerSuite) TestAKeyCloudKMSWrappedForAnotherVersionFailsStar
 	_, err := newSecretSealer(s.T().Context(), s.settings)
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: unwrap: cloud kms: decrypt with "+testKMSKey)
 	s.ErrorContains(err, "decryption failed")
-	s.NotContains(err.Error(), wrapped)
-	s.NotContains(err.Error(), "first-key")
+	s.requireNoCiphertextOrKey(err, wrapped)
+}
+
+func (s *ConnectorSealerSuite) TestTheKMSClientLogsNeitherTheKeyNorItsCiphertext() {
+	// With this set, the client's SDK logs every Decrypt request and response to stderr. The
+	// logger reads it when the client opens, and stderr is the writer it takes.
+	s.T().Setenv("GOOGLE_SDK_GO_LOGGING_LEVEL", "debug")
+	fake := s.startFakeCloudKMS()
+	s.settings.Connectors.Enabled = true
+	wrapped := fake.kms.wrap("first-key", "router-kek-v1")
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", wrapped)
+
+	reader, writer, err := os.Pipe()
+	s.Require().NoError(err)
+	stderr := os.Stderr
+	os.Stderr = writer
+	sealer, loadErr := newSecretSealer(s.T().Context(), s.settings)
+	os.Stderr = stderr
+	s.Require().NoError(writer.Close())
+	logged, err := io.ReadAll(reader)
+	s.Require().NoError(err)
+	s.Require().NoError(reader.Close())
+
+	s.Require().NoError(loadErr)
+	s.requireOpensWhatTheBaseSealed(sealer)
+	s.Equal(int64(1), fake.decrypts.Load())
+	s.NotContains(string(logged), wrapped)
+	s.NotContains(string(logged), base64.StdEncoding.EncodeToString([]byte("first-key")))
+	s.NotContains(string(logged), "first-key")
 }
 
 func (s *ConnectorSealerSuite) TestACloudKMSClientThatCannotOpenFailsStartup() {
@@ -550,6 +587,19 @@ func (s *ConnectorSealerSuite) TestAnAPIKeyStartUnwrapsTheKeyOnce() {
 	s.Require().NoError(err)
 	s.NotNil(authenticator)
 	s.Equal(int64(1), fake.decrypts.Load())
+}
+
+func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithoutTheKeyringUnwrapsNothing() {
+	// newAuthenticator takes the keyring from its caller: handed none, it refuses and does
+	// not open a KMS client of its own for a second Decrypt.
+	fake := s.startFakeCloudKMS()
+	configs := s.apiKeyConfigs()
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", fake.kms.wrap("first-key", "router-kek-v1"))
+
+	_, err := newAuthenticator(s.T().Context(), s.settings, configs, nil, slog.New(slog.DiscardHandler))
+	s.EqualError(err, "auth.mode=api_key needs a key encryption keyring to seal the secrets it holds: "+
+		"set ROUTER_AUTH_KEK_V1 (ROUTER_AUTH_KEK is version 1)")
+	s.Equal(int64(0), fake.decrypts.Load())
 }
 
 func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithoutAKeyIsRefusedAsBefore() {

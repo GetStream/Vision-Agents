@@ -192,7 +192,10 @@ the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK
    ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
    opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
    be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
-   lines, so `tr` joins them:
+   lines, so `tr` joins them. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
+   key, which `roles/cloudkms.admin` lacks too
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
 
    ```bash
    printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
