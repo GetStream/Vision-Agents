@@ -17,7 +17,7 @@ final readonly class Authorization
     public function __construct(
         // When the attempt ends, 10 minutes after it began. A callback after that is refused.
         public \DateTimeImmutable $expiresAt,
-        // Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, never put in a U...
+        // Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, and never in a q...
         public string $handoffToken,
         // The attempt.
         public string $id,

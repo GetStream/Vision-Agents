@@ -170,6 +170,18 @@ module GetStream
           body: "RouterConfigRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "createRun" => {
+          method: :post, path: "/v1/agents/runs",
+          path_params: [].freeze, query: [].freeze,
+          body: "CreateRunRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "createScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks",
+          path_params: [].freeze, query: [].freeze,
+          body: "CreateScheduledTaskRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "createSession" => {
           method: :post, path: "/v1/agents/sessions",
           path_params: [].freeze, query: [].freeze,
@@ -277,6 +289,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "deleteScheduledTask" => {
+          method: :delete, path: "/v1/agents/scheduled-tasks/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "deleteSession" => {
           method: :delete, path: "/v1/agents/sessions/{id}",
@@ -554,6 +572,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getScheduledTask" => {
+          method: :get, path: "/v1/agents/scheduled-tasks/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "getSession" => {
           method: :get, path: "/v1/agents/sessions/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -706,7 +730,7 @@ module GetStream
         }.freeze,
         "listAgentConfigs" => {
           method: :get, path: "/v1/agents/configs",
-          path_params: [].freeze, query: %w[name].freeze,
+          path_params: [].freeze, query: %w[name role].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -878,6 +902,18 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listScheduledTaskRuns" => {
+          method: :get, path: "/v1/agents/scheduled-tasks/{id}/runs",
+          path_params: %w[id].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
+        "listScheduledTasks" => {
+          method: :get, path: "/v1/agents/scheduled-tasks",
+          path_params: [].freeze, query: %w[limit cursor state config_id session_id].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "listSessionTools" => {
           method: :get, path: "/v1/agents/sessions/{id}/tools",
           path_params: %w[id].freeze, query: [].freeze,
@@ -955,6 +991,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "pauseScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks/{id}/pause",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "placePhoneCall" => {
           method: :post, path: "/v1/phone/calls",
@@ -1106,6 +1148,12 @@ module GetStream
           body: "RespondRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "resumeScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks/{id}/resume",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "reviewUseCase" => {
           method: :post, path: "/v1/ops/use-cases/{id}/review",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1134,6 +1182,12 @@ module GetStream
           method: :post, path: "/v1/stats/rollup",
           path_params: [].freeze, query: [].freeze,
           body: "RollupRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "runScheduledTask" => {
+          method: :post, path: "/v1/agents/scheduled-tasks/{id}/run",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "runSimulation" => {
@@ -1304,6 +1358,12 @@ module GetStream
           body: "RouterConfigRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "updateScheduledTask" => {
+          method: :patch, path: "/v1/agents/scheduled-tasks/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "UpdateScheduledTaskRequest", body_required: true,
+          socket: false, client_accessible: true
+        }.freeze,
         "updateSession" => {
           method: :patch, path: "/v1/agents/sessions/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1378,19 +1438,19 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
-          properties: %w[connection connector_id events name policy required timeout_ms tool_patterns tools].freeze,
+          properties: %w[connection connector_id events name policy required sandbox timeout_ms tool_patterns tools].freeze,
           required: %w[name connector_id connection tools].freeze, open: false
         }.freeze,
         "AgentConnectorSelection" => {
@@ -1424,6 +1484,14 @@ module GetStream
         "AgentResponsePage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "AgentReview" => {
+          properties: %w[instructions].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "AgentScheduling" => {
+          properties: %w[default_timezone enabled max_tasks_per_user].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "AgentStats" => {
           properties: %w[peak_at peak_concurrent_sessions tool_calls tools].freeze,
@@ -1614,7 +1682,7 @@ module GetStream
           required: %w[expected_revision].freeze, open: false
         }.freeze,
         "ConnectionInvocation" => {
-          properties: %w[arguments binding config_id connection_id connector_id error_type id latency_ms session_id started_at tool].freeze,
+          properties: %w[arguments binding config_id connection_id connector_id error_message error_type id latency_ms provider_status session_id started_at tool].freeze,
           required: %w[id connection_id connector_id config_id binding tool started_at latency_ms].freeze, open: false
         }.freeze,
         "ConnectionInvocationPage" => {
@@ -1670,7 +1738,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "Connector" => {
-          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision schemes scopes setup].freeze,
+          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision sandbox schemes scopes setup].freeze,
           required: %w[id revision name custom schemes inputs scopes client channel created_at].freeze, open: false
         }.freeze,
         "ConnectorAuditCredential" => {
@@ -1737,6 +1805,10 @@ module GetStream
           properties: %w[allowed_ip_address_ranges config_refresh_token name].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
+        "ConnectorSandbox" => {
+          properties: %w[env hosts].freeze,
+          required: %w[env hosts].freeze, open: false
+        }.freeze,
         "ConnectorSetup" => {
           properties: %w[steps url].freeze,
           required: %w[steps].freeze, open: false
@@ -1769,8 +1841,16 @@ module GetStream
           properties: %w[images max_output_tokens reasoning_effort request_id text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
+        "CreateRunRequest" => {
+          properties: %w[config_id images input instructions tags timeout_ms].freeze,
+          required: %w[config_id input].freeze, open: false
+        }.freeze,
+        "CreateScheduledTaskRequest" => {
+          properties: %w[agent config_id custom deliver_to id instructions quiet_hours schedule session_id title].freeze,
+          required: %w[title instructions schedule].freeze, open: false
+        }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id return_url search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -1929,6 +2009,10 @@ module GetStream
           properties: %w[description namespace refresh_hours title url].freeze,
           required: %w[namespace url].freeze, open: false
         }.freeze,
+        "LeftOutConnector" => {
+          properties: %w[connection connector_id name].freeze,
+          required: %w[name connector_id connection].freeze, open: false
+        }.freeze,
         "LibraryVoice" => {
           properties: %w[accent description gender id language name own preview provider tags].freeze,
           required: %w[id name provider].freeze, open: false
@@ -1954,7 +2038,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ModelCallTiming" => {
-          properties: %w[duration_ms input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
+          properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {
@@ -2034,7 +2118,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Policy" => {
-          properties: %w[allowed_models budget data_policy prompt_injection require_own_stream_app tags].freeze,
+          properties: %w[allowed_models budget data_policy prompt_injection quota require_own_stream_app tags].freeze,
           required: [].freeze, open: false
         }.freeze,
         "PostalAddress" => {
@@ -2050,7 +2134,7 @@ module GetStream
           required: %w[digits vendor].freeze, open: false
         }.freeze,
         "Provider" => {
-          properties: %w[benchmark description health languages model price provider realtime tier usage_share].freeze,
+          properties: %w[benchmark description health languages model price provider realtime supports tier usage_share].freeze,
           required: %w[health languages model provider realtime tier].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
@@ -2063,6 +2147,10 @@ module GetStream
         }.freeze,
         "ProviderPrice" => {
           properties: %w[per_million_input_tokens per_million_output_tokens].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "Quota" => {
+          properties: %w[messages_per_user_per_day tokens_per_user_per_day].freeze,
           required: [].freeze, open: false
         }.freeze,
         "RCSProfile" => {
@@ -2121,6 +2209,10 @@ module GetStream
           properties: %w[llm name search sts stt tts].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
+        "Run" => {
+          properties: %w[final_text model_route session_id usage].freeze,
+          required: %w[final_text model_route session_id usage].freeze, open: false
+        }.freeze,
         "SandboxOptions" => {
           properties: %w[allowed_domains cpu disk_gb image memory_gb network network_allow_list setup timeout_ms].freeze,
           required: [].freeze, open: false
@@ -2128,6 +2220,34 @@ module GetStream
         "SayRequest" => {
           properties: %w[text].freeze,
           required: %w[text].freeze, open: false
+        }.freeze,
+        "ScheduledTask" => {
+          properties: %w[config_id consecutive_failures created_at created_by custom deliver_to id instructions last_run_at next_run_at quiet_hours schedule session_id state title upcoming updated_at user_id].freeze,
+          required: %w[id user_id config_id session_id title instructions schedule deliver_to state next_run_at upcoming last_run_at consecutive_failures created_by created_at updated_at].freeze, open: false
+        }.freeze,
+        "ScheduledTaskNext" => {
+          properties: %w[at in].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "ScheduledTaskPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ScheduledTaskQuietHours" => {
+          properties: %w[end start].freeze,
+          required: %w[start end].freeze, open: false
+        }.freeze,
+        "ScheduledTaskRun" => {
+          properties: %w[attempts delivered_to error finished_at id scheduled_for session_id started_at state task_id trigger].freeze,
+          required: %w[id task_id scheduled_for trigger state delivered_to session_id attempts started_at finished_at error].freeze, open: false
+        }.freeze,
+        "ScheduledTaskRunPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ScheduledTaskSchedule" => {
+          properties: %w[at description in repeat timezone until].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "SearchAnswer" => {
           properties: %w[answer model provider results].freeze,
@@ -2250,7 +2370,7 @@ module GetStream
           required: %w[reason vendor].freeze, open: false
         }.freeze,
         "Speech" => {
-          properties: %w[audio audio_duration_ms characters completed_at created_at error format id model provider status updated_at url].freeze,
+          properties: %w[audio audio_duration_ms characters completed_at created_at error format id model provider status updated_at url voice].freeze,
           required: %w[created_at id status updated_at].freeze, open: false
         }.freeze,
         "SpeechRequest" => {
@@ -2290,7 +2410,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -2346,8 +2466,8 @@ module GetStream
           required: %w[text type].freeze, open: false
         }.freeze,
         "TranscriptMessage" => {
-          properties: %w[agent created_at name speaker text].freeze,
-          required: %w[created_at speaker text].freeze, open: false
+          properties: %w[agent created_at generating id interrupted name purpose speaker text turn_id].freeze,
+          required: %w[created_at id speaker text].freeze, open: false
         }.freeze,
         "TranscriptWord" => {
           properties: %w[confidence end_ms speaker start_ms text].freeze,
@@ -2372,6 +2492,10 @@ module GetStream
         "TurnStatsBucket" => {
           properties: %w[agent_id audio_out_ms_total bucket interrupted_count llm_ttft_p50_ms llm_ttft_p95_ms roundtrip_p50_ms roundtrip_p95_ms roundtrip_p99_ms stt_latency_p50_ms stt_latency_p95_ms tts_ttfb_p50_ms tts_ttfb_p95_ms turn_count].freeze,
           required: %w[agent_id audio_out_ms_total bucket interrupted_count turn_count].freeze, open: false
+        }.freeze,
+        "UpdateScheduledTaskRequest" => {
+          properties: %w[deliver_to instructions next quiet_hours schedule title].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "UpdateSessionRequest" => {
           properties: %w[custom description llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,

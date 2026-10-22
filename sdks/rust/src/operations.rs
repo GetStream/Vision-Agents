@@ -1442,6 +1442,150 @@ impl Client {
         )
         .await
     }
+    /// Run an agent on one input and wait for its answer
+    ///
+    /// `POST /v1/agents/runs` (`createRun`).
+    pub async fn create_run(&self, body: &types::CreateRunRequest) -> Result<types::Run> {
+        self.send(
+            Method::POST,
+            "/v1/agents/runs",
+            None::<&()>,
+            Some(body),
+            "createRun",
+        )
+        .await
+    }
+    /// The scheduled tasks of the user, or of the customer
+    ///
+    /// `GET /v1/agents/scheduled-tasks` (`listScheduledTasks`).
+    pub async fn list_scheduled_tasks(
+        &self,
+        query: &ListScheduledTasksQuery,
+    ) -> Result<types::ScheduledTaskPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/scheduled-tasks",
+            Some(query),
+            None::<&()>,
+            "listScheduledTasks",
+        )
+        .await
+    }
+    /// Schedule a task for a user
+    ///
+    /// `POST /v1/agents/scheduled-tasks` (`createScheduledTask`).
+    pub async fn create_scheduled_task(
+        &self,
+        body: &types::CreateScheduledTaskRequest,
+    ) -> Result<types::ScheduledTask> {
+        self.send(
+            Method::POST,
+            "/v1/agents/scheduled-tasks",
+            None::<&()>,
+            Some(body),
+            "createScheduledTask",
+        )
+        .await
+    }
+    /// One scheduled task
+    ///
+    /// `GET /v1/agents/scheduled-tasks/{id}` (`getScheduledTask`).
+    pub async fn get_scheduled_task(&self, id: &str) -> Result<types::ScheduledTask> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/scheduled-tasks/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getScheduledTask",
+        )
+        .await
+    }
+    /// Change a scheduled task
+    ///
+    /// `PATCH /v1/agents/scheduled-tasks/{id}` (`updateScheduledTask`).
+    pub async fn update_scheduled_task(
+        &self,
+        id: &str,
+        body: &types::UpdateScheduledTaskRequest,
+    ) -> Result<types::ScheduledTask> {
+        self.send(
+            Method::PATCH,
+            &format!("/v1/agents/scheduled-tasks/{id}", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "updateScheduledTask",
+        )
+        .await
+    }
+    /// Delete a scheduled task
+    ///
+    /// `DELETE /v1/agents/scheduled-tasks/{id}` (`deleteScheduledTask`).
+    pub async fn delete_scheduled_task(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/scheduled-tasks/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteScheduledTask",
+        )
+        .await
+    }
+    /// Pause a scheduled task
+    ///
+    /// `POST /v1/agents/scheduled-tasks/{id}/pause` (`pauseScheduledTask`).
+    pub async fn pause_scheduled_task(&self, id: &str) -> Result<types::ScheduledTask> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/scheduled-tasks/{id}/pause", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "pauseScheduledTask",
+        )
+        .await
+    }
+    /// Resume a scheduled task
+    ///
+    /// `POST /v1/agents/scheduled-tasks/{id}/resume` (`resumeScheduledTask`).
+    pub async fn resume_scheduled_task(&self, id: &str) -> Result<types::ScheduledTask> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/scheduled-tasks/{id}/resume", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "resumeScheduledTask",
+        )
+        .await
+    }
+    /// Run a scheduled task now
+    ///
+    /// `POST /v1/agents/scheduled-tasks/{id}/run` (`runScheduledTask`).
+    pub async fn run_scheduled_task(&self, id: &str) -> Result<types::ScheduledTaskRun> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/scheduled-tasks/{id}/run", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "runScheduledTask",
+        )
+        .await
+    }
+    /// A scheduled task's runs
+    ///
+    /// `GET /v1/agents/scheduled-tasks/{id}/runs` (`listScheduledTaskRuns`).
+    pub async fn list_scheduled_task_runs(
+        &self,
+        id: &str,
+        query: &ListScheduledTaskRunsQuery,
+    ) -> Result<types::ScheduledTaskRunPage> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/scheduled-tasks/{id}/runs", id = segment(id)),
+            Some(query),
+            None::<&()>,
+            "listScheduledTaskRuns",
+        )
+        .await
+    }
     /// Join a call as a voice agent
     ///
     /// `POST /v1/agents/sessions` (`createSession`).
@@ -3267,11 +3411,14 @@ pub struct ListAgentConfigsQuery {
     /// Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Narrow the list to the live config holding this role, which is how the app's moderator agent is found. One config holds a role, and test copies are left out, so this answers with at most one. Ignored when name is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 /// The query string `listConnections` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListConnectionsQuery {
-    /// app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
+    /// app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id, or every user's when it names none. Omitted is app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_type: Option<String>,
     /// Keeps one connector's.
@@ -3436,6 +3583,35 @@ pub struct PluginOAuthCallbackQuery {
     pub state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+/// The query string `listScheduledTasks` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListScheduledTasksQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Only tasks in this state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Only tasks on this agent config.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_id: Option<String>,
+    /// Only tasks following up in this session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+/// The query string `listScheduledTaskRuns` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListScheduledTaskRunsQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `listResponses` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

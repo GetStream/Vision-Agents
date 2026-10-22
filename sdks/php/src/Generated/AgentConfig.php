@@ -30,6 +30,9 @@ final readonly class AgentConfig
         /** @var list<string>|null */
         public ?array $keyterms = null,
         public ?string $knowledgeNamespace = null,
+        // The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or...
+        /** @var list<LeftOutConnector>|null */
+        public ?array $leftOutConnectors = null,
         public ?string $llm = null,
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
@@ -39,8 +42,12 @@ final readonly class AgentConfig
         // Deprecated: use connectors, a binding to a connector.
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        // Absent when calls are reviewed by Stream's default guide.
+        public ?AgentReview $review = null,
+        public AgentRole|string|null $role = null,
         public Sandbox|string|null $sandbox = null,
         public ?SandboxOptions $sandboxOptions = null,
+        public ?AgentScheduling $scheduling = null,
         public ?string $search = null,
         /** @var list<string>|null */
         public ?array $skills = null,
@@ -83,12 +90,16 @@ final readonly class AgentConfig
             instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
+            leftOutConnectors: array_key_exists('left_out_connectors', $data) && $data['left_out_connectors'] !== null ? array_map(LeftOutConnector::fromArray(...), Json::objects($data, 'left_out_connectors')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
+            role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
+            scheduling: array_key_exists('scheduling', $data) && $data['scheduling'] !== null ? AgentScheduling::fromArray(Json::object($data, 'scheduling')) : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
@@ -147,6 +158,9 @@ final readonly class AgentConfig
         if ($this->knowledgeNamespace !== null) {
             $out['knowledge_namespace'] = $this->knowledgeNamespace;
         }
+        if ($this->leftOutConnectors !== null) {
+            $out['left_out_connectors'] = array_map(static fn (LeftOutConnector $each): array => $each->toArray(), $this->leftOutConnectors);
+        }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
         }
@@ -159,11 +173,20 @@ final readonly class AgentConfig
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
         }
+        if ($this->review !== null) {
+            $out['review'] = $this->review->toArray();
+        }
+        if ($this->role !== null) {
+            $out['role'] = Json::enumValue($this->role);
+        }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
         }
         if ($this->sandboxOptions !== null) {
             $out['sandbox_options'] = $this->sandboxOptions->toArray();
+        }
+        if ($this->scheduling !== null) {
+            $out['scheduling'] = $this->scheduling->toArray();
         }
         if ($this->search !== null) {
             $out['search'] = $this->search;
