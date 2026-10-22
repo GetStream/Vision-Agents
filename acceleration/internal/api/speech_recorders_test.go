@@ -68,7 +68,7 @@ func (s *SpeechRecordersSuite) TestASpeechJobWithAPriorityListOfLiveModelsAloneI
 		map[string]any{"text": "hello", "options": map[string]any{"providers": []string{s.live}}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "routing: nothing in the priority list "+s.live+" can record speech")
+	s.Contains(failure, "routing: nothing in the priority list "+s.live+" can serve this request")
 	s.Zero(s.recordingRows(), "a refused job is not left queued")
 }
 
