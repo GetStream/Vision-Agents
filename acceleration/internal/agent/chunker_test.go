@@ -19,12 +19,21 @@ func (s *ChunkerSuite) stream(deltas ...string) []string {
 	var chunker chunker
 	var chunks []string
 	for _, delta := range deltas {
-		chunks = append(chunks, chunker.Add(delta)...)
+		chunks = append(chunks, texts(chunker.Add(delta))...)
 	}
-	if remainder := chunker.Flush(); remainder != "" {
-		chunks = append(chunks, remainder)
+	if remainder := chunker.Flush(); remainder.text != "" {
+		chunks = append(chunks, remainder.text)
 	}
 	return chunks
+}
+
+// texts is what the voice is sent of each sentence.
+func texts(sentences []sentence) []string {
+	var said []string
+	for _, sentence := range sentences {
+		said = append(said, sentence.text)
+	}
+	return said
 }
 
 func (s *ChunkerSuite) TestASentenceIsReturnedAsSoonAsItEnds() {
@@ -33,7 +42,7 @@ func (s *ChunkerSuite) TestASentenceIsReturnedAsSoonAsItEnds() {
 	var chunker chunker
 
 	s.Empty(chunker.Add("The weather today "))
-	s.Equal([]string{"The weather today is fine."}, chunker.Add("is fine."))
+	s.Equal([]string{"The weather today is fine."}, texts(chunker.Add("is fine.")))
 }
 
 func (s *ChunkerSuite) TestSentencesArriveInOrder() {
@@ -74,8 +83,8 @@ func (s *ChunkerSuite) TestAReplyOpensWithItsFirstClause() {
 	var chunker chunker
 
 	s.Equal([]string{"Of course, a table for four on Saturday,"},
-		chunker.Add("Of course, a table for four on Saturday, "))
-	s.Equal([]string{"at 7:30, on the patio."}, chunker.Add("at 7:30, on the patio."),
+		texts(chunker.Add("Of course, a table for four on Saturday, ")))
+	s.Equal([]string{"at 7:30, on the patio."}, texts(chunker.Add("at 7:30, on the patio.")),
 		"after the opening clause the rest of the reply goes by the sentence")
 }
 
@@ -106,17 +115,17 @@ func (s *ChunkerSuite) TestADecimalDoesNotEndASentenceAtItsPoint() {
 func (s *ChunkerSuite) TestAnIntegerSentenceEndsBeforeTheNextSentence() {
 	var chunker chunker
 
-	got := chunker.Add("The total is 12.")
-	got = append(got, chunker.Add(" The second sentence follows.")...)
+	got := texts(chunker.Add("The total is 12."))
+	got = append(got, texts(chunker.Add(" The second sentence follows."))...)
 	s.Equal([]string{"The total is 12.", "The second sentence follows."}, got)
 }
 
 func (s *ChunkerSuite) TestAReplyEndingWithAnIntegerIsReturnedOnFlush() {
 	var chunker chunker
 
-	got := chunker.Add("The total is 12.")
-	if tail := chunker.Flush(); tail != "" {
-		got = append(got, tail)
+	got := texts(chunker.Add("The total is 12."))
+	if tail := chunker.Flush(); tail.text != "" {
+		got = append(got, tail.text)
 	}
 	s.Equal([]string{"The total is 12."}, got)
 }
@@ -127,7 +136,7 @@ func (s *ChunkerSuite) TestEachReplyOpensWithItsOwnClause() {
 	chunker.Flush()
 
 	s.Equal([]string{"Let me check the calendar,", "one moment."},
-		chunker.Add("Let me check the calendar, one moment."),
+		texts(chunker.Add("Let me check the calendar, one moment.")),
 		"a new reply may open on a clause again")
 }
 
@@ -139,8 +148,8 @@ func (s *ChunkerSuite) TestFlushingTwiceReturnsNothingTheSecondTime() {
 	var chunker chunker
 	chunker.Add("a reply that just stops")
 
-	s.NotEmpty(chunker.Flush())
-	s.Empty(chunker.Flush())
+	s.NotEmpty(chunker.Flush().text)
+	s.Empty(chunker.Flush().text)
 }
 
 func (s *ChunkerSuite) TestResettingThrowsAwayAnInterruptedReply() {
@@ -149,5 +158,49 @@ func (s *ChunkerSuite) TestResettingThrowsAwayAnInterruptedReply() {
 
 	chunker.Reset()
 
-	s.Empty(chunker.Flush(), "an interrupted reply is not finished off after the fact")
+	s.Empty(chunker.Flush().text, "an interrupted reply is not finished off after the fact")
+}
+
+func (s *ChunkerSuite) TestEachSentenceSaysWhereItCameFromAndEndsWhereTheNextStarts() {
+	// Where a sentence is in the reply is what a page reveals while it is said, so the
+	// space between two sentences belongs to one of them rather than to neither.
+	var chunker chunker
+	got := chunker.Add("Hello there. How are")
+	got = append(got, chunker.Add(" you today?  Fine")...)
+	got = append(got, chunker.Flush())
+
+	s.Equal([]sentence{
+		{text: "Hello there.", start: 0, end: 12},
+		{text: "How are you today?", start: 12, end: 31},
+		{text: "Fine", start: 31, end: 37},
+	}, got)
+}
+
+func (s *ChunkerSuite) TestASentenceEndingInAnIntegerEndsAtItsPeriod() {
+	var chunker chunker
+
+	got := chunker.Add("The total is 12.")
+	got = append(got, chunker.Add(" Next one follows.")...)
+
+	s.Equal([]sentence{{text: "The total is 12.", start: 0, end: 16}, {text: "Next one follows.", start: 16, end: 34}}, got,
+		"the rune that showed the period ended it starts the next sentence")
+}
+
+func (s *ChunkerSuite) TestWhereASentenceCameFromIsCountedInCharactersNotBytes() {
+	var chunker chunker
+
+	got := chunker.Add("Café au lait, s'il vous plaît. Merci beaucoup.")
+
+	s.Equal([]sentence{
+		{text: "Café au lait, s'il vous plaît.", start: 0, end: 30},
+		{text: "Merci beaucoup.", start: 30, end: 46},
+	}, got)
+}
+
+func (s *ChunkerSuite) TestANewReplyIsCountedFromItsOwnStart() {
+	var chunker chunker
+	chunker.Add("Of course, a table for four.")
+	chunker.Flush()
+
+	s.Equal([]sentence{{text: "Hello there.", start: 0, end: 12}}, chunker.Add("Hello there."))
 }

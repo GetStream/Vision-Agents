@@ -43,7 +43,7 @@ type SynthesisComplete struct {
 	SynthesisID string
 	Provider    string
 	Model       string
-	// Characters is the text that was billed for.
+	// Characters is the text that was billed for, in Unicode code points.
 	Characters int64
 	// AudioDurationMs is how much speech came back.
 	AudioDurationMs float64

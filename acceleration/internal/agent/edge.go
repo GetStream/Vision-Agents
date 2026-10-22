@@ -115,3 +115,17 @@ type Roster interface {
 	// must be queued on it before Join returns.
 	Attendance() <-chan Attendance
 }
+
+// SFU is the Stream SFU a call runs on, by the name of its edge and the host of its URL.
+type SFU struct {
+	Edge string
+	Host string
+}
+
+// SFUReporter is an edge that can say which SFU it is on.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that
+// connects to an SFU has one. An edge without it leaves the SFU unnamed.
+type SFUReporter interface {
+	SFU() SFU
+}

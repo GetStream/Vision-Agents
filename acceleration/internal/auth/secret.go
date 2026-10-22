@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -20,6 +21,9 @@ const KEKVersion = 1
 // a record that does not open.
 var ErrKeyVersionUnavailable = errors.New("auth: key encryption key version is unavailable")
 
+// macKeyLabel separates the key Derive signs with from the key records are encrypted with.
+const macKeyLabel = "auth: derived credential key v1"
+
 // Sealer wraps and unwraps the secrets held in the database.
 //
 // The received wisdom is to hash an API secret and never hold it back, and it does not
@@ -29,6 +33,9 @@ var ErrKeyVersionUnavailable = errors.New("auth: key encryption key version is u
 type Sealer struct {
 	currentVersion int
 	aeads          map[int]cipher.AEAD
+	// macKeys are the keys Derive signs with, each derived from its key encryption key
+	// under a label of its own so the AES key is never the HMAC key as well.
+	macKeys map[int][]byte
 }
 
 // NewSealer derives the key encryption key from configuration. The value is stretched
@@ -51,6 +58,7 @@ func NewSealerWithKeyring(currentVersion int, keys map[int]string) (*Sealer, err
 		return nil, fmt.Errorf("auth: key encryption key version %d is required", currentVersion)
 	}
 	aeads := make(map[int]cipher.AEAD, len(keys))
+	macKeys := make(map[int][]byte, len(keys))
 	for version, kek := range keys {
 		if version < 1 || kek == "" {
 			return nil, errors.New("auth: keyring versions and keys must be non-empty and positive")
@@ -65,13 +73,34 @@ func NewSealerWithKeyring(currentVersion int, keys map[int]string) (*Sealer, err
 			return nil, fmt.Errorf("auth: new gcm for key version %d: %w", version, err)
 		}
 		aeads[version] = aead
+		label := hmac.New(sha256.New, sum[:])
+		label.Write([]byte(macKeyLabel))
+		macKeys[version] = label.Sum(nil)
 	}
-	return &Sealer{currentVersion: currentVersion, aeads: aeads}, nil
+	return &Sealer{currentVersion: currentVersion, aeads: aeads, macKeys: macKeys}, nil
 }
 
 // CurrentVersion is the key version Seal and SealWithAAD write with.
 func (s *Sealer) CurrentVersion() int {
 	return s.currentVersion
+}
+
+// Derive returns a credential for one purpose, HMAC-SHA256 of the purpose under each key of
+// the keyring: current is the one to present, and accepted holds one per key, current
+// included, so a process still presenting an older key's is let in while a rotation rolls
+// out. The keys themselves never leave this package.
+func (s *Sealer) Derive(purpose string) (current []byte, accepted [][]byte) {
+	current = derive(s.macKeys[s.currentVersion], purpose)
+	for _, key := range s.macKeys {
+		accepted = append(accepted, derive(key, purpose))
+	}
+	return current, accepted
+}
+
+func derive(key []byte, purpose string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(purpose))
+	return mac.Sum(nil)
 }
 
 // Seal encrypts a secret for storage. The nonce is prepended to the ciphertext rather than

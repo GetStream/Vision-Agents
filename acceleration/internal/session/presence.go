@@ -117,7 +117,7 @@ func (s *Session) observe(run *presence, event Event) {
 		}
 		delete(run.people, reported.Participant.ID)
 		if run.settled && len(run.people) == 0 && s.callerSeen.Load() {
-			s.SetTimeout(hangupTimeout)
+			s.SetTimeout(hangupTimeout, TimeoutHangup)
 		}
 	case agent.Joined:
 		run.settled = true
@@ -130,12 +130,12 @@ func (s *Session) observe(run *presence, event Event) {
 			s.ClearTimeout()
 		case s.callerSeen.Load():
 			// Voice was stopped and started again after the caller hung up.
-			s.SetTimeout(hangupTimeout)
+			s.SetTimeout(hangupTimeout, TimeoutHangup)
 		case first && spec.Phone != nil:
 			if spec.Phone.VendorCallID != "" {
-				s.SetTimeout(outboundStartTimeout)
+				s.SetTimeout(outboundStartTimeout, TimeoutStart)
 			} else {
-				s.SetTimeout(inboundStartTimeout)
+				s.SetTimeout(inboundStartTimeout, TimeoutStart)
 			}
 		}
 	}
