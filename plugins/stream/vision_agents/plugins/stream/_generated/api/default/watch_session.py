@@ -96,15 +96,22 @@ def sync_detailed(
     it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
     been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
     an utterance reported before the track got to it, how long after at it is expected to be heard, from
-    the speech queued ahead of it), `spoke` (an utterance finished being synthesised: turn_id,
-    synthesis_id, characters (Unicode code points, as every character count on this socket is),
-    audio_duration_ms and time_to_first_byte_ms; it follows the utterance's `speaking`), `turn`,
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
     `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id and heard_ms, the utterance being heard when it was cut
-    and how many milliseconds of it had been, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -238,15 +245,22 @@ def sync(
     it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
     been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
     an utterance reported before the track got to it, how long after at it is expected to be heard, from
-    the speech queued ahead of it), `spoke` (an utterance finished being synthesised: turn_id,
-    synthesis_id, characters (Unicode code points, as every character count on this socket is),
-    audio_duration_ms and time_to_first_byte_ms; it follows the utterance's `speaking`), `turn`,
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
     `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id and heard_ms, the utterance being heard when it was cut
-    and how many milliseconds of it had been, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -375,15 +389,22 @@ async def asyncio_detailed(
     it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
     been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
     an utterance reported before the track got to it, how long after at it is expected to be heard, from
-    the speech queued ahead of it), `spoke` (an utterance finished being synthesised: turn_id,
-    synthesis_id, characters (Unicode code points, as every character count on this socket is),
-    audio_duration_ms and time_to_first_byte_ms; it follows the utterance's `speaking`), `turn`,
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
     `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id and heard_ms, the utterance being heard when it was cut
-    and how many milliseconds of it had been, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
@@ -515,15 +536,22 @@ async def asyncio(
     it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had
     been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for
     an utterance reported before the track got to it, how long after at it is expected to be heard, from
-    the speech queued ahead of it), `spoke` (an utterance finished being synthesised: turn_id,
-    synthesis_id, characters (Unicode code points, as every character count on this socket is),
-    audio_duration_ms and time_to_first_byte_ms; it follows the utterance's `speaking`), `turn`,
+    the speech queued ahead of it, and message_start and message_end, where that text is in the reply's
+    Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of
+    and sentences held back are in one and not the other; a streaming voice's grows as it is sent more),
+    `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code
+    points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and
+    message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
     `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`,
-    `interrupted` (turn_id; with synthesis_id and heard_ms, the utterance being heard when it was cut
-    and how many milliseconds of it had been, when any of it had), `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance
+    being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is
+    in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`,
+    `models_changed`, `error` and `left`.
+    message_start and message_end are offsets in Unicode code points into the text of the Chat message
+    the reply is written into, the one whose turn_id names the turn, from message_start up to
+    message_end. They are left out where the router does not know them.
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider

@@ -513,24 +513,24 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Speaking:
-		return frame{
+		return withMessageSpan(frame{
 			"type":         "speaking",
 			"turn_id":      typed.TurnID,
 			"synthesis_id": typed.SynthesisID,
 			"text":         typed.Text,
 			"at":           typed.At,
 			"delay_ms":     typed.DelayMs,
-		}, true
+		}, typed.Message), true
 
 	case agent.Spoke:
-		return frame{
+		return withMessageSpan(frame{
 			"type":                  "spoke",
 			"turn_id":               typed.TurnID,
 			"synthesis_id":          typed.SynthesisID,
 			"characters":            typed.Characters,
 			"audio_duration_ms":     typed.AudioDurationMs,
 			"time_to_first_byte_ms": typed.TimeToFirstByteMs,
-		}, true
+		}, typed.Message), true
 
 	case agent.Turn:
 		return frame{
@@ -678,7 +678,7 @@ func frameOf(event session.Event) (frame, bool) {
 			cut["synthesis_id"] = typed.SynthesisID
 			cut["heard_ms"] = typed.HeardMs
 		}
-		return cut, true
+		return withMessageSpan(cut, typed.Message), true
 
 	case agent.OverlapDecided:
 		return frame{
@@ -730,6 +730,17 @@ func withPurpose(rendered frame, purpose string) frame {
 		rendered["purpose"] = purpose
 	}
 	return rendered
+}
+
+// withMessageSpan adds where an utterance is in its reply's Chat message to a frame about it,
+// when the agent knows. A router before them sent neither, and a client falls back on
+// counting the voice's characters.
+func withMessageSpan(sent frame, message *agent.MessageSpan) frame {
+	if message != nil {
+		sent["message_start"] = message.Start
+		sent["message_end"] = message.End
+	}
+	return sent
 }
 
 // withLine names the transcript line a frame is about, which is the id the stored transcript

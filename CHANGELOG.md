@@ -664,8 +664,8 @@ many milliseconds of it went out before the cut. Every character count on the se
 `characters` included, is in Unicode code points.
 
 Each of the agent's spoken messages in the Chat channel already carries that same `turn_id`,
-now pinned by tests: one being written, settled, cut off, a greeting (`say-...`) or other line
-said as written, and each message of a reply a sentence voice leaves more than one of (#1128).
+now pinned by tests: one being written, settled, cut off, and a greeting (`say-...`) or other
+line said as written (#1128).
 
 The JS SDK's `session.speech` adds it up: `heard(message, now)` is `{ chars, done }`, the code points
 of the turn heard so far, exact once `spoke` has measured the playing utterance and estimated
@@ -676,6 +676,25 @@ or from `heard` being asked about the agent's message while it is still being wr
 turns out to say nothing is let go of at once, and one let go of stays let go of. Leaving the
 call or stopping the voice ends the holding. It reads the frames the session already receives,
 so `events()` is untouched (#1142).
+
+### Each utterance says where it is in the reply's message
+
+The voice is not sent the words the reply's Chat message holds: a voice that acts directions
+gets `[laughs]`, "last four 1234" goes to it as "last four digits, 1234", the space between
+two sentences is not sent, and a sentence held back is in the message as it is written but
+never said. Counting the voice's characters into the message drifts from the words being said
+and cuts words in half. `speaking` and `spoke` now carry `message_start` and `message_end`, the
+utterance's place in the message's text in Unicode code points, from one sentence to the next
+with no gap, and `interrupted` carries the cut utterance's beside `heard_ms`. A streaming
+voice's utterance grows as it is sent each sentence, so its `speaking` says how far it had been
+sent and its `spoke` the whole. They are left out where the router has no record of the
+utterance. The message no longer starts with the blank space a model may open a reply with, so
+the offsets count from its first word.
+
+A reply a sentence voice started saying before the model finished it was split in two in the
+Chat channel: the first message settled to the text so far, and a second one carried on and
+settled to the whole reply, its start said twice. It is now one message, settled once the
+model has finished and the voice has said some of it (#1145).
 
 ### A tool call waits for the person to sign in, and carries on once they have
 

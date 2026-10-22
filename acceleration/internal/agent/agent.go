@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -495,6 +496,10 @@ type Agent struct {
 
 	// chunk assembles model deltas into sentences. Only the model consumer touches it.
 	chunk chunker
+	// performed is what the chunker has been given of the reply for a voice that acts
+	// directions, which the reply's message has none of: where a sentence is in the
+	// message is found from it.
+	performed []rune
 	// directions takes the voice's stage directions out of the reply. They are meant for
 	// the provider that can act them, so they never reach a reader or the history.
 	directions tts.Directions
@@ -2554,7 +2559,7 @@ func (a *Agent) say(turnID, delta string) {
 	// text -- a markdown link, an array literal -- and taking it out corrupts the reply.
 	plain := speech
 	if !a.options.Text {
-		plain = a.directions.Add(speech)
+		plain = a.messageText(a.directions.Add(speech))
 	}
 	if plain != "" {
 		a.spoken.WriteString(plain)
@@ -2575,11 +2580,11 @@ func (a *Agent) say(turnID, delta string) {
 		return
 	}
 
-	for _, sentence := range a.chunk.Add(speech) {
-		if a.withhold(sentence) {
+	for _, sentence := range a.sentencesOf(speech) {
+		if a.withhold(sentence.text) {
 			continue
 		}
-		if err := a.speakSentence(turnID, sentence); err != nil {
+		if err := a.speakSentence(turnID, sentence.text, a.inMessage(sentence)); err != nil {
 			a.fail(err, "tts")
 		}
 	}
@@ -2706,7 +2711,7 @@ func (a *Agent) finish(response llm.Response) {
 	// was only ever text. In writing the stripper never ran, so there is nothing held.
 	plain := tail
 	if !a.options.Text {
-		plain = a.directions.Add(tail) + a.directions.Flush()
+		plain = a.messageText(a.directions.Add(tail) + a.directions.Flush())
 	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
@@ -2725,17 +2730,17 @@ func (a *Agent) finish(response llm.Response) {
 			a.emitter.Send(ResponseDelta{TurnID: response.ID, Text: plain})
 		}
 	} else {
-		for _, sentence := range a.chunk.Add(tail) {
-			if a.withhold(sentence) {
+		for _, sentence := range a.sentencesOf(tail) {
+			if a.withhold(sentence.text) {
 				continue
 			}
-			if err := a.speakSentence(response.ID, sentence); err != nil {
+			if err := a.speakSentence(response.ID, sentence.text, a.inMessage(sentence)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
 		// Whatever did not end in punctuation is still worth saying.
-		if remainder := a.chunk.Flush(); remainder != "" && !a.withhold(remainder) {
-			if err := a.speakSentence(response.ID, remainder); err != nil {
+		if remainder := a.chunk.Flush(); remainder.text != "" && !a.withhold(remainder.text) {
+			if err := a.speakSentence(response.ID, remainder.text, a.inMessage(remainder)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
@@ -2747,8 +2752,7 @@ func (a *Agent) finish(response llm.Response) {
 		// once the work is handed over.
 		if a.fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			if filler := a.preSpeech(calls); filler != "" {
-				a.spoken.WriteString(filler)
-				if err := a.speakSentence(response.ID, filler); err != nil {
+				if err := a.speakSentence(response.ID, filler, a.appendSpoken(filler)); err != nil {
 					a.fail(err, "tts")
 				}
 			} else {
@@ -2758,8 +2762,7 @@ func (a *Agent) finish(response llm.Response) {
 		// A reply that failed before a word of it was said leaves the caller waiting for
 		// one that is not coming, and after "one moment" that silence is the answer lost.
 		if response.Status == llm.StatusFailed && strings.TrimSpace(a.spoken.String()) == "" {
-			a.spoken.WriteString(lostReply)
-			if err := a.speakSentence(response.ID, lostReply); err != nil {
+			if err := a.speakSentence(response.ID, lostReply, a.appendSpoken(lostReply)); err != nil {
 				a.fail(err, "tts")
 			}
 		}
@@ -3592,6 +3595,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 					TurnID:            turnOf(typed.SynthesisID),
 					SynthesisID:       typed.SynthesisID,
 					Characters:        typed.Characters,
+					Message:           done.span(),
 					AudioDurationMs:   typed.AudioDurationMs,
 					TimeToFirstByteMs: typed.TimeToFirstByteMs,
 				})
@@ -3884,12 +3888,13 @@ func pauseCounted(text string) string {
 	return countedDigits.ReplaceAllString(text, "$1 $2 digits, $3")
 }
 
-// speakSentence sends one sentence of a reply to the voice.
+// speakSentence sends one sentence of a reply to the voice, from where it is in the reply's
+// message.
 //
 // A streaming provider takes a turn's sentences as deltas of one utterance, which keeps a
 // turn to a single billed synthesis. A provider that cannot take deltas gets each sentence
 // as its own final request instead.
-func (a *Agent) speakSentence(turnID, text string) error {
+func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 	voice := a.voice()
 	if voice == nil {
 		return errors.New("agent: not joined")
@@ -3906,17 +3911,18 @@ func (a *Agent) speakSentence(turnID, text string) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true})
+		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
 	}
 
 	if a.openTurn != turnID {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text})
+	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
 }
 
-// speakWhole says a piece of text that is already complete, as one utterance.
+// speakWhole says a piece of text that is already complete, as one utterance. Its message,
+// if it has one, is the text.
 func (a *Agent) speakWhole(turnID, text string) error {
 	voice := a.voice()
 	if voice == nil {
@@ -3924,7 +3930,8 @@ func (a *Agent) speakWhole(turnID, text string) error {
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
-	if err := a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
+	whole := MessageSpan{End: utf8.RuneCountInString(text)}
+	if err := a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text, Final: true}, whole); err != nil {
 		// Refused, it is never said, so it is not counted as being said either.
 		a.settle()
 		return err
@@ -3969,6 +3976,7 @@ func (a *Agent) claimReply(turnID string) {
 // finished or was interrupted.
 func (a *Agent) resetTurn() {
 	a.chunk.Reset()
+	a.performed = a.performed[:0]
 	a.harness.Reset()
 	a.directions.Reset()
 	a.spoken.Reset()
@@ -4070,7 +4078,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		return false
 	}
 	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
-	cutID, heardMs := a.cutShortLocked(turnID, time.Now())
+	cut := a.cutShortLocked(turnID, time.Now())
 	a.abandoned[turnID] = struct{}{}
 	a.interrupting = true
 	a.speakingTurn = ""
@@ -4117,7 +4125,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	}
 
 	a.turns.interrupt(turnID)
-	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant, SynthesisID: cutID, HeardMs: heardMs})
+	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
 	a.interrupting = false
 	a.mu.Unlock()
