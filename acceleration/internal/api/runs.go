@@ -149,6 +149,10 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	if err != nil {
 		return nil, runFailed(ctx, err, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: err.Error()})
 	}
+	// The images are counted here because nothing else a run logs says whether it had any,
+	// and an answer that says it saw no image is otherwise impossible to place.
+	s.logger.Info("a run started", "customer", customerID, "session", created.ID(), "config", body.ConfigId,
+		"images", len(images))
 	events, detach := created.Watch()
 	defer detach()
 	defer func() {

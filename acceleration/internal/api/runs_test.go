@@ -20,6 +20,8 @@ type RunsSuite struct {
 	RouterSuite
 	// images serves a PNG at /photo.png, a web page at /page and nothing anywhere else.
 	images *httptest.Server
+	// logged is what the router logged.
+	logged *lockedLog
 }
 
 // png is the start of a PNG, which is all the router reads to tell one.
@@ -44,6 +46,8 @@ func (s *RunsSuite) SetupSuite() {
 		}
 	}))
 	s.T().Cleanup(s.images.Close)
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -216,6 +220,18 @@ func (s *RunsSuite) TestARunsImagesReachTheModelAsTheBytesFetched() {
 	s.Equal("image/png", seen[0].MIME)
 	s.Empty(seen[0].URL)
 	s.Equal("image/jpeg", seen[1].MIME)
+}
+
+func (s *RunsSuite) TestARunLogsHowManyImagesItCarried() {
+	config := s.config("vision/vision-model")
+
+	withImages := s.run(CreateRunRequest{ConfigId: config, Input: "hello",
+		Images: &[]ImageSource{{Url: s.images.URL + "/photo.png"}, {Url: s.images.URL + "/photo.png"}}})
+	without := s.run(CreateRunRequest{ConfigId: config, Input: "hello"})
+
+	logged := s.logged.String()
+	s.Contains(logged, `msg="a run started" customer=`+s.customerID()+" session="+withImages.SessionId+" config="+config+" images=2")
+	s.Contains(logged, `msg="a run started" customer=`+s.customerID()+" session="+without.SessionId+" config="+config+" images=0")
 }
 
 func (s *RunsSuite) TestAnImageThatCannotBeFetchedIsUnavailable() {
