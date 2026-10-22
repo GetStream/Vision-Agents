@@ -185,6 +185,28 @@ func (s *RunSuite) TestTheWaitForCallSitesIsAnnounced() {
 	s.InDelta(callSitesWait.Seconds(), lines[0]["max_wait_s"], 0)
 }
 
+func (s *RunSuite) TestTheCallSitesRowsArrivalIsLogged() {
+	s.Require().NoError(s.run())
+
+	lines := s.linesSaying("call_sites row after 0 s")
+	s.Require().Len(lines, 1)
+	s.InDelta(0, lines[0]["after_s"], 0)
+}
+
+func (s *RunSuite) TestAMissingCallSitesRowSaysHowLongItWasWaitedForInSeconds() {
+	s.addRows(logRow("1", "joined", time.Now(), map[string]any{"sfu_host": "sfu.example.com"}))
+	was := callSitesWait
+	callSitesWait = 1500 * time.Millisecond
+	s.T().Cleanup(func() { callSitesWait = was })
+
+	s.Require().NoError(s.run())
+
+	warnings := s.linesSaying("the router wrote no call_sites row")
+	s.Require().Len(warnings, 1)
+	s.InDelta(1, warnings[0]["waited_s"], 0)
+	s.NotContains(warnings[0], "waited")
+}
+
 func (s *RunSuite) TestTeardownRunsWhenTheRunIsCancelled() {
 	s.person.stayOn = true
 	s.person.waiting = make(chan struct{})
