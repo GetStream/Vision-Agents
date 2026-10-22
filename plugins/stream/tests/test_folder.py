@@ -229,6 +229,8 @@ class TestFolder:
             ("plugins:\n  - sentry\n", "plugins"),
             ("plugins:\n  - name: google_calendar\n    user: true\n", "plugins"),
             ("plugins: sentry\n", "plugins"),
+            ("plugins: {}\n", "plugins"),
+            ('plugin_events: ""\n', "plugin_events"),
             ("plugin_events:\n  - plugin: linear\n    event: issue\n", "plugin_events"),
             ("plugin_events: linear\n", "plugin_events"),
         ],
@@ -241,7 +243,7 @@ class TestFolder:
 
         with pytest.raises(
             ValueError,
-            match=f"agent.yaml `{key}` is no longer supported: use `connectors`",
+            match=f"`{key}` is no longer supported: use `connectors`",
         ):
             load(root)
 

@@ -569,7 +569,7 @@ def _refuse_plugins(path: Path, field_name: str, value: object) -> None:
     if value is None or value == []:
         return
     raise ValueError(
-        f"{path}: agent.yaml `{field_name}` is no longer supported: use `connectors`"
+        f"{path}: `{field_name}` is no longer supported: use `connectors`"
     )
 
 
