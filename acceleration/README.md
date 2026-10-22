@@ -46,6 +46,7 @@ and billing as a direct API call.
 | `cmd/chat`           | Types a line, reads the answer                                      |
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
 | `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
+| `cmd/phonecheck`     | Places a live test call and logs where each hop of it ran |
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |

@@ -387,6 +387,19 @@ func (s *PhoneSuite) TestABridgeCarriesTheNumberStreamFindsItsTrunkBy() {
 	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
 }
 
+func (s *PhoneSuite) TestTheBridgeHostIsTheHostAlone() {
+	s.Equal("trunk-1.sip.example.com", BridgeHost("sip:+15550100001@trunk-1.sip.example.com"))
+
+	host := BridgeHost("sips:user:secret-value@sip.example.com:5061;transport=tls")
+	s.Equal("sip.example.com", host)
+	s.NotContains(host, "secret-value")
+}
+
+func (s *PhoneSuite) TestABridgeHostOfSomethingThatIsNotSIPIsEmpty() {
+	s.Empty(BridgeHost(""))
+	s.Empty(BridgeHost("https://sip.example.com"))
+}
+
 func (s *PhoneSuite) TestCapabilitiesAreCoveredOnlyWhenEveryOneIsPresent() {
 	s.True(covers([]Capability{Voice, SMS}, []Capability{Voice}))
 	s.True(covers([]Capability{Voice}, nil))

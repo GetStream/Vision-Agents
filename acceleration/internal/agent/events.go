@@ -18,9 +18,11 @@ type Event interface {
 }
 
 // Joined means the agent is in the call and listening. Everyone already in the call when it
-// joined has been reported before it (ParticipantJoined).
+// joined has been reported before it (ParticipantJoined). SFU is zero when the edge cannot
+// say which one it is on.
 type Joined struct {
-	At time.Time
+	At  time.Time
+	SFU SFU
 }
 
 func (Joined) isAgentEvent() {}

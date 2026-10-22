@@ -27,3 +27,38 @@ func TestSafeLogTextCredentials(t *testing.T) {
 		t.Fatal("long messages must be bounded and marked")
 	}
 }
+
+func TestSafeLogDetailsKeepsTheSFUKeys(t *testing.T) {
+	details := safeLogDetails(map[string]any{
+		"sfu_edge": "sfu-a1",
+		"sfu_host": "sfu-a1.example.com",
+		"token":    "secret-value",
+	})
+	if len(details) != 2 || details["sfu_edge"] != "sfu-a1" || details["sfu_host"] != "sfu-a1.example.com" {
+		t.Fatalf("details = %v, want only the two SFU keys", details)
+	}
+}
+
+func TestSafeLogDetailsKeepsTheCallPlacedKeys(t *testing.T) {
+	details := safeLogDetails(map[string]any{
+		"stream_sip_host": "trunk-1.sip.example.com",
+		"vendor":          "twilio",
+		"vendor_call_id":  "twilio-call",
+		"token":           "secret-value",
+	})
+	if len(details) != 3 || details["stream_sip_host"] != "trunk-1.sip.example.com" ||
+		details["vendor"] != "twilio" || details["vendor_call_id"] != "twilio-call" {
+		t.Fatalf("details = %v, want only the three call placed keys", details)
+	}
+}
+
+func TestSafeLogDetailsKeepsTheBridgeMediaKeys(t *testing.T) {
+	details := safeLogDetails(map[string]any{
+		"stream_media_addr":   "203.0.113.10",
+		"customer_media_addr": "198.51.100.7",
+		"token":               "secret-value",
+	})
+	if len(details) != 2 || details["stream_media_addr"] != "203.0.113.10" || details["customer_media_addr"] != "198.51.100.7" {
+		t.Fatalf("details = %v, want only the two media addresses", details)
+	}
+}

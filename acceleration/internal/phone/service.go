@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -728,6 +729,13 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 	}
 
+	if trunk != nil {
+		customerID := request.Owner.CustomerID
+		outbound.Connected = func(media sipbridge.MediaAddrs) {
+			s.recordBridgeMedia(context.WithoutCancel(ctx), customerID, sessionID, media)
+		}
+	}
+
 	started := time.Now()
 	dialed, err := provider.Dial(ctx, outbound)
 	s.record(held.Vendor, "call", request.Owner, started, 0, err)
@@ -736,6 +744,12 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 
 	committed = true
+	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
+	if trunk != nil {
+		sites.customerTrunkHost = trunk.Host
+	}
+	s.logger.Info("placed a phone call", append([]any{"session_id", sessionID,
+		"vendor_call_id", dialed.VendorCallID, "vendor", held.Vendor}, sites.logged()...)...)
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:     trunkID,
 		RouteID:     routeID,
@@ -750,6 +764,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		s.logger.Error("could not record a call's trunk for cleanup; it may leak",
 			"trunk", trunkID, "call", callID, "error", err)
 	}
+	s.recordPlaced(context.WithoutCancel(ctx), request.Owner.CustomerID, sessionID, dialed, held.Vendor, sites)
 	return Placed{
 		VendorCallID: dialed.VendorCallID,
 		Status:       dialed.Status,
@@ -759,6 +774,92 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		CallType:     callType,
 		StreamApp:    pin,
 	}, nil
+}
+
+// placedSites is where a placed call was sent: the Stream SIP host, and the host of the
+// customer's own trunk when the call went out through one. Never the trunk's username or
+// password.
+type placedSites struct {
+	streamSIPHost, customerTrunkHost string
+}
+
+func (p placedSites) details() map[string]any {
+	details := map[string]any{"stream_sip_host": p.streamSIPHost}
+	if p.customerTrunkHost != "" {
+		details["customer_trunk_host"] = p.customerTrunkHost
+	}
+	return details
+}
+
+func (p placedSites) logged() []any {
+	logged := []any{"stream_sip_host", p.streamSIPHost}
+	if p.customerTrunkHost != "" {
+		logged = append(logged, "customer_trunk_host", p.customerTrunkHost)
+	}
+	return logged
+}
+
+// recordPlaced keeps where a placed call was sent, found later by its session id. The call
+// is already ringing, so a failure is logged and goes no further, and a slow store cannot
+// hold the reply for longer than agentLogTimeout.
+func (s *Service) recordPlaced(
+	ctx context.Context,
+	customerID, sessionID string,
+	placed Dialed,
+	vendor string,
+	sites placedSites,
+) {
+	details := sites.details()
+	details["vendor"] = vendor
+	details["vendor_call_id"] = placed.VendorCallID
+	ctx, cancel := context.WithTimeout(ctx, agentLogTimeout)
+	defer cancel()
+	err := s.store.RecordAgentLog(ctx, &store.AgentLog{
+		CustomerID: customerID,
+		SessionID:  sessionID,
+		Source:     "system",
+		Severity:   "info",
+		EventType:  "call_placed",
+		Message:    "Call placed",
+		Details:    details,
+	})
+	if err != nil {
+		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)
+	}
+}
+
+// agentLogTimeout bounds writing a call_placed or bridge_media row. The node waits for the
+// bridge_media row when it stops.
+const agentLogTimeout = 5 * time.Second
+
+// recordBridgeMedia keeps where each side of a call through a customer's own SIP trunk
+// sends its audio from, as the router's bridge saw in their SDP. It is the only place the
+// Stream side's real address shows: the SIP host's DNS answer depends on who asks.
+func (s *Service) recordBridgeMedia(ctx context.Context, customerID, sessionID string, media sipbridge.MediaAddrs) {
+	if media.Stream == "" && media.Customer == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, agentLogTimeout)
+	defer cancel()
+	details := map[string]any{}
+	if media.Stream != "" {
+		details["stream_media_addr"] = media.Stream
+	}
+	if media.Customer != "" {
+		details["customer_media_addr"] = media.Customer
+	}
+	err := s.store.RecordAgentLog(ctx, &store.AgentLog{
+		CustomerID: customerID,
+		SessionID:  sessionID,
+		Source:     "system",
+		Severity:   "info",
+		EventType:  "bridge_media",
+		Message:    "Bridge media",
+		Details:    details,
+	})
+	if err != nil {
+		s.logger.Warn("could not record a bridged call's media addresses", "session_id", sessionID, "error", err)
+	}
 }
 
 // bridgeLifetime is how long a parked bridge is claimable for. It has to outlast the longest

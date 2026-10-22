@@ -6,6 +6,8 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
 )
 
 // Direction is which way a stamp travelled.
@@ -146,7 +148,7 @@ func centre(role map[string]float64) float64 {
 // Render writes the report: for each region the bench ran in, each city's matrix in both
 // directions, how much each vendor adds as caller and as callee, and where each vendor's
 // side of each cell was served from.
-func Render(results []Result, places map[string]Place) string {
+func Render(results []Result, places map[string]locate.Place) string {
 	var out strings.Builder
 	out.WriteString("# Telephony latency\n\n")
 	out.WriteString("Mouth-to-ear latency between phone numbers, measured by a timestamp sent as tones " +
@@ -256,7 +258,7 @@ func identifiable(cells map[Cell]float64, vendors []string) bool {
 }
 
 // writeNetwork lists the addresses each vendor's side of each cell came from.
-func writeNetwork(out *strings.Builder, results []Result, vendors []string, places map[string]Place) {
+func writeNetwork(out *strings.Builder, results []Result, vendors []string, places map[string]locate.Place) {
 	out.WriteString("**Where each side was served from**\n\n" +
 		"| caller → callee | caller's media | callee's media | caller's signalling | callee's signalling |\n" +
 		"|---|---|---|---|---|\n")
@@ -322,7 +324,7 @@ func writeFailures(out *strings.Builder, results []Result) {
 }
 
 // describe is the distinct places one side of a cell's media came from, most used first.
-func describe(results []Result, addressOf func(Result) string, places map[string]Place) string {
+func describe(results []Result, addressOf func(Result) string, places map[string]locate.Place) string {
 	counts := map[string]int{}
 	for _, result := range results {
 		address, err := netip.ParseAddrPort(addressOf(result))
@@ -332,7 +334,7 @@ func describe(results []Result, addressOf func(Result) string, places map[string
 		ip := address.Addr().String()
 		place, ok := places[ip]
 		if !ok {
-			place = Place{IP: ip}
+			place = locate.Place{IP: ip}
 		}
 		counts[place.String()]++
 	}
