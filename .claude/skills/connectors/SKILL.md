@@ -239,9 +239,9 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   - `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` name
     `/tmp/va-egress-ca-bundle.pem`, and `NODE_EXTRA_CA_CERTS` names the proxy's CA certificate,
     `/tmp/va-egress-ca.pem`;
-  - `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=http.proxyAuthMethod`, `GIT_CONFIG_VALUE_0=basic`:
-    git sends the proxy credential on its first `CONNECT` instead of waiting for a 407
-    (https://git-scm.com/docs/git-config#ENVIRONMENT).
+  - `GIT_HTTP_PROXY_AUTHMETHOD=basic`: git sends the proxy credential on its first `CONNECT`
+    instead of waiting for a 407 (git-config(1), `http.proxyAuthMethod`:
+    https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpproxyAuthMethod).
   Before any code runs, the router writes the bundle: the image's own roots and that CA.
   Daytona's image is Debian 13, whose roots are `/etc/ssl/certs/ca-certificates.crt` (live
   probe, 2026-10-21). An image with no roots file runs no code. The proxy puts the token in place

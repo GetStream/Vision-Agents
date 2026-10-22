@@ -39,9 +39,10 @@ type Subject struct {
 	// Push is git in the sandbox the broker's last Prepare made: it commits a file holding
 	// content and pushes it to https://github.com/octo/hello.git with ref, the value of a
 	// grant's env var, as Basic auth's password. It returns the Authorization of each request
-	// github.com got, and the file as github.com keeps it. Nil for a broker whose egress no test
+	// github.com got, the file as github.com keeps it, and every other header value and the URL of
+	// each request. Nil for a broker whose egress no test
 	// here runs.
-	Push func(ref, content string) (authorizations []string, pushed string)
+	Push func(ref, content string) (authorizations []string, pushed string, elsewhere []string)
 }
 
 // BrokerContract is the suite. New builds a broker for session over tokens, logging to
@@ -353,7 +354,7 @@ func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
 	s.Require().NoError(s.returned(err))
 	placeholder := ref(mount, "GITHUB_TOKEN")
 
-	authorizations, pushed := subject.Push(placeholder, "GITHUB_TOKEN="+placeholder+"\n")
+	authorizations, pushed, elsewhere := subject.Push(placeholder, "GITHUB_TOKEN="+placeholder+"\n")
 
 	token := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:gho_first"))
 	s.Contains(authorizations, token)
@@ -361,4 +362,8 @@ func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
 		s.Contains([]string{"", token}, authorization, "github.com gets the token or no credential")
 	}
 	s.Equal("GITHUB_TOKEN="+placeholder+"\n", pushed)
+	s.NotEmpty(elsewhere)
+	for _, value := range elsewhere {
+		s.NotContains(value, "gho_first", "the token is in Authorization alone")
+	}
 }

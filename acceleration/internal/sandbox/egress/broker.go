@@ -56,10 +56,10 @@ var proxyEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"
 // waits for the 407 and connects again (http.proxyAuthMethod «anyauth»: «It is assumed that
 // the proxy answers an unauthenticated request with a 407»); basic saves that round trip
 // (tunnel probe 2, 2026-10-22: one CONNECT without auth before each authenticated one).
-// GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n> set a git config for every git
-// command: https://git-scm.com/docs/git-config#ENVIRONMENT, and http.proxyAuthMethod
+// GIT_HTTP_PROXY_AUTHMETHOD overrides http.proxyAuthMethod, and a user's own GIT_CONFIG_* does not
+// replace it: git-config(1), http.proxyAuthMethod,
 // https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpproxyAuthMethod.
-var gitEnv = map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.proxyAuthMethod", "GIT_CONFIG_VALUE_0": "basic"}
+var gitEnv = map[string]string{"GIT_HTTP_PROXY_AUTHMETHOD": "basic"}
 
 // noProxy keeps the sandbox's own loopback off the proxy, as Daytona's netleash does (live probe,
 // 2026-10-21).

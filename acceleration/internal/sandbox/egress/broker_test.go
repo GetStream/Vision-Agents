@@ -56,7 +56,7 @@ func TestProxyBrokerContract(t *testing.T) {
 			Refuse:  func() { r.gate.shut(true) },
 			Recover: r.recover,
 			Live:    true,
-			Push:    func(ref, content string) ([]string, string) { return r.push(t, mount, ref, content) },
+			Push:    func(ref, content string) ([]string, string, []string) { return r.push(t, mount, ref, content) },
 		}
 	}})
 }
@@ -167,7 +167,7 @@ func (s *BrokerSuite) TestEveryRunGoesThroughTheProxyAndTrustsTheCA() {
 	s.Equal(map[string]string{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle,
 		"GIT_SSL_CAINFO": bundle, "NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "HTTPS_PROXY": proxy, "HTTP_PROXY": proxy,
 		"https_proxy": proxy, "http_proxy": proxy, "NO_PROXY": loopback, "no_proxy": loopback,
-		"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.proxyAuthMethod", "GIT_CONFIG_VALUE_0": "basic"}, s.mount.RunEnv)
+		"GIT_HTTP_PROXY_AUTHMETHOD": "basic"}, s.mount.RunEnv)
 	s.Equal(map[string][]byte{"/tmp/va-egress-ca.pem": s.rig.caCert}, s.mount.Files)
 	s.Len(s.mount.Setup, 1)
 }
@@ -181,7 +181,7 @@ func (s *BrokerSuite) TestGitSendsTheProxyCredentialOnItsFirstConnect() {
 	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{github})
 	s.Require().NoError(err)
 
-	s.rig.push(s.T(), mount, mount.Env["GITHUB_TOKEN"], "pushed\n")
+	_, _, _ = s.rig.push(s.T(), mount, mount.Env["GITHUB_TOKEN"], "pushed\n")
 
 	s.NotEmpty(s.rig.connects())
 	s.NotContains(s.rig.connects(), false, "a CONNECT without the proxy credential")
@@ -677,8 +677,10 @@ func (r *rig) connects() []bool {
 // «git clone https://x-access-token:TOKEN@github.com/owner/repo.git»). The proxy's public
 // address is not one a test can reach, so the proxy env names the rig's proxy in its place, and
 // the CA files the env names are under a directory standing for the sandbox's root. It returns
-// what github.com got: each request's Authorization, and the file.
-func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) ([]string, string) {
+// what github.com got: each request's Authorization, the file, and every other header value and
+// each request's URL. The pack is stored uncompressed (pack.compression=0), so a placeholder in
+// the file is plain text in the push body.
+func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) ([]string, string, []string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
@@ -716,14 +718,14 @@ func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) ([]st
 	}
 	for _, args := range [][]string{{"init", "--quiet", "--initial-branch=main"}, {"add", "token.txt"},
 		{"-c", "user.name=sandbox", "-c", "user.email=sandbox@example.com", "commit", "--quiet", "--message=token"},
-		{"push", "--quiet", "https://x-access-token:" + ref + "@github.com/octo/hello.git", "main"}} {
+		{"-c", "pack.compression=0", "push", "--quiet", "https://x-access-token:" + ref + "@github.com/octo/hello.git", "main"}} {
 		command := exec.Command("git", args...)
 		command.Dir, command.Env = work, env
 		if out, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("git %s: %v: %s", args[0], err, out)
 		}
 	}
-	return git.requests(), git.file(t, "token.txt")
+	return git.requests(), git.file(t, "token.txt"), git.elsewhere()
 }
 
 // gitHost is github.com's git over HTTPS as a stand-in: git http-backend
@@ -736,6 +738,7 @@ type gitHost struct {
 	repo   string
 	mu     sync.Mutex
 	seen   []string
+	rest   []string
 }
 
 func newGitHost(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey) *gitHost {
@@ -756,6 +759,12 @@ func newGitHost(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey) *gi
 	g.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		g.mu.Lock()
 		g.seen = append(g.seen, request.Header.Get("Authorization"))
+		g.rest = append(g.rest, request.URL.String())
+		for name, values := range request.Header {
+			if name != "Authorization" {
+				g.rest = append(g.rest, values...)
+			}
+		}
 		g.mu.Unlock()
 		if _, _, ok := request.BasicAuth(); !ok {
 			w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
@@ -774,6 +783,13 @@ func (g *gitHost) requests() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return slices.Clone(g.seen)
+}
+
+// elsewhere is each request's URL and every header value but Authorization.
+func (g *gitHost) elsewhere() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.rest)
 }
 
 // file is name on main as the repository keeps it.

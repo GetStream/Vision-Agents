@@ -410,6 +410,21 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 
 	s.Contains(description, "Code may call api.github.com, uploads.github.com with $GITHUB_TOKEN: send it over HTTPS as "+
 		"`Authorization: Bearer $GITHUB_TOKEN`; the value is a placeholder that works only for api.github.com, uploads.github.com")
+	s.NotContains(description, "git over HTTPS", "a grant with no git host gets no git sentence")
+	s.NotContains(description, "x-access-token")
+}
+
+// githubGit is a GitHub grant that reaches github.com too, as the connector's manifest does.
+var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
+	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}
+
+// TestRunCodeTellsTheModelGitCannotUseTheGrant: Daytona replaces a plain header alone. Bearer is
+// not offered for github.com, which git cannot send it to.
+func (s *SecretsSuite) TestRunCodeTellsTheModelGitCannotUseTheGrant() {
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit)).Description
+
+	s.Contains(description, "Code may call api.github.com with $GITHUB_TOKEN: send it over HTTPS as "+
+		"`Authorization: Bearer $GITHUB_TOKEN`; the value is a placeholder that works only for api.github.com, github.com")
 	s.Contains(description, " git over HTTPS cannot use $GITHUB_TOKEN: git sends it Base64-encoded, which only the router's "+
 		"code_sandbox.broker: proxy replaces.")
 	s.NotContains(description, "x-access-token")
@@ -417,7 +432,7 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 
 // TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem: no broker, no egress that takes Basic.
 func (s *SecretsSuite) TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem() {
-	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Grants: []sandbox.Grant{github}})
+	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Grants: []sandbox.Grant{githubGit}})
 	s.Require().NoError(err)
 
 	s.Contains(sandbox.Tool(box).Description, " git over HTTPS cannot use $GITHUB_TOKEN")
