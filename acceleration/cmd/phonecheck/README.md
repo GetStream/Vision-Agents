@@ -19,10 +19,11 @@ reads is only written when the router has a database (`ROUTER_POSTGRES_DSN`):
 
 ```bash
 cd acceleration
-go run ./cmd/router
+go run ./cmd/router 2>&1 | tee -a router.log
 ```
 
-Wait for the `listening` log line. The router listens on `http://localhost:8080` unless you
+`tee` shows the router's output and keeps it in `router.log`, for §6. Wait for the `listening`
+log line. The router listens on `http://localhost:8080` unless you
 configured another address.
 
 **Remote.** Pass `-router https://router.example.com`. The tool checks that it answers and that

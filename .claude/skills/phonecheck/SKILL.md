@@ -16,10 +16,13 @@ skill asks what to test, sets it up, runs, reports and puts things back.
   say the wizard must run in the main session. Sub-agents only read logs and write the
   per-call report.
 - **Long processes run in the background.** Start the router, the tunnel and each phonecheck run
-  with the Bash tool's `run_in_background`, each writing to its own log in the scratchpad:
+  with the Bash tool's `run_in_background`, as
+  `bash -c 'set -o pipefail; … 2>&1 | tee -a <scratchpad>/<name>.log'`, so the output shows in
+  the Claude Code shell panel and is kept in its own log in the scratchpad:
   `<scratchpad>/router.log`, `<scratchpad>/tunnel.log`, `<scratchpad>/phonecheck-<n>.log`.
-  Right after starting one, print its log's full path, so the human can `tail -f` it or ask
-  questions while the call runs. The main session stays free to answer.
+  `pipefail` keeps the process's own exit status, not `tee`'s. Right after starting one, print
+  its log's full path, so the human can `tail -f` it or ask questions while the call runs. The
+  main session stays free to answer.
 - **Shell.** The user's shell is fish. Run every snippet as `bash -c '…'`. Shell variables do not
   last between tool calls: write literal values (env file path, router address, customer id,
   numbers, ids) into each command.
@@ -131,8 +134,9 @@ to its database (migrations, and the router's own background work).
    in `.env`, after the router's lines). See README §3.
 3. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something
    does, show it and ask. Starting it runs migrations, binds :8080 and may start background
-   work that writes rows or calls models; ask a yes. From `acceleration/`, start
-   `ROUTER_AUTH_MODE=noauth go run ./cmd/router > <scratchpad>/router.log 2>&1` in the background;
+   work that writes rows or calls models; ask a yes. Start
+   `bash -c 'set -o pipefail; cd acceleration && ROUTER_AUTH_MODE=noauth go run ./cmd/router 2>&1 | tee -a <scratchpad>/router.log'`
+   in the background;
    once it listens, write its process id (`lsof -tiTCP:8080 -sTCP:LISTEN`) to the state file. Wait for `listening`. If it never comes, show the last lines of
    the file and stop. Note the Stream app id from `stream_app=<id>` in
    `stream: the deployment acts in its own Stream app`, if that line appears.
@@ -203,8 +207,8 @@ No yes: nothing is bought or changed; stop the router this skill started and end
 In this order, each change into the state file:
 
 1. **Tunnel and hooks** (local only). `command -v cloudflared`; if missing, ask the human. Start
-   `cloudflared tunnel --url http://localhost:8080 > <scratchpad>/tunnel.log 2>&1` in the
-   background, write its process id to the state file, take its
+   `bash -c 'set -o pipefail; cloudflared tunnel --url http://localhost:8080 2>&1 | tee -a <scratchpad>/tunnel.log'`
+   in the background, write its process id to the state file, take its
    `https://<random>.trycloudflare.com` URL, then `go run ./cmd/phone hooks -url <tunnel URL>`
    (`-remove <stale URL>` only if approved; `-app <id>` only for a router in app mode). A local
    Telnyx router's own TeXML app (`TELNYX_CONNECTION_ID`) needs its voice URL on the tunnel; the
@@ -228,11 +232,11 @@ blocks an inbound run, stop and tell the human. Then, per combination `<n>` (1, 
 background, one at a time:
 
 ```bash
-bash -c 'set -a; . <env file>; set +a; cd acceleration/cmd/phonecheck && go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east > <scratchpad>/phonecheck-<n>.log 2>&1'
+bash -c 'set -o pipefail; set -a; . <env file>; set +a; cd acceleration/cmd/phonecheck && go run . outbound -provider twilio -router http://localhost:8080 -customer <customer> -agent-number +15550100001 -person-number +15550100002 -talk 20s -runs 1 -region us-east 2>&1 | tee -a <scratchpad>/phonecheck-<n>.log'
 ```
 
 `-provider` is the person's vendor; `inbound` for the other direction. Print the log's path. The
-tool waits up to 90 s for the `call_sites` row. Start the next run once this one's exit is
+tool waits up to 90 s for the `call_sites` row and logs `call_sites row after N s` when it comes. Start the next run once this one's exit is
 reported.
 
 ## Report
@@ -242,9 +246,10 @@ and, locally, the lines of `<scratchpad>/router.log` with that run's `session_id
 `the agent is on the call`). It returns the block below, so the large logs stay out of the
 main session. Per call, one short block:
 
-- **Hops:** agent SFU, router address, Stream SIP host, SFUs used and where, person side and
-  `region_label`, each with `observed`, `inferred` or `reported`.
-- **Timings:** `connect_ms`, `talked_ms`, `total_ms`.
+- **Hops:** agent SFU, caller SFU (and where Stream placed each side), router address, Stream
+  SIP host, the customer's trunk when there is one, SFUs used, person side and `region_label`,
+  each with `observed`, `inferred` or `reported`.
+- **Timings:** `connect_ms`, `talked_ms`, `total_ms`, and when the `call_sites` row came.
 - **Gaps:** anything missing, plainly: `person call not observed` (Telnyx outbound), no
   `call_sites` row, a host that did not resolve, a run skipped and why.
 
