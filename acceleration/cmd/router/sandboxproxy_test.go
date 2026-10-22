@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -17,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -81,7 +83,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, proxy)
-	stop, err := serveSandboxProxy(proxy, settings.ProxyAddr, func(server *http.Server, listener net.Listener) {
+	stop, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -97,11 +99,11 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	_ = freed.Close()
 }
 
-// TestNoProxyServesNothing: the router without one listens on no proxy address, and stop
-// is safe.
+// TestNoProxyServesNothing: the router without one listens on no proxy address, whatever its
+// public URL, and stop is safe.
 func TestNoProxyServesNothing(t *testing.T) {
 	address := freeAddress(t)
-	stop, err := serveSandboxProxy(nil, address, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	stop, err := serveSandboxProxy(nil, address, tlsPublicURL, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
 
@@ -250,4 +252,150 @@ func forward(t *testing.T, address string) net.Listener {
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
 	return listener
+}
+
+// tlsPublicURL is a proxy served over TLS at a public IPv4 address (TEST-NET-3, RFC 5737), which
+// listenedProxy's clients reach at its loopback listener.
+const tlsPublicURL = "https://203.0.113.7:8091"
+
+// listenedProxy is a proxy served as serveSandboxProxy serves it for publicURL, on a loopback
+// address, and a sandbox's credential whose record allows example.com, which the proxy
+// tunnels to host.
+type listenedProxy struct {
+	address    string
+	credential string
+	host       *httptest.Server
+	// trusted holds the router CA's certificate and host's, which a sandbox trusts.
+	trusted *x509.CertPool
+}
+
+func newListenedProxy(t *testing.T, publicURL string) listenedProxy {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		t.Skip("ROUTER_REDIS_ADDR not set")
+	}
+	redis, err := live.New(live.Options{Address: address})
+	require.NoError(t, err)
+	t.Cleanup(redis.Close)
+	host := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "hello") }))
+	t.Cleanup(host.Close)
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{Store: sandboxStore(redis), CACert: []byte(caCert), CAKey: []byte(caKey),
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, host.Listener.Addr().String())
+		}, Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	credential := "w15tlsl-" + egress.NewCredential()
+	require.NoError(t, sandboxStore(redis).Put(context.Background(), credential,
+		egress.Record{Session: "w15tlsl-session", Allowed: []string{"example.com"}}, time.Minute))
+	t.Cleanup(func() { _ = sandboxStore(redis).Delete(context.Background(), credential) })
+	listen := freeAddress(t)
+	stop, err := serveSandboxProxy(proxy, listen, publicURL, func(server *http.Server, listener net.Listener) {
+		_ = server.Serve(listener)
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+	trusted := host.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs.Clone()
+	require.True(t, trusted.AppendCertsFromPEM([]byte(caCert)))
+	return listenedProxy{address: listen, credential: credential, host: host, trusted: trusted}
+}
+
+// client is a sandbox's client with proxyURL, whose credential is the sandbox's, trusting
+// roots. It dials the listener wherever proxyURL points.
+func (l listenedProxy) client(t *testing.T, proxyURL string, roots *x509.CertPool) *http.Client {
+	proxy, err := url.Parse(proxyURL)
+	require.NoError(t, err)
+	proxy.User = url.UserPassword("sbx", l.credential)
+	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxy),
+		TLSClientConfig: &tls.Config{RootCAs: roots},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, l.address)
+		}}}
+}
+
+// connect sends a plain-HTTP CONNECT with the sandbox's credential to the listener and gives
+// the first line it answers.
+func (l listenedProxy) connect(t *testing.T) (string, error) {
+	conn, err := net.Dial("tcp", l.address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
+	_, err = fmt.Fprintf(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n",
+		base64.StdEncoding.EncodeToString([]byte("sbx:"+l.credential)))
+	require.NoError(t, err)
+	return bufio.NewReader(conn).ReadString('\n')
+}
+
+// TestAnHTTPSPublicURLServesTheProxyOverTLS: a sandbox that trusts the router CA sends its
+// credential inside TLS and reaches the host through the tunnel.
+func TestAnHTTPSPublicURLServesTheProxyOverTLS(t *testing.T) {
+	proxy := newListenedProxy(t, tlsPublicURL)
+
+	response, err := proxy.client(t, tlsPublicURL, proxy.trusted).Get("https://example.com/")
+
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Equal(t, "hello", string(body))
+}
+
+// TestTheTLSProxysCertificateNamesItsPublicAddress: the sandbox reaches the proxy at that IPv4
+// address alone, so the certificate the CA signs names it as an IP address.
+func TestTheTLSProxysCertificateNamesItsPublicAddress(t *testing.T) {
+	proxy := newListenedProxy(t, tlsPublicURL)
+
+	conn, err := tls.Dial("tcp", proxy.address, &tls.Config{ServerName: "203.0.113.7", RootCAs: proxy.trusted})
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	leaf := conn.ConnectionState().PeerCertificates[0]
+	require.Len(t, leaf.IPAddresses, 1)
+	require.Equal(t, "203.0.113.7", leaf.IPAddresses[0].String())
+	require.Empty(t, leaf.DNSNames)
+}
+
+// TestPlainHTTPToTheTLSProxyGetsNoProxy: a CONNECT sent in the clear opens no tunnel and gets
+// no answer.
+func TestPlainHTTPToTheTLSProxyGetsNoProxy(t *testing.T) {
+	proxy := newListenedProxy(t, tlsPublicURL)
+
+	line, err := proxy.connect(t)
+
+	require.ErrorIs(t, err, io.EOF)
+	require.Empty(t, line)
+}
+
+// TestASandboxThatDoesNotTrustTheRouterCAReachesNoTLSProxy: the proxy's certificate is the
+// router CA's alone.
+func TestASandboxThatDoesNotTrustTheRouterCAReachesNoTLSProxy(t *testing.T) {
+	proxy := newListenedProxy(t, tlsPublicURL)
+
+	_, err := proxy.client(t, tlsPublicURL, proxy.host.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs).
+		Get("https://example.com/")
+
+	var unknown x509.UnknownAuthorityError
+	require.ErrorAs(t, err, &unknown)
+}
+
+// TestAnHTTPOrNoPublicURLServesThePlainProxyAsOnBase is the control. Each value is what base
+// e5d6d8057 answered, with no public URL to give: a plain CONNECT opens the tunnel, a TLS
+// handshake is not one, and a client with an http proxy URL reaches the host.
+func TestAnHTTPOrNoPublicURLServesThePlainProxyAsOnBase(t *testing.T) {
+	for _, publicURL := range []string{"http://203.0.113.7:8091", ""} {
+		proxy := newListenedProxy(t, publicURL)
+
+		line, err := proxy.connect(t)
+		require.NoError(t, err, publicURL)
+		require.Equal(t, "HTTP/1.1 200 Connection established\r\n", line, publicURL)
+		_, err = tls.Dial("tcp", proxy.address, &tls.Config{InsecureSkipVerify: true})
+		require.EqualError(t, err, "tls: first record does not look like a TLS handshake", publicURL)
+		response, err := proxy.client(t, "http://"+proxy.address, proxy.trusted).Get("https://example.com/")
+		require.NoError(t, err, publicURL)
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, "200 hello", fmt.Sprintf("%d %s", response.StatusCode, body), publicURL)
+	}
 }

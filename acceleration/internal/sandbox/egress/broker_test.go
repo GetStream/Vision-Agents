@@ -449,10 +449,10 @@ var unusableURLs = []string{"http://0.0.0.0:8091", "http://127.0.0.1:8091", "htt
 	"http://203.0.113.7:0", "http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path",
 	"http://203.0.113.7:8091?a=b", "http://203.0.113.7:8091#frag"}
 
-// TestAProxyURLItCannotUseIsRefused: the sandbox's own credential is the URL's user, and a
-// proxy reached over anything but http would take no Basic credential from it.
+// TestAProxyURLItCannotUseIsRefused: the sandbox's own credential is the URL's user, and most
+// of its clients cannot use an https proxy URL.
 func (s *BrokerSuite) TestAProxyURLItCannotUseIsRefused() {
-	for _, address := range append([]string{"", "https://proxy.test:8091", "http://user:pass@proxy.test:8091", "http://:8091", "proxy.test:8091",
+	for _, address := range append([]string{"", "https://proxy.test:8091", "https://203.0.113.7:8091", "http://user:pass@proxy.test:8091", "http://:8091", "proxy.test:8091",
 		"http://proxy.test:8091", "http://[2001:db8::7]:8091", "http://[::ffff:203.0.113.7]:8091", "http://user:pass@203.0.113.7:8091"}, unusableURLs...) {
 		_, err := egress.NewBroker(egress.BrokerOptions{Store: s.rig.store, URL: address, CACert: s.rig.caCert, Session: "session-1",
 			Tokens: s.tokens})

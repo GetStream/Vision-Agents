@@ -515,7 +515,18 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 	return p.store.lookup(ctx, credential)
 }
 
-// leaf is host's certificate, signed by the CA.
+// ListenerTLS is the TLS the proxy is served with when a sandbox reaches it at address, an IP
+// address: the sandbox's proxy credential then never crosses the network in the clear. Each
+// handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
+// tunnel does, since one is valid for leafValidity alone.
+func (p *Proxy) ListenerTLS(address string) *tls.Config {
+	return &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		leaf, err := p.leaf(address)
+		return &leaf, err
+	}}
+}
+
+// leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -531,6 +542,11 @@ func (p *Proxy) leaf(host string) (tls.Certificate, error) {
 		NotAfter:     now.Add(leafValidity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if address := net.ParseIP(host); address != nil {
+		// A client checks an IP address against the certificate's iPAddress names alone (RFC 5280
+		// section 4.2.1.6), never its DNS names (crypto/x509 Certificate.VerifyHostname).
+		template.DNSNames, template.IPAddresses = nil, []net.IP{address}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, p.ca, &p.leafKey.PublicKey, p.caKey)
 	if err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
@@ -53,9 +54,10 @@ func sandboxBroker(settings config.CodeSandbox, redis *live.Client, options *ses
 	return nil
 }
 
-// serveSandboxProxy has serve run proxy on addr, until stop. Without a proxy it listens on
+// serveSandboxProxy has serve run proxy on addr, until stop: over TLS when publicURL, the proxy
+// as a sandbox reaches it, is https, and plain HTTP otherwise. Without a proxy it listens on
 // nothing.
-func serveSandboxProxy(proxy *egress.Proxy, addr string, serve func(*http.Server, net.Listener),
+func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*http.Server, net.Listener),
 	logger *slog.Logger) (stop func() error, err error) {
 	if proxy == nil {
 		return func() error { return nil }, nil
@@ -64,8 +66,14 @@ func serveSandboxProxy(proxy *egress.Proxy, addr string, serve func(*http.Server
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	public, valid := config.ProxyURL(publicURL)
+	secure := valid && public.Scheme == "https"
+	if secure {
+		listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
+	}
 	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout}
-	logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr")
+	logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
+		"tls", secure)
 	go serve(server, listener)
 	// Close, not a drain: a tunnel is the sandbox's to reopen.
 	return server.Close, nil
