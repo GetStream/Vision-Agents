@@ -9,6 +9,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -119,7 +120,14 @@ type Sandbox interface {
 // Granted is a sandbox whose code may call connectors' APIs through grants.
 type Granted interface {
 	Grants() []Grant
+	// Basic is its broker's CredentialBroker.Basic: whether git over HTTPS may send a grant's
+	// placeholder.
+	Basic() bool
 }
+
+// gitHost is the host git clones and pushes to for a GitHub grant
+// (https://docs.github.com/en/get-started/git-basics/about-remote-repositories).
+const gitHost = "github.com"
 
 // Tool describes running code in box to a model, with the env vars its grants give code.
 func Tool(box Sandbox) llm.Tool {
@@ -127,8 +135,27 @@ func Tool(box Sandbox) llm.Tool {
 	if granted, ok := box.(Granted); ok {
 		for _, grant := range granted.Grants() {
 			hosts := strings.Join(grant.Hosts, ", ")
-			description += fmt.Sprintf(" Code may call %s with $%s: send it over HTTPS as `Authorization: Bearer $%s`; "+
-				"the value is a placeholder that works only for %s, only in a request header.", hosts, grant.Env, grant.Env, hosts)
+			// github.com refuses Bearer from git (probe, 2026-10-22T03:53Z), so it is not offered
+			// for it; git takes the Basic form below.
+			bearer := slices.DeleteFunc(slices.Clone(grant.Hosts), func(host string) bool { return host == gitHost })
+			if len(bearer) > 0 {
+				description += fmt.Sprintf(" Code may call %s with $%s: send it over HTTPS as `Authorization: Bearer $%s`; "+
+					"the value is a placeholder that works only for %s, only in a request header.", strings.Join(bearer, ", "), grant.Env, grant.Env, hosts)
+			} else {
+				description += fmt.Sprintf(" $%s is a placeholder that works only for %s, only in a request header.", grant.Env, hosts)
+			}
+			if !slices.Contains(grant.Hosts, gitHost) {
+				continue
+			}
+			// The user name is GitHub's for a token
+			// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
+			if granted.Basic() {
+				description += fmt.Sprintf(" git over HTTPS takes it as the password in the remote's URL, such as "+
+					"https://x-access-token:$%s@%s/<owner>/<repo>.git.", grant.Env, gitHost)
+			} else {
+				description += fmt.Sprintf(" git over HTTPS cannot use $%s: git sends it Base64-encoded, which only "+
+					"the router's code_sandbox.broker: proxy replaces.", grant.Env)
+			}
 		}
 	}
 	return llm.Tool{

@@ -303,6 +303,11 @@ func (s *Sandbox) Grants() []sandbox.Grant {
 	return s.grants
 }
 
+// Basic is false without a broker: New takes grants without one.
+func (s *Sandbox) Basic() bool {
+	return s.broker != nil && s.broker.Basic()
+}
+
 // domains are the config's allowed domains and, unless the config opens the whole network or
 // lists CIDR ranges, which Daytona takes instead of domains, the hosts of each grant the
 // sandbox holds a secret for: a sandbox that may reach nothing else still reaches its grants.
