@@ -118,6 +118,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
 			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "checking", Model: "checking-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
@@ -145,6 +146,8 @@ type scriptedLLM struct {
 	mu    sync.Mutex
 	turns int
 	reply string
+	// then, when set, is what every turn after the first says instead of reply.
+	then  string
 	calls []llm.ToolCall
 	asked []llm.ResponseParams
 	sees  bool
@@ -181,6 +184,9 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	s.asked = append(s.asked, params)
 	first := s.turns == 1
 	reply := s.reply
+	if !first && s.then != "" {
+		reply = s.then
+	}
 	if s.echoes {
 		reply = params.Instructions
 	}
