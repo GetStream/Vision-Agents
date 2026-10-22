@@ -146,6 +146,33 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 	}
 }
 
+// TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRun: the tunnel starts with the
+// setup, after its file is written, and is checked before each run, whose clients it serves;
+// a check that fails runs no code. The sandbox still reaches the proxy's address alone.
+func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRun() {
+	box := s.proxied(sandbox.Config{}, "https://203.0.113.7:8091")
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(2)", nil)
+	s.Require().NoError(err)
+
+	s.Equal("203.0.113.7/32", s.platform.requests()[0]["networkAllowList"])
+	s.Contains(s.platform.uploads, "/tmp/va-egress-tunnel.py after 0 runs")
+	start := "sh -c " + quoted(box.mount.EachRun[0])
+	s.Equal([]string{"sh -c " + quoted(box.mount.Setup[0]) + " after 0 runs", start + " after 0 runs", start + " after 0 runs",
+		start + " after 1 runs"}, s.platform.commands)
+	for _, ran := range s.platform.executed() {
+		s.Regexp(`^http://sbx:[A-Z2-7]{26}@127\.0\.0\.1:3128$`, ran["envs"].(map[string]any)["HTTPS_PROXY"])
+	}
+	s.platform.mu.Lock()
+	s.platform.commandExit = 1
+	s.platform.mu.Unlock()
+	_, err = box.Run(s.ctx, "print(3)", nil)
+	s.ErrorContains(err, "readying the sandbox for a run")
+	s.Len(s.platform.executed(), 2)
+}
+
 // TestAGrantTheBrokerLeavesOutHasNoEnvVar: the sandbox still reaches the proxy alone.
 func (s *ProxySuite) TestAGrantTheBrokerLeavesOutHasNoEnvVar() {
 	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091", disconnected)

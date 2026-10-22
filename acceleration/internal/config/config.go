@@ -627,18 +627,11 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: code_sandbox.broker is %s or %s, got %q", CodeSandboxBrokerDaytona, CodeSandboxBrokerProxy,
 			c.CodeSandbox.Broker)
 	}
-	public, validProxy := ProxyURL(c.CodeSandbox.ProxyPublicURL)
+	_, validProxy := ProxyURL(c.CodeSandbox.ProxyPublicURL)
 	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && (!validProxy || c.CodeSandbox.ProxyCACert == "") {
 		return errors.New("config: code_sandbox.broker is proxy, so code_sandbox.proxy_public_url (http://<public IPv4 address>:port: " +
 			"a sandbox reaches that address alone and has no DNS to look a host name up with) and proxy_ca_cert " +
 			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL, ROUTER_CODE_SANDBOX_PROXY_CA_CERT) must say how a sandbox reaches the proxy")
-	}
-	// Most of a sandbox's clients cannot use an https proxy URL (curl, urllib, wget and node fail:
-	// live probe, 2026-10-22), so the proxy broker hands out http alone until the sandbox gets a
-	// local forwarder that speaks TLS to the proxy.
-	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && validProxy && public.Scheme == "https" {
-		return errors.New("config: code_sandbox.broker is proxy, and an https code_sandbox.proxy_public_url " +
-			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) needs the sandbox's TLS tunnel (AI-1683), which is not built yet: use http")
 	}
 	// An https URL a sandbox cannot use is served as plain HTTP by the listener, which would
 	// leave a router running a different proxy from the one its settings say.

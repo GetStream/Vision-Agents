@@ -64,9 +64,9 @@ type Mount struct {
 	// sandbox, which Env does not: Daytona's netleash replaces its proxy and CA env vars (live
 	// probe, 2026-10-21).
 	RunEnv map[string]string
-	// Proxy, when set, is the only address the sandbox may reach: an http proxy at an IPv4
-	// address, with the sandbox's credential in the userinfo. RunEnv sends the sandbox's
-	// requests there.
+	// Proxy, when set, is the only address the sandbox may reach: an http or https proxy at an
+	// IPv4 address, with the sandbox's credential in the userinfo. RunEnv sends the sandbox's
+	// requests there, or to a tunnel in the sandbox to it.
 	Proxy *url.URL
 	// Files are written into the sandbox, by absolute path, before code runs in it.
 	Files map[string][]byte
@@ -74,6 +74,9 @@ type Mount struct {
 	// any code. One that fails stops the run, and runs again, with those after it, before the
 	// next.
 	Setup []string
+	// EachRun are shell commands run in the sandbox before each run of code, once Setup is
+	// done. One that fails fails the run, and no code runs.
+	EachRun []string
 }
 
 // CredentialBroker lets code in a sandbox call a connector's API with a connection's

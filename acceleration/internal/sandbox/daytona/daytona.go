@@ -115,6 +115,15 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	}
 	run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
 	defer cancel()
+	for _, command := range s.mount.EachRun {
+		checked, err := s.box.Process.ExecuteCommand(run, "sh -c "+quoted(command), options.WithCommandEnv(s.mount.RunEnv))
+		if err != nil {
+			return sandbox.Result{}, stack.Wrap(err)
+		}
+		if checked.ExitCode != 0 {
+			return sandbox.Result{}, stack.Wrap(fmt.Errorf("daytona: readying the sandbox for a run: exit code %d: %s", checked.ExitCode, checked.Result))
+		}
+	}
 	ran, err := s.box.Process.CodeRun(run, code, options.WithCodeRunTimeout(s.runTimeout),
 		options.WithCodeRunParams(types.CodeRunParams{Env: s.mount.RunEnv}))
 	if err != nil {

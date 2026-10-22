@@ -223,7 +223,7 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
 	for _, address := range []string{"", "https://proxy.stg.example:8091", "http://sbx:secret@proxy.stg.example:8091", "http://:8091",
-		"proxy.stg.example:8091", "http://203.0.113.7:8091/%zz", "https://203.0.113.7:8091", "http://sbx:secret@203.0.113.7:8091",
+		"proxy.stg.example:8091", "http://203.0.113.7:8091/%zz", "http://sbx:secret@203.0.113.7:8091",
 		"http://0.0.0.0:8091", "http://127.0.0.1:8091", "http://10.1.2.3:8091", "http://172.16.0.1:8091", "http://192.168.1.1:8091",
 		"http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://203.0.113.7", "http://203.0.113.7:0",
 		"http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path", "http://203.0.113.7:8091?a=b",
@@ -287,22 +287,20 @@ func (s *ConfigSuite) TestAnHTTPSProxyURLHasTheRulesOfAnHTTPOne() {
 	s.Equal("203.0.113.7", public.Hostname())
 }
 
-// TestTheProxyBrokerRefusesAnHTTPSProxyURL: most of a sandbox's clients cannot use one, so
-// only a router whose sandboxes do not go through the proxy serves it over TLS for now.
-func (s *ConfigSuite) TestTheProxyBrokerRefusesAnHTTPSProxyURL() {
+// TestTheProxyBrokerTakesAnHTTPSProxyURL: its sandboxes reach the proxy through their TLS
+// tunnel, and the router serves the proxy over TLS.
+func (s *ConfigSuite) TestTheProxyBrokerTakesAnHTTPSProxyURL() {
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://203.0.113.7:8091")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
 
-	_, _, err := Load("")
-
-	s.ErrorContains(err, "an https code_sandbox.proxy_public_url (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) needs the sandbox's TLS tunnel")
-	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
 	config, _, err := Load("")
+
 	s.Require().NoError(err)
-	s.Equal("https://203.0.113.7:8091", config.CodeSandbox.ProxyPublicURL)
+	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
+		ProxyPublicURL: "https://203.0.113.7:8091"}, config.CodeSandbox)
 }
 
 // TestAnHTTPSProxyURLTheListenerCannotServeIsRefused: the daytona broker with a proxy address
