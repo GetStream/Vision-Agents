@@ -67,7 +67,7 @@ Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's st
 
 ### `audexum` plugin: Audexum TTS
 
-Adds a new `audexum` plugin exposing `audexum.TTS`, backed by Audexum's OpenAI-compatible `/v1/audio/speech` endpoint. It returns a full clip per request, decoded to `PcmData`, defaults to the `Nova` voice, and reads `AUDEXUM_API_KEY` from the environment. Install with `vision-agents[audexum]`.
+Adds a new `audexum` plugin exposing `audexum.TTS`, backed by Audexum's OpenAI-compatible `/v1/audio/speech` endpoint. It returns a full clip per request, decoded to `PcmData`, defaults to the `Nova` voice, and reads `AUDEXUM_API_KEY` from the environment. Install with `vision-agents[audexum]`. (#1127)
 
 ### Agent metadata describing the configured providers (#618)
 

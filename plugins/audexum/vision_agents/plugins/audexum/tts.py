@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import os
@@ -45,11 +46,16 @@ class TTS(tts.TTS):
         if not self.api_key:
             raise ValueError("AUDEXUM_API_KEY env var or api_key parameter required")
 
+        if not 0.25 <= speed <= 4.0:
+            raise ValueError(f"speed must be between 0.25 and 4.0, got {speed}")
+
         self.voice = voice
         self.speed = speed
         self._base_url = (base_url or BASE_URL).rstrip("/")
         self._session = session
         self._own_session = session is None
+        self._current_task: Optional[asyncio.Task] = None
+        self._stopped: Optional[asyncio.Task] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -60,7 +66,28 @@ class TTS(tts.TTS):
     async def stream_audio(
         self, text: str, *_, **__
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
-        """Synthesize ``text`` and return it as a single PcmData buffer."""
+        """Synthesize ``text`` and return it as a single PcmData buffer.
+
+        Returns an empty buffer if ``stop_audio()`` cancels the request.
+        """
+        task = asyncio.ensure_future(self._synthesize(text))
+        self._current_task = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            if self._stopped is not task:
+                raise
+            return PcmData.from_numpy(
+                np.zeros(0, dtype=np.int16),
+                sample_rate=24000,
+                channels=1,
+                format=AudioFormat.S16,
+            )
+        finally:
+            if self._current_task is task:
+                self._current_task = None
+
+    async def _synthesize(self, text: str) -> PcmData:
         session = await self._get_session()
         async with session.post(
             f"{self._base_url}/audio/speech",
@@ -92,8 +119,12 @@ class TTS(tts.TTS):
             )
 
     async def stop_audio(self) -> None:
-        """No-op: each request is a single one-shot HTTP call."""
-        logger.debug("Audexum TTS stop requested (no-op)")
+        """Cancel the in-flight synthesis request, if any; its output is discarded."""
+        task = self._current_task
+        if task and not task.done():
+            self._stopped = task
+            task.cancel()
+        logger.debug("Audexum TTS stop requested")
 
     async def close(self) -> None:
         """Close the HTTP session if this instance created it."""
