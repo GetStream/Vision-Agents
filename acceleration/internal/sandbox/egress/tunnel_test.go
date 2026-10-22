@@ -438,19 +438,35 @@ func (s *TunnelSuite) TestAClientThatIsResetFreesTheProxysConnectionAtOnce() {
 	}
 }
 
-// TestParallelChecksAllFindTheForwarderUp: of checks that start it together, the ones that lose
-// the port exit, and each must still find the winner up, however late it writes its pid.
-func (s *TunnelSuite) TestParallelChecksAllFindTheForwarderUp() {
-	var wg sync.WaitGroup
-	errs := make([]error, 30)
-	outs := make([]string, 30)
-	for i := range errs {
-		wg.Go(func() { outs[i], errs[i] = s.sh(s.mount.EachRun[0]) })
-	}
-	wg.Wait()
+// TestACheckWhoseForwarderLostThePortFindsTheWinnerUp: a forwarder that loses the port to one
+// still writing its pid exits, and the check must look once more after it, however late the
+// winner's pid file appears. The winner here is this process, which holds the port and names
+// itself after a delay, tried across the check's whole span (the loop sleeps in 0.1 s steps).
+func (s *TunnelSuite) TestACheckWhoseForwarderLostThePortFindsTheWinnerUp() {
+	listener, err := net.Listen("tcp", "127.0.0.1:"+s.port)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	pidFile := s.root + "/tmp/va-egress-tunnel.pid"
+	s.Require().NoError(os.MkdirAll(filepath.Dir(pidFile), 0o755))
+	for delay := 0; delay <= 400; delay += 20 {
+		_ = os.Remove(pidFile)
+		timer := time.AfterFunc(time.Duration(delay)*time.Millisecond, func() {
+			_ = os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600)
+		})
 
-	for i := range errs {
-		s.NoError(errs[i], outs[i])
+		out, err := s.sh(s.mount.EachRun[0])
+
+		timer.Stop()
+		s.NoError(err, "pid file written after %d ms: %s", delay, out)
 	}
 }
 
