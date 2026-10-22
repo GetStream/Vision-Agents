@@ -29,7 +29,8 @@ public struct SessionOptions: Sendable {
     public var llm: String?
     public var stt: String?
     public var tts: String?
-    /// A provider-specific voice id.
+    /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    /// the name you gave it. Prefix it with `custom:` to mean only yours.
     public var voice: String?
     /// Functions of yours the agent may call, answered on this device.
     public var tools: [AgentTool] = []
