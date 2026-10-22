@@ -112,7 +112,8 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 	s.Len(s.platform.requests(), len(cases))
 	bundle := "/tmp/va-egress-ca-bundle.pem"
 	runEnv := map[string]any{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle, "GIT_SSL_CAINFO": bundle,
-		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1"}
+		"NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1",
+		"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.proxyAuthMethod", "GIT_CONFIG_VALUE_0": "basic"}
 	withProxy := func(env map[string]any) map[string]any {
 		proxied := maps.Clone(runEnv)
 		for _, name := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
@@ -144,6 +145,15 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 		s.Regexp(`^sh -c '.*> /tmp/va-egress-ca-bundle\.pem.*' after `+strconv.Itoa(2*i)+` runs$`, s.platform.commands[2*i],
 			"once per sandbox, after the CA file")
 	}
+}
+
+// TestRunCodeTellsTheModelGitTakesThePlaceholder: the proxy takes it as Basic auth's password.
+func (s *ProxySuite) TestRunCodeTellsTheModelGitTakesThePlaceholder() {
+	description := sandbox.Tool(s.proxied(sandbox.Config{}, "http://203.0.113.7:8091")).Description
+
+	s.Contains(description, " git over HTTPS takes it as the password in the remote's URL, such as "+
+		"https://x-access-token:$GITHUB_TOKEN@<host>/<owner>/<repo>.git.")
+	s.NotContains(description, "cannot use")
 }
 
 // TestAGrantTheBrokerLeavesOutHasNoEnvVar: the sandbox still reaches the proxy alone.

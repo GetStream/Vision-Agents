@@ -410,6 +410,17 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 
 	s.Contains(description, "Code may call api.github.com, uploads.github.com with $GITHUB_TOKEN: send it over HTTPS as "+
 		"`Authorization: Bearer $GITHUB_TOKEN`; the value is a placeholder that works only for api.github.com, uploads.github.com")
+	s.Contains(description, " git over HTTPS cannot use $GITHUB_TOKEN: git sends it Base64-encoded, which only the router's "+
+		"code_sandbox.broker: proxy replaces.")
+	s.NotContains(description, "x-access-token")
+}
+
+// TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem: no broker, no egress that takes Basic.
+func (s *SecretsSuite) TestRunCodeWithGrantsAndNoBrokerSaysGitCannotUseThem() {
+	box, err := New(Options{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Grants: []sandbox.Grant{github}})
+	s.Require().NoError(err)
+
+	s.Contains(sandbox.Tool(box).Description, " git over HTTPS cannot use $GITHUB_TOKEN")
 }
 
 // TestASandboxWithoutGrantsIsCreatedAsOnBase is the control: a sandbox no binding gives

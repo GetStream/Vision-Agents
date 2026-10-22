@@ -5,6 +5,7 @@ package egress_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/http/cgi"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -54,6 +56,7 @@ func TestProxyBrokerContract(t *testing.T) {
 			Refuse:  func() { r.gate.shut(true) },
 			Recover: r.recover,
 			Live:    true,
+			Push:    func(ref, content string) ([]string, string) { return r.push(t, mount, ref, content) },
 		}
 	}})
 }
@@ -163,9 +166,25 @@ func (s *BrokerSuite) TestEveryRunGoesThroughTheProxyAndTrustsTheCA() {
 	bundle, loopback := "/tmp/va-egress-ca-bundle.pem", "localhost,127.0.0.1,::1"
 	s.Equal(map[string]string{"SSL_CERT_FILE": bundle, "REQUESTS_CA_BUNDLE": bundle, "CURL_CA_BUNDLE": bundle,
 		"GIT_SSL_CAINFO": bundle, "NODE_EXTRA_CA_CERTS": "/tmp/va-egress-ca.pem", "HTTPS_PROXY": proxy, "HTTP_PROXY": proxy,
-		"https_proxy": proxy, "http_proxy": proxy, "NO_PROXY": loopback, "no_proxy": loopback}, s.mount.RunEnv)
+		"https_proxy": proxy, "http_proxy": proxy, "NO_PROXY": loopback, "no_proxy": loopback,
+		"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.proxyAuthMethod", "GIT_CONFIG_VALUE_0": "basic"}, s.mount.RunEnv)
 	s.Equal(map[string][]byte{"/tmp/va-egress-ca.pem": s.rig.caCert}, s.mount.Files)
 	s.Len(s.mount.Setup, 1)
+}
+
+// TestGitSendsTheProxyCredentialOnItsFirstConnect: each run's env has git send it at once
+// rather than wait for a 407 and connect again (tunnel probe 2, 2026-10-22: without it, a
+// CONNECT with no credential before each one with it).
+func (s *BrokerSuite) TestGitSendsTheProxyCredentialOnItsFirstConnect() {
+	github := github
+	github.Hosts = append(github.Hosts, "github.com")
+	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{github})
+	s.Require().NoError(err)
+
+	s.rig.push(s.T(), mount, mount.Env["GITHUB_TOKEN"], "pushed\n")
+
+	s.NotEmpty(s.rig.connects())
+	s.NotContains(s.rig.connects(), false, "a CONNECT without the proxy credential")
 }
 
 // TestTheBundleHoldsTheSandboxsRootsAndTheCA: a host of the config's allowed domains, which
@@ -511,6 +530,14 @@ type rig struct {
 	caCert []byte
 	host   *host
 	proxy  *httptest.Server
+	// upstream signs the hosts' certificates.
+	upstream    *x509.Certificate
+	upstreamKey *ecdsa.PrivateKey
+	mu          sync.Mutex
+	// git is github.com, made by the first push. credentialed is, for each CONNECT the proxy
+	// got, whether it carried Proxy-Authorization.
+	git          *gitHost
+	credentialed []bool
 	// run marks the records of this test's sessions, so left reads no other test's.
 	run string
 }
@@ -545,6 +572,7 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	upstream := x509.NewCertPool()
 	upstream.AddCert(upstreamCA)
 	r.host = newHost(t, upstreamCA, upstreamKey, "api.github.com", "uploads.github.com")
+	r.upstream, r.upstreamKey = upstreamCA, upstreamKey
 	dial := &net.Dialer{}
 	proxy, err := egress.New(egress.Options{Store: egress.NewStore(r.redis), CACert: caCert, CAKey: keyPEM(t, caKey), Logger: logger,
 		Tokens: func(ctx context.Context, grant egress.Grant) (string, error) {
@@ -552,13 +580,23 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 			return token.Value, err
 		},
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: upstream},
-			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				if git := r.github(); git != nil && address == "github.com:443" {
+					return dial.DialContext(ctx, network, git.server.Listener.Addr().String())
+				}
 				return dial.DialContext(ctx, network, r.host.server.Listener.Addr().String())
 			}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.proxy = httptest.NewServer(proxy)
+	r.proxy = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodConnect {
+			r.mu.Lock()
+			r.credentialed = append(r.credentialed, request.Header.Get("Proxy-Authorization") != "")
+			r.mu.Unlock()
+		}
+		proxy.ServeHTTP(w, request)
+	}))
 	t.Cleanup(r.proxy.Close)
 	return r
 }
@@ -618,6 +656,133 @@ func (r *rig) held(t *testing.T, mount sandbox.Mount, ref string) (string, []str
 		return "", nil, false
 	}
 	return strings.TrimPrefix(sent[0], "Bearer "), hosts, true
+}
+
+func (r *rig) github() *gitHost {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.git
+}
+
+func (r *rig) connects() []bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.credentialed)
+}
+
+// push is git as code in the sandbox mount runs it, with each run's env alone: it commits a
+// file holding content and pushes it to github.com with ref as Basic auth's password, which is
+// how GitHub takes a token over git
+// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation:
+// «git clone https://x-access-token:TOKEN@github.com/owner/repo.git»). The proxy's public
+// address is not one a test can reach, so the proxy env names the rig's proxy in its place, and
+// the CA files the env names are under a directory standing for the sandbox's root. It returns
+// what github.com got: each request's Authorization, and the file.
+func (r *rig) push(t *testing.T, mount sandbox.Mount, ref, content string) ([]string, string) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	git := r.github()
+	if git == nil {
+		git = newGitHost(t, r.upstream, r.upstreamKey)
+		r.mu.Lock()
+		r.git = git
+		r.mu.Unlock()
+	}
+	root, work := t.TempDir(), t.TempDir()
+	// The user's own git config stays out (GIT_CONFIG_NOSYSTEM, a HOME of its own), so no
+	// credential helper keeps the placeholder.
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
+	for name, value := range mount.RunEnv {
+		switch {
+		case slices.Contains([]string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, name):
+			proxy := *mount.Proxy
+			proxy.Host = r.proxy.Listener.Addr().String()
+			value = proxy.String()
+		case strings.HasPrefix(value, "/tmp/"):
+			// The bundle holds the image's roots too; github.com is the rig's, signed by the CA.
+			value = root + value
+			if err := os.MkdirAll(filepath.Dir(value), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(value, mount.Files[mount.RunEnv["NODE_EXTRA_CA_CERTS"]], 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		env = append(env, name+"="+value)
+	}
+	if err := os.WriteFile(filepath.Join(work, "token.txt"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--quiet", "--initial-branch=main"}, {"add", "token.txt"},
+		{"-c", "user.name=sandbox", "-c", "user.email=sandbox@example.com", "commit", "--quiet", "--message=token"},
+		{"push", "--quiet", "https://x-access-token:" + ref + "@github.com/octo/hello.git", "main"}} {
+		command := exec.Command("git", args...)
+		command.Dir, command.Env = work, env
+		if out, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", args[0], err, out)
+		}
+	}
+	return git.requests(), git.file(t, "token.txt")
+}
+
+// gitHost is github.com's git over HTTPS as a stand-in: git http-backend
+// (https://git-scm.com/docs/git-http-backend) over one bare repository, octo/hello.git, which
+// answers a request with no Basic credential 401 asking for one, as github.com did to git with
+// none (probe, 2026-10-22T03:53:09Z). It takes any Basic credential:
+// the test reads what each request carried.
+type gitHost struct {
+	server *httptest.Server
+	repo   string
+	mu     sync.Mutex
+	seen   []string
+}
+
+func newGitHost(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey) *gitHost {
+	root := t.TempDir()
+	g := &gitHost{repo: filepath.Join(root, "octo", "hello.git")}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--quiet", "--bare", "--initial-branch=main", g.repo},
+		{"--git-dir", g.repo, "config", "http.receivepack", "true"}} {
+		if out, err := exec.Command(git, args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", args[0], err, out)
+		}
+	}
+	backend := &cgi.Handler{Path: git, Args: []string{"http-backend"},
+		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "HOME=" + root}}
+	g.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		g.mu.Lock()
+		g.seen = append(g.seen, request.Header.Get("Authorization"))
+		g.mu.Unlock()
+		if _, _, ok := request.BasicAuth(); !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		backend.ServeHTTP(w, request)
+	}))
+	g.server.TLS = &tls.Config{Certificates: []tls.Certificate{sign(t, ca, caKey, "github.com")}}
+	g.server.StartTLS()
+	t.Cleanup(g.server.Close)
+	return g
+}
+
+func (g *gitHost) requests() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.seen)
+}
+
+// file is name on main as the repository keeps it.
+func (g *gitHost) file(t *testing.T, name string) string {
+	out, err := exec.Command("git", "--git-dir", g.repo, "show", "main:"+name).Output()
+	if err != nil {
+		t.Fatalf("git show: %v", err)
+	}
+	return string(out)
 }
 
 // keys are every record's key.

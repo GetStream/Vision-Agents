@@ -14,7 +14,7 @@ One test function builds the suite with `New`, which returns a `Subject` for a s
 
 `daytona/secrets_test.go` (`TestSecretsBrokerContract`) is the example: Daytona's API is an `httptest.Server`; `egress/broker_test.go` (`TestProxyBrokerContract`) runs it against the egress proxy. Tests that need the provider's real wire (egress) run live, per broker (`daytona_live_test.go`).
 
-## What it covers (attack table A1-A13 of wave 13)
+## What it covers (attack table A1-A13 of wave 13, and A15)
 
 | Case | Tests |
 | --- | --- |
@@ -23,6 +23,7 @@ One test function builds the suite with `New`, which returns a `Subject` for a s
 | A9: Close leaves nothing with the provider | `TestClosingLeavesNothingWithTheProvider` |
 | A10: a revoked connection is withdrawn; a failed renewal is kept and asked again; a refused withdrawal is an error and is retried | `TestAConnectionRevokedMidSessionIsWithdrawn`, `TestACredentialUnavailableJustNowIsKeptAndAskedForAgain`, `TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried` |
 | A13: no token in a log line or an error (`TearDownTest`, after every test), on Prepare and on refresh | `TestAProviderThatRefusesLeavesTheTokenInNoError`, `TestARefusedRefreshIsAnErrorWithoutTheToken` |
+| A15: git pushes a commit holding the placeholder, with the placeholder as Basic auth's password; github.com gets the token in `Authorization` alone and the file as it was. Only a broker whose `Basic()` is true runs it, through `Subject.Push` (egress: `git http-backend` behind a TLS stand-in for github.com). Daytona's skips: its egress is Daytona's, and live A12 shows it substitutes no Base64 Basic | `TestAGitPushCarriesTheTokenInAuthorizationAlone` |
 | A new revision is handed over before the next run; a disconnected or required grant behaves as the session expects | `TestANewRevisionIsHandedOverBeforeTheNextRun`, `TestADisconnectedConnectionGivesNoEnvAndAWarning`, `TestARequiredGrantWithoutACredentialRefusesTheSandbox` |
 
 Spans are not checked: a provider SDK makes its own only when told to, with an exporter of its own, so a span check here would check nothing.

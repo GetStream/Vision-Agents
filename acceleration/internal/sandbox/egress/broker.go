@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"strings"
 	"sync"
@@ -50,6 +51,15 @@ var bundleEnv = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"
 // curl reads http_proxy in lower case only (https://curl.se/docs/manpage.html#ENVIRONMENT). The
 // sandbox reaches the proxy alone and has no DNS, so a client that ignores them reaches nothing.
 var proxyEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
+
+// gitEnv has git send the proxy credential on its first CONNECT. By default it sends none,
+// waits for the 407 and connects again (http.proxyAuthMethod «anyauth»: «It is assumed that
+// the proxy answers an unauthenticated request with a 407»); basic saves that round trip
+// (tunnel probe 2, 2026-10-22: one CONNECT without auth before each authenticated one).
+// GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n> set a git config for every git
+// command: https://git-scm.com/docs/git-config#ENVIRONMENT, and http.proxyAuthMethod
+// https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpproxyAuthMethod.
+var gitEnv = map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.proxyAuthMethod", "GIT_CONFIG_VALUE_0": "basic"}
 
 // noProxy keeps the sandbox's own loopback off the proxy, as Daytona's netleash does (live probe,
 // 2026-10-21).
@@ -172,6 +182,7 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	proxy := *b.proxy
 	proxy.User = url.UserPassword("sbx", credential)
 	run := map[string]string{"NODE_EXTRA_CA_CERTS": caPath, "NO_PROXY": noProxy, "no_proxy": noProxy}
+	maps.Copy(run, gitEnv)
 	for _, name := range bundleEnv {
 		run[name] = bundlePath
 	}
@@ -217,6 +228,9 @@ func (b *Broker) BeforeRun(ctx context.Context) error {
 	b.held = kept
 	return nil
 }
+
+// Basic is true: the proxy replaces a placeholder that is Basic auth's password (placed, rewrite.go).
+func (b *Broker) Basic() bool { return true }
 
 func (b *Broker) Close(ctx context.Context) error {
 	b.mu.Lock()

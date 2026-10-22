@@ -119,6 +119,9 @@ type Sandbox interface {
 // Granted is a sandbox whose code may call connectors' APIs through grants.
 type Granted interface {
 	Grants() []Grant
+	// Basic is its broker's CredentialBroker.Basic: whether git over HTTPS may send a grant's
+	// placeholder.
+	Basic() bool
 }
 
 // Tool describes running code in box to a model, with the env vars its grants give code.
@@ -129,6 +132,15 @@ func Tool(box Sandbox) llm.Tool {
 			hosts := strings.Join(grant.Hosts, ", ")
 			description += fmt.Sprintf(" Code may call %s with $%s: send it over HTTPS as `Authorization: Bearer $%s`; "+
 				"the value is a placeholder that works only for %s, only in a request header.", hosts, grant.Env, grant.Env, hosts)
+			// The user name is GitHub's for a token
+			// (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
+			if granted.Basic() {
+				description += fmt.Sprintf(" git over HTTPS takes it as the password in the remote's URL, such as "+
+					"https://x-access-token:$%s@<host>/<owner>/<repo>.git.", grant.Env)
+			} else {
+				description += fmt.Sprintf(" git over HTTPS cannot use $%s: git sends it Base64-encoded, which only "+
+					"the router's code_sandbox.broker: proxy replaces.", grant.Env)
+			}
 		}
 	}
 	return llm.Tool{

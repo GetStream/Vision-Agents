@@ -196,6 +196,12 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   granted host when the value is not Base64-encoded (live Basic-auth check, staging 2026-10-21).
   It does not substitute a Base64-encoded Basic header (Daytona docs). So git, which sends
   Base64 Basic, still does not work through the Daytona broker.
+- Git over HTTPS needs `code_sandbox.broker: proxy`. GitHub refuses the token as `Authorization:
+  Bearer` from git (401 to `git-receive-pack`, probe 2026-10-22T03:53:09Z; Basic
+  `x-access-token:<token>` was taken), and Daytona substitutes no Base64 Basic, so under the
+  Daytona broker github.com gets no token. `run_code`'s description tells the model so. GitHub
+  revision 7 grants github.com (AI-1576); a connection on revision 6 keeps its two API hosts
+  until it is reconnected.
 - `sandbox: true` lets the code call every API the token's scopes allow, outside the binding's tool
   grants, the connector limiter and the audit. That is intended.
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
@@ -232,11 +238,16 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
     `localhost,127.0.0.1,::1`;
   - `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` name
     `/tmp/va-egress-ca-bundle.pem`, and `NODE_EXTRA_CA_CERTS` names the proxy's CA certificate,
-    `/tmp/va-egress-ca.pem`.
+    `/tmp/va-egress-ca.pem`;
+  - `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=http.proxyAuthMethod`, `GIT_CONFIG_VALUE_0=basic`:
+    git sends the proxy credential on its first `CONNECT` instead of waiting for a 407
+    (https://git-scm.com/docs/git-config#ENVIRONMENT).
   Before any code runs, the router writes the bundle: the image's own roots and that CA.
   Daytona's image is Debian 13, whose roots are `/etc/ssl/certs/ca-certificates.crt` (live
   probe, 2026-10-21). An image with no roots file runs no code. The proxy puts the token in place
-  of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git works too.
+  of the placeholder in `Authorization` (Bearer, `token`, or Basic), so git works too:
+  `git push https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git`. The pushed
+  content is never rewritten: a file holding the placeholder arrives with it (A15, `brokertest`).
 - DNS behind the proxy: the sandbox has none. The proxy looks up each host. A client that does
   not read the proxy env vars (a raw socket, a DNS lookup) reaches nothing. Plain HTTP through
   the proxy is refused.
