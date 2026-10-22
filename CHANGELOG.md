@@ -653,7 +653,7 @@ push the reveal ahead of the words being said. A gap between two utterances, suc
 sentence held back, is passed when the next one starts, and a cut stops at the share of the cut
 utterance's place that was heard. A streamed utterance not yet measured goes at the message's
 characters to the voice's its `speaking` had. A router that sends no offsets is counted in the
-voice's characters as before.
+voice's characters as before (#1146).
 
 ### The session socket says when each utterance starts being heard
 
