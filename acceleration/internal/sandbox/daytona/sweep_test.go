@@ -244,9 +244,10 @@ func (s *SweepSuite) TestASecretYoungerThanAnHourIsKept() {
 }
 
 // Daytona's name filter matches anywhere in a name, so another environment's secret whose
-// session id holds this prefix is listed too.
+// session id holds this prefix is listed too, also where that environment's prefix extends ours.
 func (s *SweepSuite) TestAnotherEnvironmentsSecretIsKept() {
-	other := []string{"va_dev_session-1_github_0a1b2c3d", "va_dev_" + s.named("session-2", "github")}
+	other := []string{"va_dev_session-1_github_0a1b2c3d", "va_dev_" + s.named("session-2", "github"),
+		"va_" + s.prefix + "2_" + s.named("session-4", "github")}
 	for _, name := range other {
 		s.org.add(name, 2*time.Hour)
 	}
