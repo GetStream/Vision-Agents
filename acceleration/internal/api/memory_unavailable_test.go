@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 )
@@ -47,6 +49,7 @@ func (s *MemoryUnavailableSuite) SetupSuite() {
 func (s *MemoryUnavailableSuite) SetupTest() {
 	s.useFixture("standard")
 	s.mem0.down.Store(false)
+	s.mem0.hang.Store(false)
 }
 
 func (s *MemoryUnavailableSuite) TestADeleteTheMemoryStoreRefusesKeepsTheSession() {
@@ -64,6 +67,31 @@ func (s *MemoryUnavailableSuite) TestADeleteTheMemoryStoreRefusesKeepsTheSession
 		"Try again later.", answer.Message)
 	s.NotContains(strings.ToLower(string(body)), "mem0")
 	s.NotContains(string(body), "quota")
+	s.assertReaches(s.client, opened.Id)
+	s.True(s.mem0.holds(s.customerID(), opened.Id))
+}
+
+func (s *MemoryUnavailableSuite) TestACallerWhoHangsUpWhileTheMemoryStoreIsSlowIsNotAMemoryFailure() {
+	opened := s.client.createSession(textSession(nil))
+	s.mem0.remember(s.customerID(), opened.Id)
+	s.mem0.hang.Store(true)
+	path := "/v1/agents/sessions/" + opened.Id
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.client.base()+path, nil)
+	s.Require().NoError(err)
+	req.Header = s.client.header.Clone()
+
+	_, err = s.server.Client().Do(req)
+
+	s.Require().ErrorIs(err, context.DeadlineExceeded)
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), " path="+path+" ")
+	}, 5*time.Second, 20*time.Millisecond)
+	line := s.servedLine(http.MethodDelete, path)
+	s.Contains(line, "status=500")
+	s.NotContains(line, "memory_unavailable")
+	s.mem0.hang.Store(false)
 	s.assertReaches(s.client, opened.Id)
 	s.True(s.mem0.holds(s.customerID(), opened.Id))
 }
@@ -144,6 +172,7 @@ func (s *MemoryUnavailableSuite) servedLine(method, path string) string {
 type flakyMem0 struct {
 	server *httptest.Server
 	down   atomic.Bool
+	hang   atomic.Bool
 
 	mu   sync.Mutex
 	kept []keptMem0
@@ -175,6 +204,13 @@ func (f *flakyMem0) holds(appID, runID string) bool {
 }
 
 func (f *flakyMem0) serve(w http.ResponseWriter, r *http.Request) {
+	if f.hang.Load() {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+		return
+	}
 	if f.down.Load() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
