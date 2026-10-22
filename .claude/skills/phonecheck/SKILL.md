@@ -20,7 +20,9 @@ skill asks what to test, sets it up, runs, reports and puts things back.
   `bash -c 'set -o pipefail; … 2>&1 | tee -a <scratchpad>/<name>.log'`, so the output shows in
   the Claude Code shell panel and is kept in its own log in the scratchpad:
   `<scratchpad>/router.log`, `<scratchpad>/tunnel.log`, `<scratchpad>/phonecheck-<n>.log`.
-  `pipefail` keeps the process's own exit status, not `tee`'s. Right after starting one, print
+  `pipefail` keeps the process's own exit status, not `tee`'s. The background task's process is
+  the `bash -c` wrapper, not the process inside it: record and stop the inner one as each step
+  says. Right after starting one, print
   its log's full path, so the human can `tail -f` it or ask questions while the call runs. The
   main session stays free to answer.
 - **Shell.** The user's shell is fish. Run every snippet as `bash -c '…'`. Shell variables do not
@@ -135,7 +137,7 @@ to its database (migrations, and the router's own background work).
 3. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something
    does, show it and ask. Starting it runs migrations, binds :8080 and may start background
    work that writes rows or calls models; ask a yes. Start
-   `bash -c 'set -o pipefail; cd acceleration && ROUTER_AUTH_MODE=noauth go run ./cmd/router 2>&1 | tee -a <scratchpad>/router.log'`
+   `bash -c 'set -o pipefail; set -a; . <env file>; set +a; cd acceleration && ROUTER_AUTH_MODE=noauth go run ./cmd/router 2>&1 | tee -a <scratchpad>/router.log'`
    in the background;
    once it listens, write its process id (`lsof -tiTCP:8080 -sTCP:LISTEN`) to the state file. Wait for `listening`. If it never comes, show the last lines of
    the file and stop. Note the Stream app id from `stream_app=<id>` in
@@ -208,7 +210,8 @@ In this order, each change into the state file:
 
 1. **Tunnel and hooks** (local only). `command -v cloudflared`; if missing, ask the human. Start
    `bash -c 'set -o pipefail; cloudflared tunnel --url http://localhost:8080 2>&1 | tee -a <scratchpad>/tunnel.log'`
-   in the background, write its process id to the state file, take its
+   in the background (it needs no env file), write cloudflared's own process id
+   (`pgrep -f 'cloudflared tunnel --url http://localhost:8080'`) to the state file, take its
    `https://<random>.trycloudflare.com` URL, then `go run ./cmd/phone hooks -url <tunnel URL>`
    (`-remove <stale URL>` only if approved; `-app <id>` only for a router in app mode). A local
    Telnyx router's own TeXML app (`TELNYX_CONNECTION_ID`) needs its voice URL on the tunnel; the
@@ -237,7 +240,9 @@ bash -c 'set -o pipefail; set -a; . <env file>; set +a; cd acceleration/cmd/phon
 
 `-provider` is the person's vendor; `inbound` for the other direction. Print the log's path. The
 tool waits up to 90 s for the `call_sites` row and logs `call_sites row after N s` when it comes. Start the next run once this one's exit is
-reported.
+reported. To stop a run early, interrupt the tool itself, so it still hangs up and closes the
+session: `pkill -INT -x phonecheck` (`go run` names the binary after its folder). Then check
+`pgrep -x phonecheck` finds nothing.
 
 ## Report
 
@@ -267,8 +272,10 @@ it lists, in reverse:
    Person number: Twilio `DELETE …/IncomingPhoneNumbers/<sid>.json`, Telnyx
    `DELETE /v2/phone_numbers/<id>`. Say what is kept and what stays attached: an attached
    number blocks inbound tests on other numbers.
-4. Stop the tunnel, then the router: their background tasks, and check by the process ids in
-   the state file that nothing is left.
+4. Stop any phonecheck run left (`pkill -INT -x phonecheck`), then the tunnel, then the router:
+   `kill <id>` for each process id in the state file, then their background tasks. Check that
+   nothing is left: `pgrep -x phonecheck`, `pgrep -f 'cloudflared tunnel --url http://localhost:8080'`
+   and `lsof -tiTCP:8080 -sTCP:LISTEN` each print nothing.
 
 If a run was killed hard, a call may still be up and the state file says what is left to undo;
 tell the human its path.

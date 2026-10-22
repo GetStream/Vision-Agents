@@ -90,9 +90,9 @@ func (s *SitesSuite) TestStreamsSFUsAreLoggedAsFields() {
 	s.Require().Len(lines, 1)
 	s.Equal("stream_sfus", lines[0]["hop"])
 	s.Equal("2", lines[0]["sfus_used"])
-	s.Equal("sfu-a.example.com", lines[0]["agent_sfu"])
+	s.Equal("sfu-a.example.com", lines[0]["agent_current_sfu"])
 	s.Equal("Frankfurt, Hesse, DE", lines[0]["agent_location"])
 	s.Equal("12", lines[0]["agent_distance_to_sfu_km"])
-	s.Equal("sfu-c.example.com", lines[0]["caller_sfu"])
+	s.Equal("sfu-c.example.com", lines[0]["caller_current_sfu"])
 	s.Equal("reported", lines[0]["how"])
 }

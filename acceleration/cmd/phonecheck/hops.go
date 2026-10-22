@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/netip"
+	"strings"
 )
 
 // hop is one place the call passed through. How says how we know: "observed" (we resolved
@@ -28,8 +29,8 @@ type callHosts struct {
 // with -sip-lookup-from. A host that does not resolve is logged and kept with no address.
 func collectHops(ctx context.Context, logger *slog.Logger, lookup, resolveSIP lookupFunc, hosts callHosts) []hop {
 	hops := []hop{
-		resolved(ctx, logger, lookup, hop{Name: "agent_sfu", Host: hosts.AgentSFU, How: "reported"}),
-		resolved(ctx, logger, lookup, hop{Name: "caller_sfu", Host: hosts.CallerSFU, How: "reported"}),
+		resolvedSFU(ctx, logger, lookup, hop{Name: "agent_sfu", Host: hosts.AgentSFU, How: "reported"}),
+		resolvedSFU(ctx, logger, lookup, hop{Name: "caller_sfu", Host: hosts.CallerSFU, How: "reported"}),
 		resolved(ctx, logger, lookup, hop{Name: "router_address", Host: hosts.Router, How: "observed"}),
 		resolved(ctx, logger, resolveSIP, hop{Name: "stream_sip", Host: hosts.StreamSIP, How: "inferred"}),
 	}
@@ -49,6 +50,15 @@ func resolved(ctx context.Context, logger *slog.Logger, lookup lookupFunc, h hop
 	}
 	h.Addrs = addrs
 	return h
+}
+
+// resolvedSFU leaves an SFU name with no dot unresolved: it is Stream's id for the SFU, not a
+// DNS name. Only SFUs: a router on "localhost" still resolves.
+func resolvedSFU(ctx context.Context, logger *slog.Logger, lookup lookupFunc, h hop) hop {
+	if !strings.Contains(h.Host, ".") {
+		return h
+	}
+	return resolved(ctx, logger, lookup, h)
 }
 
 func firstAddress(hops []hop, name string) string {

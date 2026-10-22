@@ -62,8 +62,8 @@ go run ./cmd/phone hooks -remove https://<random>.trycloudflare.com
 ```
 
 Stream sends `call.session_ended` about 30 s after the agent leaves. The router then reads
-Stream's participant stats 5 s later, and again for up to 35 s in all until both sides' SFUs
-are named, so the `call_sites` row appears about 35 to 65 s after hang-up. The tool waits up
+Stream's participant stats 5 s later, and again for up to 35 s in all until every session's
+SFU is named, so the `call_sites` row appears about 35 to 65 s after hang-up. The tool waits up
 to 90 s for it and logs `call_sites row after N s` when it arrives.
 
 Inbound also needs:
@@ -187,11 +187,17 @@ One line per hop: `hop`, `host`, `address`, `place`, `how`. `how` says how we kn
 
 The hops are `agent_sfu`, `caller_sfu`, `router_address`, `stream_sip`, and `customer_trunk`
 when the agent number is on a customer's own SIP trunk (the trunk's host, as the router
-reports it). `caller_sfu` is the SFU Stream's participant stats name for the phone caller.
+reports it).
 
-A `stream_sfus` line follows: `sfus_used`, and for the agent and the caller their SFU, where
-Stream placed them (`agent_location`, `caller_location`) and how far that is from their SFU
+Two sources name SFUs: `agent_sfu` is the SFU the agent joined, from the router's joined row;
+`agent_current_sfu` and `caller_current_sfu` are Stream's participant stats. The `caller_sfu`
+hop is `caller_current_sfu`. An SFU name with no dot is an id, not a DNS name, so it is logged
+with no address.
+
+A `stream_sfus` line follows: `sfus_used`, `agent_current_sfu`, `caller_current_sfu`, where
+Stream placed each side (`agent_location`, `caller_location`) and how far that is from its SFU
 (`agent_distance_to_sfu_km`, `caller_distance_to_sfu_km`), each empty when Stream does not say.
+`caller_location` is where Stream's SIP side joined the call from, not where the person is.
 
 A `person call` line gives the person side's status, start and end where the tool can see them.
 

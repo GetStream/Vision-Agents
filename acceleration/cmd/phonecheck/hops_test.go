@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -78,6 +79,28 @@ func (s *HopsSuite) TestTheCallersSFUIsAHopNextToTheAgents() {
 
 	s.Equal(hop{Name: "caller_sfu", Host: "caller-sfu.example.com",
 		Addrs: []netip.Addr{netip.MustParseAddr("192.0.2.9")}, How: "reported"}, hops[1])
+}
+
+func (s *HopsSuite) TestAHostWithNoDotIsAnIdAndIsNotLookedUp() {
+	var out bytes.Buffer
+	asked := false
+	lookup := func(context.Context, string) ([]netip.Addr, error) {
+		asked = true
+		return nil, errors.New("no such host")
+	}
+
+	hops := collectHops(context.Background(), newLogger("json", &out), lookup, lookup,
+		callHosts{CallerSFU: "sfu-a1b2c3"})
+
+	s.False(asked)
+	s.Equal(hop{Name: "caller_sfu", Host: "sfu-a1b2c3", How: "reported"}, hops[1])
+	s.Empty(out.String(), "no warning")
+}
+
+func (s *HopsSuite) TestALocalRouterIsStillLookedUp() {
+	hops := s.hopsOf(callHosts{Router: "localhost"})
+
+	s.Equal("192.0.2.9", firstAddress(hops, "router_address"))
 }
 
 func names(hops []hop) []string {
