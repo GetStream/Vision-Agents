@@ -27,6 +27,23 @@ func legacyCostMicros(p Price, usage Usage) int64 {
 	return int64(dollars * 1_000_000)
 }
 
+// atItsContextTier is the price a prompt of that length is billed at: the legacy price knew
+// no long-prompt tier, so a usage past one is compared with the rates the tier multiplies.
+func atItsContextTier(p Price, usage Usage) Price {
+	billed := p
+	for _, tier := range p.ContextTiers {
+		if usage.InputTokens <= tier.AboveInputTokens {
+			continue
+		}
+		billed = p
+		billed.PerMillionInputTokens *= tier.Input
+		billed.PerMillionCachedInputTokens *= tier.Input
+		billed.PerMillionCacheWriteInputTokens *= tier.Input
+		billed.PerMillionOutputTokens *= tier.Output
+	}
+	return billed
+}
+
 // legacyRequestMicros is how a search was priced before: the rate per thousand set outright.
 func legacyRequestMicros(p Price) int64 {
 	return int64(p.PerThousandRequests * 1_000)
@@ -95,7 +112,7 @@ func (s *RoutingSuite) TestPriceEntriesCostWhatPriceCostMicrosDid() {
 		for _, provider := range section.Providers {
 			name := string(modality) + "/" + provider.Name()
 			for _, usage := range usages {
-				price := provider.Price
+				price := atItsContextTier(provider.Price, usage)
 				if usage == cached && price.PerMillionInputTokens != 0 && price.PerMillionCachedInputTokens == 0 {
 					atTheInputRate = append(atTheInputRate, name)
 					price.PerMillionCachedInputTokens = price.PerMillionInputTokens
@@ -130,7 +147,7 @@ func (s *RoutingSuite) TestPriceEntriesCostWhatPriceCostMicrosDidForAnyUsage() {
 					Images:       random.Int64N(5),
 					Pixels:       random.Int64N(20_000_000),
 				}
-				price := provider.Price
+				price := atItsContextTier(provider.Price, usage)
 				if price.PerMillionCachedInputTokens != 0 {
 					usage.CachedInputTokens = random.Int64N(input + 1)
 				}
