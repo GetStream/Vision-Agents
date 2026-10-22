@@ -120,6 +120,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
 	)
 	// Where a socket that names no target goes.
 	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}

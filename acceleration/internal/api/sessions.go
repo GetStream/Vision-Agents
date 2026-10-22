@@ -103,6 +103,8 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	// caller asking for the fork, and drops the ones the config no longer declares. A config
 	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
 	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
+	// An ended parent's row keeps none of the config's prompts, so its fork is told, guarded
+	// and reviewed by the config as it is now too; a live parent's spec already carries them.
 	if config == nil {
 		spec.ConnectorBindings = nil
 		if s.store != nil && spec.ConfigID != "" {
@@ -110,6 +112,11 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 			switch {
 			case err == nil:
 				spec.ConnectorBindings = current.Connectors
+				if parent.Live == nil {
+					spec.Instructions = current.Instructions
+					spec.Guardrail = current.Guardrail
+					spec.ReviewInstructions = current.ReviewInstructions
+				}
 			case !errors.Is(err, store.ErrNoAgentConfig):
 				return nil, err
 			}
