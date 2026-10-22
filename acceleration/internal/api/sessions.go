@@ -98,12 +98,23 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	// the parent was opened with. A config deleted since leaves the fork what its parent had;
 	// a config that cannot be read fails the fork rather than dropping what it decides.
 	var current *store.AgentConfig
-	if config == nil && s.store != nil && parent.ConfigID() != "" {
+	currentConfig := func() error {
+		if config != nil || s.store == nil || parent.ConfigID() == "" {
+			return nil
+		}
 		read, err := s.store.AgentConfig(ctx, customerID, parent.ConfigID())
 		switch {
 		case err == nil:
 			current = &read
 		case !errors.Is(err, store.ErrNoAgentConfig):
+			return err
+		}
+		return nil
+	}
+	// An ended parent's fork is built from it, so it is read first. A live parent's fork, an
+	// incognito one or one on a thread is refused by forkSpec before any config is needed.
+	if parent.Live == nil && parent.Stored != nil && !thread {
+		if err := currentConfig(); err != nil {
 			return nil, err
 		}
 	}
@@ -115,6 +126,11 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	// session re-resolves the parent's selections against them and against the caller asking
 	// for the fork, and drops the ones the config no longer declares. A config deleted since
 	// binds nothing, and its fork goes ahead as a fork did before bindings existed.
+	if parent.Live != nil {
+		if err := currentConfig(); err != nil {
+			return nil, err
+		}
+	}
 	if config == nil {
 		spec.ConnectorBindings = nil
 		if current != nil {
@@ -928,6 +944,9 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 			spec = session.FromConfig(*current)
 		}
 		spec.Text = true
+		// The conversation goes on after its history, which a greeting would interrupt:
+		// a reopen says none either (sessionToAnswer).
+		spec.Greeting = ""
 		spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
 		spec.Custom, spec.ModelOverwrites = row.Custom, row.ModelOverwrites
 		spec.ConnectorSelections = selectionsOf(*row)

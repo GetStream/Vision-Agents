@@ -273,6 +273,10 @@ func (s *SessionVerbsSuite) TestAChatIsReviewedByItsAgentsReviewInstructions() {
 	opened := s.serverClient.createSession(request)
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "Is the upgrade worth it?"}, nil))
+	// The call is queued behind the session; stopping before it is written loses the review.
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id, nil, nil) == http.StatusOK
+	}, settleFor, 10*time.Millisecond, "the chat's call is recorded")
 	s.serverClient.stopSession(opened.Id)
 
 	var call Call

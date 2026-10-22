@@ -440,6 +440,7 @@ func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionKeepsWhatItsRowRemembe
 	id := s.utils.uuid()
 	request := s.session(s.modelledConfig("counted/counted-model", nil), nil)
 	request.Title, request.Description = pointerTo("Upgrade "+id), pointerTo("About upgrade "+id)
+	request.ProjectId = pointerTo("Billing " + id)
 	request.Custom = &map[string]any{"ticket": id}
 	opened := s.client.createSession(request)
 	s.storedSelections(opened.Id)
@@ -449,7 +450,67 @@ func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionKeepsWhatItsRowRemembe
 
 	s.Equal("Upgrade "+id, value(forked.Title))
 	s.Equal("About upgrade "+id, value(forked.Description))
+	s.Equal("Billing "+id, value(forked.ProjectId))
 	s.Equal(map[string]any{"ticket": id}, value(forked.Custom))
+}
+
+// TestAForkOfAnEndedSessionDoesNotGreetAgain: the conversation goes on after its history, so
+// the config's greeting is not said again, as when a conversation is reopened.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionDoesNotGreetAgain() {
+	greeting, config := s.greetingConfig()
+	parent := s.endedSession(config)
+
+	s.NotContains(s.forkSummary(parent, nil), greeting)
+}
+
+// TestAForkNamingAConfigGreetsAndSoDoesARunningParentsFork: the greeting is the config's to
+// say on a fork that starts afresh on it, and a running parent's fork carries it on as it was.
+func (s *SessionConnectorsSuite) TestAForkNamingAConfigGreetsAndSoDoesARunningParentsFork() {
+	greeting, config := s.greetingConfig()
+	running := s.client.createSession(s.session(config, nil))
+
+	s.Contains(s.forkSummary(running.Id, nil), greeting, "a running parent's fork")
+	s.Contains(s.forkSummary(s.endedSession(config), &config), greeting, "a fork naming the config")
+}
+
+// TestAnIncognitoForkIsRefusedWhateverItsConfig: an incognito session has nothing to fork from,
+// whether or not its config can be read.
+func (s *SessionConnectorsSuite) TestAnIncognitoForkIsRefusedWhateverItsConfig() {
+	config := s.modelledConfig("counted/counted-model", nil)
+	request := s.session(config, nil)
+	request.Incognito = pointerTo(true)
+	running := s.client.createSession(request)
+	_, err := s.store.DB().ExecContext(context.Background(),
+		`UPDATE agent_configs SET connectors = '{"not": "a list"}'::jsonb WHERE id = ?`, config)
+	s.Require().NoError(err)
+
+	status, failure := s.client.failure(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/fork", ForkSessionRequest{})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "nothing to fork from")
+}
+
+// TestAThreadsForkIsRefusedWhateverItsConfig: a thread channel's conversation is not forked,
+// whether or not its config can be read.
+func (s *SessionConnectorsSuite) TestAThreadsForkIsRefusedWhateverItsConfig() {
+	connector := s.connector()
+	app, echo := s.connection(nil, connector)
+	config := s.config(s.binding("crm", connector, "fixed", app, echo))
+	channel := conversation.ThreadChannelPrefix + s.utils.uuid()
+	s.threadChannel(channel, connector, app, config)
+	request := s.session(config, nil)
+	request.AgentId = &channel
+	opened := s.serverClient.createSession(request)
+	s.serverClient.stopSession(opened.Id)
+	s.storedSelections(opened.Id)
+	_, err := s.store.DB().ExecContext(context.Background(),
+		`UPDATE agent_configs SET connectors = '{"not": "a list"}'::jsonb WHERE id = ?`, config)
+	s.Require().NoError(err)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "a thread channel's conversation is not forked")
 }
 
 // TestAForkOfARunningSessionReachesTheConnectionItsParentChose: a live parent's fork is bound
@@ -715,6 +776,7 @@ func (s *SessionConnectorsSuite) forkPrompts(parent string) forkedPrompts {
 		RespondRequest{Text: "Is the upgrade worth it?", RequestId: pointerTo(s.utils.uuid())})
 	s.Require().Equal(http.StatusOK, status, failure)
 	answer, _ := s.await(watching, "responded")["text"].(string)
+	s.recorded(forked.Id)
 	s.client.stopSession(forked.Id)
 
 	var call Call
@@ -724,4 +786,43 @@ func (s *SessionConnectorsSuite) forkPrompts(parent string) forkedPrompts {
 	}, 2*settleFor, 10*time.Millisecond, "the fork is reviewed when it ends")
 	review := strings.TrimSuffix(*call.ReviewNotes, "\n\n"+`Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`)
 	return forkedPrompts{instructions: value(forked.Instructions), answer: answer, review: review}
+}
+
+// recorded waits for the call of session id to be written. It is queued behind the session,
+// and a session stopped before it is there loses the review that stopping starts.
+func (s *SessionConnectorsSuite) recorded(id string) {
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+id, nil, nil) == http.StatusOK
+	}, settleFor, 10*time.Millisecond, "the call is recorded")
+}
+
+// greetingConfig is a config that greets with words unique to the test, on the model that
+// summarises, and the words.
+func (s *SessionConnectorsSuite) greetingConfig() (string, string) {
+	greeting := "Welcome back " + s.utils.uuid()
+	return greeting, s.modelledConfig("summarising/summarising-model", map[string]any{"greeting": map[string]any{"text": greeting}})
+}
+
+// forkSummary forks parent onto config, asks the fork a question, stops it and reads what its
+// summary made of the conversation, once it has the question in it.
+func (s *SessionConnectorsSuite) forkSummary(parent string, config *string) string {
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ConfigId: config}, &forked))
+	watching := s.client.opens("/v1/agents/sessions/" + forked.Id + "/events")
+	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+forked.Id+"/respond",
+		RespondRequest{Text: "Is the upgrade worth it?", RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusOK, status, failure)
+	s.await(watching, "responded")
+	s.recorded(forked.Id)
+	s.client.stopSession(forked.Id)
+
+	var summary string
+	s.Require().Eventually(func() bool {
+		var call Call
+		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+forked.Id, nil, &call)
+		summary = value(call.Summary)
+		return strings.Contains(summary, "upgrade")
+	}, 2*settleFor, 10*time.Millisecond, "the fork is summarised when it ends")
+	return summary
 }
