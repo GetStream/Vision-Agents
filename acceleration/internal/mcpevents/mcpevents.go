@@ -38,8 +38,8 @@ import (
 // with the app's secret: each delivery here is signed with its subscription's own.
 const Path = "/v1/connectors/mcp-events/"
 
-// MaxEventBytes is the most one delivery may hold: the plugin system's webhook.MaxEventBytes
-// and the cap the router's other provider webhooks use (256 KiB). The draft names no size.
+// MaxEventBytes is the most one delivery may hold: webhook.MaxEventBytes, the plugin
+// system's cap and the one the router's other provider webhooks use (256 KiB). The draft names no size.
 // Unverified against a real server's largest event.
 const MaxEventBytes = webhook.MaxEventBytes
 

@@ -88,10 +88,13 @@ func (s *WebhookSuite) TestADeliveryWithoutAnIDOrANumericTimestampIsRefused() {
 	noID := s.signed("", now, body, s.secret)
 	badStamp := s.signed("evt_1", now, body, s.secret)
 	badStamp.Set("webhook-timestamp", "soon")
+	noStamp := s.signed("evt_1", now, body, s.secret)
+	noStamp.Del("webhook-timestamp")
 
 	s.ErrorIs(Verify(s.secret, noID, body, now), ErrBadSignature)
 	// Refused as unsigned, not as signed at the Unix epoch.
 	s.Equal(ErrBadSignature, Verify(s.secret, badStamp, body, now))
+	s.Equal(ErrBadSignature, Verify(s.secret, noStamp, body, now))
 }
 
 func (s *WebhookSuite) TestEitherSignatureOfARotationIsEnough() {

@@ -69,7 +69,7 @@ func Sign(secret, id string, at time.Time, body []byte) (string, error) {
 func Verify(secret string, header http.Header, body []byte, now time.Time) error {
 	id := header.Get("webhook-id")
 	stamp := header.Get("webhook-timestamp")
-	if id == "" || stamp == "" {
+	if id == "" {
 		return ErrBadSignature
 	}
 	seconds, err := strconv.ParseInt(stamp, 10, 64)
