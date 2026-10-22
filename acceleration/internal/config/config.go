@@ -640,6 +640,12 @@ func (c Config) validate() error {
 		return errors.New("config: code_sandbox.broker is proxy, and an https code_sandbox.proxy_public_url " +
 			"(ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) needs the sandbox's TLS tunnel (AI-1683), which is not built yet: use http")
 	}
+	// An https URL a sandbox cannot use is served as plain HTTP by the listener, which would
+	// leave a router running a different proxy from the one its settings say.
+	if c.CodeSandbox.ProxyAddr != "" && strings.HasPrefix(c.CodeSandbox.ProxyPublicURL, "https://") && !validProxy {
+		return fmt.Errorf("config: code_sandbox.proxy_public_url (ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL) is %q, an https URL that is not "+
+			"https://<public IPv4 address>:port, so the proxy would be served in plain HTTP: fix it or use http", c.CodeSandbox.ProxyPublicURL)
+	}
 	// Every router of a proxy broker serves the proxy, so no sandbox is sent to a proxy no
 	// router runs.
 	if c.CodeSandbox.Broker == CodeSandboxBrokerProxy && c.CodeSandbox.ProxyAddr == "" {

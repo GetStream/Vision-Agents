@@ -71,7 +71,9 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, serve func(*
 	if secure {
 		listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
 	}
-	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout}
+	// ErrorLog: a failed handshake is the router's log line, as in a tunnel, not the std log's.
+	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout,
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelInfo)}
 	logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
 		"tls", secure)
 	go serve(server, listener)

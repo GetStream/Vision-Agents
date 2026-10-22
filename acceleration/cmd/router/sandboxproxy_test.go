@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -20,6 +21,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -270,6 +272,11 @@ type listenedProxy struct {
 }
 
 func newListenedProxy(t *testing.T, publicURL string) listenedProxy {
+	return newLoggedListenedProxy(t, publicURL, slog.New(slog.DiscardHandler))
+}
+
+// newLoggedListenedProxy is newListenedProxy whose listener logs to logger.
+func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger) listenedProxy {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
@@ -292,7 +299,7 @@ func newListenedProxy(t *testing.T, publicURL string) listenedProxy {
 	listen := freeAddress(t)
 	stop, err := serveSandboxProxy(proxy, listen, publicURL, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
-	}, slog.New(slog.DiscardHandler))
+	}, logger)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
 	trusted := host.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs.Clone()
@@ -354,6 +361,72 @@ func TestTheTLSProxysCertificateNamesItsPublicAddress(t *testing.T) {
 	require.Len(t, leaf.IPAddresses, 1)
 	require.Equal(t, "203.0.113.7", leaf.IPAddresses[0].String())
 	require.Empty(t, leaf.DNSNames)
+}
+
+// TestTheTLSProxyNamesOnlyItsPublicAddressWhateverTheClientAsks: a client that sends another
+// name as its SNI gets the same certificate, for the IP address alone. Were the certificate
+// signed for the name asked, any client on the internet would get one from the router CA.
+func TestTheTLSProxyNamesOnlyItsPublicAddressWhateverTheClientAsks(t *testing.T) {
+	proxy := newListenedProxy(t, tlsPublicURL)
+
+	conn, err := tls.Dial("tcp", proxy.address, &tls.Config{ServerName: "example.com", InsecureSkipVerify: true})
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	leaf := conn.ConnectionState().PeerCertificates[0]
+	require.Empty(t, leaf.DNSNames)
+	require.Len(t, leaf.IPAddresses, 1)
+	require.Equal(t, "203.0.113.7", leaf.IPAddresses[0].String())
+}
+
+// TestTheTLSProxyHoldsAClientToTLS12AndHTTP11: TLS 1.1 is refused, and a client offering h2 is
+// held to HTTP/1.1, as a tunnel does.
+func TestTheTLSProxyHoldsAClientToTLS12AndHTTP11(t *testing.T) {
+	proxy := newListenedProxy(t, tlsPublicURL)
+
+	_, err := tls.Dial("tcp", proxy.address, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS10,
+		MaxVersion: tls.VersionTLS11})
+	require.Error(t, err)
+
+	conn, err := tls.Dial("tcp", proxy.address, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2", "http/1.1"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.Equal(t, "http/1.1", conn.ConnectionState().NegotiatedProtocol)
+	require.GreaterOrEqual(t, conn.ConnectionState().Version, uint16(tls.VersionTLS12))
+}
+
+// TestAFailedTLSHandshakeIsTheRouterLogsLine: not the std log's.
+func TestAFailedTLSHandshakeIsTheRouterLogsLine(t *testing.T) {
+	var out lockedBuffer
+	proxy := newLoggedListenedProxy(t, tlsPublicURL, slog.New(slog.NewTextHandler(&out, nil)))
+
+	conn, err := net.Dial("tcp", proxy.address)
+	require.NoError(t, err)
+	_, err = io.WriteString(conn, "GET / HTTP/1.1\r\n\r\n")
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, conn)
+	_ = conn.Close()
+
+	require.Eventually(t, func() bool { return strings.Contains(out.String(), "TLS handshake error") },
+		5*time.Second, 10*time.Millisecond)
+}
+
+// lockedBuffer is a log sink the listener's goroutine writes and the test reads.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // TestPlainHTTPToTheTLSProxyGetsNoProxy: a CONNECT sent in the clear opens no tunnel and gets

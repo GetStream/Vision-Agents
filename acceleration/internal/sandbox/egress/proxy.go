@@ -520,10 +520,12 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 // handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
 // tunnel does, since one is valid for leafValidity alone.
 func (p *Proxy) ListenerTLS(address string) *tls.Config {
-	return &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-		leaf, err := p.leaf(address)
-		return &leaf, err
-	}}
+	// The same floor and HTTP/1.1 as tunnel() holds a sandbox to: the server here serves no HTTP/2.
+	return &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			leaf, err := p.leaf(address)
+			return &leaf, err
+		}}
 }
 
 // leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.

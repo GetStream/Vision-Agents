@@ -276,7 +276,7 @@ func (s *ConfigSuite) TestAnHTTPSProxyURLHasTheRulesOfAnHTTPOne() {
 	for _, address := range []string{"https://proxy.stg.example:8091", "https://sbx:secret@203.0.113.7:8091",
 		"https://10.1.2.3:8091", "https://127.0.0.1:8091", "https://169.254.169.254:8091", "https://[2001:db8::7]:8091",
 		"https://203.0.113.7", "https://203.0.113.7:0", "https://203.0.113.7:8091/", "https://203.0.113.7:8091?a=b",
-		"https://203.0.113.7:8091#frag", "ftp://203.0.113.7:8091"} {
+		"https://203.0.113.7:8091#frag", "ftp://203.0.113.7:8091", "httpx://203.0.113.7:8091"} {
 		_, ok := ProxyURL(address)
 		s.False(ok, address)
 	}
@@ -303,6 +303,26 @@ func (s *ConfigSuite) TestTheProxyBrokerRefusesAnHTTPSProxyURL() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal("https://203.0.113.7:8091", config.CodeSandbox.ProxyPublicURL)
+}
+
+// TestAnHTTPSProxyURLTheListenerCannotServeIsRefused: the daytona broker with a proxy address
+// and an https URL a sandbox cannot use would serve plain HTTP in silence. An http URL and no
+// URL load as on base.
+func (s *ConfigSuite) TestAnHTTPSProxyURLTheListenerCannotServeIsRefused() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://proxy.example:8091")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "an https URL that is not https://<public IPv4 address>:port")
+	for _, address := range []string{"http://proxy.example:8091", "", "https://203.0.113.7:8091"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
+		_, _, err = Load("")
+		s.NoError(err, address)
+	}
 }
 
 // TestTheProxysCACertificateHoldsNoKey: every sandbox is given it.
