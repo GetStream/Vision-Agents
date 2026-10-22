@@ -100,7 +100,7 @@ func (o *org) serve(w http.ResponseWriter, r *http.Request) {
 	for _, held := range o.secrets {
 		if strings.Contains(held.name, r.URL.Query().Get("name")) {
 			matched = append(matched, map[string]any{"id": held.id, "name": held.name, "placeholder": "dtn_secret_" + held.id,
-				"hosts": []string{"api.github.com"}, "createdAt": held.created, "updatedAt": held.created})
+				"hosts": []string{"api.github.com"}, "createdAt": held.created, "updatedAt": time.Now()})
 		}
 	}
 	from, _ := strconv.Atoi(cursor)
