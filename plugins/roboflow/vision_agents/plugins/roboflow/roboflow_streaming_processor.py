@@ -147,7 +147,7 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         if ManualSource is None:
             raise ImportError(
                 "RoboflowStreamingProcessor requires inference-sdk[webrtc]>=1.3.5. "
-                "Install it with: uv add 'vision-agents-plugins-roboflow[webrtc]'"
+                "Install it with: uv add 'inference-sdk[webrtc]>=1.3.5'"
             )
         if self._session is not None:
             return
