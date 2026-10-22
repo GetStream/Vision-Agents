@@ -279,10 +279,14 @@ session.speech.subscribe(() => requestAnimationFrame(render));
 Every message the agent said carries the `turn_id` the session socket's `speaking`, `spoke`
 and `interrupted` name (on `message.turn_id` in stream-chat 9, `message.custom.turn_id` in
 10). `heard` takes the message and reads either, or the turn id itself, and with `now` is
-`{ chars, done }`: the code points heard so far, exact once the playing utterance's `spoke`
-has said how long it is and estimated from the voice's measured rate (about 15 a second until
-then), and `done` once the turn's last known utterance has played out or the caller talked
-over it. A cut freezes the turn at what the router says was heard of the utterance it cut
+`{ chars, done }`: the code points of the message heard so far, exact once the playing
+utterance's `spoke` has said how long it is and estimated from the voice's measured rate
+(about 15 a second until then), and `done` once the turn's last known utterance has played out
+or the caller talked over it. The voice is not sent the message's own words (a direction it
+acts, "last four digits, 1234" for "last four 1234", a sentence held back), so the router says
+where each utterance is in the message (`message_start` and `message_end` on `speaking`,
+`spoke` and `interrupted`), and each is revealed across its own place there; a router that
+does not say is counted in the voice's characters. A cut freezes the turn at what the router says was heard of the utterance it cut
 (`heard_ms` on `interrupted`), or at the estimate when it does not say. An utterance reported
 before the track got to it, behind speech still queued, starts when that has played
 (`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another

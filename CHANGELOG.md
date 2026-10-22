@@ -642,6 +642,19 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).
 - The `anthropic` provider sends `ANTHROPIC_WORKSPACE_ID` as the `anthropic-workspace-id` header, so an Anthropic key that is not scoped to a workspace is accepted; with it unset, requests are sent as before.
 
+### `session.speech` reveals a reply by where each utterance is in its message
+
+A router that says where each utterance is in the reply's Chat message (`message_start` and
+`message_end` on `speaking`, `spoke` and `interrupted`) has `session.speech` reveal the message
+from one to the other over the utterance's audio, at the share of it the voice has got
+through, so `heard(...).chars` is in the message's own text rather than the voice's: a
+direction the voice acts, digits it is told the count of and a sentence held back no longer
+push the reveal ahead of the words being said. A gap between two utterances, such as a
+sentence held back, is passed when the next one starts, and a cut stops at the share of the cut
+utterance's place that was heard. A streamed utterance not yet measured goes at the message's
+characters to the voice's its `speaking` had. A router that sends no offsets is counted in the
+voice's characters as before (#1146).
+
 ### The session socket says when each utterance starts being heard
 
 A new `speaking` frame comes when the call's track takes the first audible frame of an

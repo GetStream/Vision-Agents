@@ -409,4 +409,115 @@ describe("Speech", () => {
     assert.deepEqual(speech.heard("turn-3"), { chars: 0, done: false }, "audio went out, so its speaking is coming");
     assert.equal(told, 5, "held three times, let go twice");
   });
+
+  describe("from a router that says where each utterance is in the message", () => {
+    // The voice is sent other words than the message holds. The message reads
+    // "Your card ends in last four 1234. Is that right?" and its first sentence went to the
+    // voice as "Your card ends in last four digits, 1234." (41 characters for 33).
+    const card = "Your card ends in last four digits, 1234.";
+
+    function heardFrom(turnId: string, synthesisId: string, words: string, start: number, end: number): void {
+      speech.observe({
+        type: "speaking",
+        turn_id: turnId,
+        synthesis_id: synthesisId,
+        text: words,
+        at: "2026-10-22T09:30:00Z",
+        message_start: start,
+        message_end: end,
+      });
+    }
+
+    function spokeFrom(
+      turnId: string,
+      synthesisId: string,
+      characters: number,
+      durationMs: number,
+      start: number,
+      end: number,
+    ): void {
+      speech.observe({
+        type: "spoke",
+        turn_id: turnId,
+        synthesis_id: synthesisId,
+        characters,
+        audio_duration_ms: durationMs,
+        time_to_first_byte_ms: 120,
+        message_start: start,
+        message_end: end,
+      });
+    }
+
+    it("reveals a sentence over its place in the message, not over the voice's words", () => {
+      heardFrom("turn-1", "turn-1#0", card, 0, 33);
+      spokeFrom("turn-1", "turn-1#0", 41, 2000, 0, 33);
+
+      assert.deepEqual(speech.heard("turn-1", clock + 1000), { chars: 16, done: false }, "half of 33, not 20 of 41");
+      assert.deepEqual(speech.heard("turn-1", clock + 2000), { chars: 33, done: true }, "and ends at its end, not past it");
+    });
+
+    it("paces a sentence not yet measured by the voice's words, within its place", () => {
+      heardFrom("turn-1", "turn-1#0", card, 0, 33);
+      wait(60_000);
+
+      assert.equal(speech.heard("turn-1")?.chars, 33, "never past where the sentence ends in the message");
+    });
+
+    it("starts each sentence where it is in the message, passing one held back", () => {
+      heardFrom("turn-1", "turn-1#0", "One two three.", 0, 14);
+      spokeFrom("turn-1", "turn-1#0", 14, 1000, 0, 14);
+      wait(1000);
+      heardFrom("turn-1", "turn-1#1", "Four.", 30, 36);
+
+      assert.deepEqual(speech.heard("turn-1", clock + 1), { chars: 30, done: false }, "what lies between was never said");
+      spokeFrom("turn-1", "turn-1#1", 5, 500, 30, 36);
+      assert.deepEqual(speech.heard("turn-1", clock + 500), { chars: 36, done: true });
+    });
+
+    it("grows a streamed reply's place as the voice is sent more", () => {
+      heardFrom("turn-1", "turn-1", "Your card ends in", 0, 17);
+      wait(2000);
+
+      assert.equal(speech.heard("turn-1")?.chars, 30, "the voice was sent more since, so it is not stopped at 17");
+      spokeFrom("turn-1", "turn-1", 56, 4000, 0, 48);
+
+      assert.deepEqual(speech.heard("turn-1", clock + 2000), { chars: 48, done: true }, "all of it, as the audio ends");
+    });
+
+    it("paces a streamed reply not yet measured at the message's characters to the voice's", () => {
+      heardFrom("turn-1", "turn-1", card, 0, 33);
+      wait(2000);
+
+      assert.equal(speech.heard("turn-1")?.chars, 24, "30 of the voice's characters are 24 of the message's");
+    });
+
+    it("cuts at the share of its place that was heard", () => {
+      heardFrom("turn-1", "turn-1#0", card, 0, 33);
+      spokeFrom("turn-1", "turn-1#0", 41, 2000, 0, 33);
+      wait(1500);
+
+      speech.observe({ type: "interrupted", turn_id: "turn-1", synthesis_id: "turn-1#0", heard_ms: 1000, message_start: 0, message_end: 33 });
+
+      assert.deepEqual(speech.heard("turn-1"), { chars: 16, done: true });
+    });
+
+    it("cuts a streamed reply no further than the voice had been sent", () => {
+      heardFrom("turn-1", "turn-1", "Your card ends in", 0, 17);
+      wait(4000);
+
+      speech.observe({ type: "interrupted", turn_id: "turn-1", synthesis_id: "turn-1", heard_ms: 4000, message_start: 0, message_end: 33 });
+
+      assert.deepEqual(speech.heard("turn-1"), { chars: 33, done: true }, "60 estimated, of 33 sent");
+    });
+
+    it("counts in the voice's words for a turn some of whose utterances it has no place for", () => {
+      heardFrom("turn-1", "turn-1#0", "One two three.", 0, 14);
+      spoke("turn-1", "turn-1#0", 14, 1000);
+      wait(1000);
+      speaking("turn-1", "turn-1#1", "Four.");
+      wait(200);
+
+      assert.equal(speech.heard("turn-1")?.chars, 16, "as an older router would have it");
+    });
+  });
 });

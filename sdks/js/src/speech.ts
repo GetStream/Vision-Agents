@@ -28,12 +28,16 @@ const NOTHING_YET: HeardSpeech = Object.freeze({ chars: 0, done: false });
  */
 export interface HeardSpeech {
   /**
-   * Code points of the turn heard so far: every utterance that has played out, and the
-   * share of the one playing. Exact once the playing one's `spoke` has said how long it is,
-   * and estimated from the voice's measured rate until then. A `spoke` that finds the
-   * estimate ahead slows the rest down rather than jumping back, so it only drops when a
-   * streamed reply's estimate overshot all the utterance turned out to hold, or when a cut
-   * says less was heard than estimated.
+   * Code points of the turn's message heard so far: every utterance that has played out,
+   * and the share of the one playing. A router that says where each utterance is in the
+   * message (`message_start` and `message_end` on `speaking` and `spoke`) has it counted in
+   * the message's own text, which is not what the voice was sent: a direction the voice
+   * acts, digits it is told the count of, a sentence held back. An older router has it
+   * counted in the voice's characters. Exact once the playing one's `spoke` has said how
+   * long it is, and estimated from the voice's measured rate until then. A `spoke` that
+   * finds the estimate ahead slows the rest down rather than jumping back, so it only drops
+   * when a streamed reply's estimate overshot all the utterance turned out to hold, or when
+   * a cut says less was heard than estimated.
    */
   readonly chars: number;
   /**
@@ -71,6 +75,20 @@ export interface SpeechOptions {
   voice?: () => boolean;
 }
 
+/**
+ * Where an utterance is in its reply's message, in code points: `start` up to `end`. A
+ * streamed one's grows while it is sent, and is `final` once `spoke` or `interrupted` says
+ * all of it; a sentence's is final from its `speaking`. `perVoiceChar` is how many of the
+ * message's characters each of the voice's stands for, from the text and place `speaking`
+ * gave, for an utterance the voice has not said the length of.
+ */
+interface MessageSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly final: boolean;
+  readonly perVoiceChar: number;
+}
+
 /** One utterance of a turn: from its `speaking`, and its `spoke` once that arrives. */
 interface Utterance {
   readonly synthesisId: string;
@@ -78,6 +96,8 @@ interface Utterance {
   /** A sentence of its own, whose `text` was all of it. A streamed one's is only its start. */
   readonly sentence: boolean;
   readonly textChars: number;
+  /** Where it is in the message, from a router that says. */
+  message?: MessageSpan | undefined;
   /** From `spoke`: how long it is, and where the estimate had got to when that arrived. */
   measured?: {
     readonly chars: number;
@@ -415,11 +435,13 @@ export class Speech {
     if (before?.turn.cut === undefined && before?.utterance.measured) {
       startedAt = Math.max(startedAt, before.utterance.startedAt + before.utterance.measured.durationMs);
     }
+    const sentence = synthesisId !== turnId;
     const utterance: Utterance = {
       synthesisId,
       startedAt,
-      sentence: synthesisId !== turnId,
+      sentence,
       textChars: codePoints(text(frame, "text")),
+      message: spanOf(frame, sentence, codePoints(text(frame, "text"))),
     };
     // A turn let go of keeps its utterances, for later ones to queue behind, and stays let go.
     turn.utterances.push(utterance);
@@ -436,6 +458,7 @@ export class Speech {
     if (!utterance || utterance.measured || chars <= 0 || durationMs <= 0) {
       return;
     }
+    utterance.message = spanOf(frame, true, utterance.textChars, utterance.message) ?? utterance.message;
 
     // The estimate so far is where the rest starts from, so a reveal that ran ahead slows
     // down rather than jumping back, and both end with the audio.
@@ -470,9 +493,15 @@ export class Speech {
     const cutId = text(frame, "synthesis_id");
     const heardMs = frame["heard_ms"];
     const index = cutId ? turn.utterances.findIndex((u) => u.synthesisId === cutId) : -1;
+    const cut = turn.utterances[index];
+    if (cut) {
+      cut.message = spanOf(frame, true, cut.textChars, cut.message) ?? cut.message;
+    }
     turn.cut = Math.floor(
-      typeof heardMs === "number" && index >= 0
-        ? this.charsBefore(turn, index) + this.heardOf(turn.utterances[index]!, heardMs)
+      typeof heardMs === "number" && cut
+        ? spanned(turn)
+          ? this.inMessage(cut, this.heardOf(cut, heardMs))
+          : this.charsBefore(turn, index) + this.heardOf(cut, heardMs)
         : this.charsOf(turn, now),
     );
     this.release(turn);
@@ -513,6 +542,9 @@ export class Speech {
 
   /** Characters of a turn heard by `now`, utterance by utterance. */
   private charsOf(turn: Turn, now: number): number {
+    if (spanned(turn)) {
+      return this.messageCharsOf(turn, now);
+    }
     let chars = 0;
     turn.utterances.forEach((utterance, index) => {
       if (now <= utterance.startedAt) {
@@ -527,6 +559,42 @@ export class Speech {
       chars += this.share(utterance, now);
     });
     return chars;
+  }
+
+  /**
+   * Characters of a turn's message heard by `now`, for a router that says where each
+   * utterance is in it: all of each that played out, and of the one playing, the share of
+   * its place the voice has got through. A gap between two, such as a sentence held back,
+   * is passed when the one after it starts.
+   */
+  private messageCharsOf(turn: Turn, now: number): number {
+    let chars = 0;
+    turn.utterances.forEach((utterance, index) => {
+      if (now <= utterance.startedAt) {
+        return;
+      }
+      const next = turn.utterances[index + 1];
+      const playedOut = next !== undefined && next.startedAt <= now;
+      chars = Math.max(chars, playedOut ? utterance.message!.end : this.inMessage(utterance, this.share(utterance, now)));
+    });
+    return chars;
+  }
+
+  /**
+   * Where in the message `said` characters of an utterance's voice are: the same share of
+   * its place as of all the voice says, once that is known. A streamed utterance not yet
+   * measured goes at the message's characters to the voice's its `speaking` had, no further
+   * than its place once all of that is known.
+   */
+  private inMessage(utterance: Utterance, said: number): number {
+    const { start, end, final, perVoiceChar } = utterance.message!;
+    const total =
+      utterance.measured?.chars ?? (utterance.sentence && utterance.textChars > 0 ? utterance.textChars : undefined);
+    if (final && total !== undefined) {
+      return start + (end - start) * Math.min(1, said / total);
+    }
+    const at = start + said * perVoiceChar;
+    return final ? Math.min(end, at) : at;
   }
 
   /** How much of the utterance playing has been heard by `now`. */
@@ -593,6 +661,26 @@ function agentWriting(message: object): boolean {
   const fields = message as Record<string, unknown> & { custom?: Record<string, unknown> };
   const field = (key: string): unknown => fields[key] ?? fields.custom?.[key];
   return field("generating") === true && (field("source") === "agent" || field("ai_generated") === true);
+}
+
+/**
+ * Where a frame says its utterance is in the reply's message, undefined from a router that
+ * does not say. `final` is whether that is all of it, and `voiceChars` how long the voice's
+ * text for that place is, from `speaking`. A later frame keeps what `speaking` measured by.
+ */
+function spanOf(frame: Frame, final: boolean, voiceChars: number, before?: MessageSpan): MessageSpan | undefined {
+  const start = frame["message_start"];
+  const end = frame["message_end"];
+  if (typeof start !== "number" || typeof end !== "number" || start < 0 || end < start) {
+    return undefined;
+  }
+  const perVoiceChar = before?.perVoiceChar ?? (voiceChars > 0 && end > start ? (end - start) / voiceChars : 1);
+  return { start, end, final, perVoiceChar };
+}
+
+/** Whether the router said where every utterance of a turn is in its message. */
+function spanned(turn: Turn): boolean {
+  return turn.utterances.length > 0 && turn.utterances.every((utterance) => utterance.message !== undefined);
 }
 
 /** How many Unicode code points a text is, which is how the session socket counts characters. */
