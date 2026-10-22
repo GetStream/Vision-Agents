@@ -3,6 +3,9 @@ package io.getstream.visionagents.android.core
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
+import kotlin.io.encoding.Base64
+import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -21,7 +24,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 /** How many events a slow [AgentSession.events] collector may fall behind before the oldest go. */
 private const val EVENT_BUFFER = 256
@@ -64,6 +72,9 @@ public class AgentSession internal constructor(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+
+    /** What the call's camera showed lately while it is on, which answers the router's request for frames. */
+    @Volatile internal var cameraFrames: CameraFrames? = null
 
     /** The session the router opened, as [update] last left it. */
     @Volatile public var session: Session = session
@@ -244,13 +255,63 @@ public class AgentSession internal constructor(
     /** Runs a tool the model asked for, or holds the call for the person when the tool asks first. */
     private fun answer(call: AgentEvent.ToolCall) {
         // Session events go to every watcher, and another one may own this call. Answering a
-        // tool this device never declared would resolve it before its owner could.
+        // tool this device never declared would resolve it before its owner could. The request
+        // for frames is this device's only while its camera is on; otherwise a video worker in
+        // the backend may own it.
+        if (call.name == CameraFrames.TOOL_NAME) {
+            cameraFrames?.let { return show(it, call) }
+        }
         val tool = tools[call.name] ?: return
         val approval = tool.approval
         if (approval != null) {
             held.update { it + ToolApprovalRequest(call, approval, tool) }
         } else {
             run(call, tool)
+        }
+    }
+
+    /**
+     * Answers the router's request for frames with the ones the camera showed at the moment it
+     * names: what the frames are, then the frames, oldest first. Nothing recent enough is said as
+     * the answer rather than as a failure, as the router's own video workers say it, so the agent
+     * can ask the person to show it again.
+     */
+    private fun show(frames: CameraFrames, call: AgentEvent.ToolCall) {
+        scope.launch {
+            val arguments = call.argumentValues
+            val at = (arguments["at_ms"] as? JsonPrimitive)?.doubleOrNull
+                ?.let { Instant.fromEpochMilliseconds(it.toLong()) }
+                ?: Clock.System.now()
+            val limit = (arguments["limit"] as? JsonPrimitive)?.doubleOrNull?.toInt() ?: 1
+            val answer = try {
+                val selected = frames.select(at, limit)
+                val words = buildJsonObject {
+                    put("clock", "device_unix_ms")
+                    putJsonArray("frames") {
+                        selected.forEach { frame ->
+                            addJsonObject {
+                                put("captured_at_ms", frame.capturedAt.toEpochMilliseconds())
+                                put("frame_id", "camera-${frame.id}")
+                            }
+                        }
+                    }
+                    put("source", "camera")
+                }
+                Command.ToolResult(
+                    call.id,
+                    output = words.toString(),
+                    requestId = call.requestId,
+                    turnId = call.turnId,
+                    images = selected.map { ImageSource("data:image/jpeg;base64," + Base64.encode(it.jpeg)) },
+                )
+            } catch (e: CameraFrames.NoFrames) {
+                Command.ToolResult(call.id, output = e.message.orEmpty(), requestId = call.requestId, turnId = call.turnId)
+            }
+            try {
+                socket.send(answer)
+            } catch (_: AgentsException) {
+                // The socket went; there is nobody left to show.
+            }
         }
     }
 

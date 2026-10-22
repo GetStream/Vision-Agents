@@ -846,7 +846,9 @@ four seconds kept; when the agent's `vision` skill asks for what the camera show
 moment the question was taken, newest last, at most eight, as the router's Python video workers
 do. With nothing from the last five seconds it says so as the answer, so the agent asks the person
 to show it again. The Swift assistant example has a camera button in voice mode, with a preview
-of what Juno sees.
+of what Juno sees. Kotlin does the same from `VoiceSession.join(camera = true)` and
+`setCameraEnabled(true)`, sampling through `call.videoFilter` on top of any filter already set
+there, Stream Video's moderation blur included, so the agent sees what the call publishes.
 
 ### A tool can show the model pictures
 
