@@ -169,9 +169,10 @@ func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRu
 	}
 	s.platform.mu.Lock()
 	s.platform.commandExit = 1
+	s.platform.commandOutput = "the TLS tunnel to the proxy did not start: OSError"
 	s.platform.mu.Unlock()
 	_, err = box.Run(s.ctx, "print(3)", nil)
-	s.ErrorContains(err, "readying the sandbox for a run")
+	s.ErrorContains(err, "readying the sandbox for a run: exit code 1: the TLS tunnel to the proxy did not start: OSError")
 	s.Len(s.platform.executed(), 2)
 }
 

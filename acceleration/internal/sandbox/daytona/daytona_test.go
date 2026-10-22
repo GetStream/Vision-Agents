@@ -37,9 +37,10 @@ type platform struct {
 	// refuseUpload answers every file written into the sandbox with a 400.
 	refuseUpload bool
 	// commands are every shell command run in the sandbox, with how many runs came before,
-	// and commandExit the exit code each gives.
-	commands    []string
-	commandExit int
+	// and commandExit and commandOutput the exit code and output each gives.
+	commands      []string
+	commandExit   int
+	commandOutput string
 	// rawCommands are the request bodies of those commands.
 	rawCommands []string
 	// steps are the file uploads ("upload") and shell commands ("command") in the order they came.
@@ -141,7 +142,7 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		p.steps = append(p.steps, "command")
 		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"result":"","exitCode":%d}`, p.commandExit)
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": p.commandOutput, "exitCode": p.commandExit})
 
 	case strings.HasSuffix(r.URL.Path, "/files/download"):
 		data, ok := p.files[r.URL.Query().Get("path")]
