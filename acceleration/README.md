@@ -187,10 +187,12 @@ the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK
 
 2. Wrap the current key as version 1, with the AAD `router-kek-v1` (`router-kek-v<n>` for
    version `n`). `printf %s` adds no newline: the unwrapped key must be the same bytes as the
-   plain one, or no row opens. `gcloud kms encrypt` reads `-` from stdin and writes the raw
-   ciphertext to stdout for `-`, and only one input can be stdin
+   plain one, or no row opens. `gcloud kms encrypt` reads a `-` input from stdin and writes
+   the ciphertext to stdout for `-`
    ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
-   opened 2026-10-22). GNU `base64` breaks lines, so `tr` joins them:
+   opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
+   be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
+   lines, so `tr` joins them:
 
    ```bash
    printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \

@@ -440,11 +440,16 @@ func (f *fakeCloudKMS) HandleRPC(context.Context, stats.RPCStats) {}
 // every KMS client the router opens at it, with no credentials and no TLS.
 func (s *ConnectorSealerSuite) startFakeCloudKMS() *fakeCloudKMS {
 	fake := &fakeCloudKMS{kms: newLocalKMS(s)}
+	// 1 MiB of buffer is far more than one Decrypt sends: a key and its AAD are each at most
+	// 64 KiB (https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt).
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer(grpc.StatsHandler(fake))
 	kmspb.RegisterKeyManagementServiceServer(server, fake)
 	go func() { _ = server.Serve(listener) }()
 	s.T().Cleanup(server.Stop)
+	// The client dials the fake itself, so the connection it closes is the one counted here.
+	// passthrough hands the target to the dialer unresolved
+	// (https://github.com/grpc/grpc/blob/master/doc/naming.md), and the dialer ignores it.
 	kmsClientOptions = []option.ClientOption{
 		option.WithEndpoint("passthrough:///cloudkms"),
 		option.WithoutAuthentication(),
@@ -497,6 +502,29 @@ func (s *ConnectorSealerSuite) TestAKeyCloudKMSWrappedForAnotherVersionFailsStar
 	s.ErrorContains(err, "decryption failed")
 	s.NotContains(err.Error(), wrapped)
 	s.NotContains(err.Error(), "first-key")
+}
+
+func (s *ConnectorSealerSuite) TestACloudKMSClientThatCannotOpenFailsStartup() {
+	s.settings.Connectors.Enabled = true
+	s.settings.Auth.KMSKey = testKMSKey
+	kmsClientOptions = []option.ClientOption{option.WithCredentialsJSON([]byte("{}"))}
+	s.T().Cleanup(func() { kmsClientOptions = nil })
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", newLocalKMS(s).wrap("first-key", "router-kek-v1"))
+
+	_, err := newSecretSealer(s.T().Context(), s.settings)
+	s.ErrorContains(err, "auth.kms_key: open a Cloud KMS client")
+}
+
+func (s *ConnectorSealerSuite) TestWithoutAKMSKeyNoCloudKMSClientIsOpened() {
+	// A client opened with these fails, so a start that opened one would fail too.
+	kmsClientOptions = []option.ClientOption{option.WithCredentialsJSON([]byte("{}"))}
+	s.T().Cleanup(func() { kmsClientOptions = nil })
+	s.settings.Connectors.Enabled = true
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+
+	sealer, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	s.requireOpensWhatTheBaseSealed(sealer)
 }
 
 // apiKeyConfigs is the store api_key mode looks keys up in. Nothing here looks one up, and
