@@ -1692,8 +1692,10 @@ go run github.com/bufbuild/buf/cmd/buf@v1.73.0 generate
   a slower one for help in its own words, in the middle of a sentence it goes on to finish;
   `Session.LLM()` still reaches the provider's own `Client()` for anything else.
 - **Costs come from config, not from the provider.** Each model declares what this
-  deployment is billed, and the recorder prices every row once. A model with no price
-  reports a cost of zero rather than a guess.
+  deployment is billed, and the recorder prices every row once, through one price list
+  (`internal/pricing`) built from those rates at start. A model with no price reports a
+  cost of zero rather than a guess, and is logged as billable work with no price unless it
+  is marked `free` or `local`.
 - **Transcript modes.** `delta` appends, `replacement` supersedes the current in-progress
   text, `final` is settled. Both speech-to-text providers send replacements.
 - **An audio chunk does not say whether it is the last.** A streaming voice only learns
