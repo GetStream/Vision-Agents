@@ -237,6 +237,10 @@ async fn a_review_guide_is_patched_and_read_back() {
         json!({"review": {"instructions": guide}})
     );
     assert_eq!(
+        server.request(Method::GET, "/v1/agents/configs").query,
+        "name=docs"
+    );
+    assert_eq!(
         patched
             .review
             .and_then(|review| review.instructions)
