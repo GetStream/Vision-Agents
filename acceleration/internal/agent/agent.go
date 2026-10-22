@@ -391,6 +391,10 @@ type Agent struct {
 	// heard is each synthesis that has not settled, with what the voice was sent for it,
 	// for reporting when it starts being heard.
 	heard map[string]*utterance
+	// finished is the syntheses that settled lately, oldest first in finishedOrder, so a
+	// delta sent for one after it settled does not open it again.
+	finished      map[string]struct{}
+	finishedOrder []string
 	// interrupting holds off new replies until the voice, edge and old model stream have
 	// all finished the interruption cleanup.
 	interrupting bool
@@ -626,6 +630,7 @@ func New(options Options) (*Agent, error) {
 		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
 		heard:            map[string]*utterance{},
+		finished:         map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
 		speculations:     map[string]*speculation{},
@@ -1252,6 +1257,9 @@ func (a *Agent) close() error {
 		p.running.Wait()
 	}
 	a.running.Wait()
+	a.mu.Lock()
+	a.forgetUtterancesLocked()
+	a.mu.Unlock()
 	a.logHeardFromEveryone("end")
 
 	// The writers are drained after the consumers have stopped, so a turn that finished
@@ -3490,6 +3498,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	leveller := audio.NewLeveller()
 	overlapping := newOverlap(voice.Provider(), a.abandonedTurn, a.logger)
 	queue := newPlayout(a.options.Edge, voice.Provider())
+	marked, marks := a.options.Edge.(MarkedPlayout)
+	// The utterance the last chunk was of. A synthesis arrives as a run of chunks, so it is
+	// looked up once per run rather than once per chunk.
+	var heard *utterance
+	heardID := ""
 
 	for event := range voice.Events() {
 		switch typed := event.(type) {
@@ -3501,7 +3514,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			// to say what a tool returned or what delegated work came back with, does not:
 			// treating it as one would throw away the tail of the sentence being spoken
 			// and cut the agent off mid-word.
-			publish, first := a.publishing(turnOf(typed.SynthesisID))
+			lookup := typed.SynthesisID != heardID
+			publish, first, found := a.publishing(turnOf(typed.SynthesisID), typed.SynthesisID, lookup)
+			if lookup {
+				heard, heardID = found, typed.SynthesisID
+			}
 			if !publish {
 				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 				if dropping != typed.SynthesisID {
@@ -3512,9 +3529,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				continue
 			}
 			speech := leveller.Level(typed.Audio)
-			heard := a.utteranceOf(typed.SynthesisID)
 			var err error
-			marked, marks := a.options.Edge.(MarkedPlayout)
 			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
@@ -3527,7 +3542,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 			// An edge that cannot say when its track took the audio is taken at its word,
 			// like firstAudio below.
-			if heard != nil && !heard.published.Swap(true) && !marks {
+			if heard.sent(typed.Audio.DurationMs()) && !marks {
 				heard.FirstAudiblePulled(time.Now())
 			}
 			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
@@ -3550,7 +3565,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
-			heard := a.takeUtterance(typed.SynthesisID)
+			done := a.takeUtterance(typed.SynthesisID)
+			if heardID == typed.SynthesisID {
+				heard, heardID = nil, ""
+			}
 			overlapping.finished(typed.SynthesisID)
 			a.settleVoice(voice)
 			a.logger.Info("finished speaking", append([]any{
@@ -3564,7 +3582,8 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if !typed.Interrupted {
 				// An interrupted utterance was not heard in full, so it must not be
 				// recorded as a finished spoken reply.
-				a.heardBefore(heard)
+				// All of it is queued at the edge, behind whatever is still to play.
+				a.heardBefore(done, func() float64 { return queue.ahead(typed.AudioDurationMs) })
 				a.emitter.Send(Spoke{
 					TurnID:            turnOf(typed.SynthesisID),
 					SynthesisID:       typed.SynthesisID,
@@ -4047,6 +4066,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		return false
 	}
 	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
+	cutID, heardMs := a.cutShortLocked(turnID, time.Now())
 	a.abandoned[turnID] = struct{}{}
 	a.interrupting = true
 	a.speakingTurn = ""
@@ -4093,7 +4113,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	}
 
 	a.turns.interrupt(turnID)
-	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant})
+	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant, SynthesisID: cutID, HeardMs: heardMs})
 	a.mu.Lock()
 	a.interrupting = false
 	a.mu.Unlock()
@@ -4151,20 +4171,26 @@ func (a *Agent) speaking(turnID string) bool {
 // publishing reports whether audio of a turn goes out (not once it was abandoned), and whether
 // it is the turn's first, which makes a caller's reply heard. Interleaved turns count a first
 // at each switch, which is the agent talking over itself (speechOverlaps).
-func (a *Agent) publishing(turnID string) (publish, first bool) {
+//
+// With lookup it also returns the utterance the synthesis is, under the same lock, so that
+// finding it costs the voice's goroutine nothing more than the check it makes anyway.
+func (a *Agent) publishing(turnID, synthesisID string, lookup bool) (publish, first bool, heard *utterance) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if lookup {
+		heard = a.utteranceLocked(synthesisID)
+	}
 	if _, gone := a.abandoned[turnID]; gone {
-		return false, false
+		return false, false, heard
 	}
 	if a.unheard.turnID == turnID {
 		a.unheard = unheardReply{}
 	}
 	if a.voiced == turnID {
-		return true, false
+		return true, false, heard
 	}
 	a.voiced, a.voicedAt = turnID, time.Now()
-	return true, true
+	return true, true, heard
 }
 
 // abandonedTurn reports whether an interruption gave up on a turn, which is what stops

@@ -398,6 +398,7 @@ func (a *Agent) startNative(prep *prepared) {
 	a.mu.Lock()
 	a.pipe = p
 	a.sts = prep.sts
+	a.forgetUtterancesLocked()
 	if prep.harness != nil {
 		drained = make(chan struct{})
 		a.harness, a.harnessDrained = prep.harness, drained
@@ -693,8 +694,13 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		return
 	}
 	a.utterances = 0
+	// What a reply cut off with the voice had been heard of, before it is forgotten.
+	cutID, heardMs := "", 0.0
+	if lost == a.tts && a.speakingTurn != "" {
+		cutID, heardMs = a.cutShortLocked(a.speakingTurn, time.Now())
+	}
 	// What the lost voice was saying will not be heard from it.
-	a.heard = map[string]*utterance{}
+	a.forgetUtterancesLocked()
 	replace := !a.closed && !a.switching.Load() &&
 		len(a.lostVoices) < maxLostVoices
 	if replace {
@@ -723,7 +729,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 			current.Release(cut)
 		}
 		a.turns.interrupt(cut)
-		a.emitter.Send(Interrupted{TurnID: cut})
+		a.emitter.Send(Interrupted{TurnID: cut, SynthesisID: cutID, HeardMs: heardMs})
 	}
 	if !replace {
 		return

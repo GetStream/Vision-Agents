@@ -515,6 +515,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"synthesis_id": typed.SynthesisID,
 			"text":         typed.Text,
 			"at":           typed.At,
+			"delay_ms":     typed.DelayMs,
 		}, true
 
 	case agent.Spoke:
@@ -662,11 +663,18 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Interrupted:
-		return frame{
+		cut := frame{
 			"type":        "interrupted",
 			"turn_id":     typed.TurnID,
 			"participant": participantOf(typed.Participant),
-		}, true
+		}
+		// Only when some of the turn had been heard, so a client falls back on its own
+		// count rather than freezing at nothing.
+		if typed.SynthesisID != "" {
+			cut["synthesis_id"] = typed.SynthesisID
+			cut["heard_ms"] = typed.HeardMs
+		}
+		return cut, true
 
 	case agent.OverlapDecided:
 		return frame{

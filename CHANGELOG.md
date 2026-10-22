@@ -650,7 +650,27 @@ its transcript so far. An edge with no track of its own reports it once publishi
 chunk returns. `spoke` now carries the same `synthesis_id` and the `characters` synthesised
 (for a speech-to-speech model, its transcript's), and always comes after the utterance's
 `speaking`. An utterance the caller talks over is still reported `speaking` if any of it was
-heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged (#1128).
+heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged.
+
+`speaking` also carries `delay_ms`: for an utterance reported before the track got to it (one
+that finished being made behind speech still queued), how long after `at` it is expected to be
+heard, from the speech queued ahead of it at the edge. `interrupted` carries `synthesis_id` and
+`heard_ms` when any of the turn had been heard: the utterance the track was playing and how
+many milliseconds of it went out before the cut. Every character count on the session socket,
+`characters` included, is in Unicode code points.
+
+Each of the agent's spoken messages in the Chat channel already carries that same `turn_id`,
+now pinned by tests: one being written, settled, cut off, a greeting (`say-...`) or other line
+said as written, and each message of a reply a sentence voice leaves more than one of. The JS
+SDK's `session.speech` adds it up: `heard(message, now)` is `{ chars, done }`, the code points
+of the turn heard so far, exact once `spoke` has measured the playing utterance and estimated
+at the voice's rate before that, and `done` once it has played out or was cut off, at what the
+router says was heard. On a call, a reply known to be coming, from its first text on the socket
+or from `heard` being asked about the agent's message while it is still being written, is
+`{ chars: 0, done: false }` until its `speaking`, for at most `SPEECH_GRACE_MS` (5 s); one that
+turns out to say nothing is let go of at once, and one let go of stays let go of. Leaving the
+call or stopping the voice ends the holding. It reads the frames the session already receives,
+so `events()` is untouched (#1128).
 
 ### An agent config sets the guide its calls are reviewed by
 

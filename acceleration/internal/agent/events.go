@@ -217,7 +217,14 @@ type Speaking struct {
 	// as written or of a sentence a voice took on its own, and the start of a reply a
 	// streaming voice is still being sent. A speech-to-speech model's transcript so far.
 	Text string
-	At   time.Time
+	// At is when the track took its first audible frame, or for an utterance reported
+	// before the track got to it (one that finished being made behind speech still queued),
+	// when it was reported.
+	At time.Time
+	// DelayMs is how long after At the utterance is expected to be heard: the speech queued
+	// ahead of it at the edge, for one reported before the track got to it. Zero otherwise,
+	// and for an edge that does not count its queue.
+	DelayMs float64
 }
 
 func (Speaking) isAgentEvent() {}
@@ -228,7 +235,7 @@ type Spoke struct {
 	// SynthesisID is the utterance, as on its Speaking.
 	SynthesisID string
 	// Characters is how much text was synthesised, or for a speech-to-speech model how long
-	// its transcript is.
+	// its transcript is, in Unicode code points.
 	Characters int64
 	// AudioDurationMs is how much speech was published.
 	AudioDurationMs float64
@@ -435,6 +442,11 @@ func (Backchannel) isAgentEvent() {}
 type Interrupted struct {
 	TurnID      string
 	Participant stt.Participant
+	// SynthesisID is the utterance the track was playing when it was cut, and HeardMs how
+	// much of it had been heard: from the track taking its first audible frame, never more
+	// than was published. Empty when none of the turn's open utterances had been heard.
+	SynthesisID string
+	HeardMs     float64
 }
 
 func (Interrupted) isAgentEvent() {}

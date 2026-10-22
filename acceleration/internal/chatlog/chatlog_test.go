@@ -557,6 +557,113 @@ func (s *ChatLogSuite) TestTheTranscriptSaysWhatEachLineIsAndWhetherItIsFinished
 	s.True(said[1].Generating, "words still being said are stored as they first were, and say so")
 }
 
+// written runs events through a writer the way the log's own goroutine would, showing what
+// is being written after each, and returns what the channel then holds.
+func (s *ChatLogSuite) written(events ...agent.Event) []getstream.MessageResponse {
+	s.useChat()
+	writer := newWriter(s.log)
+	for _, event := range events {
+		s.log.Record(event)
+		for _, queued := range s.queued() {
+			writer.handle(queued)
+		}
+		writer.show()
+	}
+	return s.channel()
+}
+
+func (s *ChatLogSuite) TestAStreamedReplyNamesTheTurnItIsSpokenAs() {
+	// The session socket's speaking and spoke name the same turn, which is how a page pairs
+	// the reply it was shown with how much of it has been heard.
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, text: "Your order", turnID: "turn-1", kind: piece, source: SourceAgent})
+	writer.show()
+
+	live := s.channel()
+	s.Require().Len(live, 1)
+	s.Equal(true, live[0].Custom[generatingField])
+	s.Equal("turn-1", live[0].Custom[turnField], "a watcher has the turn from the reply's first message")
+
+	writer.handle(message{author: s.log.agent, text: "Your order ships today.", turnID: "turn-1", kind: prepared, source: SourceAgent})
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken, source: SourceAgent})
+
+	settled := s.channel()
+	s.Require().Len(settled, 1)
+	s.Equal(false, settled[0].Custom[generatingField])
+	s.Equal("turn-1", settled[0].Custom[turnField], "settling it keeps the turn")
+}
+
+func (s *ChatLogSuite) TestAReplyThatNeverStreamedNamesItsTurn() {
+	stored := s.written(
+		agent.Responded{TurnID: "turn-1", Text: "Yes."},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1"},
+	)
+
+	s.Require().Len(stored, 1)
+	s.Equal("turn-1", stored[0].Custom[turnField])
+}
+
+func (s *ChatLogSuite) TestALineSaidAsWrittenNamesTheTurnItIsSpokenAs() {
+	// A greeting's turn is the say- id its speaking and spoke carry.
+	stored := s.written(
+		agent.Said{TurnID: "say-1761134400000000000", Text: "Hi there.", Purpose: agent.PurposeGreeting},
+		agent.Spoke{TurnID: "say-1761134400000000000", SynthesisID: "say-1761134400000000000"},
+		agent.Responded{TurnID: "back-1", Text: "Are you still there?", Purpose: agent.PurposeCheckIn},
+		agent.Spoke{TurnID: "back-1", SynthesisID: "back-1"},
+	)
+
+	s.Require().Len(stored, 2)
+	s.Equal("say-1761134400000000000", stored[0].Custom[turnField])
+	s.Equal("back-1", stored[1].Custom[turnField])
+}
+
+func (s *ChatLogSuite) TestAReplyCutOffKeepsItsTurn() {
+	stored := s.written(
+		agent.ResponseDelta{TurnID: "turn-1", Text: "Tomorrow will be"},
+		agent.Interrupted{TurnID: "turn-1"},
+		agent.Interrupted{TurnID: "turn-2"},
+		agent.Responded{TurnID: "turn-2", Text: "One,"},
+	)
+
+	s.Require().Len(stored, 2)
+	s.Equal(true, stored[0].Custom[interruptedField])
+	s.Equal("turn-1", stored[0].Custom[turnField], "a reply emptied when cut off")
+	s.Equal(true, stored[1].Custom[interruptedField])
+	s.Equal("turn-2", stored[1].Custom[turnField], "what a native model said before the cut")
+}
+
+func (s *ChatLogSuite) TestEveryMessageOfAReplySpokenSentenceBySentenceNamesItsTurn() {
+	// A voice that takes a sentence at a time reports each one spoken, and one finished
+	// before the model is leaves the rest of the reply to a message of its own.
+	stored := s.written(
+		agent.ResponseDelta{TurnID: "turn-1", Text: "One. "},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#0"},
+		agent.ResponseDelta{TurnID: "turn-1", Text: "Two."},
+		agent.Responded{TurnID: "turn-1", Text: "One. Two."},
+		agent.Spoke{TurnID: "turn-1", SynthesisID: "turn-1#1"},
+	)
+
+	s.Require().Len(stored, 2)
+	for _, message := range stored {
+		s.Equal("turn-1", message.Custom[turnField])
+	}
+}
+
+func (s *ChatLogSuite) TestAWrittenReplyNamesNoTurn() {
+	// Nothing was spoken, so no speaking or spoke will ever name it.
+	s.useChat()
+	writer := newWriter(s.log)
+	s.log.Reply("reissuing to another company is not possible")
+	for _, queued := range s.queued() {
+		writer.handle(queued)
+	}
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.NotContains(stored[0].Custom, turnField)
+}
+
 func (s *ChatLogSuite) TestALineSaidUnaskedIsReadBackWithWhatItWasFor() {
 	s.useChat()
 	s.log.Record(agent.Said{TurnID: "say-1", Text: "Hi there.", Purpose: agent.PurposeGreeting})

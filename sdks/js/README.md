@@ -257,6 +257,57 @@ point rather than an override.
 point rather than the main one. It hands `sync` the stamp to read and write, so `sync`
 itself touches no filesystem.
 
+## A reply as it is heard
+
+The Chat channel has the agent's reply as fast as the model writes it, seconds ahead of the
+voice. `session.speech` says how much of each reply has been heard on the call, so a page can
+show a message as it is said:
+
+```ts
+import type { LocalMessage } from "stream-chat";
+
+function shownText(message: LocalMessage, now = performance.now()) {
+  const text = message.text ?? "";
+  const heard = session.speech.heard(message, now);
+  // Characters are Unicode code points, as the session socket counts them.
+  return heard ? Array.from(text).slice(0, heard.chars).join("") : text;
+}
+
+session.speech.subscribe(() => requestAnimationFrame(render));
+```
+
+Every message the agent said carries the `turn_id` the session socket's `speaking`, `spoke`
+and `interrupted` name (on `message.turn_id` in stream-chat 9, `message.custom.turn_id` in
+10). `heard` takes the message and reads either, or the turn id itself, and with `now` is
+`{ chars, done }`: the code points heard so far, exact once the playing utterance's `spoke`
+has said how long it is and estimated from the voice's measured rate (about 15 a second until
+then), and `done` once the turn's last known utterance has played out or the caller talked
+over it. A cut freezes the turn at what the router says was heard of the utterance it cut
+(`heard_ms` on `interrupted`), or at the estimate when it does not say. An utterance reported
+before the track got to it, behind speech still queued, starts when that has played
+(`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another
+after a pause, so show a reply in full once `done` is true and its message is no longer
+`generating`.
+
+A reply's message usually arrives before its audio starts, and Chat can even be faster than the
+session socket. While the agent is on the call, a turn is `{ chars: 0, done: false }` until its
+`speaking` once it is known to be coming: its text has begun on the socket (`said`,
+`response_delta`, or a `responded` with words), or `heard` was asked about a message of the
+agent's (`source: "agent"` or `ai_generated`) that is still `generating`. It is let go of, and
+`undefined` from then on, once it turns out to say nothing (an empty `responded`, or a `turn`
+that published no audio) or when `SPEECH_GRACE_MS` (5 s) pass without a `speaking`; speech that
+comes later does not take it back, since the page has shown it in full. The agent leaving the
+call (`left`), `voice.stop()` and the session ending stop anything being held, so a reply in
+writing afterwards shows at once. A turn let go of, a message with no turn and a router too
+old to send `speaking` are all `undefined`: show those as they are. A reply cut off before any
+of it was heard stays at `{ chars: 0, done: true }`.
+
+`now` is on the clock of `performance.now()`, which `requestAnimationFrame` hands its callback
+too, and `heard` is cheap enough to call on every frame. `subscribe` is told whenever what
+`heard` says of a turn changes other than with the clock; `get` says where the voice last was.
+The store is fed from the frames the session reads, beside `events()` rather than through it,
+so it needs no loop and takes nothing from yours. It keeps the last 20 turns.
+
 ## Going back, and branching off
 
 ```ts

@@ -83,6 +83,15 @@ func (p *playout) finished(synthesisID string) []any {
 	}
 }
 
+// ahead is how many milliseconds of speech are queued at the edge ahead of the last ownMs
+// of it, zero for an edge with no queue to count.
+func (p *playout) ahead(ownMs float64) float64 {
+	if p.counter == nil {
+		return 0
+	}
+	return queuedAhead(p.read(), true, ownMs)
+}
+
 // read takes a reading. Its peak is the deepest since the last one, so it belongs to every
 // utterance open now.
 func (p *playout) read() PlayoutStats {

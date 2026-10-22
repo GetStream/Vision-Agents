@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -510,7 +511,7 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 	if request.Final {
 		s.emitter.Send(tts.SynthesisComplete{
 			SynthesisID:       request.ID,
-			Characters:        int64(len(request.Text)),
+			Characters:        int64(utf8.RuneCountInString(request.Text)),
 			AudioDurationMs:   10,
 			TimeToFirstByteMs: 5,
 		})

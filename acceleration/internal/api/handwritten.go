@@ -40,14 +40,19 @@ func documentHandWritten(api huma.API) {
 			"`response_delta`, `responded` (pending_work remains true while tools or delegated work " +
 			"are outstanding), `said` (a line the agent says as written rather than asking the model, " +
 			"such as its greeting, with the purpose it has), `speaking` (an utterance started being heard: " +
-			"turn_id, synthesis_id, the text the voice had been sent for it by then, and at, when the call's " +
-			"track took its first audible frame), `spoke` (an utterance finished being synthesised: turn_id, " +
-			"synthesis_id, characters, audio_duration_ms and time_to_first_byte_ms; it follows the " +
-			"utterance's `speaking`), `turn`, `decision`, `delegated`, `task_settled` (files " +
+			"turn_id, synthesis_id, the text the voice had been sent for it by then, at, when the call's " +
+			"track took its first audible frame, and delay_ms, for an utterance reported before the track " +
+			"got to it, how long after at it is expected to be heard, from the speech queued ahead of it), " +
+			"`spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode " +
+			"code points, as every character count on this socket is), " +
+			"audio_duration_ms and time_to_first_byte_ms; it follows the utterance's `speaking`), `turn`, " +
+			"`decision`, `delegated`, `task_settled` (files " +
 			"lists what the work's code handed back, each a name, mime_type, url and size, uploaded " +
 			"to a persistent conversation's channel and attached to the reply), " +
 			"`task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
-			"`backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, " +
+			"`backchannel`, `interrupted` (turn_id; with synthesis_id and heard_ms, the utterance being " +
+			"heard when it was cut and how many milliseconds of it had been, when any of it had), " +
+			"`overlap_decided`, `conversation_compacted`, " +
 			"`models_changed`, `error` and `left`.\n" +
 			"`connector_unavailable` names an optional connector binding the session opened " +
 			"without: name (its alias), connector_id and reason, one of no_selection, " +
