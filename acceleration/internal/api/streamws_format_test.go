@@ -3,32 +3,48 @@ package api
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
-func TestRespondFormat(t *testing.T) {
-	tests := []struct {
-		name  string
-		frame string
-		held  string
-		want  llm.TextFormat
-	}{
-		{"json_object frame", "json_object", "", llm.FormatJSONObject},
-		{"json_object held", "", "json_object", llm.FormatJSONObject},
-		{"json_schema frame is prose", "json_schema", "", llm.FormatText},
-		{"json_schema held is prose", "", "json_schema", llm.FormatText},
-		{"frame wins over held json_schema", "json_object", "json_schema", llm.FormatJSONObject},
-		{"nothing named", "", "", ""},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			params, err := respond{Format: test.frame}.params(options.LLM{Format: test.held})
-			require.NoError(t, err)
-			require.Equal(t, test.want, params.Text.Format)
-			require.Nil(t, params.Text.Schema)
-		})
-	}
+type RespondFormatSuite struct {
+	suite.Suite
+}
+
+func TestRespondFormatSuite(t *testing.T) {
+	suite.Run(t, new(RespondFormatSuite))
+}
+
+// format is the text format respond.params resolves from a frame's format and the held one.
+func (s *RespondFormatSuite) format(frame, held string) llm.TextFormat {
+	params, err := respond{Format: frame}.params(options.LLM{Format: held})
+	s.Require().NoError(err)
+	s.Nil(params.Text.Schema)
+	return params.Text.Format
+}
+
+func (s *RespondFormatSuite) TestAFrameNamingJSONObjectAsksForJSONObject() {
+	s.Equal(llm.FormatJSONObject, s.format("json_object", ""))
+}
+
+func (s *RespondFormatSuite) TestAHeldJSONObjectAsksForJSONObject() {
+	s.Equal(llm.FormatJSONObject, s.format("", "json_object"))
+}
+
+func (s *RespondFormatSuite) TestAFrameNamingJSONSchemaAsksForProse() {
+	s.Equal(llm.FormatText, s.format("json_schema", ""))
+}
+
+func (s *RespondFormatSuite) TestAHeldJSONSchemaAsksForProse() {
+	s.Equal(llm.FormatText, s.format("", "json_schema"))
+}
+
+func (s *RespondFormatSuite) TestTheFrameFormatBeatsAHeldJSONSchema() {
+	s.Equal(llm.FormatJSONObject, s.format("json_object", "json_schema"))
+}
+
+func (s *RespondFormatSuite) TestNoFormatNamedLeavesItUnset() {
+	s.Equal(llm.TextFormat(""), s.format("", ""))
 }
