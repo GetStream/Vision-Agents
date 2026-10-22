@@ -1025,6 +1025,80 @@ func TestSyncSendsRequiredFalse(t *testing.T) {
 	}
 }
 
+func TestSyncSendsSandboxOnEachBindingThatSetsIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: true\n"+
+		"  - name: code\n    connector: github\n    connection: company\n    sandbox: true\n  - linear\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("conn-1", "company"))
+	})
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 3 {
+		t.Fatalf("connectors went as %+v", sent)
+	}
+	github, code, linear := (*sent)[0], (*sent)[1], (*sent)[2]
+	if github.Sandbox == nil || !*github.Sandbox || github.Connection.Type != acceleration.AgentConnectorSelectionTypeSession {
+		t.Errorf("github went as %+v", github)
+	}
+	if code.Sandbox == nil || !*code.Sandbox || code.Connection.ConnectionId == nil || *code.Connection.ConnectionId != "conn-1" {
+		t.Errorf("code went as %+v", code)
+	}
+	if linear.Sandbox != nil {
+		t.Errorf("linear went with sandbox %v", *linear.Sandbox)
+	}
+	if strings.Count(string(router.syncRaw[0]), `"sandbox":true`) != 2 {
+		t.Errorf("body = %s", router.syncRaw[0])
+	}
+}
+
+// sandboxlessYAML is a connector entry with no sandbox key. Its sync body was probed on
+// e5d6d8057, before agent.yaml read sandbox on a connector.
+const sandboxlessYAML = "name: concierge\nconnectors:\n  - name: github\n    required: true\n"
+
+func TestSyncOfAConnectorWithoutSandboxSendsTheBodyItSentBefore(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", sandboxlessYAML)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	const probed = `{"connectors":[{"connection":{"type":"session"},"connector_id":"github","name":"github","required":true,"tool_patterns":["*"],"tools":[]}],"hash":"aeda4c2bbe3be818d7c79f48ee9ab0b8","name":"concierge"}`
+	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
+		t.Errorf("body = %s", router.syncRaw)
+	}
+}
+
+func TestSyncSendsNoSandboxKeyForSandboxFalse(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: false\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncRaw) != 1 || strings.Contains(string(router.syncRaw[0]), `"sandbox"`) {
+		t.Errorf("body = %s", router.syncRaw)
+	}
+}
+
 func TestSyncOfAnEmptyConnectorListClearsThem(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors: []\n")

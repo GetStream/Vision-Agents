@@ -433,6 +433,9 @@ func connectorBinding(ctx context.Context, client *acceleration.ClientWithRespon
 		Required:     entry.Required,
 		Connection:   acceleration.AgentConnectorSelection{Type: acceleration.AgentConnectorSelectionTypeSession},
 	}
+	if entry.Sandbox {
+		binding.Sandbox = &entry.Sandbox
+	}
 	if entry.Connection == nil {
 		return binding, nil
 	}
