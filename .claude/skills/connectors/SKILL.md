@@ -200,7 +200,11 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   staging E2E, 2026-10-22, session `01a16514-923c-7843-9214-40a94453f194`: `git ls-remote` of a public repo with
   `Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)` exited 0, with a fake placeholder it
   got 502). Daytona's docs say it does not («Transformed placeholders»); the live result wins.
-- Git over HTTPS works under both brokers: `git clone https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git`.
+- Git over HTTPS under both brokers: `run_code` tells the model `git clone https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git`.
+  Shown live under Daytona: `git ls-remote` of a public repo with `x-access-token:<placeholder>` as Basic
+  auth (see above). `unverified` under Daytona: `git clone` (upload-pack POST), `git push`
+  (receive-pack), a private repo, a user name other than `x-access-token`. The proxy broker's
+  tests cover its push (`brokertest` A15).
   GitHub refuses the token as `Authorization: Bearer` from git (401 to `git-receive-pack`, probe
   2026-10-22T03:53:09Z; Basic `x-access-token:<token>` was taken), so `run_code`'s description
   gives git the URL form. GitHub revision 7 grants github.com (AI-1576); a connection on
