@@ -65,6 +65,8 @@ func New(options Options) (*openaicompat.LLM, error) {
 		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
 			return map[string]any{"reasoning_effort": effort}
 		},
-		Logger: options.Logger,
+		// xAI reads a cached prefix back only for a request that names its cache key.
+		CacheKeyField: "prompt_cache_key",
+		Logger:        options.Logger,
 	})
 }

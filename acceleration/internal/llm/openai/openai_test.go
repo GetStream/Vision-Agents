@@ -161,6 +161,44 @@ func (s *OpenAISuite) TestAToolResultImageGoesInFunctionCallOutput() {
 	s.Contains(string(raw), "2 roses")
 }
 
+// TestAnExplicitBreakpointIsSent: in explicit mode OpenAI caches only at the breakpoints a
+// request names, so instructions sent without one are never written to the cache.
+func (s *OpenAISuite) TestAnExplicitBreakpointIsSent() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{
+		Instructions:       "Be brief.",
+		Input:              []llm.Message{{Role: llm.User, Content: "hi"}},
+		PromptCacheOptions: llm.PromptCacheOptions{Mode: llm.CacheExplicit},
+	})
+	s.Require().Len(items, 2)
+
+	var sent struct {
+		Content []map[string]any `json:"content"`
+	}
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+	s.Require().Len(sent.Content, 1)
+	s.Equal("Be brief.", sent.Content[0]["text"])
+	s.Equal(map[string]any{"mode": "explicit"}, sent.Content[0]["prompt_cache_breakpoint"])
+}
+
+func (s *OpenAISuite) TestImplicitCachingSendsNoBreakpoint() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{
+		Instructions: "Be brief.",
+		Input:        []llm.Message{{Role: llm.User, Content: "hi"}},
+	})
+
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "prompt_cache_breakpoint")
+}
+
 // sendMessage is Slack's MCP slack_send_message input schema as its server listed it on
 // 2026-10-08: two required properties and four optional ones (AI-969).
 var sendMessage = llm.Tool{

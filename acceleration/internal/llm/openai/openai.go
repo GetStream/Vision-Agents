@@ -523,7 +523,9 @@ func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
 func (l *LLM) instructions(request llm.ResponseParams) responses.ResponseInputItemUnionParam {
 	text := responses.ResponseInputTextParam{Text: request.Instructions}
 	if request.PromptCacheOptions.Mode == llm.CacheExplicit {
-		text.PromptCacheBreakpoint = responses.ResponseInputTextPromptCacheBreakpointParam{}
+		// The constructor sets mode; the zero value is dropped by the field's omitzero tag,
+		// and an explicit-mode request with no breakpoint caches nothing.
+		text.PromptCacheBreakpoint = responses.NewResponseInputTextPromptCacheBreakpointParam()
 	}
 	return responses.ResponseInputItemParamOfInputMessage(
 		responses.ResponseInputMessageContentListParam{{OfInputText: &text}},

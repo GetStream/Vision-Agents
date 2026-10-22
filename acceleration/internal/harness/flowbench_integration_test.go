@@ -36,7 +36,7 @@ import (
 const benchmarkEnvVar = "FLOW_BENCHMARK"
 
 // modelsEnvVar names the router targets to compare, comma separated: an alias such as
-// llm-flow, a provider and model such as cerebras/gemma-4-31b, all for every LLM the router is
+// llm-flow, a provider and model such as gemma/gemma-4-26B-A4B-it, all for every LLM the router is
 // configured with, or none to run only the Jev arms. Each is asked the production prompt and read with the
 // production parser.
 const modelsEnvVar = "FLOW_BENCHMARK_MODELS"

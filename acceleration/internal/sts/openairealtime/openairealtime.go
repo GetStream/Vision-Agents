@@ -318,6 +318,9 @@ type serverEvent struct {
 	Response   *response   `json:"response"`
 	Item       *serverItem `json:"item"`
 	Error      *apiError   `json:"error"`
+	// Usage is where xAI reports what a reply cost: on response.done beside the response,
+	// whose own usage it leaves empty.
+	Usage *usage `json:"usage"`
 }
 
 type response struct {
@@ -513,6 +516,7 @@ func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
 			Endpointing:            true,
 			InstructionsMidSession: true,
 			ToolsMidSession:        true,
+			Usage:                  true,
 		}
 	case DialectQwen:
 		// Qwen's realtime models take neither a typed turn nor a tool, and a session is
@@ -1248,14 +1252,18 @@ func (s *STS) finishTurn(event serverEvent) {
 	var status, reason string
 	var cost sts.Usage
 	var failure *apiError
+	reported := event.Usage
 	if event.Response != nil {
 		status = event.Response.Status
-		cost = usageOf(event.Response.Usage)
+		if event.Response.Usage != nil && *event.Response.Usage != (usage{}) {
+			reported = event.Response.Usage
+		}
 		if event.Response.StatusDetails != nil {
 			reason = event.Response.StatusDetails.Reason
 			failure = event.Response.StatusDetails.Error
 		}
 	}
+	cost = usageOf(reported)
 
 	if status == "failed" {
 		err := error(failure)

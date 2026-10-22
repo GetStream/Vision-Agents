@@ -1,6 +1,7 @@
 package openairealtime
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"log/slog"
@@ -362,6 +363,51 @@ func (s *RealtimeSuite) TestTheFramesXAISendsDecodeDespiteTheirStringDetails() {
 	s.False(complete.Interrupted)
 	s.Equal(int64(3), complete.Usage.InputTokens)
 	s.Equal("turn_detected", detailed.Response.StatusDetails.Reason, "the object form still reads")
+}
+
+// xaiResponseDone is the response.done xAI sent for a typed turn answered in speech.
+//
+//go:embed testdata/xai_response_done.json
+var xaiResponseDone []byte
+
+// settled is the usage of the one reply the provider has settled so far.
+func (s *RealtimeSuite) settled(provider *STS) sts.Usage {
+	var completes []sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if complete, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1)
+	return completes[0].Usage
+}
+
+// TestXAIUsageIsReadFromTheTopOfResponseDone: xAI leaves response.usage empty and reports
+// what the reply cost beside it, at the top of the event.
+func (s *RealtimeSuite) TestXAIUsageIsReadFromTheTopOfResponseDone() {
+	provider := s.newProvider(XAI)
+	s.True(provider.Capabilities().Usage)
+
+	var finished serverEvent
+	s.Require().NoError(json.Unmarshal(xaiResponseDone, &finished))
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(finished)
+
+	s.Equal(sts.Usage{InputTokens: 7, OutputTokens: 119, OutputAudioTokens: 112}, s.settled(provider))
+}
+
+func (s *RealtimeSuite) TestOpenAIUsageIsStillReadFromTheResponse() {
+	provider := s.newProvider(OpenAI)
+
+	var finished serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(`{"type":"response.done","response":{"id":"resp_1","status":"completed",`+
+		`"usage":{"input_tokens":12,"output_tokens":30,"input_token_details":{"cached_tokens":4,"audio_tokens":8},`+
+		`"output_token_details":{"audio_tokens":24}}}}`), &finished))
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(finished)
+
+	s.Equal(sts.Usage{InputTokens: 12, CachedInputTokens: 4, OutputTokens: 30, InputAudioTokens: 8, OutputAudioTokens: 24},
+		s.settled(provider))
 }
 
 func (s *RealtimeSuite) TestACancelThatFoundNothingIsNotAnError() {

@@ -29,8 +29,9 @@ type OpenAICompatSuite struct {
 	// mu guards requests, because a test with two completions in flight is served by two
 	// goroutines at once.
 	mu sync.Mutex
-	// requests records the decoded bodies the provider sent.
+	// requests records the decoded bodies the provider sent, and headers their headers.
 	requests []map[string]any
+	headers  []http.Header
 	// hold blocks the response until closed, for tests about cancellation.
 	hold chan struct{}
 	// status replaces 200 when non-zero.
@@ -50,6 +51,7 @@ func TestOpenAICompatSuite(t *testing.T) {
 func (s *OpenAICompatSuite) SetupTest() {
 	s.frames = nil
 	s.requests = nil
+	s.headers = nil
 	s.hold = nil
 	s.status = 0
 	s.errorBody = ""
@@ -65,6 +67,7 @@ func (s *OpenAICompatSuite) SetupTest() {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		s.mu.Lock()
 		s.requests = append(s.requests, body)
+		s.headers = append(s.headers, r.Header.Clone())
 		s.keys = append(s.keys, key)
 		s.mu.Unlock()
 
@@ -863,6 +866,30 @@ func (s *OpenAICompatSuite) TestChatCompletionsCannotStoreOrCacheByKey() {
 	s.False(model.Store)
 	s.False(model.PromptCacheKey)
 	s.False(model.Conversations)
+}
+
+// TestTheCacheKeyIsSentWhereTheProviderWantsIt: chat completions has no field for a cache
+// key, so a provider that caches or routes by one says where it goes, a body field or a
+// header, and the key is sent there and nowhere else.
+func (s *OpenAICompatSuite) TestTheCacheKeyIsSentWhereTheProviderWantsIt() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	request := hello()
+	request.PromptCacheKey = "conversation-42"
+
+	inBody := s.provider(Options{CacheKeyField: "prompt_cache_key"})
+	s.True(inBody.Capabilities().PromptCacheKey)
+	s.ask(inBody, request)
+	s.Equal("conversation-42", s.requests[0]["prompt_cache_key"])
+	s.Empty(s.headers[0].Get("X-Session-Affinity"))
+
+	inHeader := s.provider(Options{CacheKeyHeader: "x-session-affinity"})
+	s.True(inHeader.Capabilities().PromptCacheKey)
+	s.ask(inHeader, request)
+	s.Equal("conversation-42", s.headers[1].Get("X-Session-Affinity"))
+	s.NotContains(s.requests[1], "prompt_cache_key")
+
+	s.ask(inHeader, hello())
+	s.Empty(s.headers[2].Values("X-Session-Affinity"), "a request with no key sends no header")
 }
 
 func (s *OpenAICompatSuite) TestMaxTokensAndTemperatureAreOnlySentWhenAsked() {
