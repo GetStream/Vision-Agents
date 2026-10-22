@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrChangesExpired says the cursor a caller is resuming from is older than anything
@@ -466,6 +468,11 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	if err != nil {
 		return err
 	}
+	if table == "phone_numbers" {
+		if err := importableNumber(ctx, db, customerID, row); err != nil {
+			return err
+		}
+	}
 	shape, err := s.shapeOf(ctx, table)
 	if err != nil {
 		return err
@@ -516,6 +523,49 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	return nil
 }
 
+// importableNumber refuses an imported number the customer would hold in a form other than
+// E.164, or that another customer holds. Every bought number is held in the deployment's one
+// account at its vendor, and releasing it there is what holding it here allows, so a number
+// two customers held would be one either of them could give back. The unique index on what
+// is held compares the text as written, so it sees neither another form of a number nor the
+// same number at another vendor. A number given back is only its bill's history and imports
+// as written; one on the customer's own trunk is in no account here.
+//
+// Two imports of one number into two customers at the same moment can both pass this.
+func importableNumber(ctx context.Context, db bun.IDB, customerID string, row json.RawMessage) error {
+	var number struct {
+		E164       string          `json:"e164"`
+		Vendor     string          `json:"vendor"`
+		ReleasedAt json.RawMessage `json:"released_at"`
+	}
+	if err := json.Unmarshal(row, &number); err != nil {
+		return fmt.Errorf("store: read an imported number: %w", err)
+	}
+	if len(number.ReleasedAt) > 0 && string(number.ReleasedAt) != "null" {
+		return nil
+	}
+	if !IsE164(number.E164) {
+		return stack.Wrap(fmt.Errorf("%w: %q", ErrNotE164, number.E164))
+	}
+	if number.Vendor == "sip_trunk" {
+		return nil
+	}
+	// Compared by its digits too, so a number held in another form before every write
+	// checked the form is found as well.
+	var held bool
+	if err := db.QueryRowContext(ctx, `
+SELECT EXISTS (SELECT 1 FROM phone_numbers
+WHERE customer_id <> ? AND released_at IS NULL AND vendor <> 'sip_trunk'
+  AND regexp_replace(e164, '[^0-9]', '', 'g') = ?)`,
+		customerID, strings.TrimPrefix(number.E164, "+")).Scan(&held); err != nil {
+		return fmt.Errorf("store: who holds an imported number: %w", err)
+	}
+	if held {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNumberHeldElsewhere, number.E164))
+	}
+	return nil
+}
+
 // identity is what the importing deployment overwrites on every row of this table, which
 // is whose it is. A table holding more than one kind of row has the kind forced too, so
 // an app-scope policy cannot be imported as its organization's.
@@ -542,9 +592,14 @@ func (t dataTable) identity() string {
 		return "jsonb_build_object('customer_id', ?::text, 'password_kek_version', 0)"
 	}
 	// An attached number arrives without its bridge password for the same reason, so its key
-	// version stays behind too rather than describing a password that is not there.
+	// version stays behind too rather than describing a password that is not there. Nor does
+	// where its calls go: the trunk, route and call it was attached to are named by whatever
+	// the importer wrote, and a hook that finds one call under two customers' numbers answers
+	// it for neither (ErrAmbiguousHook). It arrives needing to be attached again.
 	if t.name == "phone_numbers" {
-		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL)"
+		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL," +
+			" 'stream_trunk_id', NULL, 'stream_route_id', NULL, 'stream_call_id', NULL," +
+			" 'stream_call_type', NULL, 'bridge_uri', NULL, 'bridge_username', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

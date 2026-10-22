@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -29,6 +30,22 @@ var ErrSIPTrunkInUse = errors.New("store: the sip trunk still has numbers on it"
 
 // ErrNumberHeld says the customer already holds the number, bought or on a trunk.
 var ErrNumberHeld = errors.New("store: the customer already holds this number")
+
+// ErrNumberHeldElsewhere says another customer holds the number, at any vendor.
+var ErrNumberHeldElsewhere = errors.New("store: the number is held by another app")
+
+// ErrNotE164 says a number is not written in E.164 form, the only form a number is held in.
+var ErrNotE164 = errors.New("store: a number is held in E.164 form, such as +15551234567")
+
+// e164Pattern is E.164 as numbers are held here: a plus, a country code that does not start
+// with 0, and 7 to 15 digits (ITU-T E.164 caps a number at 15). One number has exactly one
+// form, because vendors drop what they do not need from it: Plivo, DIDWW and Vonage the
+// plus, Bandwidth the plus and a leading 1. Held in two forms it would be two numbers here
+// and one at the vendor.
+var e164Pattern = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
+
+// IsE164 reports whether a number is written in the one form a number is held in.
+func IsE164(number string) bool { return e164Pattern.MatchString(number) }
 
 // ErrNoNumber is what Number's error matches when the customer holds no such number, as
 // opposed to the lookup failing.
