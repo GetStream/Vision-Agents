@@ -7,6 +7,7 @@ class AuditResourceType(StrEnum):
     KNOWLEDGE_URL = "knowledge_url"
     PLUGIN = "plugin"
     POLICY = "policy"
+    PRICE_LIST = "price_list"
     ROUTER_CONFIG = "router_config"
     SKILL = "skill"
 

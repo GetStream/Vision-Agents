@@ -44,6 +44,14 @@ var securitySchemes = map[string]*huma.SecurityScheme{
 		Description: "Stream staff's own key, for reviewing 10DLC use cases across apps. It is " +
 			"held by Stream's internal tools and never by an app or a browser.",
 	},
+	"ManageKey": {
+		Type: "apiKey",
+		In:   "header",
+		Name: manageKeyHeader,
+		Description: "Stream staff's billing key, for price lists. Held by Stream's proxy, which " +
+			"adds it to a staff member's call, or by a self-hosted router's operator, and never " +
+			"by an app or a browser. A deployment without one serves no management operation.",
+	},
 	"CustomerId": {
 		Type: "apiKey",
 		In:   "header",
@@ -276,7 +284,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
-	api.UseMiddleware(s.requireOpsKey(api))
+	api.UseMiddleware(s.requireStaffKey(api))
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
@@ -328,6 +336,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerChannels(api)
 	s.registerDLC(api)
 	s.registerSuspensions(api)
+	s.registerManage(api)
 	return api
 }
 
@@ -336,7 +345,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 // An operation declaring no security at all is reached before there is a caller to ask for.
 func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		// A staff operation is answered for no customer: requireOpsKey let it through.
+		// A staff operation is answered for no customer: requireStaffKey let it through.
 		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0 || staffOperation(ctx.Operation())
 		if _, known := CustomerFrom(ctx.Context()); !known && !public {
 			writeOperationError(ctx, errMissingCustomer)

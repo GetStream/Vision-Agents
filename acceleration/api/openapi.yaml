@@ -962,7 +962,7 @@ components:
           type: integer
       type: object
     AuditResourceType:
-      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.'
+      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app.'
       enum:
         - agent_config
         - skill
@@ -971,14 +971,16 @@ components:
         - router_config
         - plugin
         - policy
+        - price_list
       type: string
     AuditSource:
-      description: 'Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.'
+      description: 'Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.'
       enum:
         - dashboard
         - cli
         - sdk
         - api
+        - manage
       type: string
     Authorization:
       description: 'A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.'
@@ -4521,6 +4523,18 @@ components:
             - medium
             - high
           type: string
+      type: object
+    ManageStatus:
+      description: 'Who a management call is recorded as made by: the actor and the name the call named, as the audit log keeps them.'
+      properties:
+        actor:
+          description: The X-Stream-Actor-Id the call named.
+          type: string
+        name:
+          description: The X-Stream-Actor-Name it named, decoded from percent-encoding. Absent when it named none.
+          type: string
+      required:
+        - actor
       type: object
     McpServer:
       description: An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
@@ -8860,6 +8874,11 @@ components:
       description: The customer, taken at face value. Read in noauth mode, where there is nothing else to go on, and in proxy mode, where something in front has already decided who the caller is. X-Stream-App-Id and X-Stream-Organization-Id say the same thing with the organization around it. It is ignored entirely in api_key mode, where the key decides and a header would only be a way around it.
       in: header
       name: X-Customer-Id
+      type: apiKey
+    ManageKey:
+      description: Stream staff's billing key, for price lists. Held by Stream's proxy, which adds it to a staff member's call, or by a self-hosted router's operator, and never by an app or a browser. A deployment without one serves no management operation.
+      in: header
+      name: X-Manage-Key
       type: apiKey
     OpsKey:
       description: Stream staff's own key, for reviewing 10DLC use cases across apps. It is held by Stream's internal tools and never by an app or a browser.
@@ -15323,6 +15342,35 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Draw pictures from a prompt, and return them
+  /v1/manage/status:
+    get:
+      description: |-
+        Answers who the call is from, as `X-Stream-Actor-Id` and `X-Stream-Actor-Name` name them, and changes nothing. It is how a deployment, or the proxy in front of it, checks that the manage key and the actor reach the router.
+
+        Every management call names its actor in `X-Stream-Actor-Id`, 1 to 256 characters of UTF-8 with no control character, or is refused with a 400. `X-Stream-Actor-Name` is optional; a name that is not printable ASCII, or holds a `%`, is sent percent-encoded as UTF-8. On a deployment with no manage key every management operation answers 404 `not_configured`.
+
+        Stream staff only: it needs the manage key.
+      operationId: getManageStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManageStatus'
+          description: Who the call is from
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Check a management call gets through
+      tags:
+        - Staff
   /v1/ops/customers/{customer_id}/connectors/{id}/provider-app:
     delete:
       description: |-
@@ -15365,6 +15413,8 @@ paths:
       security:
         - OpsKey: []
       summary: Stop Stream's own app being a customer's provider app
+      tags:
+        - Staff
     put:
       description: |-
         Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
@@ -15424,6 +15474,8 @@ paths:
       security:
         - OpsKey: []
       summary: Make Stream's own app a customer's provider app
+      tags:
+        - Staff
   /v1/ops/customers/{customer_id}/telephony-suspension:
     delete:
       description: |-
@@ -15453,6 +15505,8 @@ paths:
       security:
         - OpsKey: []
       summary: Lift an app's telephony suspension
+      tags:
+        - Staff
     get:
       description: |-
         The suspension an app is under, or 404 when it is not suspended.
@@ -15485,6 +15539,8 @@ paths:
       security:
         - OpsKey: []
       summary: Get why an app's telephony is suspended
+      tags:
+        - Staff
     put:
       description: |-
         Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
@@ -15522,6 +15578,8 @@ paths:
       security:
         - OpsKey: []
       summary: Suspend an app's telephony
+      tags:
+        - Staff
   /v1/ops/use-cases:
     get:
       description: |-
@@ -15578,6 +15636,8 @@ paths:
       security:
         - OpsKey: []
       summary: List use cases waiting on Stream
+      tags:
+        - Staff
   /v1/ops/use-cases/{id}:
     get:
       description: |-
@@ -15615,6 +15675,8 @@ paths:
       security:
         - OpsKey: []
       summary: Get a use case to review
+      tags:
+        - Staff
   /v1/ops/use-cases/{id}/review:
     post:
       description: |-
@@ -15657,6 +15719,8 @@ paths:
       security:
         - OpsKey: []
       summary: Review a submitted use case
+      tags:
+        - Staff
   /v1/phone/business-profile:
     get:
       description: |-

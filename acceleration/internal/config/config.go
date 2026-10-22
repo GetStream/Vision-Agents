@@ -188,6 +188,11 @@ type Auth struct {
 	// OpsKey is what Stream's own staff tools send as X-Ops-Key to review use cases. Empty
 	// turns those endpoints off. It is never handed to a browser.
 	OpsKey string `koanf:"ops_key"`
+	// ManageKey is what Stream's proxy adds as X-Manage-Key to a staff member's call, and
+	// what a self-hosted operator sends, to read and change price lists and set customers'
+	// limits. Empty turns those endpoints off. It decides what customers pay, so it is never
+	// the ops key.
+	ManageKey string `koanf:"manage_key"`
 }
 
 // RateLimit caps what one of a customer's end users may spend in a day, for a customer
@@ -404,6 +409,7 @@ var variables = map[string]string{
 	"auth.mode":            "ROUTER_AUTH_MODE",
 	"auth.kek":             "ROUTER_AUTH_KEK",
 	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
+	"auth.manage_key":      "ROUTER_AUTH_MANAGE_KEY",
 	"data_move.retention":  "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":       "STREAM_API_KEY",
 	"stream.api_secret":    "STREAM_API_SECRET",
@@ -653,6 +659,10 @@ func (c Config) validate() error {
 	if c.Agent.FlowHedge < 0 {
 		return fmt.Errorf("config: agent.flow_hedge cannot be negative, got %s", c.Agent.FlowHedge)
 	}
+	if c.Auth.ManageKey != "" && c.Auth.ManageKey == c.Auth.OpsKey {
+		return errors.New("config: auth.manage_key (ROUTER_AUTH_MANAGE_KEY) is the same as auth.ops_key " +
+			"(ROUTER_AUTH_OPS_KEY): give the management API a key of its own")
+	}
 	return c.validateShard()
 }
 
@@ -764,6 +774,7 @@ func (c Config) export() error {
 		"auth.mode":                     c.Auth.Mode,
 		"auth.kek":                      c.Auth.KEK,
 		"auth.ops_key":                  c.Auth.OpsKey,
+		"auth.manage_key":               c.Auth.ManageKey,
 		"auth.proxy_declares_kind":      fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":                c.Stream.APIKey,
 		"stream.api_secret":             c.Stream.APISecret,
