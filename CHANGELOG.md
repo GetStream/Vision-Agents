@@ -650,7 +650,7 @@ its transcript so far. An edge with no track of its own reports it once publishi
 chunk returns. `spoke` now carries the same `synthesis_id` and the `characters` synthesised
 (for a speech-to-speech model, its transcript's), and always comes after the utterance's
 `speaking`. An utterance the caller talks over is still reported `speaking` if any of it was
-heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged (#TBD).
+heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged (#1128).
 
 ### An agent config sets the guide its calls are reviewed by
 
