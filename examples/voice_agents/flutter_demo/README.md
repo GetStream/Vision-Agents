@@ -47,6 +47,10 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   - What the agent is working on before it answers shows as `AITypingIndicatorView`.
   - `ChatComposer` asks, dictates and stops a reply, and `AISuggestionsView` starts a
     conversation.
+- The app is drawn in Stream's design system (`stream_core_flutter`, which
+  `stream_chat_flutter_ai` is built on and re-exports): `StreamTheme` in light and dark,
+  `StreamAppBar`, `StreamBottomNavBar`, `StreamButton`, the sheet `showStreamSheet` opens with
+  its `StreamSheetHeader`, and `StreamIcons`.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
   the same user, with the token `backend` signed.
   - The agent is Stream's voice glow (`AIVoiceGlowView`). It moves with the agent's voice in

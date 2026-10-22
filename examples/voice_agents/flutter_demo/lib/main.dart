@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 
 import 'chat_view.dart';
 import 'demo.dart';
@@ -11,12 +12,22 @@ class FlutterDemoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Stream's blue, which the voice glow and the composer take as the accent.
-    const seed = Color(0xFF005FFF);
+    // Stream's design system, which Stream's AI components are built on: its colors, text
+    // styles and icons, in light and dark.
+    final light = StreamTheme.light();
+    final dark = StreamTheme.dark();
     return MaterialApp(
       title: 'Larkspur support',
-      theme: ThemeData(colorSchemeSeed: seed),
-      darkTheme: ThemeData(colorSchemeSeed: seed, brightness: Brightness.dark),
+      theme: ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: light.colorScheme.backgroundApp,
+        extensions: [light],
+      ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: dark.colorScheme.backgroundApp,
+        extensions: [dark],
+      ),
       home: const HomePage(),
     );
   }
@@ -38,9 +49,10 @@ class _HomePageState extends State<HomePage> {
   var _tab = 0;
   var _voiceStyle = VoiceStyle.orb;
 
-  void _pickStyle() => showModalBottomSheet<void>(
+  void _pickStyle() => showStreamSheet<void>(
     context: context,
-    builder: (context) => VoiceStyleSheet(
+    isDismissible: true,
+    builder: (context, _) => VoiceStyleSheet(
       style: _voiceStyle,
       onChanged: (style) {
         setState(() => _voiceStyle = style);
@@ -65,16 +77,17 @@ class _HomePageState extends State<HomePage> {
       );
     }
     return Scaffold(
-      appBar: AppBar(
+      appBar: StreamAppBar(
         title: const Text('Larkspur support'),
-        actions: [
-          if (_tab == 1)
-            IconButton(
-              tooltip: 'Voice style',
-              onPressed: _pickStyle,
-              icon: const Icon(Icons.tune),
-            ),
-        ],
+        trailing: _tab == 1
+            ? StreamButton.icon(
+                style: .secondary,
+                type: .ghost,
+                tooltip: 'Voice style',
+                onPressed: _pickStyle,
+                icon: Icon(context.streamIcons.slidersFill),
+              )
+            : null,
       ),
       // Both tabs stay alive, so a call carries on while the Chat tab is shown.
       body: IndexedStack(
@@ -85,15 +98,20 @@ class _HomePageState extends State<HomePage> {
           VoiceView(style: _voiceStyle),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (tab) => setState(() => _tab = tab),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline),
+      bottomNavigationBar: StreamBottomNavBar(
+        currentIndex: _tab,
+        onTap: (tab) => setState(() => _tab = tab),
+        items: [
+          StreamBottomNavBarItem(
+            icon: Icon(context.streamIcons.messageBubble),
+            selectedIcon: Icon(context.streamIcons.messageBubbleFill),
             label: 'Chat',
           ),
-          NavigationDestination(icon: Icon(Icons.graphic_eq), label: 'Voice'),
+          StreamBottomNavBarItem(
+            icon: Icon(context.streamIcons.voice),
+            selectedIcon: Icon(context.streamIcons.voiceFill),
+            label: 'Voice',
+          ),
         ],
       ),
     );

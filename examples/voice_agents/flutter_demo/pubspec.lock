@@ -65,6 +65,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.4.1"
+  cached_network_image_ce:
+    dependency: transitive
+    description:
+      name: cached_network_image_ce
+      sha256: "8bc77b763c571dc3736cf00f011619315d06b917ae986a0a8191813e70c014b2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.13.1"
   cached_network_image_platform_interface:
     dependency: transitive
     description:
@@ -73,6 +81,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.1"
+  cached_network_image_platform_interface_ce:
+    dependency: transitive
+    description:
+      name: cached_network_image_platform_interface_ce
+      sha256: "95343645becaeac01dd6eeb9f3a85448b6076d211010ff1973e8bbfd840b571d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.2.0"
   cached_network_image_web:
     dependency: transitive
     description:
@@ -81,6 +97,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.3.1"
+  cached_network_image_web_ce:
+    dependency: transitive
+    description:
+      name: cached_network_image_web_ce
+      sha256: "22cdf044cd013ff8d6eb06ce148bfe3f1106388ca2af244e2358739debb4459c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.2"
   characters:
     dependency: transitive
     description:
@@ -347,6 +371,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.35"
+  flutter_svg:
+    dependency: transitive
+    description:
+      name: flutter_svg
+      sha256: "35882981abcbfb8c15b286f0cd690ff25bac12d95eff3e25ee207f37d4c42e7f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.3.0"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -373,6 +405,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0"
+  hive_ce:
+    dependency: transitive
+    description:
+      name: hive_ce
+      sha256: "8b6eea82b06a7e2bb298a6a279139c45838b82491a66f3972bf609d48681392a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.22.0"
   hooks:
     dependency: transitive
     description:
@@ -477,6 +517,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.20.3"
+  isolate_channel:
+    dependency: transitive
+    description:
+      name: isolate_channel
+      sha256: a9d3d620695bc984244dafae00b95e4319d6974b2d77f4b9e1eb4f2efe099094
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.6.1"
   jni:
     dependency: transitive
     description:
@@ -661,6 +709,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.9.1"
+  path_parsing:
+    dependency: transitive
+    description:
+      name: path_parsing
+      sha256: "883402936929eac138ee0a45da5b0f2c80f89913e6dc3bf77eb65b84b409c6ca"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
   path_provider:
     dependency: transitive
     description:
@@ -861,6 +917,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.3.2"
+  shimmer:
+    dependency: transitive
+    description:
+      name: shimmer
+      sha256: "5f88c883a22e9f9f299e5ba0e4f7e6054857224976a5d9f839d4ebdc94a14ac9"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.0.0"
   sky_engine:
     dependency: transitive
     description: flutter
@@ -974,11 +1038,19 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/stream_chat_flutter_ai"
-      ref: "renefloor/flu-1043-aivoiceglowview-and-aivoicewaveview-show-what-a-voice-agent"
-      resolved-ref: "827b1778712c613d0eec9ac4775ae7fed45bad4e"
+      ref: "renefloor/flu-1028-build-stream_chat_flutter_ai-on-stream_core_flutter-theme"
+      resolved-ref: "225235a7adc5361f863ae819f18a5c55fdff59d8"
       url: "https://github.com/GetStream/stream-chat-flutter-ai.git"
     source: git
     version: "0.1.0"
+  stream_core_flutter:
+    dependency: transitive
+    description:
+      name: stream_core_flutter
+      sha256: "90af73d160e4844edf07abfce94cab0d5cecb16629c67283d4df93ea720bcb0e"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.5.3"
   stream_video:
     dependency: transitive
     description:
@@ -1011,6 +1083,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+  svg_icon_widget:
+    dependency: transitive
+    description:
+      name: svg_icon_widget
+      sha256: "8d1426804add13992c768bd37fe7673bb72c8e35100f7bc5a2f108eb8413daea"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.1+1"
   synchronized:
     dependency: transitive
     description:
@@ -1051,6 +1131,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.12"
+  theme_extensions_builder_annotation:
+    dependency: transitive
+    description:
+      name: theme_extensions_builder_annotation
+      sha256: "1589c73f90d7c8eafb1e980ffbfcb576d4d7504f5e197f088e66a77a0366449c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "7.5.0"
   thermal:
     dependency: transitive
     description:
@@ -1083,6 +1171,30 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.6.0"
+  vector_graphics:
+    dependency: transitive
+    description:
+      name: vector_graphics
+      sha256: "0964703d02677ac8636b4aef95de0b7e816224ff0082908c2c950529cb9a2f5e"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.4"
+  vector_graphics_codec:
+    dependency: transitive
+    description:
+      name: vector_graphics_codec
+      sha256: "99fd9fbd34d9f9a32efd7b6a6aae14125d8237b10403b422a6a6dfeac2806146"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.13"
+  vector_graphics_compiler:
+    dependency: transitive
+    description:
+      name: vector_graphics_compiler
+      sha256: a8e2c19796144da2f81bcc96dad1bb19c4677b561c452081b97ee737b9faed65
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.2"
   vector_math:
     dependency: transitive
     description:

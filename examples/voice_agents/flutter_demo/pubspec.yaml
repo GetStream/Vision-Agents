@@ -12,12 +12,13 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.6.0
-  # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow.
-  # From the branch that adds AIConversationView and the voice views, until they are released.
+  # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow,
+  # built on Stream's design system (stream_core_flutter), which it re-exports. From the branch
+  # that moves them onto it, until they are released.
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: renefloor/flu-1043-aivoiceglowview-and-aivoicewaveview-show-what-a-voice-agent
+      ref: renefloor/flu-1028-build-stream_chat_flutter_ai-on-stream_core_flutter-theme
       path: packages/stream_chat_flutter_ai
   # The channel a written conversation is kept in; the version vision_agents_chat pins.
   stream_chat: 10.4.0

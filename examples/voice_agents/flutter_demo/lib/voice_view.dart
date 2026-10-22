@@ -178,7 +178,8 @@ class _VoiceViewState extends State<VoiceView> {
         ? _person!.audioLevel
         : null;
     final colors = personTalking ? _personColors : _agentColors;
-    final theme = Theme.of(context);
+    final scheme = context.streamColorScheme;
+    final text = context.streamTextTheme;
     final request = voice?.session.approvals.value.firstOrNull;
     final caption = voice?.session.turns.lastOrNull?.text;
 
@@ -209,9 +210,7 @@ class _VoiceViewState extends State<VoiceView> {
             child: Text(
               presence.status,
               key: ValueKey(presence.status),
-              style: theme.textTheme.titleSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style: text.bodyEmphasis.copyWith(color: scheme.textSecondary),
             ),
           ),
           const Spacer(),
@@ -249,16 +248,17 @@ class _VoiceViewState extends State<VoiceView> {
               child: Text(
                 failure,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                style: text.captionDefault.copyWith(color: scheme.accentError),
               ),
             ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: voice == null
-                ? FilledButton.icon(
+                ? StreamButton(
+                    size: .large,
                     onPressed: _starting ? null : _start,
-                    icon: const Icon(Icons.call),
-                    label: const Text('Talk to the agent'),
+                    iconLeft: Icon(context.streamIcons.phoneFill),
+                    child: const Text('Talk to the agent'),
                   )
                 : _CallControls(
                     voice: voice,
@@ -280,25 +280,25 @@ class _CallControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final muted = voice.state.value.isMuted;
+    final icons = context.streamIcons;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       spacing: 24,
       children: [
-        IconButton.filledTonal(
-          iconSize: 28,
+        StreamButton.icon(
+          style: .secondary,
+          size: .large,
+          isSelected: muted,
           tooltip: muted ? 'Unmute' : 'Mute',
           onPressed: () => voice.setMuted(!muted),
-          icon: Icon(muted ? Icons.mic_off : Icons.mic),
+          icon: Icon(muted ? icons.voiceOffFill : icons.voiceFill),
         ),
-        IconButton.filled(
-          iconSize: 28,
+        StreamButton.icon(
+          style: .destructive,
+          size: .large,
           tooltip: 'Hang up',
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-          ),
           onPressed: onHangUp,
-          icon: const Icon(Icons.call_end),
+          icon: Icon(icons.phoneDownFill),
         ),
       ],
     );
@@ -318,74 +318,80 @@ class VoiceStyleSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.all(24),
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final spacing = context.streamSpacing;
+    final radius = BorderRadius.all(context.streamRadius.lg);
+    return SafeArea(
+      top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        spacing: 16,
         children: [
-          Text('Voice style', style: theme.textTheme.titleLarge),
-          Row(
-            spacing: 16,
-            children: [
-              for (final option in VoiceStyle.values)
-                Expanded(
-                  child: Semantics(
-                    selected: option == style,
-                    button: true,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => onChanged(option),
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: option == style
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.outlineVariant,
-                            width: option == style ? 2 : 1,
+          StreamSheetHeader(title: const Text('Voice style')),
+          Padding(
+            padding: EdgeInsets.fromLTRB(spacing.md, 0, spacing.md, spacing.md),
+            child: Row(
+              spacing: 16,
+              children: [
+                for (final option in VoiceStyle.values)
+                  Expanded(
+                    child: Semantics(
+                      selected: option == style,
+                      button: true,
+                      child: InkWell(
+                        borderRadius: radius,
+                        onTap: () => onChanged(option),
+                        child: Container(
+                          padding: EdgeInsets.all(spacing.sm),
+                          decoration: BoxDecoration(
+                            borderRadius: radius,
+                            border: Border.all(
+                              color: option == style
+                                  ? colors.accentPrimary
+                                  : colors.borderDefault,
+                              width: option == style ? 2 : 1,
+                            ),
                           ),
-                        ),
-                        child: Column(
-                          spacing: 8,
-                          children: [
-                            AspectRatio(
-                              aspectRatio: 1,
-                              child: switch (option) {
-                                VoiceStyle.orb => const AIVoiceGlowView(
-                                  state: AIVoiceAgentState.speaking,
-                                ),
-                                VoiceStyle.wave => const AIVoiceWaveView(
-                                  state: AIVoiceAgentState.speaking,
-                                ),
-                              },
-                            ),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              spacing: 6,
-                              children: [
-                                if (option == style)
-                                  Icon(
-                                    Icons.check_circle,
-                                    size: 18,
-                                    color: theme.colorScheme.primary,
+                          child: Column(
+                            spacing: 8,
+                            children: [
+                              AspectRatio(
+                                aspectRatio: 1,
+                                child: switch (option) {
+                                  VoiceStyle.orb => const AIVoiceGlowView(
+                                    state: AIVoiceAgentState.speaking,
                                   ),
-                                Text(
-                                  option.label,
-                                  style: theme.textTheme.titleSmall,
-                                ),
-                              ],
-                            ),
-                          ],
+                                  VoiceStyle.wave => const AIVoiceWaveView(
+                                    state: AIVoiceAgentState.speaking,
+                                  ),
+                                },
+                              ),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                spacing: 6,
+                                children: [
+                                  if (option == style)
+                                    Icon(
+                                      context.streamIcons.checkmark,
+                                      size: 18,
+                                      color: colors.accentPrimary,
+                                    ),
+                                  Text(
+                                    option.label,
+                                    style: text.bodyEmphasis.copyWith(
+                                      color: colors.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ],
       ),

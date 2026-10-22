@@ -68,7 +68,7 @@ class _ChatViewState extends State<ChatView> {
         ),
       );
     }
-    return const Center(child: CircularProgressIndicator());
+    return Center(child: StreamLoadingSpinner());
   }
 }
 
@@ -104,11 +104,14 @@ class _AgentConversationState extends State<_AgentConversation> {
   );
 
   /// Stream's components, with what the person can do under each finished reply: copy it
-  /// and rate it, and the composer without its attachment button. Made once, since new
-  /// builders rebuild every component that reads them.
-  late final _components = AIComponentBuilders(
-    replyActions: _replyActions,
-    composer: const _Composer(),
+  /// and rate it, and the composer without its attachment button, since a question goes to
+  /// the agent as text. Made once, since new builders rebuild every component that reads
+  /// them.
+  late final _components = StreamComponentBuilders(
+    extensions: streamAIComponentBuilders(
+      replyActions: _replyActions,
+      composerLeading: (context, props) => ChatComposer.hidden,
+    ),
   );
 
   @override
@@ -151,7 +154,8 @@ class _AgentConversationState extends State<_AgentConversation> {
   Widget build(BuildContext context) {
     final chat = widget.chat;
     final workingOn = chat.workingOn;
-    return AIComponentFactory(
+    // Here rather than above the app, since the reply actions read this chat.
+    return StreamComponentFactory(
       builders: _components,
       child: Column(
         children: [
@@ -182,9 +186,8 @@ class _AgentConversationState extends State<_AgentConversation> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
                 failure,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 12,
+                style: context.streamTextTheme.captionDefault.copyWith(
+                  color: context.streamColorScheme.accentError,
                 ),
               ),
             ),
@@ -208,35 +211,28 @@ class _Empty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final spacing = context.streamSpacing;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          Icons.inventory_2_outlined,
+          context.streamIcons.archive,
           size: 40,
-          color: theme.colorScheme.onSurfaceVariant,
+          color: colors.textSecondary,
         ),
-        const SizedBox(height: 12),
-        Text('Ask about an order', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 4),
+        SizedBox(height: spacing.sm),
+        Text(
+          'Ask about an order',
+          style: text.headingSm.copyWith(color: colors.textPrimary),
+        ),
+        SizedBox(height: spacing.xxs),
         Text(
           'Orders A-1042 and A-1043 are on this account.',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+          style: text.bodyDefault.copyWith(color: colors.textSecondary),
         ),
       ],
     );
   }
-}
-
-/// The composer without its attachment button: a question goes to the agent as text, and
-/// dictating one stays.
-class _Composer extends ChatComposerFactory {
-  const _Composer();
-
-  @override
-  Widget? buildLeading(BuildContext context, ChatComposerLeadingProps props) =>
-      null;
 }
