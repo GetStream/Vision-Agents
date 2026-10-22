@@ -257,7 +257,7 @@ func (c *callRun) readStreamMedia(ctx context.Context, sessionID string, placed 
 	if placed.CustomerTrunkHost == "" {
 		return "", nil
 	}
-	addr, err := readStreamMedia(ctx, c.d.router, sessionID)
+	addr, err := readBridgeMedia(ctx, c.d.router, sessionID)
 	if err != nil {
 		return "", fmt.Errorf("read the bridge's media addresses: %w", err)
 	}

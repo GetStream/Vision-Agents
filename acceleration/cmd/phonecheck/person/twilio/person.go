@@ -157,7 +157,7 @@ func (p *Person) follow(ctx context.Context, a api, call person.Call, sid string
 			last = rec.Status
 		}
 		if isFinal(rec.Status) {
-			return lengthOf(rec), nil
+			return person.LengthOf(rec.StartTime.Time, rec.EndTime.Time), nil
 		}
 		if !sleep(followCtx, pollEvery) {
 			return 0, didNotEnd(ctx)
@@ -190,15 +190,10 @@ func logStatus(call person.Call, rec callRecord) {
 	warnUnread(call, "end", rec.EndTime)
 	logged := []any{"status", rec.Status, "start", formatTime(rec.StartTime.Time),
 		"end", formatTime(rec.EndTime.Time), "region_label", call.RegionLabel}
-	if length := lengthOf(rec); length > 0 {
+	if length := person.LengthOf(rec.StartTime.Time, rec.EndTime.Time); length > 0 {
 		logged = append(logged, "person_call_s", int(length.Seconds()))
 	}
 	call.Logger.Info("person call", logged...)
-}
-
-// lengthOf is how long the person's call lasted by its record, zero until it has both times.
-func lengthOf(rec callRecord) time.Duration {
-	return person.LengthOf(rec.StartTime.Time, rec.EndTime.Time)
 }
 
 func warnUnread(call person.Call, field string, t twilioTime) {

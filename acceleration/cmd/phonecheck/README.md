@@ -62,9 +62,9 @@ go run ./cmd/phone hooks -remove https://<random>.trycloudflare.com
 ```
 
 Stream sends `call.session_ended` about 30 s after the agent leaves. The router then reads
-Stream's participant stats 5 s later, and again for up to 35 s in all until both the agent
-and the caller are listed with their SFU, so the `call_sites` row appears about 35 to 65 s after hang-up. The tool waits up
-to 90 s for it and logs `call_sites row after N s` when it arrives.
+Stream's participant stats 5 s later, and again for up to 35 s in all until both the agent and
+the caller are listed with their SFU, so the `call_sites` row appears about 35 to 65 s after
+hang-up. The tool waits up to 90 s for it and logs `call_sites row after N s` when it arrives.
 
 Inbound also needs:
 
@@ -208,8 +208,9 @@ A `person call` line gives the person side's status, start and end where the too
 and `person_call_s` once the call has both.
 
 Then one `call summary` line: `direction`, `provider`, `session_id`, `outcome`, `connect_ms`,
-`talked_ms`, `person_call_s` (when known), `total_ms`, `agent_sfu`, `caller_sfu`, `router_address`,
-`sip_host`, `sfus_used`, `region_label` (and `vendor_call_id` outbound). `-log-format json` writes all of it as JSON on stderr.
+`talked_ms`, `person_call_s` (when known), `total_ms`, `agent_sfu`, `caller_sfu`,
+`router_address`, `sip_host`, `sfus_used`, `region_label` (and `vendor_call_id` outbound).
+`-log-format json` writes all of it as JSON on stderr.
 
 The timings, all counted from the end of the checks:
 

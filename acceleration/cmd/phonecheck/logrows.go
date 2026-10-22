@@ -74,9 +74,9 @@ func readCallPlaced(ctx context.Context, r router, sessionID string) (callPlaced
 	}, true, nil
 }
 
-// readStreamMedia is where Stream sent its audio from on a call through a customer's own SIP
+// readBridgeMedia is where Stream sent its audio from on a call through a customer's own SIP
 // trunk, from the router's bridge_media row. Empty when there is no row.
-func readStreamMedia(ctx context.Context, r router, sessionID string) (string, error) {
+func readBridgeMedia(ctx context.Context, r router, sessionID string) (string, error) {
 	d, _, err := readEvent(ctx, r, sessionID, "bridge_media")
 	return d["stream_media_addr"], err
 }
