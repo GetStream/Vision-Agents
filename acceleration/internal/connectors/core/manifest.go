@@ -84,9 +84,9 @@ type Manifest struct {
 	// email captured from the id_token must be the one the app's backend last said that user
 	// signs in with, or the grant is refused and nothing is stored. It needs a capture rule
 	// named email from the id_token (OpenID Connect Core 1.0 section 5.1's claim), so the
-	// scheme checks the token's iss, aud and exp, and an email_verified capture, if any, from
-	// the id_token too. Left out of the JSON when false, so the JSON
-	// of every manifest stored before it stays as it was.
+	// scheme checks the token's iss, aud and exp. An email_verified capture, if any, must come
+	// from the id_token too. Left out of the JSON when false, so the JSON of every manifest
+	// stored before it stays as it was.
 	OwnerEmail bool `yaml:"owner_email,omitempty" json:"owner_email,omitempty"`
 	// RevokeOnDelete has a connection's delete ask the provider to revoke its grant
 	// (Scheme.Revoke) once the row is gone. A failure is logged and the delete stands. Opt-in
