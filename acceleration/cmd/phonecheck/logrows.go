@@ -18,7 +18,20 @@ type joinedSites struct {
 
 // callSitesRow is as the router stores it: strings. SIPHost is only there for an inbound call.
 type callSitesRow struct {
-	SFUsUsed, SFULocations, SIPHost, StreamSession string
+	SFUsUsed, SIPHost, StreamSession string
+	Agent, Caller                    sideSFU
+}
+
+// sideSFU is the SFU Stream says one side of the call was on. Location is where Stream placed
+// that side, and DistanceKm how far it was from the SFU; both may be empty.
+type sideSFU struct {
+	SFU, Location, DistanceKm string
+}
+
+func sideSFUOf(d map[string]string, side string) sideSFU {
+	return sideSFU{
+		SFU: d[side+"_current_sfu"], Location: d[side+"_location"], DistanceKm: d[side+"_distance_to_sfu_km"],
+	}
 }
 
 // callPlacedRow: CustomerTrunkHost is only there for a call through a customer's own SIP trunk.
@@ -72,8 +85,8 @@ func readCallSites(ctx context.Context, r router, sessionID string, wait, every 
 		}
 		if found {
 			return callSitesRow{
-				SFUsUsed: d["sfus_used"], SFULocations: d["sfu_locations"],
-				SIPHost: d["stream_sip_host"], StreamSession: d["stream_session_id"],
+				SFUsUsed: d["sfus_used"], SIPHost: d["stream_sip_host"], StreamSession: d["stream_session_id"],
+				Agent: sideSFUOf(d, "agent"), Caller: sideSFUOf(d, "caller"),
 			}, true, nil
 		}
 		left := time.Until(deadline)

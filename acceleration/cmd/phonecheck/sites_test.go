@@ -80,12 +80,19 @@ func (s *SitesSuite) TestAHopWithNoAddressIsOneLine() {
 }
 
 func (s *SitesSuite) TestStreamsSFUsAreLoggedAsFields() {
-	logStreamSFUs(newLogger("json", &s.out), callSitesRow{SFUsUsed: "2", SFULocations: "a, b"})
+	logStreamSFUs(newLogger("json", &s.out), callSitesRow{
+		SFUsUsed: "2",
+		Agent:    sideSFU{SFU: "sfu-a.example.com", Location: "Frankfurt, Hesse, DE", DistanceKm: "12"},
+		Caller:   sideSFU{SFU: "sfu-c.example.com"},
+	})
 
 	lines := s.lines()
 	s.Require().Len(lines, 1)
 	s.Equal("stream_sfus", lines[0]["hop"])
 	s.Equal("2", lines[0]["sfus_used"])
-	s.Equal("a, b", lines[0]["sfu_locations"])
+	s.Equal("sfu-a.example.com", lines[0]["agent_sfu"])
+	s.Equal("Frankfurt, Hesse, DE", lines[0]["agent_location"])
+	s.Equal("12", lines[0]["agent_distance_to_sfu_km"])
+	s.Equal("sfu-c.example.com", lines[0]["caller_sfu"])
 	s.Equal("reported", lines[0]["how"])
 }

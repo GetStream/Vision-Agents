@@ -18,7 +18,7 @@ func (s *SummarySuite) TestTheSummaryIsOneLine() {
 	sum := summary{
 		Direction: "outbound", Provider: "fake", SessionID: "sess-1", Outcome: "ok",
 		Connect: 1500 * time.Millisecond, Talked: 20 * time.Second, Total: 25 * time.Second,
-		SFUsUsed: "2", VendorCallID: "CA0001",
+		AgentSFU: "sfu-a1", CallerSFU: "sfu-c.example.com", SFUsUsed: "2", VendorCallID: "CA0001",
 	}
 
 	sum.log(newLogger("text", &out))
@@ -28,6 +28,8 @@ func (s *SummarySuite) TestTheSummaryIsOneLine() {
 	s.Contains(text, "session_id=sess-1")
 	s.Contains(text, "connect_ms=1500")
 	s.Contains(text, "sfus_used=2")
+	s.Contains(text, "agent_sfu=sfu-a1")
+	s.Contains(text, "caller_sfu=sfu-c.example.com")
 	s.Contains(text, "vendor_call_id=CA0001")
 }
 

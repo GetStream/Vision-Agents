@@ -182,13 +182,18 @@ One line per hop: `hop`, `host`, `address`, `place`, `how`. `how` says how we kn
 - `inferred`: resolved from a place you chose, not seen on the call;
 - `reported`: the router or Stream said so.
 
-The hops are `agent_sfu`, `router_address`, `stream_sip`, and `customer_trunk` when the agent
-number is on a customer's own SIP trunk (the trunk's host, as the router reports it).
+The hops are `agent_sfu`, `caller_sfu`, `router_address`, `stream_sip`, and `customer_trunk`
+when the agent number is on a customer's own SIP trunk (the trunk's host, as the router
+reports it). `caller_sfu` is the SFU Stream's participant stats name for the phone caller.
+
+A `stream_sfus` line follows: `sfus_used`, and for the agent and the caller their SFU, where
+Stream placed them (`agent_location`, `caller_location`) and how far that is from their SFU
+(`agent_distance_to_sfu_km`, `caller_distance_to_sfu_km`), each empty when Stream does not say.
 
 A `person call` line gives the person side's status, start and end where the tool can see them.
 
 Then one `call summary` line: `direction`, `provider`, `session_id`, `outcome`, `connect_ms`,
-`talked_ms`, `total_ms`, `agent_sfu`, `router_address`, `sip_host`, `sfus_used`, `region_label`
+`talked_ms`, `total_ms`, `agent_sfu`, `caller_sfu`, `router_address`, `sip_host`, `sfus_used`, `region_label`
 (and `vendor_call_id` outbound). `-log-format json` writes all of it as JSON on stderr.
 
 The timings, all counted from the end of the checks:

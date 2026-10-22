@@ -69,7 +69,9 @@ func (s *RunSuite) SetupTest() {
 	s.addRows(
 		logRow("1", "joined", time.Now(), map[string]any{"sfu_edge": "sfu-a1", "sfu_host": "sfu.example.com"}),
 		logRow("2", "call_placed", time.Now(), map[string]any{"stream_sip_host": "sip.example.com", "vendor_call_id": "CA0001"}),
-		logRow("3", "call_sites", time.Now(), map[string]any{"sfus_used": "2", "stream_sip_host": "sip.example.com"}),
+		logRow("3", "call_sites", time.Now(), map[string]any{
+			"sfus_used": "2", "stream_sip_host": "sip.example.com", "caller_current_sfu": "caller-sfu.example.com",
+		}),
 	)
 	s.out.Reset()
 	s.cfg = Config{
@@ -287,7 +289,7 @@ func (s *RunSuite) TestTheRegionLabelIsLoggedAndChangesNothing() {
 func (s *RunSuite) TestTheCoreNeverResolvesThroughTheNetwork() {
 	s.Require().NoError(s.run())
 
-	s.ElementsMatch([]string{"sfu.example.com", "router.example.com"}, s.looked.all())
+	s.ElementsMatch([]string{"sfu.example.com", "caller-sfu.example.com", "router.example.com"}, s.looked.all())
 	s.Equal([]string{"sip.example.com"}, s.resolved.all())
 }
 
@@ -304,6 +306,19 @@ func (s *RunSuite) TestACallThroughACustomersTrunkLogsTheTrunkAsAHop() {
 
 	s.Contains(s.looked.all(), "trunk.example.com")
 	s.Len(s.hopLines("customer_trunk"), 1)
+}
+
+func (s *RunSuite) TestBothSidesSFUsAreHopsAndInTheSummary() {
+	s.Require().NoError(s.run())
+
+	s.Len(s.hopLines("agent_sfu"), 1)
+	callers := s.hopLines("caller_sfu")
+	s.Require().Len(callers, 1)
+	s.Equal("caller-sfu.example.com", callers[0]["host"])
+	summaries := s.linesSaying("call summary")
+	s.Require().Len(summaries, 1)
+	s.Equal("sfu-a1", summaries[0]["agent_sfu"])
+	s.Equal("caller-sfu.example.com", summaries[0]["caller_sfu"])
 }
 
 func (s *RunSuite) TestACallThroughAVendorHasNoTrunkHop() {

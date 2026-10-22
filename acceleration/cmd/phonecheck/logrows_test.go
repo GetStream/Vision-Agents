@@ -86,7 +86,9 @@ func (s *LogRowsSuite) TestAnOutboundCallsSIPHostComesFromTheCallPlacedRow() {
 
 func (s *LogRowsSuite) TestAnInboundCallsSIPHostComesFromTheCallSitesRow() {
 	s.addRows(logRow("3", "call_sites", time.Now(), map[string]any{
-		"sfus_used": "2", "sfu_locations": "a, b", "stream_session_id": "st1", "stream_sip_host": "sip.example.com",
+		"sfus_used": "2", "stream_session_id": "st1", "stream_sip_host": "sip.example.com",
+		"agent_current_sfu": "sfu-a.example.com", "agent_location": "Frankfurt, Hesse, DE", "agent_distance_to_sfu_km": "12",
+		"caller_current_sfu": "sfu-c.example.com",
 	}))
 	ctx := context.Background()
 
@@ -97,7 +99,11 @@ func (s *LogRowsSuite) TestAnInboundCallsSIPHostComesFromTheCallSitesRow() {
 	s.Require().NoError(err)
 	s.Require().True(found)
 
-	s.Equal(callSitesRow{SFUsUsed: "2", SFULocations: "a, b", SIPHost: "sip.example.com", StreamSession: "st1"}, sites)
+	s.Equal(callSitesRow{
+		SFUsUsed: "2", SIPHost: "sip.example.com", StreamSession: "st1",
+		Agent:  sideSFU{SFU: "sfu-a.example.com", Location: "Frankfurt, Hesse, DE", DistanceKm: "12"},
+		Caller: sideSFU{SFU: "sfu-c.example.com"},
+	}, sites)
 	s.Equal("sip.example.com", sipHostOf(person.Inbound, placed, sites))
 }
 

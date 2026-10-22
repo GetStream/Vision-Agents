@@ -29,6 +29,11 @@ func logHops(ctx context.Context, logger *slog.Logger, loc locator, hops []hop) 
 	}
 }
 
+// logStreamSFUs writes what Stream said about each side's SFU, which the hop lines cannot
+// carry: where Stream placed each side, and how far that was from its SFU.
 func logStreamSFUs(logger *slog.Logger, sites callSitesRow) {
-	logger.Info("hop", "hop", "stream_sfus", "sfus_used", sites.SFUsUsed, "sfu_locations", sites.SFULocations, "how", "reported")
+	logger.Info("hop", "hop", "stream_sfus", "sfus_used", sites.SFUsUsed,
+		"agent_sfu", sites.Agent.SFU, "agent_location", sites.Agent.Location, "agent_distance_to_sfu_km", sites.Agent.DistanceKm,
+		"caller_sfu", sites.Caller.SFU, "caller_location", sites.Caller.Location, "caller_distance_to_sfu_km", sites.Caller.DistanceKm,
+		"how", "reported")
 }
