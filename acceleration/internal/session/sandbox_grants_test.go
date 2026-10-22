@@ -248,10 +248,9 @@ func (s *SandboxGrantsSuite) TestASandboxBindingNeedsABrokerThereIs() {
 const proxyCA = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
 
 // TestTheProxyBrokerSendsTheSandboxThroughTheProxy: with code_sandbox.broker proxy, run_code's
-// sandbox goes through the proxy to its grants' hosts and the config's allowed domains, holds a
-// placeholder, and the proxy finds the connection's token behind it, for this session, and the
-// allowed domains. No secret prefix is needed. A connection deleted mid-session is withdrawn,
-// in the session's log.
+// sandbox may reach the proxy alone, its runs go there, it holds a placeholder, and the proxy
+// finds the connection's token behind it, for this session, and the allowed domains. No secret
+// prefix is needed. A connection deleted mid-session is withdrawn, in the session's log.
 func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
@@ -262,7 +261,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	s.T().Cleanup(redis.Close)
 	api := s.daytonaAPI()
 	s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
-	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://proxy.stg.example:8091",
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
 		CACert: []byte(proxyCA)}
 	s.sandboxRevision()
 	id := s.connection("", "primary")
@@ -277,9 +276,11 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	_, err = box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
-	s.Equal("PyPI.org,Files.PythonHosted.org,api.crm.example,*.crm.example", api.created["domainAllowList"])
-	proxy, err := url.Parse(api.created["outboundProxyUrl"].(string))
+	s.Equal("203.0.113.7/32", api.created["networkAllowList"])
+	s.NotContains(api.created, "domainAllowList")
+	proxy, err := url.Parse(api.ran["envs"].(map[string]any)["HTTPS_PROXY"].(string))
 	s.Require().NoError(err)
+	s.Equal("203.0.113.7:8091", proxy.Host)
 	credential, _ := proxy.User.Password()
 	sum := sha256.Sum256([]byte(credential))
 	raw, err := redis.Do(s.ctx, redis.B().Get().Key("sandbox:egress:"+hex.EncodeToString(sum[:])).Build()).AsBytes()
@@ -305,7 +306,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 // than refuse every sandbox session.
 func (s *SandboxGrantsSuite) TestAManagerWithTheProxyBrokerNeedsItsStore() {
 	_, err := NewManager(ManagerOptions{SandboxBroker: egress.BrokerName,
-		SandboxProxy: egress.BrokerOptions{URL: "http://proxy.stg.example:8091", CACert: []byte(proxyCA)}})
+		SandboxProxy: egress.BrokerOptions{URL: "http://203.0.113.7:8091", CACert: []byte(proxyCA)}})
 
 	s.ErrorContains(err, "the proxy sandbox broker needs the store")
 }
@@ -319,7 +320,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerRefusesAConfigItCannotServe() {
 	s.NoError(s.boxed(open))
 	s.NoError(s.boxed(ranges))
 	s.manager.options.SandboxBroker = egress.BrokerName
-	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: &egress.Store{}, URL: "http://proxy.stg.example:8091", CACert: []byte(proxyCA)}
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: &egress.Store{}, URL: "http://203.0.113.7:8091", CACert: []byte(proxyCA)}
 
 	err := s.boxed(open)
 	s.ErrorContains(err, "sandbox_options.network is true")
@@ -338,8 +339,8 @@ type daytonaAPI struct {
 	mu      sync.Mutex
 	held    map[string]string
 	secrets map[string]string
-	// created is the last request for a sandbox.
-	created map[string]any
+	// created is the last request for a sandbox, and ran for a run of code.
+	created, ran map[string]any
 }
 
 func (s *SandboxGrantsSuite) daytonaAPI() *daytonaAPI {
@@ -378,6 +379,9 @@ func (a *daytonaAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `{"name":"file","path":%q,"type":"file"}`, r.URL.Query().Get("path"))
 	case r.Method == http.MethodDelete || strings.HasPrefix(r.URL.Path, "/api/socket.io"):
 		w.WriteHeader(http.StatusNoContent)
+	case strings.HasSuffix(r.URL.Path, "/process/code-run"):
+		_ = json.NewDecoder(r.Body).Decode(&a.ran)
+		_, _ = w.Write([]byte(`{"result":"","exitCode":0}`))
 	default:
 		_, _ = w.Write([]byte(`{"result":"","exitCode":0}`))
 	}

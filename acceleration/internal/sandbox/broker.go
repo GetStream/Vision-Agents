@@ -59,12 +59,14 @@ type Mount struct {
 	// Env are env vars the sandbox is created with as they are, such as a placeholder the
 	// broker's egress knows.
 	Env map[string]string
-	// RunEnv are env vars every command and run of code in the sandbox gets, such as the CA
-	// files it trusts. Set per run, they win over what the provider sets in the sandbox, which
-	// Env does not: Daytona's netleash replaces its proxy and CA env vars (live probe, 2026-10-21).
+	// RunEnv are env vars every command and run of code in the sandbox gets, such as its proxy
+	// and the CA files it trusts. Set per run, they win over what the provider sets in the
+	// sandbox, which Env does not: Daytona's netleash replaces its proxy and CA env vars (live
+	// probe, 2026-10-21).
 	RunEnv map[string]string
-	// Proxy, when set, is the egress the provider sends every request from the sandbox through,
-	// with its credential in the userinfo.
+	// Proxy, when set, is the only address the sandbox may reach: an http proxy at an IPv4
+	// address, with the sandbox's credential in the userinfo. RunEnv sends the sandbox's
+	// requests there.
 	Proxy *url.URL
 	// Files are written into the sandbox, by absolute path, before code runs in it.
 	Files map[string][]byte

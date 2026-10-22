@@ -223,17 +223,21 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
 	for _, address := range []string{"", "https://proxy.stg.example:8091", "http://sbx:secret@proxy.stg.example:8091", "http://:8091",
-		"proxy.stg.example:8091"} {
+		"proxy.stg.example:8091", "http://203.0.113.7:8091/%zz", "https://203.0.113.7:8091", "http://sbx:secret@203.0.113.7:8091",
+		"http://0.0.0.0:8091", "http://127.0.0.1:8091", "http://10.1.2.3:8091", "http://172.16.0.1:8091", "http://192.168.1.1:8091",
+		"http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://203.0.113.7", "http://203.0.113.7:0",
+		"http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path", "http://203.0.113.7:8091?a=b",
+		"http://203.0.113.7:8091#frag"} {
 		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
 		_, _, err := Load("")
 		s.ErrorContains(err, "code_sandbox.proxy_public_url", address)
 	}
 
-	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "http://proxy.stg.example:8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "http://203.0.113.7:8091")
 	config, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
-		ProxyPublicURL: "http://proxy.stg.example:8091"}, config.CodeSandbox)
+		ProxyPublicURL: "http://203.0.113.7:8091"}, config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "")
 	_, _, err = Load("")
@@ -246,6 +250,24 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "")
 	_, _, err = Load("")
 	s.ErrorContains(err, "proxy_ca_cert")
+}
+
+// TestTheProxyBrokersProxyIsAnIPv4Address: the sandbox may reach that address alone, so it
+// has no DNS to look a name up with, and no IPv6.
+func (s *ConfigSuite) TestTheProxyBrokersProxyIsAnIPv4Address() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	for _, address := range []string{"http://proxy.stg.example:8091", "http://[2001:db8::7]:8091", "http://[::ffff:203.0.113.7]:8091"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
+		_, _, err := Load("")
+		s.ErrorContains(err, "code_sandbox.proxy_public_url (http://<public IPv4 address>:port", address)
+	}
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "daytona")
+	_, _, err := Load("")
+	s.NoError(err, "only the proxy broker sends a sandbox there")
 }
 
 // TestTheProxysCACertificateHoldsNoKey: every sandbox is given it.

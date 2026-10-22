@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -26,12 +27,11 @@ const (
 	bundlePath = "/tmp/va-egress-ca-bundle.pem"
 )
 
-// bundle writes bundlePath from the first roots file the sandbox has, and fails without one:
-// Daytona's netleash roots, which are Mozilla's and netleash's own CA (live probe, 2026-10-21),
-// then the system roots files Go reads on Linux (https://go.dev/src/crypto/x509/root_linux.go).
-// A host of the config's allowed domains, which the proxy tunnels to as it is, is verified with
-// them.
-const bundle = `for roots in /etc/daytona/netleash/ca.crt /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem ` +
+// bundle writes bundlePath from the first roots file the sandbox has, and fails without one: the
+// system roots files Go reads on Linux (https://go.dev/src/crypto/x509/root_linux.go). Daytona's
+// own image is Debian, whose file is the first (live probe, 2026-10-21: 150 roots there). A host
+// of the config's allowed domains, which the proxy tunnels to as it is, is verified with them.
+const bundle = `for roots in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem ` +
 	`/etc/pki/tls/cacert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/cert.pem; do ` +
 	`if [ -s "$roots" ]; then { cat "$roots"; echo; cat ` + caPath + `; } > ` + bundlePath + ` && exit 0; exit 1; fi; done; ` +
 	`echo "no system CA bundle" >&2; exit 1`
@@ -46,11 +46,20 @@ const recordTTL = sandbox.MaxTimeout + time.Minute
 // probe, 2026-10-21). Node's NODE_EXTRA_CA_CERTS adds to its own roots, so it names the CA alone.
 var bundleEnv = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"}
 
+// proxyEnv are the env vars that send curl, Python and git through the proxy, in both cases:
+// curl reads http_proxy in lower case only (https://curl.se/docs/manpage.html#ENVIRONMENT). The
+// sandbox reaches the proxy alone and has no DNS, so a client that ignores them reaches nothing.
+var proxyEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
+
+// noProxy keeps the sandbox's own loopback off the proxy, as Daytona's netleash does (live probe,
+// 2026-10-21).
+const noProxy = "localhost,127.0.0.1,::1"
+
 // BrokerOptions are what Broker needs: the proxy and its store, and the session's tokens.
 type BrokerOptions struct {
 	Store *Store
-	// URL is the proxy as a sandbox reaches it, code_sandbox.proxy_public_url: http, a host
-	// and a port.
+	// URL is the proxy as a sandbox reaches it, code_sandbox.proxy_public_url: http, an IPv4
+	// address and a port.
 	URL string
 	// CACert is the PEM certificate of the CA the proxy signs each host's certificate with,
 	// which the sandbox trusts. Never its key.
@@ -92,9 +101,9 @@ func NewBroker(o BrokerOptions) (*Broker, error) {
 	if o.Store == nil || len(o.CACert) == 0 || o.Session == "" || o.Tokens == nil {
 		return nil, stack.Wrap(errors.New("egress: the proxy broker needs redis, the proxy's CA certificate, a session and tokens"))
 	}
-	proxy, err := url.Parse(o.URL)
-	if err != nil || proxy.Scheme != "http" || proxy.Hostname() == "" || proxy.User != nil {
-		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://host:port, with no user"))
+	proxy, ok := config.ProxyURL(o.URL)
+	if !ok {
+		return nil, stack.Wrap(errors.New("egress: the proxy's public URL is http://<public IPv4 address>:port, with no user, path, query or fragment"))
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -159,13 +168,15 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 		return sandbox.Mount{}, err
 	}
 	b.credential, b.held = credential, prepared
-	// The proxy credential goes to the provider alone: Daytona's netleash sends the sandbox's
-	// requests on to the proxy with it, and the sandbox's HTTPS_PROXY names netleash.
+	// The sandbox reaches the proxy alone and sends it every request with the credential.
 	proxy := *b.proxy
 	proxy.User = url.UserPassword("sbx", credential)
-	run := map[string]string{"NODE_EXTRA_CA_CERTS": caPath}
+	run := map[string]string{"NODE_EXTRA_CA_CERTS": caPath, "NO_PROXY": noProxy, "no_proxy": noProxy}
 	for _, name := range bundleEnv {
 		run[name] = bundlePath
+	}
+	for _, name := range proxyEnv {
+		run[name] = proxy.String()
 	}
 	return sandbox.Mount{Env: env, RunEnv: run, Proxy: &proxy, Files: map[string][]byte{caPath: b.options.CACert}, Setup: []string{bundle}}, nil
 }
