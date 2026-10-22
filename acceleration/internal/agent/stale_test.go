@@ -593,23 +593,8 @@ func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorr
 	s.logs = &logLines{}
 	s.join(true)
 	dropped := testutil.ToFloat64(staleQueuedTurns)
-	reply := s.queuesBehindAReply("A table for four at seven please.", "Peanut allergy too.")
-	s.mutters(nash, "Wait.")
-	s.eventually(func() bool { return countOf[Hearing](s.reported()) >= 3 }, "the caller was never heard going on")
-	s.model.writes(reply, "Seven works.")
-	s.model.finishes(reply)
-	s.eventually(func() bool {
-		return slices.ContainsFunc(s.reported(), func(event Event) bool {
-			decided, ok := event.(Decided)
-			return ok && decided.Kind == string(ActHold)
-		})
-	}, "the queued turn did not wait on the caller still talking")
-
-	correction := "Wait. Make it six, and one of us is gluten free instead."
-	s.says(nash, correction)
-	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was never answered")
-	newer := s.model.requests()[1]
-	s.Equal(correction, newer.Input[len(newer.Input)-1].Content)
+	newer := s.correctsAQueuedTurn()
+	s.Equal(queuedCorrection, newer.Input[len(newer.Input)-1].Content)
 	s.Contains(newer.Instructions, missedNote("Peanut allergy too."), "the queued words are owed with the correction")
 	for _, message := range newer.Input {
 		s.NotEqual("Peanut allergy too.", message.Content, "the queued words reach the model in the note, not the history")
@@ -624,7 +609,45 @@ func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorr
 	s.Require().Len(logged, 1)
 	s.Equal("nash", logged[0]["participant"])
 	s.Contains(logged[0]["turn"], "turn-")
-	s.Contains(logged[0], "age_ms")
+	s.Positive(logged[0]["age_ms"], "the queued turn waited behind the reply")
+}
+
+// queuedCorrection is what the caller of Voicebench restaurant.interrupt said once the reply was cut.
+const queuedCorrection = "Wait. Make it six, and one of us is gluten free instead."
+
+// correctsAQueuedTurn has the caller's "Peanut allergy too." queued behind a reply, then
+// their correction answered once the reply ends, and returns the correction's request.
+func (s *AgentSuite) correctsAQueuedTurn() llm.ResponseParams {
+	reply := s.queuesBehindAReply("A table for four at seven please.", "Peanut allergy too.")
+	s.mutters(nash, "Wait.")
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) >= 3 }, "the caller was never heard going on")
+	s.model.writes(reply, "Seven works.")
+	s.model.finishes(reply)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			decided, ok := event.(Decided)
+			return ok && decided.Kind == string(ActHold)
+		})
+	}, "the queued turn did not wait on the caller still talking")
+
+	s.says(nash, queuedCorrection)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was never answered")
+	return s.model.requests()[1]
+}
+
+func (s *AgentSuite) TestQueuedWordsTakenInByADroppedReplyAreOwedToTheNextTurn() {
+	// The reply to the correction is dropped before any of it went out (AI-1601), so what it
+	// was for, the queued words with it, is owed to the caller's next turn.
+	s.join(true)
+	newer := s.correctsAQueuedTurn()
+	s.Require().Contains(newer.Instructions, missedNote("Peanut allergy too."))
+	s.mutters(nash, "Under the name")
+	s.eventually(func() bool { return s.model.script(newer.ID).Abandoned() }, "the reply to the correction kept going")
+
+	s.says(nash, "Under the name Alvarez.")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the newer words were never answered")
+	s.Contains(s.model.requests()[2].Instructions, missedNote("Peanut allergy too. "+queuedCorrection))
 }
 
 func (s *AgentSuite) TestAQueuedTurnNobodySaidMoreAfterIsAskedAsBefore() {
