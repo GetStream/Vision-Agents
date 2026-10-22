@@ -1055,6 +1055,18 @@ func (f Found) ID() string {
 	return ""
 }
 
+// ConfigID is the id of the agent config the session was opened from, whichever half is
+// holding it.
+func (f Found) ConfigID() string {
+	switch {
+	case f.Live != nil:
+		return f.Live.Spec().ConfigID
+	case f.Stored != nil:
+		return f.Stored.ConfigID
+	}
+	return ""
+}
+
 // Query returns the sessions an owner may have, most recently updated first, including ones
 // that have already ended.
 //

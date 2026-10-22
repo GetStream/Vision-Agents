@@ -339,6 +339,148 @@ func (s *SessionConnectorsSuite) TestAForkOfARunningSessionKeepsTheInstructionsI
 	s.Equal(prompts.instructions, value(forked.Instructions))
 }
 
+// TestAForkOfAnEndedSessionRunsOnItsConfigsModel: the parent's row keeps no models, so the
+// fork answers on the one its config names.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionRunsOnItsConfigsModel() {
+	parent := s.endedSession(s.modelledConfig("counted/counted-model", nil))
+
+	forked, answered := s.askFork(parent, nil, "responded")
+
+	s.Equal("counted/counted-model", value(forked.Llm))
+	s.Equal("Counted.", answered["text"])
+}
+
+// TestAForkOfAnEndedSessionLoadsItsConfigsSkills: the config's skills reach the fork with its
+// model, so the fork's model can load one.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionLoadsItsConfigsSkills() {
+	config := s.modelledConfig("checking/checking-model", map[string]any{"skills": []string{"policy"}})
+	instructions := "Flag spam " + s.utils.uuid()
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/skills", map[string]any{
+		"config_id": config, "name": "policy", "description": "the labels to judge by", "instructions": instructions,
+	}, nil))
+	parent := s.endedSession(config)
+
+	_, ran := s.askFork(parent, nil, "tool_ran")
+
+	s.Empty(ran["error"])
+	s.Contains(ran["result"], instructions)
+}
+
+// TestAForkOfAnEndedSessionIsWrittenWhateverItsConfigBecame: a fork is held in writing, so a
+// config made a voice agent since still forks into a written conversation.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionIsWrittenWhateverItsConfigBecame() {
+	config := s.modelledConfig("counted/counted-model", nil)
+	parent := s.endedSession(config)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config,
+		map[string]any{"mode": "voice"}, nil))
+
+	forked, answered := s.askFork(parent, nil, "responded")
+
+	s.Equal(SessionModeText, value(forked.Mode))
+	s.Equal("Counted.", answered["text"])
+}
+
+// TestAForkNamingAConfigDoesNotReadItsParentsConfig: the named config replaces the parent's,
+// so a parent's config that cannot be read is not the fork's concern.
+func (s *SessionConnectorsSuite) TestAForkNamingAConfigDoesNotReadItsParentsConfig() {
+	config := s.modelledConfig("noted/noted-model", nil)
+	parent := s.endedSession(config)
+	_, err := s.store.DB().ExecContext(context.Background(),
+		`UPDATE agent_configs SET connectors = '{"not": "a list"}'::jsonb WHERE id = ?`, config)
+	s.Require().NoError(err)
+	named := s.modelledConfig("counted/counted-model", nil)
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ConfigId: &named}, &forked))
+
+	s.Equal("counted/counted-model", value(forked.Llm))
+}
+
+// TestAnEndedParentsModelOverwritesWinOverItsConfigsModel: the models the parent was opened
+// with in place of its config's are on its row, and the fork keeps them.
+func (s *SessionConnectorsSuite) TestAnEndedParentsModelOverwritesWinOverItsConfigsModel() {
+	parent := s.endedSessionOf(s.modelledConfig("counted/counted-model", nil), &ModelOverwrites{Llm: pointerTo("noted/noted-model")})
+
+	_, answered := s.askFork(parent, nil, "responded")
+
+	s.Equal("Noted.", answered["text"])
+}
+
+// TestAForksModelOverwritesWinOverItsParentsAndItsConfigs: what the fork asks for is what it
+// runs on.
+func (s *SessionConnectorsSuite) TestAForksModelOverwritesWinOverItsParentsAndItsConfigs() {
+	parent := s.endedSessionOf(s.modelledConfig("counted/counted-model", nil), &ModelOverwrites{Llm: pointerTo("noted/noted-model")})
+
+	_, answered := s.askFork(parent, &ModelOverwrites{Llm: pointerTo("holding/holding-model")}, "responded")
+
+	s.Equal("Held.", answered["text"])
+}
+
+// TestAForkOfASessionWhoseConfigWasDeletedRunsOnTheDefaultModel: a config that is gone names
+// no model, and its fork runs on the default one, as it did before forks followed the config.
+func (s *SessionConnectorsSuite) TestAForkOfASessionWhoseConfigWasDeletedRunsOnTheDefaultModel() {
+	config := s.modelledConfig("counted/counted-model", nil)
+	parent := s.endedSession(config)
+	var ended Session
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodGet, "/v1/agents/sessions/"+parent, nil, &ended))
+	parentAgent := value(ended.Agent)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	forked, _ := s.askFork(parent, nil, "responded")
+
+	s.Equal("stub/stub-model", value(forked.Llm), "the model llm-fast routes to")
+	s.Equal(config, value(forked.ConfigId), "the row still names the config")
+	s.Equal(parentAgent, value(forked.Agent))
+}
+
+// TestAForkOfAnEndedSessionKeepsWhatItsRowRemembers: the config decides what the agent is,
+// and the row what the conversation was called and carried.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionKeepsWhatItsRowRemembers() {
+	id := s.utils.uuid()
+	request := s.session(s.modelledConfig("counted/counted-model", nil), nil)
+	request.Title, request.Description = pointerTo("Upgrade "+id), pointerTo("About upgrade "+id)
+	request.Custom = &map[string]any{"ticket": id}
+	opened := s.client.createSession(request)
+	s.storedSelections(opened.Id)
+	s.client.stopSession(opened.Id)
+
+	forked, _ := s.askFork(opened.Id, nil, "responded")
+
+	s.Equal("Upgrade "+id, value(forked.Title))
+	s.Equal("About upgrade "+id, value(forked.Description))
+	s.Equal(map[string]any{"ticket": id}, value(forked.Custom))
+}
+
+// TestAForkOfARunningSessionReachesTheConnectionItsParentChose: a live parent's fork is bound
+// by its config, read again, and its model reaches the parent's connection through it.
+func (s *SessionConnectorsSuite) TestAForkOfARunningSessionReachesTheConnectionItsParentChose() {
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	running := s.client.createSession(s.session(s.config(s.binding("crm", connector, "session", "", echo)), map[string]string{"crm": mine}))
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+	ran := s.toolRanOn(s.serverClient.actingFor(s.client), s.client.opens("/v1/agents/sessions/"+forked.Id+"/events"), forked.Id)
+
+	s.Equal(connectorEchoText, ran["result"])
+	s.Empty(ran["error"])
+}
+
+// TestAForkOfARunningSessionKeepsTheModelItWasOpenedWith: a live parent's spec carries its
+// models, so a config edited since does not reach the fork.
+func (s *SessionConnectorsSuite) TestAForkOfARunningSessionKeepsTheModelItWasOpenedWith() {
+	config := s.modelledConfig("counted/counted-model", nil)
+	running := s.client.createSession(s.session(config, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config,
+		map[string]any{"llm": "noted/noted-model"}, nil))
+
+	_, answered := s.askFork(running.Id, nil, "responded")
+
+	s.Equal("Counted.", answered["text"])
+}
+
 // TestASlackThreadSessionUsesTheAppsConnectionsOnly: everyone in the Slack thread writes in
 // its thread channel, so a session held there uses the app's connection and never one
 // person's, even one the request chose. The model's call goes through the app's binding. The
@@ -524,10 +666,41 @@ func (s *SessionConnectorsSuite) promptedConfig(prompts forkedPrompts) string {
 
 // endedSession is a session of config, opened and stopped once its row is written.
 func (s *SessionConnectorsSuite) endedSession(config string) string {
-	opened := s.client.createSession(s.session(config, nil))
+	return s.endedSessionOf(config, nil)
+}
+
+// endedSessionOf is endedSession opened with overwrites in place of the config's models.
+func (s *SessionConnectorsSuite) endedSessionOf(config string, overwrites *ModelOverwrites) string {
+	request := s.session(config, nil)
+	request.ModelOverwrites = overwrites
+	opened := s.client.createSession(request)
 	s.storedSelections(opened.Id)
 	s.client.stopSession(opened.Id)
 	return opened.Id
+}
+
+// modelledConfig is a text agent's config on llm, with fields besides.
+func (s *SessionConnectorsSuite) modelledConfig(llm string, fields map[string]any) string {
+	created := AgentConfig{}
+	body := map[string]any{"name": "modelled-" + s.utils.uuid(), "mode": "text", "llm": llm}
+	maps.Copy(body, fields)
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", body, &created))
+	return created.Id
+}
+
+// askFork forks parent with overwrites, asks the fork a question, and returns the fork and the
+// first frame of type wanted it sent back. The fork is stopped once it has.
+func (s *SessionConnectorsSuite) askFork(parent string, overwrites *ModelOverwrites, wanted string) (Session, map[string]any) {
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ModelOverwrites: overwrites}, &forked))
+	watching := s.client.opens("/v1/agents/sessions/" + forked.Id + "/events")
+	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+forked.Id+"/respond",
+		RespondRequest{Text: "Is the upgrade worth it?", RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusOK, status, failure)
+	frame := s.await(watching, wanted)
+	s.client.stopSession(forked.Id)
+	return forked, frame
 }
 
 // forkPrompts forks parent onto the model that reviews, asks it a question, stops it, and

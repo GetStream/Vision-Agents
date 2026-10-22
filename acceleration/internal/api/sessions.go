@@ -94,32 +94,31 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, err
 	}
-	spec, err := forkSpec(parent, body, config, thread)
+	// A fork naming no config goes on with its parent's, as the config is now rather than as
+	// the parent was opened with. A config deleted since leaves the fork what its parent had;
+	// a config that cannot be read fails the fork rather than dropping what it decides.
+	var current *store.AgentConfig
+	if config == nil && s.store != nil && parent.ConfigID() != "" {
+		read, err := s.store.AgentConfig(ctx, customerID, parent.ConfigID())
+		switch {
+		case err == nil:
+			current = &read
+		case !errors.Is(err, store.ErrNoAgentConfig):
+			return nil, err
+		}
+	}
+	spec, err := forkSpec(parent, body, config, current, thread)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	// The connector bindings are the config's as it is now, not as the parent was opened
-	// with. The session re-resolves the parent's selections against them and against the
-	// caller asking for the fork, and drops the ones the config no longer declares. A config
-	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
-	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
-	// An ended parent's row keeps none of the config's prompts, so its fork is told, guarded
-	// and reviewed by the config as it is now too; a live parent's spec already carries them.
+	// The connector bindings are the config's as it is now, even for a live parent. The
+	// session re-resolves the parent's selections against them and against the caller asking
+	// for the fork, and drops the ones the config no longer declares. A config deleted since
+	// binds nothing, and its fork goes ahead as a fork did before bindings existed.
 	if config == nil {
 		spec.ConnectorBindings = nil
-		if s.store != nil && spec.ConfigID != "" {
-			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
-			switch {
-			case err == nil:
-				spec.ConnectorBindings = current.Connectors
-				if parent.Live == nil {
-					spec.Instructions = current.Instructions
-					spec.Guardrail = current.Guardrail
-					spec.ReviewInstructions = current.ReviewInstructions
-				}
-			case !errors.Is(err, store.ErrNoAgentConfig):
-				return nil, err
-			}
+		if current != nil {
+			spec.ConnectorBindings = current.Connectors
 		}
 	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
@@ -895,8 +894,9 @@ func modelOverwritesFor(held store.ModelOverwrites) *ModelOverwrites {
 // The parent is read from whichever half of Found has it. A live parent is preferable -- it
 // carries the whole spec, tools and skills included -- but a conversation worth continuing
 // has usually ended, so the row has to be enough on its own. thread is whether the parent's
-// conversation is held on a thread channel (heldOnThread).
-func forkSpec(parent session.Found, request ForkSessionRequest, config *store.AgentConfig, thread bool) (session.Spec, error) {
+// conversation is held on a thread channel (heldOnThread). current is the parent's own config
+// as it is now, nil when the parent had none or it was deleted since.
+func forkSpec(parent session.Found, request ForkSessionRequest, config, current *store.AgentConfig, thread bool) (session.Spec, error) {
 	var spec session.Spec
 	var parentID string
 	// What the fork reads its history out of, which is the parent's channel and the agent
@@ -919,13 +919,17 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			recall = &session.Recall{AgentID: spec.AgentID, ConversationID: spec.ConversationID}
 		}
 	case parent.Stored != nil:
+		// The row keeps none of what the config decides but the models the parent was given
+		// in place of the config's, so the fork runs on the config as it is now, the way a
+		// reopened conversation does (reopenedFromRow).
 		row := parent.Stored
-		spec = session.Spec{
-			AgentName: row.AgentName, ConfigID: row.ConfigID,
-			Title: row.Title, Description: row.Description, Project: row.Project,
-			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
-			Text: true,
+		spec = session.Spec{AgentName: row.AgentName, ConfigID: row.ConfigID}
+		if current != nil {
+			spec = session.FromConfig(*current)
 		}
+		spec.Text = true
+		spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
+		spec.Custom, spec.ModelOverwrites = row.Custom, row.ModelOverwrites
 		spec.ConnectorSelections = selectionsOf(*row)
 		spec.ReturnURL = row.ReturnURL
 		parentID = row.ID
