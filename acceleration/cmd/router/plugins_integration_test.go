@@ -157,7 +157,7 @@ func (s *PluginsMigrateSuite) TestAnAppWithNoPluginRowsMovesNothing() {
 // open what it wrote.
 func (s *PluginsMigrateSuite) TestADryRunLeavesAClientSecretUnderAnOlderKeyAsItIs() {
 	customer := "app-" + store.NewID()
-	older, err := loadKeyring(s.settings, "the test needs")
+	older, err := loadKeyring(s.T().Context(), s.settings, "the test needs")
 	s.Require().NoError(err)
 	s.T().Setenv(authKEKEnvVar+"_V2", "second-key")
 	s.T().Setenv(authKEKVersionEnvVar, "2")

@@ -66,7 +66,7 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	defer pgStore.Close()
 	// An imported row may be pinned only to the app its customer acts in here, and one
 	// pinned to the deployment's own app can be placed only once that app is known.
-	secrets, err := newSecretSealer(settings)
+	secrets, err := newSecretSealer(ctx, settings)
 	if err != nil {
 		return err
 	}
