@@ -20,7 +20,7 @@ from vision_agents.plugins import audexum
 tts = audexum.TTS()
 ```
 
-Create an API key at [audexum.com](https://audexum.com) and make `AUDEXUM_API_KEY` available as an environment variable (in a `.env` file or exported in your terminal).
+Create an API key at [audexum.com](https://audexum.com) and export `AUDEXUM_API_KEY` in your shell, or put it in a `.env` file and load it (for example with `python-dotenv`'s `load_dotenv()`) before creating `audexum.TTS()`.
 
 ## Parameters
 

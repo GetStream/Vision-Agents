@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import wave
@@ -24,6 +25,33 @@ class TestAudexumTTS:
         assert tts.voice == "Nova"
         assert tts.speed == 1.0
 
+    def test_invalid_speed_raises(self) -> None:
+        with pytest.raises(ValueError):
+            audexum.TTS(api_key="fake", speed=5.0)
+
+    async def test_stop_audio_cancels_request(self) -> None:
+        release = asyncio.Event()
+
+        async def handler(request: web.Request) -> web.Response:
+            await release.wait()
+            return web.Response(body=_wav(), content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="fake", base_url=str(server.make_url("/v1")))
+        try:
+            pending = asyncio.ensure_future(tts.stream_audio("Hello"))
+            await asyncio.sleep(0.1)
+            await tts.stop_audio()
+            pcm = await pending
+            assert len(pcm.samples) == 0
+        finally:
+            release.set()
+            await tts.close()
+            await server.close()
+
     def test_missing_api_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("AUDEXUM_API_KEY", raising=False)
         with pytest.raises(ValueError):
@@ -41,14 +69,13 @@ class TestAudexumTTS:
         app.router.add_post("/v1/audio/speech", handler)
         server = TestServer(app)
         await server.start_server()
-        tts = audexum.TTS(
-            api_key="sk_live_test", voice="Atlas", base_url=str(server.make_url("/v1"))
-        )
+        tts = audexum.TTS(api_key="sk_live_test", base_url=str(server.make_url("/v1")))
         try:
             pcm = await tts.stream_audio("Hello")
             assert seen["auth"] == "Bearer sk_live_test"
             assert seen["body"]["input"] == "Hello"
-            assert seen["body"]["voice"] == "Atlas"
+            assert seen["body"]["voice"] == "Nova"
+            assert seen["body"]["speed"] == 1.0
             assert seen["body"]["response_format"] == "wav"
             assert pcm.sample_rate == 24000
             assert len(pcm.samples) == 2400
