@@ -262,9 +262,14 @@ func attributesOf(details map[string]any) []any {
 	return attributes
 }
 
+const callSitesWriteTimeout = 10 * time.Second
+
 // recordCallSites writes the call_sites row, under the session's config and agent when the
 // router ran one for the call.
 func (s *Server) recordCallSites(ctx context.Context, call endedCall, details map[string]any) {
+	// The read's context may be spent by now; the row is the point of the read.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), callSitesWriteTimeout)
+	defer cancel()
 	entry := &store.AgentLog{
 		CustomerID: call.customer,
 		SessionID:  call.callID,
