@@ -180,6 +180,9 @@ type Auth struct {
 	// KEK unseals the stored key secrets. It belongs in the environment rather than in a
 	// file checked in beside the code: it is what makes a leaked backup ciphertext.
 	KEK string `koanf:"kek"`
+	// KMSKey names the KMS key that unwraps each ROUTER_AUTH_KEK_V<n>_WRAPPED at startup, so
+	// the keyring itself is in no variable. Empty reads only the plain keys.
+	KMSKey string `koanf:"kms_key"`
 	// ProxyDeclaresKind says the proxy in front authenticates every caller and declares
 	// whether it is a backend or an end user. In proxy mode the router then reads only the
 	// app header and takes a caller that declares nothing for an end user. Off, a caller
@@ -404,6 +407,7 @@ var variables = map[string]string{
 	"shutdown.drain":       "ROUTER_SHUTDOWN_DRAIN",
 	"auth.mode":            "ROUTER_AUTH_MODE",
 	"auth.kek":             "ROUTER_AUTH_KEK",
+	"auth.kms_key":         "ROUTER_AUTH_KMS_KEY",
 	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
 	"data_move.retention":  "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":       "STREAM_API_KEY",
@@ -777,6 +781,7 @@ func (c Config) export() error {
 		"shutdown.drain":                c.Shutdown.Drain.String(),
 		"auth.mode":                     c.Auth.Mode,
 		"auth.kek":                      c.Auth.KEK,
+		"auth.kms_key":                  c.Auth.KMSKey,
 		"auth.ops_key":                  c.Auth.OpsKey,
 		"auth.proxy_declares_kind":      fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":                c.Stream.APIKey,
