@@ -642,6 +642,31 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).
 - The `anthropic` provider sends `ANTHROPIC_WORKSPACE_ID` as the `anthropic-workspace-id` header, so an Anthropic key that is not scoped to a workspace is accepted; with it unset, requests are sent as before.
 
+### The session socket says when each utterance starts being heard
+
+A new `speaking` frame comes when the call's track takes the first audible frame of an
+utterance of the agent's, so a page can reveal a reply as it is said rather than as the Chat
+channel has it written: `turn_id`, `synthesis_id`, `text` and `at`. `text` is what the voice
+had been sent for the utterance by then, which is all of a greeting or other line said as
+written and of a sentence a voice that takes one at a time was given, and the start of the
+reply for a streaming voice, which is still being sent the rest. A speech-to-speech model's is
+its transcript so far. An edge with no track of its own reports it once publishing the first
+chunk returns. `spoke` now carries the same `synthesis_id` and the `characters` synthesised
+(for a speech-to-speech model, its transcript's), and always comes after the utterance's
+`speaking`. An utterance the caller talks over is still reported `speaking` if any of it was
+heard, and its cut is `interrupted` as before. What is spoken, and when, is unchanged.
+
+`speaking` also carries `delay_ms`: for an utterance reported before the track got to it (one
+that finished being made behind speech still queued), how long after `at` it is expected to be
+heard, from the speech queued ahead of it at the edge. `interrupted` carries `synthesis_id` and
+`heard_ms` when any of the turn had been heard: the utterance the track was playing and how
+many milliseconds of it went out before the cut. Every character count on the session socket,
+`characters` included, is in Unicode code points.
+
+Each of the agent's spoken messages in the Chat channel already carries that same `turn_id`,
+now pinned by tests: one being written, settled, cut off, a greeting (`say-...`) or other line
+said as written, and each message of a reply a sentence voice leaves more than one of (#1128).
+
 ### A tool call waits for the person to sign in, and carries on once they have
 
 When the agent calls a connector bound as each person's own (`connection.type: session`) that
@@ -2463,6 +2488,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A call's Chat channel shows what the agent is doing with Stream's AI indicator, as a conversation held in writing already did: `ai_indicator.update` with `AI_STATE_THINKING` once the agent starts on a reply and while its tools run, `AI_STATE_EXTERNAL_SOURCES` while a search tool runs, and `AI_STATE_GENERATING` once its words show, each naming the reply's `message_id`, then `ai_indicator.clear` once the reply is heard or cut off and its tools are back, or the call ends. The voice transcript sent none, so `AIStateIndicator` in `stream-chat-react` and the other AI components never showed the agent thinking on a call. A reply the agent starts on is stored under an id made from its channel and turn, `voice-reply-<sha256>`, which the indicator names before the reply has a word in it (#1126).
+- `POST /v1/agents/runs` answers as soon as the agent has given its answer with nothing left to do, rather than after a further two seconds of quiet, so every run returns about 2 s sooner. A reply that calls a tool or hands work off still waits for the answer that follows it.
 - A voice agent's flow controller on Gemma or OpenAI is held to a JSON Schema of its own values, so a ruling such as `{"disposition":"continue"}` can no longer replace the decision with the fallback. Other models are asked for a JSON object as before, and a ruling they get wrong still falls back. `router_agent_flow_invalid_rulings_total{reason}` counts the rulings refused, by `decode`, `disposition` or `floor` (AI-1668, #1123).
 - A fork of a session that has ended (`POST /v1/agents/sessions/{id}/fork`, naming no config) runs on its agent config's `instructions`, `guardrail` and `review.instructions` as the config is now. It ran with no instructions and no guardrail, and was reviewed by Stream's default guide. A config deleted since gives the fork none of them, and the fork goes ahead as before. A fork of a running session, and a fork naming a config, are unchanged (AI-1662, #1120).
 - Resuming a scheduled task with no occurrence left, such as a one-shot reminder that failed or a repeat past its `until`, answers 400 `schedule_in_past` over the API and leaves the task as it was, as the agent's `update_scheduled_task` tool already did. The API marked such a task `completed` although it never delivered, or answered 409 `too_many_tasks` or 404 first. To run it again, give it a new schedule, then resume it. A paused one-shot resumed after its time is still completed with a `missed` run (AI-1639, #1119).

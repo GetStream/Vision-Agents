@@ -51,6 +51,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -757,6 +758,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
+	})
+
+	// A model that loads the skill called policy on its first turn and answers once it is
+	// back, the way a moderator's run reads a skill before it judges.
+	reasoning.Register("checking", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Checking.", then: "Judged.", calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: harness.LoadSkillTool, Arguments: `{"name":"policy"}`,
+		}}}, nil
 	})
 
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {

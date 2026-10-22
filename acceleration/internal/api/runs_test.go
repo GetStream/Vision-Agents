@@ -20,6 +20,8 @@ type RunsSuite struct {
 	RouterSuite
 	// images serves a PNG at /photo.png, a web page at /page and nothing anywhere else.
 	images *httptest.Server
+	// logged is what the router logged.
+	logged *lockedLog
 }
 
 // png is the start of a PNG, which is all the router reads to tell one.
@@ -44,6 +46,8 @@ func (s *RunsSuite) SetupSuite() {
 		}
 	}))
 	s.T().Cleanup(s.images.Close)
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -60,6 +64,30 @@ func (s *RunsSuite) TestARunAnswersWithWhatTheAgentSaidLast() {
 	s.Contains(run.FinalText, policy, "the run's instructions are added to them")
 	s.Equal("echo/echo-model", run.ModelRoute)
 	s.NotEmpty(run.SessionId)
+}
+
+func (s *RunsSuite) TestARunReturnsOnceItsAgentHasAnswered() {
+	config := s.config("echo/echo-model")
+
+	started := time.Now()
+	run := s.run(CreateRunRequest{ConfigId: config, Input: "hello"})
+
+	s.NotEmpty(run.FinalText)
+	s.Less(time.Since(started), time.Second, "an agent with nothing left to do is not waited on for a quiet gap")
+}
+
+func (s *RunsSuite) TestARunWaitsForTheAnswerAfterItsTools() {
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "agent-" + s.utils.uuid(), "llm": "checking/checking-model", "skills": []string{"policy"},
+	}, &config))
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/skills", map[string]any{
+		"config_id": config.Id, "name": "policy", "description": "the labels to judge by", "instructions": "Flag spam.",
+	}, nil))
+
+	run := s.run(CreateRunRequest{ConfigId: config.Id, Input: "hello"})
+
+	s.Equal("Judged.", run.FinalText, "the reply that asked for a tool does not end the run")
 }
 
 func (s *RunsSuite) TestAModeratorsRunEndsWithTheAnswerFormat() {
@@ -108,6 +136,9 @@ func (s *RunsSuite) TestARunsSpendIsBrokenDownByItsTags() {
 
 	s.run(CreateRunRequest{ConfigId: s.config("counted/counted-model"), Input: "count me", Tags: &tags})
 
+	// A model call's spend is recorded off the request path, so the run can answer first.
+	s.Require().Eventually(func() bool { return len(s.spend("group_by=review_item")) == 1 },
+		5*time.Second, 20*time.Millisecond)
 	for key, value := range tags {
 		buckets := s.spend("group_by=" + key)
 		s.Require().Len(buckets, 1, key)
@@ -216,6 +247,18 @@ func (s *RunsSuite) TestARunsImagesReachTheModelAsTheBytesFetched() {
 	s.Equal("image/png", seen[0].MIME)
 	s.Empty(seen[0].URL)
 	s.Equal("image/jpeg", seen[1].MIME)
+}
+
+func (s *RunsSuite) TestARunLogsHowManyImagesItCarried() {
+	config := s.config("vision/vision-model")
+
+	withImages := s.run(CreateRunRequest{ConfigId: config, Input: "hello",
+		Images: &[]ImageSource{{Url: s.images.URL + "/photo.png"}, {Url: s.images.URL + "/photo.png"}}})
+	without := s.run(CreateRunRequest{ConfigId: config, Input: "hello"})
+
+	logged := s.logged.String()
+	s.Contains(logged, `msg="a run started" customer=`+s.customerID()+" session="+withImages.SessionId+" config="+config+" images=2")
+	s.Contains(logged, `msg="a run started" customer=`+s.customerID()+" session="+without.SessionId+" config="+config+" images=0")
 }
 
 func (s *RunsSuite) TestAnImageThatCannotBeFetchedIsUnavailable() {

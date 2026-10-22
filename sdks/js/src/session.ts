@@ -42,12 +42,17 @@ export interface Participant {
  * One thing the conversation did.
  *
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
- * response_delta, responded, blocked, spoke, turn, delegated, task_settled, task_cancelled,
- * tool_started, tool_ran, transferred, pressed, looked_up, backchannel, interrupted,
- * overlap_decided, conversation_compacted, conversation_updated, error and left, and
- * tool_call for a call waiting in `session.approvals`. The fields
+ * response_delta, responded, blocked, speaking, spoke, turn, delegated, task_settled,
+ * task_cancelled, tool_started, tool_ran, transferred, pressed, looked_up, backchannel,
+ * interrupted, overlap_decided, conversation_compacted, conversation_updated, error and left,
+ * and tool_call for a call waiting in `session.approvals`. The fields
  * below are filled from whichever of those carry them, and `frame` is the whole thing for
  * anything they do not cover.
+ *
+ * `speaking` is an utterance starting to be heard, and `text` is what the voice had been sent
+ * for it by then; its `frame` has `turn_id`, `synthesis_id` and `at`. The utterance's `spoke`
+ * follows with the same `synthesis_id`, its `characters` and `audio_duration_ms`, which is
+ * how a page reveals a reply as it is said rather than as it is written.
  */
 export interface SessionEvent {
   readonly kind: string;

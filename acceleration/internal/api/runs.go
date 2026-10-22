@@ -149,6 +149,10 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	if err != nil {
 		return nil, runFailed(ctx, err, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: err.Error()})
 	}
+	// The images are counted here because nothing else a run logs says whether it had any,
+	// and an answer that says it saw no image is otherwise impossible to place.
+	s.logger.Info("a run started", "customer", customerID, "session", created.ID(), "config", body.ConfigId,
+		"images", len(images))
 	events, detach := created.Watch()
 	defer detach()
 	defer func() {
@@ -195,12 +199,15 @@ type runOutcome struct {
 	usage  CallUsage
 }
 
-func (r *runOutcome) see(event session.Event) {
+// see adds event to the outcome, and says whether it ends the run: an answer the agent
+// gave with nothing left to do after it.
+func (r *runOutcome) see(event session.Event) bool {
 	switch typed := event.(type) {
 	case agent.Responded:
 		if typed.Text != "" {
 			r.finalText, r.failed = typed.Text, nil
 		}
+		return typed.Text != "" && !typed.PendingWork && typed.Purpose == ""
 	case agent.Error:
 		if typed.Context == "llm" || typed.Context == "flow" {
 			r.failed = typed.Err
@@ -212,6 +219,7 @@ func (r *runOutcome) see(event session.Event) {
 		r.usage.CostMicros += typed.CostMicros
 		r.usage.Requests++
 	}
+	return false
 }
 
 // runFailed is err as the caller is told it: a spent budget and a run out of time say so, and
