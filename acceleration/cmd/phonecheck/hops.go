@@ -18,15 +18,24 @@ type hop struct {
 
 type lookupFunc func(ctx context.Context, host string) ([]netip.Addr, error)
 
+// callHosts are the hosts a call passed through. CustomerTrunk is empty unless the call went
+// out through a customer's own SIP trunk.
+type callHosts struct {
+	AgentSFU, Router, StreamSIP, CustomerTrunk string
+}
+
 // collectHops resolves each hop's host. resolveSIP looks the SIP host up from the place chosen
 // with -sip-lookup-from. A host that does not resolve is logged and kept with no address.
-func collectHops(ctx context.Context, logger *slog.Logger, lookup, resolveSIP lookupFunc,
-	agentSFUHost, routerHost, sipHost string) []hop {
-	return []hop{
-		resolved(ctx, logger, lookup, hop{Name: "agent_sfu", Host: agentSFUHost, How: "reported"}),
-		resolved(ctx, logger, lookup, hop{Name: "router_address", Host: routerHost, How: "observed"}),
-		resolved(ctx, logger, resolveSIP, hop{Name: "stream_sip", Host: sipHost, How: "inferred"}),
+func collectHops(ctx context.Context, logger *slog.Logger, lookup, resolveSIP lookupFunc, hosts callHosts) []hop {
+	hops := []hop{
+		resolved(ctx, logger, lookup, hop{Name: "agent_sfu", Host: hosts.AgentSFU, How: "reported"}),
+		resolved(ctx, logger, lookup, hop{Name: "router_address", Host: hosts.Router, How: "observed"}),
+		resolved(ctx, logger, resolveSIP, hop{Name: "stream_sip", Host: hosts.StreamSIP, How: "inferred"}),
 	}
+	if hosts.CustomerTrunk != "" {
+		hops = append(hops, resolved(ctx, logger, lookup, hop{Name: "customer_trunk", Host: hosts.CustomerTrunk, How: "reported"}))
+	}
+	return hops
 }
 
 func resolved(ctx context.Context, logger *slog.Logger, lookup lookupFunc, h hop) hop {

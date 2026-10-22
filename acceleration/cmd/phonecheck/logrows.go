@@ -21,8 +21,9 @@ type callSitesRow struct {
 	SFUsUsed, SFULocations, SIPHost, StreamSession string
 }
 
+// callPlacedRow: CustomerTrunkHost is only there for a call through a customer's own SIP trunk.
 type callPlacedRow struct {
-	SIPHost, Vendor, VendorCallID string
+	SIPHost, Vendor, VendorCallID, CustomerTrunkHost string
 }
 
 // readJoined reads the first joined row; a rebuilt session has more than one.
@@ -54,7 +55,10 @@ func readCallPlaced(ctx context.Context, r router, sessionID string) (callPlaced
 	if err != nil || !found {
 		return callPlacedRow{}, false, err
 	}
-	return callPlacedRow{SIPHost: d["stream_sip_host"], Vendor: d["vendor"], VendorCallID: d["vendor_call_id"]}, true, nil
+	return callPlacedRow{
+		SIPHost: d["stream_sip_host"], Vendor: d["vendor"], VendorCallID: d["vendor_call_id"],
+		CustomerTrunkHost: d["customer_trunk_host"],
+	}, true, nil
 }
 
 // readCallSites polls because the router writes the row after the call ends. The last poll is

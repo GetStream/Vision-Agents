@@ -212,7 +212,10 @@ func (c *callRun) logSites(ctx context.Context) error {
 	}
 	sipHost := sipHostOf(c.cfg.Direction, placed, sites)
 
-	hops := collectHops(ctx, c.logger, c.d.lookup, c.resolveSIP, joined.SFUHost, routerHost(c.cfg.Router), sipHost)
+	hops := collectHops(ctx, c.logger, c.d.lookup, c.resolveSIP, callHosts{
+		AgentSFU: joined.SFUHost, Router: routerHost(c.cfg.Router), StreamSIP: sipHost,
+		CustomerTrunk: placed.CustomerTrunkHost,
+	})
 	logHops(ctx, c.logger, c.d.locator, hops)
 	logStreamSFUs(c.logger, sites)
 

@@ -64,7 +64,10 @@ func (s *LogRowsSuite) TestAnOutboundCallsSIPHostComesFromTheCallPlacedRow() {
 	now := time.Now()
 	s.addRows(
 		logRow("1", "joined", now, map[string]any{"sfu_host": "sfu.example.com"}),
-		logRow("2", "call_placed", now, map[string]any{"stream_sip_host": "sip.example.com", "vendor": "fake", "vendor_call_id": "CA0001"}),
+		logRow("2", "call_placed", now, map[string]any{
+			"stream_sip_host": "sip.example.com", "vendor": "fake", "vendor_call_id": "CA0001",
+			"customer_trunk_host": "trunk.example.com",
+		}),
 		logRow("3", "call_sites", now, map[string]any{"sfus_used": "1"}),
 	)
 	ctx := context.Background()
@@ -75,7 +78,9 @@ func (s *LogRowsSuite) TestAnOutboundCallsSIPHostComesFromTheCallPlacedRow() {
 	sites, _, err := readCallSites(ctx, s.router, "sess", 0, time.Millisecond)
 	s.Require().NoError(err)
 
-	s.Equal(callPlacedRow{SIPHost: "sip.example.com", Vendor: "fake", VendorCallID: "CA0001"}, placed)
+	s.Equal(callPlacedRow{
+		SIPHost: "sip.example.com", Vendor: "fake", VendorCallID: "CA0001", CustomerTrunkHost: "trunk.example.com",
+	}, placed)
 	s.Equal("sip.example.com", sipHostOf(person.Outbound, placed, sites))
 }
 

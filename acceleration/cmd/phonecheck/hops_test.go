@@ -21,9 +21,12 @@ func lookupGiving(addr string) lookupFunc {
 }
 
 func (s *HopsSuite) hops(sipHost string) []hop {
+	return s.hopsOf(callHosts{AgentSFU: "sfu.example.com", Router: "router.example.com", StreamSIP: sipHost})
+}
+
+func (s *HopsSuite) hopsOf(hosts callHosts) []hop {
 	return collectHops(context.Background(), newLogger("json", io.Discard),
-		lookupGiving("192.0.2.9"), lookupGiving("198.51.100.1"),
-		"sfu.example.com", "router.example.com", sipHost)
+		lookupGiving("192.0.2.9"), lookupGiving("198.51.100.1"), hosts)
 }
 
 func (s *HopsSuite) TestTheSIPServerHopIsMarkedInferred() {
@@ -48,11 +51,24 @@ func (s *HopsSuite) TestAHostThatDoesNotResolveIsKeptWithNoAddress() {
 	failing := func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("no such host") }
 
 	hops := collectHops(context.Background(), newLogger("json", io.Discard), failing, failing,
-		"sfu.example.com", "router.example.com", "sip.example.com")
+		callHosts{AgentSFU: "sfu.example.com", Router: "router.example.com", StreamSIP: "sip.example.com"})
 
 	s.Require().Len(hops, 3)
 	s.Equal("sfu.example.com", hops[0].Host)
 	s.Empty(hops[0].Addrs)
+}
+
+func (s *HopsSuite) TestACustomersTrunkIsAHopOnlyWhenTheCallWentThroughOne() {
+	without := s.hops("sip.example.com")
+	with := s.hopsOf(callHosts{
+		AgentSFU: "sfu.example.com", Router: "router.example.com", StreamSIP: "sip.example.com",
+		CustomerTrunk: "trunk.example.com",
+	})
+
+	s.Len(without, 3)
+	s.Require().Len(with, 4)
+	s.Equal(hop{Name: "customer_trunk", Host: "trunk.example.com",
+		Addrs: []netip.Addr{netip.MustParseAddr("192.0.2.9")}, How: "reported"}, with[3])
 }
 
 func (s *HopsSuite) TestTheFirstAddressOfAHopIsTheSummarys() {

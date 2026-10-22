@@ -182,6 +182,9 @@ One line per hop: `hop`, `host`, `address`, `place`, `how`. `how` says how we kn
 - `inferred`: resolved from a place you chose, not seen on the call;
 - `reported`: the router or Stream said so.
 
+The hops are `agent_sfu`, `router_address`, `stream_sip`, and `customer_trunk` when the agent
+number is on a customer's own SIP trunk (the trunk's host, as the router reports it).
+
 A `person call` line gives the person side's status, start and end where the tool can see them.
 
 Then one `call summary` line: `direction`, `provider`, `session_id`, `outcome`, `connect_ms`,

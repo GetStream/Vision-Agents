@@ -291,6 +291,37 @@ func (s *RunSuite) TestTheCoreNeverResolvesThroughTheNetwork() {
 	s.Equal([]string{"sip.example.com"}, s.resolved.all())
 }
 
+func (s *RunSuite) TestACallThroughACustomersTrunkLogsTheTrunkAsAHop() {
+	s.addRows(
+		logRow("1", "joined", time.Now(), map[string]any{"sfu_edge": "sfu-a1", "sfu_host": "sfu.example.com"}),
+		logRow("2", "call_placed", time.Now(), map[string]any{
+			"stream_sip_host": "sip.example.com", "customer_trunk_host": "trunk.example.com",
+		}),
+		logRow("3", "call_sites", time.Now(), map[string]any{"sfus_used": "2"}),
+	)
+
+	s.Require().NoError(s.run())
+
+	s.Contains(s.looked.all(), "trunk.example.com")
+	s.Len(s.hopLines("customer_trunk"), 1)
+}
+
+func (s *RunSuite) TestACallThroughAVendorHasNoTrunkHop() {
+	s.Require().NoError(s.run())
+
+	s.Empty(s.hopLines("customer_trunk"))
+}
+
+func (s *RunSuite) hopLines(name string) []map[string]any {
+	var found []map[string]any
+	for _, line := range s.linesSaying("hop") {
+		if line["hop"] == name {
+			found = append(found, line)
+		}
+	}
+	return found
+}
+
 func (s *RunSuite) shortenArrival() {
 	was := inboundArrivalWait
 	inboundArrivalWait = 50 * time.Millisecond
