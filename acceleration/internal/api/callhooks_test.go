@@ -226,7 +226,9 @@ func (s *CallHooksSuite) TestAnEndedPlacedCallGetsACallSitesRow() {
 	s.Equal("2", row.Details["sfus_used"])
 	s.Equal("sfu-a.example.com", row.Details["agent_current_sfu"])
 	s.Equal("sfu-c.example.com", row.Details["caller_current_sfu"])
-	s.NotContains(s.logged.String(), "+15550100002", "the caller's participant id names its number")
+	line := s.sitesLine()
+	s.Contains(line, "caller_current_sfu=sfu-c.example.com")
+	s.NotContains(line, "+15550100002", "the caller's participant id names its number")
 	s.Equal("session-1", row.Details["stream_session_id"])
 	s.NotContains(row.Details, "stream_sip_host", "a placed call's SIP host is on its call_placed row")
 	s.Equal("session-1", <-s.stats.asked)
@@ -274,6 +276,18 @@ func (s *CallHooksSuite) TestTheWebhookIsAnsweredBeforeTheStatsAreRead() {
 	close(s.stats.hold)
 	s.Equal("session-1", <-s.stats.asked)
 	s.callSitesRow()
+}
+
+// sitesLine is the router's "phone call sites" line for the suite's call.
+func (s *CallHooksSuite) sitesLine() string {
+	var found []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, `msg="phone call sites"`) && strings.Contains(line, "session_id="+s.callID+" ") {
+			found = append(found, line)
+		}
+	}
+	s.Require().Len(found, 1)
+	return found[0]
 }
 
 // recordedStats answers every stats read with one answer, and says which session it was

@@ -29,21 +29,31 @@ type sideSite struct {
 }
 
 // sitesOf reads each side's SFU out of a session's participant stats. The phone caller is
-// told apart by its participant id; anyone else is the agent.
+// told apart by its participant id; anyone else is the agent. A side keeps the first SFU
+// listed for it, as the tool keeps the agent's first joined row.
 func sitesOf(stats *getstream.QueryCallSessionParticipantStatsResponse) callSites {
 	sites := callSites{SFUsUsed: stats.Counts.SfusUsed}
 	for _, participant := range stats.Participants {
 		side := &sites.Agent
-		if _, caller := phone.CallerNumber(participant.UserID); caller {
+		if isCaller(participant) {
 			side = &sites.Caller
 		}
 		for _, session := range participant.Sessions {
-			if session.CurrentSfu != nil && *session.CurrentSfu != "" {
+			if side.SFU == "" && hasSFU(session) {
 				*side = siteOf(session)
 			}
 		}
 	}
 	return sites
+}
+
+func isCaller(participant getstream.CallStatsParticipant) bool {
+	_, caller := phone.CallerNumber(participant.UserID)
+	return caller
+}
+
+func hasSFU(session getstream.CallStatsParticipantSession) bool {
+	return session.CurrentSfu != nil && *session.CurrentSfu != ""
 }
 
 func siteOf(session getstream.CallStatsParticipantSession) sideSite {
@@ -57,15 +67,15 @@ func siteOf(session getstream.CallStatsParticipantSession) sideSite {
 	return site
 }
 
-// everySessionHasAnSFU says the stats are ready: Stream fills a session's current_sfu some
-// time after the call ends.
+// everySessionHasAnSFU says the stats are ready: the caller is listed, and every session
+// names its SFU. Stream fills both in some time after the call ends.
 func everySessionHasAnSFU(stats *getstream.QueryCallSessionParticipantStatsResponse) bool {
-	if len(stats.Participants) == 0 {
+	if !slices.ContainsFunc(stats.Participants, isCaller) {
 		return false
 	}
 	for _, participant := range stats.Participants {
 		for _, session := range participant.Sessions {
-			if session.CurrentSfu == nil || *session.CurrentSfu == "" {
+			if !hasSFU(session) {
 				return false
 			}
 		}
@@ -112,6 +122,7 @@ func joinPresent(parts ...string) string {
 type readCallStats func(ctx context.Context, client *getstream.Stream, callType, callID, session string) (*getstream.QueryCallSessionParticipantStatsResponse, error)
 
 func streamCallStats(ctx context.Context, client *getstream.Stream, callType, callID, session string) (*getstream.QueryCallSessionParticipantStatsResponse, error) {
+	// One page is enough: a phone call has two participants, the agent and the caller.
 	response, err := client.Video().QueryCallSessionParticipantStats(ctx, callType, callID, session, &getstream.QueryCallSessionParticipantStatsRequest{})
 	if err != nil {
 		return nil, err

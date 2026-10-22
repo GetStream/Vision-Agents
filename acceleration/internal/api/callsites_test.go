@@ -99,6 +99,26 @@ func TestCallStatsAreAskedAgainWhileASessionHasNoSFU(t *testing.T) {
 	require.Equal(t, "sfu-c.example.com", sites.Caller.SFU)
 }
 
+func TestEachSideKeepsItsFirstSFU(t *testing.T) {
+	stats := agentAndCaller("sfu-a.example.com", "sfu-c.example.com")
+	stats.Participants[0].Sessions = append(stats.Participants[0].Sessions, sessionOn("sfu-later.example.com"))
+
+	require.Equal(t, "sfu-a.example.com", sitesOf(stats).Agent.SFU)
+}
+
+func TestCallStatsWithoutTheCallerAreAskedAgain(t *testing.T) {
+	asked := 0
+	agentOnly := agentAndCaller("sfu-a.example.com", "")
+	agentOnly.Participants = agentOnly.Participants[:1]
+	read := answering(&asked, agentOnly, agentAndCaller("sfu-a.example.com", "sfu-c.example.com"))
+
+	sites, err := fetchCallSites(context.Background(), read, noWaits)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, asked)
+	require.Equal(t, "sfu-c.example.com", sites.Caller.SFU)
+}
+
 func TestCallStatsThatNeverFillGiveTheLastAnswerWithinTheBound(t *testing.T) {
 	asked := 0
 	read := answering(&asked, agentAndCaller("sfu-a.example.com", ""))
