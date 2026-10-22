@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -363,6 +364,10 @@ type Outbound struct {
 	// Trunk is the customer's own SIP trunk the call is dialled through. It is set only
 	// for numbers with vendor sip_trunk; every other vendor dials through its own network.
 	Trunk *SIPTrunk
+	// Connected is told where each side sends its audio from once a call through a
+	// customer's own SIP trunk is set up, which only the router's own bridge sees. Nil
+	// tells nobody; other vendors never call it.
+	Connected func(sipbridge.MediaAddrs)
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to

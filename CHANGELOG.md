@@ -699,8 +699,9 @@ The router logs the sites a phone call used: the SFU the agent joined (and any m
 the Stream SIP host for placed and arriving calls, both sides' media addresses on calls through a
 customer's own SIP trunk, and, after the call ends, how many SFUs Stream used and where. The
 agent's SFU is in the `details` of the session's `joined` log row. A placed call writes a
-`call_placed` row with its Stream SIP host, vendor and vendor call id, and an ended call writes a
-`call_sites` row with Stream's SFU count and places. No API changed.
+`call_placed` row with its Stream SIP host, vendor and vendor call id; a call through a customer's
+own SIP trunk also writes a `bridge_media` row with both sides' media addresses once it connects.
+An ended call writes a `call_sites` row with Stream's SFU count and places. No API changed.
 
 `acceleration/cmd/phonecheck` places a live outbound or inbound test call through a router, local
 or remote, with Twilio or Telnyx playing the person, and logs the site of every hop and the call's

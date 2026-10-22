@@ -33,6 +33,7 @@ type call interface {
 	Done() <-chan struct{}
 	Err() error
 	Hangup(ctx context.Context) error
+	Media() sipbridge.MediaAddrs
 }
 
 type dialer func(ctx context.Context, config sipbridge.Config) (call, error)
@@ -114,23 +115,24 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 	p.running.Add(1)
 	p.mu.Unlock()
 
-	go p.run(id, config)
+	go p.run(id, config, outbound.Connected)
 	return phone.Dialed{VendorCallID: id, Status: "queued"}, nil
 }
 
 // run holds one call from dialling to its end. It uses the node's context, never the
 // request's: the request is answered, and its context cancelled, while the phone still rings.
-func (p *Provider) run(id string, config sipbridge.Config) {
+// connected, when set, is told where each side's audio comes from once the call is up.
+func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbridge.MediaAddrs)) {
 	defer p.running.Done()
 	log := config.Logger
 
-	connected, err := p.dial(p.ctx, config)
+	bridged, err := p.dial(p.ctx, config)
 	if err != nil {
 		log.Warn("call through a customer's sip trunk did not connect", "error", err)
 		return
 	}
 	p.mu.Lock()
-	p.calls[id] = connected
+	p.calls[id] = bridged
 	p.mu.Unlock()
 	defer func() {
 		p.mu.Lock()
@@ -138,10 +140,13 @@ func (p *Provider) run(id string, config sipbridge.Config) {
 		p.mu.Unlock()
 	}()
 	log.Info("call through a customer's sip trunk connected")
+	if connected != nil {
+		connected(bridged.Media())
+	}
 
 	select {
-	case <-connected.Done():
-		if err := connected.Err(); err != nil {
+	case <-bridged.Done():
+		if err := bridged.Err(); err != nil {
 			log.Warn("call through a customer's sip trunk ended", "error", err)
 			return
 		}
@@ -149,7 +154,7 @@ func (p *Provider) run(id string, config sipbridge.Config) {
 	case <-p.ctx.Done():
 		ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
 		defer cancel()
-		if err := connected.Hangup(ctx); err != nil {
+		if err := bridged.Hangup(ctx); err != nil {
 			log.Warn("could not hang up a call through a customer's sip trunk", "error", err)
 			return
 		}

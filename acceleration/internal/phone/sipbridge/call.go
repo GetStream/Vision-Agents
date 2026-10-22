@@ -22,6 +22,8 @@ var errNotEstablished = errors.New("call not set up yet")
 type Call struct {
 	legs [2]leg
 	log  *slog.Logger
+	// media is where each side sent its audio from at setup, fixed before Dial returns.
+	media MediaAddrs
 
 	established atomic.Bool
 	ending      atomic.Bool
@@ -36,6 +38,9 @@ func newCall(customer, stream leg, log *slog.Logger) *Call {
 
 // Done is closed when the call has ended.
 func (c *Call) Done() <-chan struct{} { return c.done }
+
+// Media is where each side sent its audio from when the call was set up.
+func (c *Call) Media() MediaAddrs { return c.media }
 
 // Err says why the call ended, nil for a normal hangup. Read it after Done is closed.
 func (c *Call) Err() error { return c.err }

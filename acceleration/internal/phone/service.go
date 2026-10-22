@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -728,6 +729,13 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 	}
 
+	if trunk != nil {
+		customerID := request.Owner.CustomerID
+		outbound.Connected = func(media sipbridge.MediaAddrs) {
+			s.recordBridgeMedia(context.WithoutCancel(ctx), customerID, sessionID, media)
+		}
+	}
+
 	started := time.Now()
 	dialed, err := provider.Dial(ctx, outbound)
 	s.record(held.Vendor, "call", request.Owner, started, 0, err)
@@ -814,6 +822,31 @@ func (s *Service) recordPlaced(
 	})
 	if err != nil {
 		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)
+	}
+}
+
+// recordBridgeMedia keeps where each side of a call through a customer's own SIP trunk
+// sends its audio from, as the router's bridge saw in their SDP. It is the only place the
+// Stream side's real address shows: the SIP host's DNS answer depends on who asks.
+func (s *Service) recordBridgeMedia(ctx context.Context, customerID, sessionID string, media sipbridge.MediaAddrs) {
+	details := map[string]any{}
+	if media.Stream != "" {
+		details["stream_media_addr"] = media.Stream
+	}
+	if media.Customer != "" {
+		details["customer_media_addr"] = media.Customer
+	}
+	err := s.store.RecordAgentLog(ctx, &store.AgentLog{
+		CustomerID: customerID,
+		SessionID:  sessionID,
+		Source:     "system",
+		Severity:   "info",
+		EventType:  "bridge_media",
+		Message:    "Bridge media",
+		Details:    details,
+	})
+	if err != nil {
+		s.logger.Warn("could not record a bridged call's media addresses", "session_id", sessionID, "error", err)
 	}
 }
 

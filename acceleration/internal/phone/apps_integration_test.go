@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -613,13 +614,17 @@ func (s *AppsSuite) TestAPlacedCallLandsInTheCallOfTheSessionItWasPlacedFor() {
 }
 
 func (s *AppsSuite) callPlacedRows(placed Placed) []store.AgentLog {
+	return s.eventRows(placed, "call_placed")
+}
+
+func (s *AppsSuite) eventRows(placed Placed, eventType string) []store.AgentLog {
 	rows, err := s.store.AgentLogs(s.ctx, store.LogFilter{
 		CustomerID: s.customer, SessionID: placed.SessionID, Limit: 250,
 	})
 	s.Require().NoError(err)
 	var found []store.AgentLog
 	for _, row := range rows {
-		if row.EventType == "call_placed" {
+		if row.EventType == eventType {
 			found = append(found, row)
 		}
 	}
@@ -646,13 +651,23 @@ func (s *AppsSuite) TestAPlacedCallWritesACallPlacedRow() {
 	}
 }
 
-func (s *AppsSuite) TestACallThroughACustomersTrunkNamesTheTrunksHostOnly() {
+// trunkCall is a call placed through a customer's own trunk, with what its service logged and
+// the vendor that was asked to place it.
+type trunkCall struct {
+	placed   Placed
+	vendor   *stub
+	logged   *bytes.Buffer
+	password string
+}
+
+func (s *AppsSuite) callsThroughATrunk() trunkCall {
 	sealer, err := auth.NewSealer("apps suite")
 	s.Require().NoError(err)
-	var logged bytes.Buffer
+	logged := &bytes.Buffer{}
+	vendor := &stub{vendor: SIPTrunkVendor}
 	service, err := NewService(ServiceOptions{
 		Registry: NewRegistry(s.config()), Store: s.store, Apps: s.apps, Sealer: sealer,
-		SIPTrunks: &stub{vendor: SIPTrunkVendor}, Logger: slog.New(slog.NewTextHandler(&logged, nil)),
+		SIPTrunks: vendor, Logger: slog.New(slog.NewTextHandler(logged, nil)),
 	})
 	s.Require().NoError(err)
 	password := "trunk-s3cret"
@@ -671,8 +686,13 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkNamesTheTrunksHostOnly() {
 		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
 	})
 	s.Require().NoError(err)
+	return trunkCall{placed: placed, vendor: vendor, logged: logged, password: password}
+}
 
-	rows := s.callPlacedRows(placed)
+func (s *AppsSuite) TestACallThroughACustomersTrunkNamesTheTrunksHostOnly() {
+	call := s.callsThroughATrunk()
+
+	rows := s.callPlacedRows(call.placed)
 	s.Require().Len(rows, 1)
 	row, err := s.store.AgentLog(s.ctx, s.customer, rows[0].ID)
 	s.Require().NoError(err)
@@ -680,11 +700,33 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkNamesTheTrunksHostOnly() {
 	s.Equal(SIPTrunkVendor, row.Details["vendor"])
 	for key, value := range row.Details {
 		s.NotContains(value, "trunk-user", key)
-		s.NotContains(value, password, key)
+		s.NotContains(value, call.password, key)
 	}
-	s.Contains(logged.String(), "customer_trunk_host=trunk.example.com")
-	s.NotContains(logged.String(), "trunk-user")
-	s.NotContains(logged.String(), password)
+	s.Contains(call.logged.String(), "customer_trunk_host=trunk.example.com")
+	s.NotContains(call.logged.String(), "trunk-user")
+	s.NotContains(call.logged.String(), call.password)
+}
+
+func (s *AppsSuite) TestACallThroughACustomersTrunkKeepsWhereEachSidesAudioComesFrom() {
+	call := s.callsThroughATrunk()
+	s.Require().NotNil(call.vendor.dialed.Connected, "the bridge has nobody to tell")
+
+	call.vendor.dialed.Connected(sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"})
+
+	rows := s.eventRows(call.placed, "bridge_media")
+	s.Require().Len(rows, 1)
+	row, err := s.store.AgentLog(s.ctx, s.customer, rows[0].ID)
+	s.Require().NoError(err)
+	s.Equal(map[string]any{"stream_media_addr": "203.0.113.10", "customer_media_addr": "198.51.100.7"}, row.Details)
+}
+
+func (s *AppsSuite) TestACallThroughAVendorHasNoBridgeToHearFrom() {
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	s.Nil(s.vendor.dialed.Connected)
 }
 
 func (s *AppsSuite) TestACallTheVendorRefusedWritesNoCallPlacedRow() {
