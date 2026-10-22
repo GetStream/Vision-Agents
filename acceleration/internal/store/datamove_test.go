@@ -774,6 +774,33 @@ func (s *DataMoveSuite) TestANumberAnotherCustomerHoldsIsNotImported() {
 	}
 }
 
+func (s *DataMoveSuite) TestANumberIsReadByItsColumnsAsTheyAreNamed() {
+	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000119", Vendor: "plivo", Country: "US", CustomerID: "acme",
+	}))
+
+	// A key in another case names no column, so it gives nothing back.
+	for _, number := range []struct {
+		vendor, e164 string
+		refused      error
+	}{
+		{"bandwidth", "+15550000119", ErrNumberHeldElsewhere}, {"plivo", "15550000119", ErrNotE164},
+	} {
+		var row map[string]any
+		s.Require().NoError(json.Unmarshal(s.importedNumber(number.e164, number.vendor), &row))
+		delete(row, "released_at")
+		row["Released_At"] = time.Now().UTC()
+		encoded, err := json.Marshal(row)
+		s.Require().NoError(err)
+
+		err = s.destination.ImportRow(s.ctx, "other", "phone_numbers", encoded)
+		s.ErrorIs(err, number.refused, "%s %s", number.vendor, number.e164)
+	}
+	held, err := s.destination.CustomerNumbers(s.ctx, "other", true)
+	s.Require().NoError(err)
+	s.Empty(held)
+}
+
 func (s *DataMoveSuite) TestANumberNobodyElseHoldsAtAVendorIsImported() {
 	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
 		E164: "+15550000115", Vendor: "plivo", Country: "US", CustomerID: "acme",

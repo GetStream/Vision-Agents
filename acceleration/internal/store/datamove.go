@@ -533,21 +533,22 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 //
 // Two imports of one number into two customers at the same moment can both pass this.
 func importableNumber(ctx context.Context, db bun.IDB, customerID string, row json.RawMessage) error {
-	var number struct {
-		E164       string          `json:"e164"`
-		Vendor     string          `json:"vendor"`
-		ReleasedAt json.RawMessage `json:"released_at"`
-	}
-	if err := json.Unmarshal(row, &number); err != nil {
+	// Read the way the insert reads it, by exact column name: a JSON decoder also matches a
+	// key in another case, which the insert then leaves out.
+	var e164, vendor sql.NullString
+	var released bool
+	if err := db.QueryRowContext(ctx,
+		"SELECT e164, vendor, released_at IS NOT NULL FROM jsonb_populate_record(NULL::phone_numbers, ?::jsonb)",
+		string(row)).Scan(&e164, &vendor, &released); err != nil {
 		return fmt.Errorf("store: read an imported number: %w", err)
 	}
-	if len(number.ReleasedAt) > 0 && string(number.ReleasedAt) != "null" {
+	if released {
 		return nil
 	}
-	if !IsE164(number.E164) {
-		return stack.Wrap(fmt.Errorf("%w: %q", ErrNotE164, number.E164))
+	if !IsE164(e164.String) {
+		return stack.Wrap(fmt.Errorf("%w: %q", ErrNotE164, e164.String))
 	}
-	if number.Vendor == "sip_trunk" {
+	if vendor.String == "sip_trunk" {
 		return nil
 	}
 	// Compared by its digits too, so a number held in another form before every write
@@ -557,11 +558,11 @@ func importableNumber(ctx context.Context, db bun.IDB, customerID string, row js
 SELECT EXISTS (SELECT 1 FROM phone_numbers
 WHERE customer_id <> ? AND released_at IS NULL AND vendor <> 'sip_trunk'
   AND regexp_replace(e164, '[^0-9]', '', 'g') = ?)`,
-		customerID, strings.TrimPrefix(number.E164, "+")).Scan(&held); err != nil {
+		customerID, strings.TrimPrefix(e164.String, "+")).Scan(&held); err != nil {
 		return fmt.Errorf("store: who holds an imported number: %w", err)
 	}
 	if held {
-		return stack.Wrap(fmt.Errorf("%w: %s", ErrNumberHeldElsewhere, number.E164))
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNumberHeldElsewhere, e164.String))
 	}
 	return nil
 }
