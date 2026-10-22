@@ -143,14 +143,15 @@ func (s *TunnelSuite) pid() (int, error) {
 }
 
 // get is a request from code in the sandbox, through the proxy env it was given, with its
-// placeholder as a bearer token.
+// placeholder as a bearer token. It gives up after 5 s, where one through the forwarder takes
+// milliseconds, so a connection the forwarder leaves open fails the test.
 func (s *TunnelSuite) get() (int, error) {
 	roots := x509.NewCertPool()
 	s.Require().True(roots.AppendCertsFromPEM(s.rig.caCert))
 	proxy, err := url.Parse(s.local(s.mount.RunEnv["HTTPS_PROXY"]))
 	s.Require().NoError(err)
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{RootCAs: roots},
-		DisableKeepAlives: true}}
+		DisableKeepAlives: true}, Timeout: 5 * time.Second}
 	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, "https://api.github.com/user", nil)
 	s.Require().NoError(err)
 	request.Header.Set("Authorization", "Bearer "+s.mount.Env["GITHUB_TOKEN"])
@@ -277,11 +278,82 @@ func (s *TunnelSuite) TestAnotherProcessOnTheTunnelsPortFailsTheRun() {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = listener.Close() })
 
+	start := time.Now()
 	out, err := s.sh(s.mount.EachRun[0])
 
 	s.Require().Error(err)
 	s.Contains(out, "the TLS tunnel to the proxy did not start")
 	s.Contains(strings.ToLower(out), "address already in use", "the forwarder's own error")
+	s.Less(time.Since(start), 5*time.Second, "no waiting once the forwarder exited: 50 tries sleep 5 s")
+}
+
+// TestASecondForwarderLeavesThePidFileToTheFirst: one that cannot have the port exits without
+// naming itself, so the next check still finds the first.
+func (s *TunnelSuite) TestASecondForwarderLeavesThePidFileToTheFirst() {
+	s.setUp()
+	first, err := s.pid()
+	s.Require().NoError(err)
+
+	out, err := s.sh("python3 /tmp/va-egress-tunnel.py 3128 203.0.113.7 8091 /tmp/va-egress-ca.pem /tmp/va-egress-tunnel.pid")
+
+	s.Require().Error(err, out)
+	pid, err := s.pid()
+	s.Require().NoError(err)
+	s.Equal(first, pid)
+	out, err = s.sh(s.mount.EachRun[0])
+	s.Require().NoError(err, out)
+	pid, err = s.pid()
+	s.Require().NoError(err)
+	s.Equal(first, pid)
+}
+
+// exchange sends an HTTP/1.0 request to the forwarder, as a client that may then stop sending,
+// and is what it reads back by the deadline.
+func (s *TunnelSuite) exchange(halfClose bool) (string, error) {
+	conn, err := net.Dial("tcp", "127.0.0.1:"+s.port)
+	s.Require().NoError(err)
+	defer func() { _ = conn.Close() }()
+	_, err = conn.Write([]byte("GET http://stand.in/ HTTP/1.0\r\nHost: stand.in\r\n\r\n"))
+	s.Require().NoError(err)
+	if halfClose {
+		s.Require().NoError(conn.(*net.TCPConn).CloseWrite())
+	}
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	got, err := io.ReadAll(conn)
+	return string(got), err
+}
+
+// standIn is a proxy that answers after the client has had time to stop sending, and closes, as
+// Go's server does after an HTTP/1.0 reply.
+func (s *TunnelSuite) standIn() {
+	s.wire = newWire(s, s.serveTLS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte("answered"))
+	}), s.rig.handler.ListenerTLS("127.0.0.1")))
+}
+
+// TestAProxysCloseReachesTheClient: a client reading to the end is not left waiting.
+func (s *TunnelSuite) TestAProxysCloseReachesTheClient() {
+	s.standIn()
+	s.setUp()
+
+	got, err := s.exchange(false)
+
+	s.Require().NoError(err)
+	s.True(strings.HasPrefix(got, "HTTP/1.0 200 OK"), got)
+	s.True(strings.HasSuffix(got, "answered"), got)
+}
+
+// TestAClientThatStopsSendingStillGetsTheReply: as it did from the proxy without the tunnel.
+func (s *TunnelSuite) TestAClientThatStopsSendingStillGetsTheReply() {
+	s.standIn()
+	s.setUp()
+
+	got, err := s.exchange(true)
+
+	s.Require().NoError(err)
+	s.True(strings.HasPrefix(got, "HTTP/1.0 200 OK"), got)
+	s.True(strings.HasSuffix(got, "answered"), got)
 }
 
 // TestAnImageWithoutPython3FailsTheSetup: and Daytona runs no code after a failed setup.
@@ -295,10 +367,13 @@ func (s *TunnelSuite) TestAnImageWithoutPython3FailsTheSetup() {
 }
 
 // TestAProxyWithoutTheRouterCAsCertificateGetsNoRequest: the forwarder trusts the router CA
-// alone, so a server at the proxy's address that cannot show its certificate gets nothing past
-// the handshake.
+// alone, not the roots SSL_CERT_FILE names, so a server at the proxy's address that cannot show
+// its certificate gets nothing past the handshake.
 func (s *TunnelSuite) TestAProxyWithoutTheRouterCAsCertificateGetsNoRequest() {
 	_, otherCert, otherKey := newCA(s.T(), "another CA")
+	roots := filepath.Join(s.T().TempDir(), "roots.pem")
+	s.Require().NoError(os.WriteFile(roots, otherCert, 0o600))
+	s.T().Setenv("SSL_CERT_FILE", roots)
 	other, err := egress.New(egress.Options{Store: egress.NewStore(s.rig.redis), CACert: otherCert, CAKey: keyPEM(s.T(), otherKey),
 		Tokens: func(context.Context, egress.Grant) (string, error) { return "", nil }})
 	s.Require().NoError(err)
@@ -318,6 +393,26 @@ func (s *TunnelSuite) TestAProxyWithoutTheRouterCAsCertificateGetsNoRequest() {
 	mu.Lock()
 	defer mu.Unlock()
 	s.Empty(got)
+}
+
+// TestAProxyWithTheRouterCAsCertificateForAnotherAddressGetsNoRequest: the certificate must
+// name the proxy's address.
+func (s *TunnelSuite) TestAProxyWithTheRouterCAsCertificateForAnotherAddressGetsNoRequest() {
+	var mu sync.Mutex
+	got := 0
+	s.wire = newWire(s, s.serveTLS(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		got++
+	}), s.rig.handler.ListenerTLS("10.9.9.9")))
+	s.setUp()
+
+	_, err := s.get()
+
+	s.Error(err)
+	mu.Lock()
+	defer mu.Unlock()
+	s.Zero(got)
 }
 
 // serveTLS serves handler over TLS on loopback, as cmd/router serves the proxy for an https URL,
