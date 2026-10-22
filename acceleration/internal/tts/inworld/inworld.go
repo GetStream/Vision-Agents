@@ -538,11 +538,30 @@ func (t *TTS) readLoop(conn *websocket.Conn) {
 }
 
 func (t *TTS) handleReadError(conn *websocket.Conn, err error) {
+	// Serialize recovery with send: a new utterance must not write its create to
+	// the dead socket, or have a concurrent redial replace its new context.
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+
 	t.mu.Lock()
 	shutdown, superseded := t.shutdown, t.conn != conn
+	idle := len(t.active) == 0
 	t.mu.Unlock()
 	if shutdown || superseded {
 		return
+	}
+
+	if idle && websocket.IsCloseError(err, websocket.CloseAbnormalClosure) {
+		// An EOF between utterances lost no speech. Reconnect before reporting
+		// success; an EOF with any context still active remains a real failure.
+		_ = conn.Close()
+		if reconnectErr := t.dial(context.Background()); reconnectErr == nil {
+			t.logger.Warn("reopened the voice after an idle connection failure", "error", err)
+			t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
+			return
+		} else {
+			err = fmt.Errorf("inworld: reopen after %v: %w", err, reconnectErr)
+		}
 	}
 
 	t.settleOutstanding()
