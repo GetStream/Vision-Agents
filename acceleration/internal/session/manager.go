@@ -596,7 +596,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
-	created.end = func() { m.end(created) }
+	created.end = func(reason TimeoutReason) { m.end(created, reason) }
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -1259,7 +1259,7 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 // nobody is left to hear the end of its sentence. A reopened conversation can take the id
 // of a session that ended, so it does nothing unless found is still the session held under
 // its id.
-func (m *Manager) end(found *Session) {
+func (m *Manager) end(found *Session, reason TimeoutReason) {
 	m.mu.Lock()
 	if held, ok := m.sessions[found.id]; !ok || held != found {
 		m.mu.Unlock()
@@ -1277,7 +1277,7 @@ func (m *Manager) end(found *Session) {
 	}()
 	m.release(found.id)
 
-	m.logger.Info("ending the session at its timeout", "session", found.id)
+	m.logger.Info("ending the session at its timeout", "session", found.id, "timeout", reason)
 	found.abandon()
 }
 
