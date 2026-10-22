@@ -18,6 +18,9 @@
 # Opened October 20, 2026:
 #   [assets]  https://docs.github.com/en/rest/releases/assets
 #   [secrets] https://www.daytona.io/docs/en/secrets.md
+# Opened October 22, 2026:
+#   [remotes] https://docs.github.com/en/get-started/git-basics/about-remote-repositories
+#   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
 # And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
 #   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
 #         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
@@ -37,8 +40,9 @@ id: github
 # endpoints.api_base, so a backend can call GitHub's REST API through the connection proxy.
 # 5 (AI-1309) adds the X-MCP-Toolsets header on the mcp source, so GitHub offers its Actions
 # tools beside the default ones. 6 adds sandbox, so code in a session's sandbox can call
-# GitHub's REST API with the connection's token.
-revision: 6
+# GitHub's REST API with the connection's token. 7 (AI-1576) adds github.com to sandbox.hosts,
+# so git over HTTPS reaches it through the proxy broker.
+revision: 7
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -155,8 +159,9 @@ sources:
 # https://cli.github.com/manual/gh_help_environment, opened October 20, 2026). A placeholder is
 # replaced only in a request header and only when the header carries it verbatim ([secrets]),
 # so code sends it as «Authorization: Bearer», which every scheme's token takes ([rest] and
-# api_base above). A header that carries it Base64-encoded, as Basic auth does, is not matched
-# ([secrets], «Transformed placeholders»), so github.com, where git sends one, is left out.
+# api_base above). The proxy broker (code_sandbox.broker: proxy) also replaces it as Basic
+# auth's password, which is how git sends it to github.com. Daytona does not: a header that
+# carries it Base64-encoded is not matched ([secrets], «Transformed placeholders»).
 sandbox:
   env: GITHUB_TOKEN
   hosts:
@@ -166,3 +171,9 @@ sandbox:
     # Create a release endpoint», and its example request is
     # https://uploads.github.com/repos/OWNER/REPO/releases/RELEASE_ID/assets?name=example.zip.
     - uploads.github.com
+    # [remotes]: git over HTTPS uses «An HTTPS URL like https://github.com/user/repo.git», and
+    # «When Git prompts you for your password, enter your personal access token»; [install]:
+    # «git clone https://x-access-token:TOKEN@github.com/owner/repo.git». GitHub refuses
+    # «Authorization: Bearer» there (401 to git-receive-pack, 2026-10-22T03:53:09Z), so only
+    # the proxy broker serves git; under Daytona, git to github.com gets no token.
+    - github.com

@@ -1,12 +1,13 @@
 // Package brokertest is the suite every sandbox.CredentialBroker passes: the contract the
 // session relies on, and the attacks on it a test can make without a sandbox's real egress
-// (A1, A2, A8, A9, A10 and A13, as far as logs and errors go, of the wave's attack table; the egress ones run live for each
-// broker). It is test code: import it only from _test.go files.
+// (A1, A2, A8, A9, A10 and A13, as far as logs and errors go, of the wave's attack table, and A15 where the
+// egress runs here; the egress ones run live for each broker). It is test code: import it only from _test.go files.
 package brokertest
 
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,6 +36,13 @@ type Subject struct {
 	// copy: Held is what a request gets now, so a credential that cannot be had just now
 	// reaches no request, and a refresh the provider refused still sends the newest.
 	Live bool
+	// Push is git in the sandbox the broker's last Prepare made: it commits a file holding
+	// content and pushes it to https://github.com/octo/hello.git with ref, the value of a
+	// grant's env var, as Basic auth's password. It returns the Authorization of each request
+	// github.com got, the file as github.com keeps it, and every other header value and the URL of
+	// each request. Nil for a broker whose egress no test
+	// here runs.
+	Push func(ref, content string) (authorizations []string, pushed string, elsewhere []string)
 }
 
 // BrokerContract is the suite. New builds a broker for session over tokens, logging to
@@ -325,4 +333,37 @@ func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried(
 	subject.Recover()
 	s.Require().NoError(s.returned(subject.Broker.Close(s.ctx)))
 	s.Empty(subject.Left(), "Close deletes what an earlier try could not")
+}
+
+// TestAGitPushCarriesTheTokenInAuthorizationAlone is A15: git sends the placeholder as Basic
+// auth's password, and github.com gets the token there and nowhere else. A commit holding the
+// placeholder is pushed with the placeholder as it is: the body is never rewritten.
+func (s *BrokerContract) TestAGitPushCarriesTheTokenInAuthorizationAlone() {
+	subject := s.subject("session-1")
+	if !subject.Broker.Basic() {
+		// Daytona: its egress runs in Daytona's network, which no test here reaches. Git sends the
+		// placeholder Base64-encoded, which Daytona does not replace (live A12,
+		// daytona/daytona_live_test.go), so github.com gets no token.
+		s.Nil(subject.Push, "a broker whose egress takes no Basic has no git push to check")
+		s.T().Skip("the broker's egress takes no Basic auth, so git gets no token: live A12 checks it")
+	}
+	s.Require().NotNil(subject.Push, "a broker whose egress takes Basic proves it with a push")
+	github := grant("github", "GITHUB_TOKEN")
+	github.Hosts = append(github.Hosts, "github.com")
+	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{github})
+	s.Require().NoError(s.returned(err))
+	placeholder := ref(mount, "GITHUB_TOKEN")
+
+	authorizations, pushed, elsewhere := subject.Push(placeholder, "GITHUB_TOKEN="+placeholder+"\n")
+
+	token := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:gho_first"))
+	s.Contains(authorizations, token)
+	for _, authorization := range authorizations {
+		s.Contains([]string{"", token}, authorization, "github.com gets the token or no credential")
+	}
+	s.Equal("GITHUB_TOKEN="+placeholder+"\n", pushed)
+	s.NotEmpty(elsewhere)
+	for _, value := range elsewhere {
+		s.NotContains(value, "gho_first", "the token is in Authorization alone")
+	}
 }

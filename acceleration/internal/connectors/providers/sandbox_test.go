@@ -21,15 +21,16 @@ func TestSandboxSuite(t *testing.T) {
 	suite.Run(t, new(SandboxSuite))
 }
 
-func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIHostsFromRevisionSix() {
+// From revision 7 github.com too, where git sends the token as Basic auth's password.
+func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts() {
 	github := s.manifest("github")
-	s.Equal(6, github.Revision)
+	s.Equal(7, github.Revision)
 
 	for _, scheme := range github.Schemes {
 		resolved, err := github.Resolve(scheme, nil, nil)
 		s.Require().NoError(err, scheme)
 
-		s.Equal(&core.SandboxRule{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com"}}, resolved.Sandbox, scheme)
+		s.Equal(&core.SandboxRule{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"}}, resolved.Sandbox, scheme)
 	}
 }
 
