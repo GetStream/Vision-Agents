@@ -45,6 +45,9 @@ modules the host resolved. `main.release` is the version Sentry files events und
 workflow sets it. Repeat with
 `--platform linux/amd64`, which works under emulation.
 
+`GOPROXY=off` also means a module the host has not downloaded fails the build: after a
+`go.mod` change, run `go mod download` in `acceleration/` on the host first.
+
 Versions are `vX.Y.Z` or `vX.Y.Z-<prerelease>`, an unreleased build is named after its
 commit (`v0.6.9-dev-<short sha>`), and a published one is immutable. The build is
 reproducible, so the checksum a pod reports traces back to a commit.
@@ -100,6 +103,15 @@ A release is a tagged build, published once, then deployed per shard:
   share one migration set.
 - Prod runs with the overlap deploy on, so a restarted pod drains its calls (up to 1 h),
   but `rocky fastdeploy` does not reach the prod clusters yet: deploy with `launch deploy`.
+
+## The key encryption key
+
+A hosted router can unwrap its key encryption key with Cloud KMS at startup in place of holding
+it in `ROUTER_AUTH_KEK`: the steps (IAM role, the `gcloud kms encrypt` line, the two variables)
+are in `acceleration/README.md`, «The key encryption key in Cloud KMS». Ship the build first,
+with the values unchanged, then switch the values and restart. Check that the pods start and
+open an existing connection before you remove `ROUTER_AUTH_KEK` from the secret. To roll back,
+restore `ROUTER_AUTH_KEK` and unset `ROUTER_AUTH_KMS_KEY` and `ROUTER_AUTH_KEK_V1_WRAPPED`.
 
 ## Before and after
 

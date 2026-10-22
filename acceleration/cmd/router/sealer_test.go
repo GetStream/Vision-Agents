@@ -9,14 +9,27 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // ConnectorSealerSuite covers how the router builds the keyring the secrets it holds are
@@ -53,7 +66,7 @@ func (s *ConnectorSealerSuite) TestProxyStartsWithoutAKEKWhenConnectorsAreOff() 
 	s.Require().NoError(err)
 	s.Nil(sealer)
 
-	_, err = newAuthenticator(s.T().Context(), s.settings, nil, slog.New(slog.DiscardHandler))
+	_, err = newAuthenticator(s.T().Context(), s.settings, nil, sealer, slog.New(slog.DiscardHandler))
 	s.NoError(err)
 }
 
@@ -378,11 +391,156 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyThatIsNotBase64IsNotRepeatedInTheE
 	s.NotContains(err.Error(), "first-key")
 }
 
-func (s *ConnectorSealerSuite) TestAKMSKeyIsRefusedWhileThisBuildHasNoKMSClient() {
-	// Nothing here needs a keyring, so only the KMS key brings one on: a deployment that
-	// names one has taken its plain key away.
-	s.settings.Auth.KMSKey = "projects/p/locations/l/keyRings/r/cryptoKeys/k"
+// testKMSKey is the CryptoKey the fake Cloud KMS holds, in the resource name form
+// auth.kms_key takes.
+const testKMSKey = "projects/p/locations/global/keyRings/router/cryptoKeys/kek"
+
+// fakeCloudKMS answers Decrypt for testKMSKey as Cloud KMS does, unwrapping with localKMS
+// only under the AAD a key was wrapped with. It counts the Decrypts a start makes and the
+// connections still open to it.
+type fakeCloudKMS struct {
+	kmspb.UnimplementedKeyManagementServiceServer
+	kms      *localKMS
+	refusal  error
+	decrypts atomic.Int64
+	open     atomic.Int64
+}
+
+func (f *fakeCloudKMS) Decrypt(ctx context.Context, request *kmspb.DecryptRequest) (*kmspb.DecryptResponse, error) {
+	f.decrypts.Add(1)
+	if f.refusal != nil {
+		return nil, f.refusal
+	}
+	if request.GetName() != testKMSKey {
+		return nil, status.Error(codes.NotFound, "no such CryptoKey")
+	}
+	plaintext, err := f.kms.Unwrap(ctx, request.GetCiphertext(), request.GetAdditionalAuthenticatedData())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "decryption failed")
+	}
+	return &kmspb.DecryptResponse{Plaintext: plaintext}, nil
+}
+
+func (f *fakeCloudKMS) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
+
+func (f *fakeCloudKMS) HandleConn(_ context.Context, event stats.ConnStats) {
+	switch event.(type) {
+	case *stats.ConnBegin:
+		f.open.Add(1)
+	case *stats.ConnEnd:
+		f.open.Add(-1)
+	}
+}
+
+func (f *fakeCloudKMS) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
+
+func (f *fakeCloudKMS) HandleRPC(context.Context, stats.RPCStats) {}
+
+// startFakeCloudKMS serves a fakeCloudKMS in process, over an in-memory listener, and points
+// every KMS client the router opens at it, with no credentials and no TLS.
+func (s *ConnectorSealerSuite) startFakeCloudKMS() *fakeCloudKMS {
+	fake := &fakeCloudKMS{kms: newLocalKMS(s)}
+	listener := bufconn.Listen(1 << 20)
+	server := grpc.NewServer(grpc.StatsHandler(fake))
+	kmspb.RegisterKeyManagementServiceServer(server, fake)
+	go func() { _ = server.Serve(listener) }()
+	s.T().Cleanup(server.Stop)
+	kmsClientOptions = []option.ClientOption{
+		option.WithEndpoint("passthrough:///cloudkms"),
+		option.WithoutAuthentication(),
+		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
+		option.WithGRPCDialOption(grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		})),
+	}
+	s.T().Cleanup(func() { kmsClientOptions = nil })
+	s.settings.Auth.KMSKey = testKMSKey
+	return fake
+}
+
+func (s *ConnectorSealerSuite) TestAKeyCloudKMSUnwrapsOpensWhatThePlainOneSealed() {
+	fake := s.startFakeCloudKMS()
+	s.settings.Connectors.Enabled = true
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", fake.kms.wrap("first-key", "router-kek-v1"))
+
+	sealer, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	s.Equal(1, sealer.CurrentVersion())
+	s.requireOpensWhatTheBaseSealed(sealer)
+	s.Equal(int64(1), fake.decrypts.Load())
+	s.Eventually(func() bool { return fake.open.Load() == 0 }, 5*time.Second, 10*time.Millisecond,
+		"the KMS client is closed once the keyring is read")
+}
+
+func (s *ConnectorSealerSuite) TestACloudKMSRefusalFailsStartupWithoutTheKey() {
+	fake := s.startFakeCloudKMS()
+	fake.refusal = status.Error(codes.PermissionDenied, "permission cloudkms.cryptoKeyVersions.useToDecrypt denied")
+	s.settings.Connectors.Enabled = true
+	wrapped := fake.kms.wrap("first-key", "router-kek-v1")
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", wrapped)
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
-	s.ErrorContains(err, "auth.kms_key is set, but this build has no KMS client")
+	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: unwrap: cloud kms: decrypt with "+testKMSKey)
+	s.ErrorContains(err, "useToDecrypt denied")
+	s.NotContains(err.Error(), wrapped)
+	s.NotContains(err.Error(), "first-key")
+}
+
+func (s *ConnectorSealerSuite) TestAKeyCloudKMSWrappedForAnotherVersionFailsStartup() {
+	fake := s.startFakeCloudKMS()
+	s.settings.Connectors.Enabled = true
+	wrapped := fake.kms.wrap("first-key", "router-kek-v2")
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", wrapped)
+
+	_, err := newSecretSealer(s.T().Context(), s.settings)
+	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: unwrap: cloud kms: decrypt with "+testKMSKey)
+	s.ErrorContains(err, "decryption failed")
+	s.NotContains(err.Error(), wrapped)
+	s.NotContains(err.Error(), "first-key")
+}
+
+// apiKeyConfigs is the store api_key mode looks keys up in. Nothing here looks one up, and
+// opening a store connects to nothing until a query runs, so no database is needed.
+func (s *ConnectorSealerSuite) apiKeyConfigs() *appconfig.Store {
+	s.settings.Auth.Mode = string(auth.APIKey)
+	pg, err := store.Open("postgres://nobody@127.0.0.1:1/unused?sslmode=disable")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { pg.Close() })
+	configs, err := appconfig.New(appconfig.Options{Store: pg})
+	s.Require().NoError(err)
+	return configs
+}
+
+func (s *ConnectorSealerSuite) TestAnAPIKeyStartUnwrapsTheKeyOnce() {
+	fake := s.startFakeCloudKMS()
+	configs := s.apiKeyConfigs()
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", fake.kms.wrap("first-key", "router-kek-v1"))
+
+	secrets, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	authenticator, err := newAuthenticator(s.T().Context(), s.settings, configs, secrets, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.NotNil(authenticator)
+	s.Equal(int64(1), fake.decrypts.Load())
+}
+
+func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithoutAKeyIsRefusedAsBefore() {
+	configs := s.apiKeyConfigs()
+
+	secrets, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	_, err = newAuthenticator(s.T().Context(), s.settings, configs, secrets, slog.New(slog.DiscardHandler))
+	s.EqualError(err, "auth.mode=api_key needs a key encryption keyring to seal the secrets it holds: "+
+		"set ROUTER_AUTH_KEK_V1 (ROUTER_AUTH_KEK is version 1)")
+}
+
+func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithAPlainKeyAuthenticates() {
+	configs := s.apiKeyConfigs()
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+
+	secrets, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	authenticator, err := newAuthenticator(s.T().Context(), s.settings, configs, secrets, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.NotNil(authenticator)
 }
