@@ -121,7 +121,7 @@ func (s *BrokerSuite) get() (*http.Response, string, error) {
 	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, "https://api.github.com/user", nil)
 	s.Require().NoError(err)
 	request.Header.Set("Authorization", "Bearer "+s.mount.Env["GITHUB_TOKEN"])
-	response, err := sandboxClient(s.T(), s.mount).Do(request)
+	response, err := s.rig.sandboxClient(s.T(), s.mount).Do(request)
 	if err != nil {
 		return nil, "", err
 	}
@@ -376,7 +376,7 @@ func (s *BrokerSuite) TestClosingEndsTheCredentialOfARecordWithAllowedDomains() 
 
 	_, found = s.rig.record(s.T(), key(credential))
 	s.False(found)
-	_, err := sandboxClient(s.T(), mount).Get("https://pypi.test/")
+	_, err := s.rig.sandboxClient(s.T(), mount).Get("https://pypi.test/")
 	s.ErrorContains(err, "Proxy Authentication Required")
 }
 
@@ -608,7 +608,7 @@ func (r *rig) held(t *testing.T, mount sandbox.Mount, ref string) (string, []str
 		t.Fatal(err)
 	}
 	request.Header.Set("Authorization", "Bearer "+ref)
-	response, err := sandboxClient(t, mount).Do(request)
+	response, err := r.sandboxClient(t, mount).Do(request)
 	if err != nil {
 		return "", nil, false
 	}
@@ -663,8 +663,9 @@ func (r *rig) record(t *testing.T, key string) (egress.Record, bool) {
 }
 
 // sandboxClient is an HTTP client set up from what the sandbox was given alone: each run's env
-// names the proxy, with the sandbox's credential, and the CA file.
-func sandboxClient(t *testing.T, mount sandbox.Mount) *http.Client {
+// names the proxy, with the sandbox's credential, and the CA file. The proxy's public address
+// is not one a test can reach, so the client dials the rig's proxy in its place.
+func (r *rig) sandboxClient(t *testing.T, mount sandbox.Mount) *http.Client {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(mount.Files[mount.RunEnv["NODE_EXTRA_CA_CERTS"]]) {
 		t.Fatal("the sandbox's CA file holds no certificate")
@@ -673,7 +674,11 @@ func sandboxClient(t *testing.T, mount sandbox.Mount) *http.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{RootCAs: roots}}}
+	dialer := &net.Dialer{}
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{RootCAs: roots},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, r.proxy.Listener.Addr().String())
+		}}}
 }
 
 // redisGate passes connections on to Redis until shut, which cuts every one and refuses the
