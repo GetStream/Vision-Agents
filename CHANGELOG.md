@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### The Python SDK refuses `plugins` and `plugin_events` in agent.yaml
+
+Connectors replaced plugins. `plugins.stream` now fails to load an agent folder whose `agent.yaml` names `plugins` or `plugin_events`, with a `ValueError` that points to `connectors`, and never sends either to the router. An empty key (`plugins: []`, or the key with nothing after it) names nothing and loads (AI-1785).
+
 ### A router's peers need the key encryption key to hand each other requests
 
 A router node now answers a request another node forwards to it only when the forwarding node proves it belongs to the deployment, with a credential derived from the key encryption keyring (`ROUTER_AUTH_KEK`, `ROUTER_AUTH_KEK_V<n>`). A node accepts the credential of every key it holds, so rotating a key needs no pause. A deployment of more than one node must set the keyring on every node: a node without one refuses every forwarded request and logs a warning naming `ROUTER_AUTH_KEK` at startup. While a deployment rolls out this version, nodes on it refuse what nodes still on the previous version forward, until the rollout ends (AI-1720, #1138).

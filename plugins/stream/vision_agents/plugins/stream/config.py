@@ -38,7 +38,6 @@ from ._generated.models import (
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
     McpServer,
-    PluginWithOptions,
     SandboxOptions,
     SimulationDeclaration,
     SimulationDeclarationMode,
@@ -57,7 +56,6 @@ from .folder import (
     ConnectorSettings,
     Folder,
     MCPServerSettings,
-    PluginSettings,
     Settings,
     Simulation,
     find,
@@ -379,8 +377,6 @@ async def _declare_settings(
         body.greeting = Greeting(text=settings.greeting.text)
         if settings.greeting.mode:
             body.greeting.mode = GreetingMode(settings.greeting.mode)
-    if settings.plugins:
-        body.plugins = [_plugin_entry(plugin) for plugin in settings.plugins]
     if settings.connectors is not None:
         body.connectors = [
             await _connector_binding(client, entry) for entry in settings.connectors
@@ -436,30 +432,6 @@ async def _declare_settings(
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)
         body.tags = tags
-
-
-def _plugin_entry(plugin: PluginSettings) -> PluginWithOptions | str:
-    """A plugin as the router takes it: its id alone when nothing else is said about it."""
-    if not (
-        plugin.user
-        or plugin.readonly
-        or plugin.scopes
-        or plugin.toolsets
-        or plugin.tools
-    ):
-        return plugin.name
-    declared = PluginWithOptions(name=plugin.name)
-    if plugin.user:
-        declared.user = True
-    if plugin.readonly:
-        declared.readonly = True
-    if plugin.scopes:
-        declared.scopes = plugin.scopes
-    if plugin.toolsets:
-        declared.toolsets = plugin.toolsets
-    if plugin.tools:
-        declared.tools = plugin.tools
-    return declared
 
 
 async def _connector_binding(

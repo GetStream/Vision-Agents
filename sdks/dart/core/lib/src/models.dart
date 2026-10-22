@@ -356,7 +356,8 @@ final class SessionOptions {
   final String? stt;
   final String? tts;
 
-  /// A provider-specific voice id.
+  /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+  /// the name you gave it. Prefix it with `custom:` to mean only yours.
   final String? voice;
 
   /// What to call the conversation, for a list a person reads. Never shown to the model.
