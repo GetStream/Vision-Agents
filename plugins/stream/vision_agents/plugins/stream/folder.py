@@ -571,9 +571,7 @@ def _refuse_plugins(path: Path, field_name: str, value: object) -> None:
     names none and is let through, as the Go SDK does."""
     if value is None or value == []:
         return
-    raise ValueError(
-        f"{path}: `{field_name}` is no longer supported: use `connectors`"
-    )
+    raise ValueError(f"{path}: `{field_name}` is no longer supported: use `connectors`")
 
 
 def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
