@@ -465,6 +465,20 @@ func (s *LLMSuite) TestCapabilitiesRefuseAnEffortTheModelDoesNotAccept() {
 	s.NoError(model.Validate(ResponseParams{Reasoning: ReasoningParams{Effort: "low"}}))
 }
 
+func (s *LLMSuite) TestASchemaIsSentOnlyToAModelThatTakesOne() {
+	schema := &JSONSchema{Name: "ruling", Schema: map[string]any{"type": "object"}}
+	text := TextParams{Format: FormatJSONSchema, Schema: schema}
+
+	s.Same(schema, Capabilities{JSONSchema: true}.Schema(text))
+	s.Nil(Capabilities{}.Schema(text), "a model that cannot hold to a schema is asked for a JSON object")
+}
+
+func (s *LLMSuite) TestASchemaIsSentOnlyWhenTheFormatAsksForIt() {
+	schema := &JSONSchema{Name: "ruling", Schema: map[string]any{"type": "object"}}
+
+	s.Nil(Capabilities{JSONSchema: true}.Schema(TextParams{Format: FormatJSONObject, Schema: schema}))
+}
+
 func (s *LLMSuite) TestCapabilitiesRefuseReasoningFromAModelThatDoesNotReason() {
 	err := Capabilities{}.Validate(ResponseParams{Reasoning: ReasoningParams{Effort: "low"}})
 

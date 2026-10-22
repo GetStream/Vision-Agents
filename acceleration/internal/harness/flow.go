@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,9 +26,11 @@ const (
 	Clarify Disposition = "clarify"
 )
 
-func (d Disposition) Valid() bool {
-	return d == Wait || d == Ignore || d == Respond || d == Clarify
-}
+// dispositions are every Disposition, which is both what Valid accepts and what the flow
+// controller's schema allows.
+var dispositions = []Disposition{Wait, Ignore, Respond, Clarify}
+
+func (d Disposition) Valid() bool { return slices.Contains(dispositions, d) }
 
 // Floor says how the agent should handle speech arriving while it is talking.
 type Floor string
@@ -38,7 +41,26 @@ const (
 	Continue Floor = "continue"
 )
 
-func (f Floor) Valid() bool { return f == Stop || f == Shorten || f == Continue }
+// floors are every Floor, which is both what Valid accepts and what the flow controller's
+// schema allows.
+var floors = []Floor{Stop, Shorten, Continue}
+
+func (f Floor) Valid() bool { return slices.Contains(floors, f) }
+
+// flowSchema holds the model to the values parseFlow accepts. With only a JSON object asked
+// for, Gemma named "continue", a floor, as the disposition.
+var flowSchema = &llm.JSONSchema{
+	Name: "flow_ruling",
+	Schema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"disposition": map[string]any{"type": "string", "enum": dispositions},
+			"floor":       map[string]any{"type": "string", "enum": floors},
+		},
+		"required":             []string{"disposition", "floor"},
+		"additionalProperties": false,
+	},
+}
 
 // FlowTurn is one transcript candidate for the flow controller.
 type FlowTurn struct {
@@ -241,7 +263,7 @@ func (f *flow) run(asked *candidate) {
 		// was only enough for `{"dis` — which we treated as continue, so barge-in never
 		// stopped the agent.
 		MaxOutputTokens: 512,
-		Text:            llm.TextParams{Format: llm.FormatJSONObject},
+		Text:            llm.TextParams{Format: llm.FormatJSONSchema, Schema: flowSchema},
 	})
 	if err != nil {
 		if f.forget(turn.ID) == nil {
@@ -455,9 +477,10 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
 		return
 	}
 
-	answer, err := parseFlow(response.OutputText)
+	answer, invalid, err := parseFlow(response.OutputText)
 	var ruler Ruler
 	if err != nil {
+		invalidRulings.WithLabelValues(invalid).Inc()
 		// Truncated JSON used to mean continue, which is how Gemini thinking ate the
 		// token budget and the caller talking over the agent never took the floor.
 		if asked.turn.Unfinished {
@@ -517,16 +540,18 @@ func millis(took time.Duration) float64 {
 	return float64(took.Microseconds()) / 1000
 }
 
-func parseFlow(text string) (flowAnswer, error) {
+// parseFlow reads the controller's answer. A refused one comes with what was wrong with it:
+// decode, disposition or floor.
+func parseFlow(text string) (flowAnswer, string, error) {
 	var answer flowAnswer
 	if err := json.Unmarshal([]byte(llm.Unfence(text)), &answer); err != nil {
-		return flowAnswer{}, fmt.Errorf("harness: decode flow decision: %w", err)
+		return flowAnswer{}, "decode", fmt.Errorf("harness: decode flow decision: %w", err)
 	}
 	if !answer.Disposition.Valid() {
-		return flowAnswer{}, fmt.Errorf("harness: invalid flow disposition %q", answer.Disposition)
+		return flowAnswer{}, "disposition", fmt.Errorf("harness: invalid flow disposition %q", answer.Disposition)
 	}
 	if !answer.Floor.Valid() {
-		return flowAnswer{}, fmt.Errorf("harness: invalid floor decision %q", answer.Floor)
+		return flowAnswer{}, "floor", fmt.Errorf("harness: invalid floor decision %q", answer.Floor)
 	}
-	return answer, nil
+	return answer, "", nil
 }

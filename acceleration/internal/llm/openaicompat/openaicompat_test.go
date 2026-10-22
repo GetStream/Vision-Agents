@@ -899,6 +899,57 @@ func (s *OpenAICompatSuite) TestJSONIsOnlyAskedForWhenWanted() {
 	s.Equal("json_object", format["type"])
 }
 
+// ruling is a schema-bound request like the flow controller's.
+func ruling() llm.ResponseParams {
+	return llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
+		Text: llm.TextParams{Format: llm.FormatJSONSchema, Schema: &llm.JSONSchema{
+			Name: "ruling",
+			Schema: map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{"floor": map[string]any{"type": "string", "enum": []string{"stop"}}},
+				"required":             []string{"floor"},
+				"additionalProperties": false,
+			},
+		}},
+	}
+}
+
+func (s *OpenAICompatSuite) TestAModelThatTakesASchemaIsHeldToItStrictly() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{Capabilities: llm.Capabilities{JSONSchema: true}})
+
+	s.ask(provider, ruling())
+
+	format, ok := s.requests[0]["response_format"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("json_schema", format["type"])
+	s.Equal(map[string]any{
+		"name":   "ruling",
+		"strict": true,
+		"schema": map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"floor": map[string]any{"type": "string", "enum": []any{"stop"}}},
+			"required":             []any{"floor"},
+			"additionalProperties": false,
+		},
+	}, format["json_schema"])
+}
+
+func (s *OpenAICompatSuite) TestAModelThatTakesNoSchemaIsAskedForAJSONObjectAsBefore() {
+	// A provider that never claimed schemas is sent what a json_object request has always
+	// sent, so it sees nothing new.
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{})
+	asObject := ruling()
+	asObject.Text = llm.TextParams{Format: llm.FormatJSONObject}
+
+	s.ask(provider, asObject)
+	s.ask(provider, ruling())
+
+	s.Equal(s.requests[0], s.requests[1])
+}
+
 func (s *OpenAICompatSuite) TestClosingAStreamSettlesWhatHadAlreadyArrived() {
 	s.hold = make(chan struct{})
 	// Usage must be read before cancellation; a frame merely flushed by the server

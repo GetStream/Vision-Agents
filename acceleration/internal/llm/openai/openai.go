@@ -55,7 +55,9 @@ const cacheTTL = 30 * time.Minute
 // asked for together. Anything older is offered the smaller set it answers to, which is
 // the whole reason this is a table rather than one list. GPT-6 keeps the 5.6 ladder, except
 // Astra and GPT-6.1 Sol, which answer none with a 400, so the least thinking they can be
-// asked for is low. GPT-6.1 Sol also stops at xhigh and answers max with a 400.
+// asked for is low. GPT-6.1 Sol also stops at xhigh and answers max with a 400. Every
+// family here takes a strict JSON Schema (Structured Outputs, which OpenAI documents from
+// GPT-4o on: https://platform.openai.com/docs/guides/structured-outputs).
 var modelCapabilities = map[string]llm.Capabilities{
 	"gpt-6": {
 		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
@@ -64,6 +66,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
 	},
 	"gpt-6-astra": {
@@ -73,6 +76,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
 	},
 	"gpt-6.1-sol": {
@@ -82,6 +86,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
 	},
 	"gpt-5.6": {
@@ -92,6 +97,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
 	},
 	"gpt-5.5": {
@@ -101,6 +107,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
 	},
 	"gpt-5": {
@@ -110,6 +117,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		JSONSchema:       true,
 		InputModalities:  []string{llm.ModalityImage},
 	},
 }
@@ -439,7 +447,15 @@ func (l *LLM) params(request llm.ResponseParams) responses.ResponseNewParams {
 	if request.Text.Verbosity != "" {
 		params.Text.Verbosity = responses.ResponseTextConfigVerbosity(request.Text.Verbosity)
 	}
-	if request.Text.Format == llm.FormatJSONObject {
+	if schema := l.capabilities.Schema(request.Text); schema != nil {
+		params.Text.Format = responses.ResponseFormatTextConfigUnionParam{
+			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
+				Name:   schema.Name,
+				Schema: schema.Schema,
+				Strict: param.NewOpt(true),
+			},
+		}
+	} else if request.Text.Format.JSON() {
 		params.Text.Format = responses.ResponseFormatTextConfigUnionParam{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}

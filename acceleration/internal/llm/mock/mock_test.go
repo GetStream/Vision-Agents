@@ -99,7 +99,7 @@ func (s *MockLLMSuite) TestTheFlowControllerIsToldTheWordsWereMeantForTheAgent()
 	// would be unparseable, and an unparseable decision is one the router warns about on
 	// every turn of a run.
 	answer := s.answerTo(llm.ResponseParams{
-		ID: "turn-1", Purpose: "flow", Text: llm.TextParams{Format: llm.FormatJSONObject},
+		ID: "turn-1", Purpose: "flow", Text: llm.TextParams{Format: llm.FormatJSONSchema},
 	})
 
 	var decided struct {
