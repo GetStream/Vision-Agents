@@ -535,9 +535,9 @@ func (s *ConverseSuite) TestAQueuedTurnIsDroppedOnceTheSameWordsAreAnsweredInFul
 	s.False(waiting, "the queued words were answered as part of the longer turn")
 }
 
-func (s *ConverseSuite) TestAQueuedTurnRestatedShorterIsDroppedWithoutBeingOwed() {
-	// The transcriber went back over the run of speech and kept less of it: the same words,
-	// not more said after them, so they are dropped as a revision always was.
+func (s *ConverseSuite) TestAQueuedTurnRestatedShorterOwesTheRestOfIt() {
+	// The transcriber went back over the run of speech and kept less of it. The answer is to
+	// the words it kept, so the rest is still owed.
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.queueSettledTurn("okay wait make it six", 0, harness.Continue)
 
@@ -547,10 +547,44 @@ func (s *ConverseSuite) TestAQueuedTurnRestatedShorterIsDroppedWithoutBeingOwed(
 	}, s.quiet())
 
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
-	s.Empty(answered[0].Unanswered)
+	s.Equal("okay wait", answered[0].Text)
+	s.Equal("make it six", answered[0].Unanswered)
 	_, waiting := s.converse.Waiting(s.quiet())
-	s.False(waiting)
-	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+	s.False(waiting, "the rest was answered with the shorter turn")
+	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func (s *ConverseSuite) TestAQueuedTurnANewerUtteranceOpensWithIsNotOwedAgain() {
+	// The newer turn's own text says the queued words, so the note would only repeat them.
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	s.queueSettledTurn("peanut allergy too", 7, harness.Continue)
+
+	answered := s.answerFinal("peanut allergy too and make it six", 8)
+
+	s.Empty(answered.Unanswered)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the newer turn said the queued words")
+	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
+}
+
+func (s *ConverseSuite) TestQueuedWordsAreOwedToOneAnswerOnly() {
+	dropped := testutil.ToFloat64(staleQueuedTurns)
+	queued := s.queueSettledTurn("peanut allergy too", 0, harness.Continue)
+	first := s.settle("wait make it six", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: first.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
+	s.Require().Equal(queued.Text, answered[0].Unanswered)
+
+	second := s.settle("and gluten free", s.talking())
+	answered = s.converse.Ruled(harness.Decided{
+		CandidateID: second.ID, Disposition: harness.Respond, Floor: harness.Stop,
+	}, s.talking())
+
+	s.Require().Equal([]ActionKind{ActInterrupt, ActAnswer}, kinds(answered))
+	s.Empty(answered[1].Unanswered, "the first answer took them in")
+	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
 }
 
 func (s *ConverseSuite) TestAReplacementThenFinalCorrectionReplacesAQueuedOverlap() {
@@ -674,6 +708,7 @@ func (s *ConverseSuite) assertRevisedQueueIsNotReplayed(decision harness.Floor) 
 
 func (s *ConverseSuite) TestAQueuedTurnSurvivesASeparateNumberedUtteranceWithTheSamePrefix() {
 	const queuedText = "Way"
+	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.queueSettledTurn(queuedText, 7, harness.Continue)
 
 	const nextText = "Way make it six"
@@ -693,7 +728,9 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesASeparateNumberedUtteranceWithThe
 		Floor:       harness.Continue,
 	}, s.quiet())
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
-	s.Equal(queuedText, answered[0].Unanswered, "a new utterance is not a correction of the queued one, so it is owed")
+	s.Empty(answered[0].Unanswered, "the newer utterance says the queued words already")
+	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped,
+		"a new utterance is not a correction of the queued one, so it is answered over it")
 
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the queued words were answered with the newer ones")

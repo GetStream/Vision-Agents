@@ -711,15 +711,15 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	// The turn counts, which is the point at which it becomes what the caller said rather
 	// than what they might have been saying.
 	shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
+	var unanswered string
+	if !queue {
+		unanswered = c.forgetQueuedAnsweredOver(ready)
+	}
 	c.mu.Lock()
 	released := c.forgetQueuedRevisedByLocked(ready)
 	c.mu.Unlock()
 	if released != "" {
 		c.cadence.ReleaseHeld(released)
-	}
-	var unanswered string
-	if !queue {
-		unanswered = c.forgetQueuedAnsweredOver(ready)
 	}
 	c.emitter.Send(Heard{
 		Participant: ready.Participant,
@@ -1200,11 +1200,7 @@ func (c *converse) forgetQueuedRevisedByLocked(ready candidate) string {
 	if held == nil || held.candidate.ID == ready.ID || held.candidate.Participant.ID != ready.Participant.ID {
 		return ""
 	}
-	if held.candidate.Utterance != 0 && ready.Utterance != 0 {
-		if held.candidate.Utterance != ready.Utterance {
-			return ""
-		}
-	} else if !revisesTranscript(held.candidate.Text, ready.Text) {
+	if !revisesQueued(held.candidate, ready) {
 		return ""
 	}
 	c.logger.Debug("dropping a queued turn the caller has since said again in full",
@@ -1213,15 +1209,43 @@ func (c *converse) forgetQueuedRevisedByLocked(ready candidate) string {
 	return held.candidate.ID
 }
 
+// revisesQueued reports whether ready is the queued turn's run of speech again, restated or
+// grown, rather than a second utterance: the same utterance number when both have one, the
+// same words so far otherwise.
+func revisesQueued(held, ready candidate) bool {
+	if held.Utterance != 0 && ready.Utterance != 0 {
+		return held.Utterance == ready.Utterance
+	}
+	return revisesTranscript(held.Text, ready.Text)
+}
+
 // forgetQueuedAnsweredOver drops the turn the same participant has queued once a newer turn of
 // theirs is answered, and returns its words for that answer to take in. Answered on its own
 // after it, the older turn undoes the newer: in Voicebench a caller's correction was answered,
 // then their first request again, and the agent went back to asking about it. Another
 // participant's queued turn is still theirs to be answered.
+//
+// Only words the newer turn does not say are taken in. A revision that kept less of the run
+// ("okay wait" after "okay wait make it six") owes the rest of it; any other revision says it
+// all and is left to forgetQueuedRevisedByLocked. A newer utterance that opens with the queued
+// words says them already.
 func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 	c.mu.Lock()
 	held := c.queued
 	if held == nil || held.candidate.Participant.ID != ready.Participant.ID {
+		c.mu.Unlock()
+		return ""
+	}
+	said := held.candidate.Said()
+	switch {
+	case !revisesQueued(held.candidate, ready):
+		if opensWith(ready.Text, said) {
+			said = ""
+		}
+	case opensWith(held.candidate.Text, ready.Text) &&
+		len(wordList(held.candidate.Text)) > len(wordList(ready.Text)):
+		said = unrepeated(held.candidate.Text, ready.Text)
+	default:
 		c.mu.Unlock()
 		return ""
 	}
@@ -1243,7 +1267,7 @@ func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 	c.logger.Info("dropped a queued turn the caller has said more after",
 		"turn", held.candidate.ID, "participant", held.candidate.Participant.ID,
 		"age_ms", time.Since(held.candidate.ReadyAt).Milliseconds())
-	return held.candidate.Said()
+	return said
 }
 
 // forgetQueuedGrownLocked drops the queued turn once the caller's words still in progress have
