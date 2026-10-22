@@ -56,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -110,7 +111,10 @@ const clientAccessibleExtension = "x-client-accessible"
 type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
-	Store   *store.Store
+	// Pricer is what the providers' rates are read from. Nil reads them from the routers'
+	// configs.
+	Pricer pricing.Pricer
+	Store  *store.Store
 	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
 	// router configs, voices -- through whatever cache is in front of Postgres. Built
 	// over Store when it is not given, in which case every read is a query.
@@ -305,6 +309,7 @@ type Options struct {
 // Server serves the router's HTTP API.
 type Server struct {
 	routers            map[routing.Modality]routing.Inspector
+	pricer             pricing.Pricer
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
@@ -465,8 +470,21 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			return nil, err
 		}
 	}
+	pricer := options.Pricer
+	if pricer == nil {
+		capabilities := routing.Config{}
+		for modality, router := range options.Routers {
+			capabilities[modality] = router.Config()
+		}
+		list, err := routing.Prices(capabilities, logger)
+		if err != nil {
+			return nil, err
+		}
+		pricer = list
+	}
 	server := &Server{
 		routers:            options.Routers,
+		pricer:             pricer,
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,
@@ -1354,7 +1372,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
 			Benchmark:   providerBenchmark(candidate.Config.Benchmark),
-			Price:       providerPrice(candidate.Config.Price),
+			Price:       s.providerPrice(request.Modality, candidate.Config),
 		})
 	}
 	return &listProvidersResponse{Body: providers}, nil
@@ -1864,14 +1882,22 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 
 // providerPrice is the token rates a model is billed at, and nil for a model not billed
 // by the token.
-func providerPrice(price routing.Price) *ProviderPrice {
-	if price.PerMillionInputTokens == 0 && price.PerMillionOutputTokens == 0 {
+func (s *Server) providerPrice(modality Modality, config routing.ProviderConfig) *ProviderPrice {
+	entry, _ := s.pricer.Entry(routing.ItemOf(routing.Modality(modality), config, nil))
+	input, output := perMillion(entry.Rates[pricing.InputTokens]), perMillion(entry.Rates[pricing.OutputTokens])
+	if input == 0 && output == 0 {
 		return nil
 	}
-	return &ProviderPrice{
-		PerMillionInputTokens:  &price.PerMillionInputTokens,
-		PerMillionOutputTokens: &price.PerMillionOutputTokens,
+	return &ProviderPrice{PerMillionInputTokens: &input, PerMillionOutputTokens: &output}
+}
+
+// perMillion is a rate in US dollars a million units, and zero for no rate. The factor is
+// worked out first so a rate already per million comes back exactly as it was written.
+func perMillion(rate pricing.Rate) float64 {
+	if rate.Per == 0 {
+		return 0
 	}
+	return rate.USD * (1_000_000 / float64(rate.Per))
 }
 
 var errMissingCustomer = APIError{

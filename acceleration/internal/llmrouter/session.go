@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -22,10 +23,12 @@ import (
 
 var tracer = tracing.Tracer("llmrouter")
 
-// statRecorder is where a session writes the stat row of each response. It is the router's
-// recorder, and a test's stand-in where the row itself is under test.
+// statRecorder is where a session writes the stat row of each response, and what prices
+// it. It is the router's recorder, and a test's stand-in where the row itself is under
+// test.
 type statRecorder interface {
 	Record(routing.ProviderConfig, routing.Stat)
+	Quote(routing.ProviderConfig, routing.Usage) pricing.Quote
 }
 
 // errClosed is what a session answers once it has been closed.
@@ -128,9 +131,9 @@ func (s *Session) Model() string { return s.config.Model }
 // Capabilities is what the model serving this session accepts.
 func (s *Session) Capabilities() llm.Capabilities { return s.provider.Capabilities() }
 
-// Price is what this session's provider charges, so a caller can report a cost without
-// reaching for the router's config.
-func (s *Session) Price() routing.Price { return s.config.Price }
+// Quote is what that usage of this session's provider costs, priced as its row is, so a
+// caller can report a cost without reaching for the router's prices.
+func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
 // ContextWindow is how many tokens of prompt this session's model takes, or zero when
 // its config does not say.
@@ -192,7 +195,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 			TTFTMs: ttftMs, DurationMs: durationMs,
 			Success: served(response), ErrorCode: errorCode(response),
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
-			OutputTokens: usage.OutputTokens, CostMicros: s.config.Price.CostMicros(usage)})
+			OutputTokens: usage.OutputTokens, CostMicros: s.Quote(usage).CostMicros})
 	}
 
 	// The debit is taken here rather than where the response was asked for, because what a

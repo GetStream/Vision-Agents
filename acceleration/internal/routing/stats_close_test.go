@@ -9,7 +9,7 @@ import (
 )
 
 func TestAStatRecordedAfterCloseIsDroppedNotAPanic(t *testing.T) {
-	recorder := newRecorder(STT, nil, &live.Client{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	recorder := newRecorder(STT, nil, &live.Client{}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	recorder.Close()
 
 	recorder.Record(ProviderConfig{}, Stat{})

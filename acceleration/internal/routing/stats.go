@@ -3,11 +3,13 @@ package routing
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -41,7 +43,8 @@ type Owner struct {
 // completion for an LLM, plus rows for sessions that never got off the ground.
 //
 // The provider, model, modality and cost are filled in by the Recorder, so a caller
-// cannot record a row that disagrees with the routing decision it came from.
+// cannot record a row that disagrees with the routing decision it came from, or with the
+// price.
 type Stat struct {
 	Owner
 	StartedAt   time.Time
@@ -52,6 +55,12 @@ type Stat struct {
 	Usage
 	// InputParts is what an LLM's prompt was made of. Zero for every other modality.
 	InputParts store.InputParts
+	// Meters are quantities Usage has no field for, priced like the rest and stored with
+	// the row.
+	Meters pricing.Quantities
+	// Attributes are what can choose the price, such as the service tier the vendor served
+	// at, or explain the row. They are stored with it.
+	Attributes map[string]string
 	// LatencyMs is how long the customer waited for the work to be useful.
 	LatencyMs float64
 	// CostMicros overrides the priced amount for work that is not billed by the units in
@@ -81,6 +90,7 @@ type Recorder struct {
 	modality Modality
 	store    *store.Store
 	live     *live.Client
+	pricer   pricing.Pricer
 	logger   *slog.Logger
 	// gate is where the tags a customer's policies lay over every row come from. Nil lays
 	// none.
@@ -98,16 +108,22 @@ type Recorder struct {
 	dropped atomic.Int64
 }
 
-// NewRecorder starts the background writer.
-func NewRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, logger *slog.Logger) *Recorder {
-	return newRecorder(modality, pgStore, liveClient, nil, logger)
+// NewRecorder starts the background writer. The pricer prices every row; nil prices
+// nothing, and logs every row as billable work with no price.
+func NewRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
+	return newRecorder(modality, pgStore, liveClient, nil, pricer, logger)
 }
 
-func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, logger *slog.Logger) *Recorder {
+func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
+	if pricer == nil {
+		// An empty list cannot be refused.
+		pricer, _ = pricing.NewList("none", nil, logger)
+	}
 	r := &Recorder{
 		modality: modality,
 		store:    pgStore,
 		live:     liveClient,
+		pricer:   pricer,
 		logger:   logger,
 		gate:     gate,
 		queue:    make(chan queued, statQueueSize),
@@ -117,21 +133,46 @@ func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Clien
 	return r
 }
 
-// Record queues a stat, pricing it from the provider's configured rates and dropping it
-// if the writer is too far behind.
+// Quote is what that usage of the provider costs, priced as Record prices a row.
+func (r *Recorder) Quote(config ProviderConfig, usage Usage) pricing.Quote {
+	return quote(r.pricer, r.modality, config, nil, row(r.modality, config, Stat{Usage: usage}).Quantities())
+}
+
+// Record queues a stat, pricing what its row holds and dropping it if the writer is too
+// far behind.
 func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	if r.store == nil && r.live == nil {
 		return
 	}
 
-	cost := config.Price.CostMicros(entry.Usage)
+	request := row(r.modality, config, entry)
 	if entry.CostMicros != 0 {
-		cost = entry.CostMicros
+		// Quoted outright by the vendor, so no rate is asked for.
+		request.CostMicros, request.Billable = entry.CostMicros, true
+	} else {
+		priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
+		request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
 	}
-	outputCost := min(config.Price.CostMicros(Usage{OutputTokens: entry.OutputTokens}), cost)
 
+	// A caller still streaming at shutdown records after Close; that stat is dropped.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		r.dropped.Add(1)
+		return
+	}
+	select {
+	case r.queue <- queued{request: request, fatal: entry.Fatal}:
+	default:
+		r.dropped.Add(1)
+	}
+}
+
+// row is the request a stat records, before it is priced: what it is priced by is what it
+// stores.
+func row(modality Modality, config ProviderConfig, entry Stat) store.Request {
 	request := store.Request{
-		Modality:          string(r.modality),
+		Modality:          string(modality),
 		CustomerID:        entry.CustomerID,
 		AgentID:           entry.AgentID,
 		CallID:            entry.CallID,
@@ -149,8 +190,8 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		OutputTokens:      entry.OutputTokens,
 		InputParts:        entry.InputParts,
 		Images:            entry.Images,
-		CostMicros:        cost,
-		OutputCostMicros:  outputCost,
+		Meters:            entry.meters(),
+		Attributes:        entry.Attributes,
 		Success:           entry.Success,
 		ErrorCode:         entry.ErrorCode,
 		ErrorMessage:      store.SafeLogText(entry.ErrorMessage),
@@ -163,19 +204,26 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		duration := entry.DurationMs
 		request.DurationMs = &duration
 	}
+	return request
+}
 
-	// A caller still streaming at shutdown records after Close; that stat is dropped.
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		r.dropped.Add(1)
-		return
+// meters is what the row stores beyond its typed columns: the stat's own meters, and the
+// usage that has no column.
+func (s Stat) meters() pricing.Quantities {
+	if len(s.Meters) == 0 && s.Pixels == 0 && s.Requests == 0 {
+		return nil
 	}
-	select {
-	case r.queue <- queued{request: request, fatal: entry.Fatal}:
-	default:
-		r.dropped.Add(1)
+	meters := maps.Clone(s.Meters)
+	if meters == nil {
+		meters = pricing.Quantities{}
 	}
+	if s.Pixels != 0 {
+		meters[pricing.Pixels] += s.Pixels
+	}
+	if s.Requests != 0 {
+		meters[pricing.Requests] += s.Requests
+	}
+	return meters
 }
 
 // Close drains the queue and stops the writer.

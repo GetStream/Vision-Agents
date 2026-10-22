@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -30,7 +31,9 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is what a caller wants a search provider for.
@@ -67,6 +70,7 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {

@@ -70,6 +70,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -455,6 +456,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
+	if err != nil {
+		return err
+	}
+	prices, err := newPrices(capabilities, vendorConfig, logger)
+	if err != nil {
+		return err
+	}
 
 	// Traces go nowhere unless the deployment names a collector in the environment, so
 	// this is a no-op on a laptop and on every deployment that has not asked for them.
@@ -638,6 +647,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -656,6 +666,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:        pgStore,
 			Live:         liveClient,
 			Gate:         gate,
+			Pricer:       prices,
 			Logger:       logger,
 		})
 		if err != nil {
@@ -677,6 +688,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:     liveClient,
 			Voices:   resolver,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -693,6 +705,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:      liveClient,
 			Voices:    resolver,
 			Gate:      gate,
+			Pricer:    prices,
 			Logger:    logger,
 		})
 		if err != nil {
@@ -714,6 +727,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -744,6 +758,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:       liveClient,
 			Quota:      limiter,
 			Gate:       gate,
+			Pricer:     prices,
 			Models:     models,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
@@ -765,6 +780,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -786,6 +802,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -806,6 +823,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -825,6 +843,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
+			Pricer:   prices,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -861,7 +880,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, secrets, logger)
+	telephony, err := buildPhone(settings, vendorConfig, prices, pgStore, liveClient, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -905,7 +924,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessionConnectors.Resolver = connectorResolver
 	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		sessionConnectors, logger)
+		sessionConnectors, prices, logger)
 	if err != nil {
 		return err
 	}
@@ -1080,6 +1099,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	options := api.Options{
 		Routers:               routers,
+		Pricer:                prices,
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
@@ -1588,6 +1608,7 @@ func buildSessions(
 	stream *streamapp.Clients,
 	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
+	prices *pricing.List,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1616,6 +1637,7 @@ func buildSessions(
 		STS:        streams.STS,
 		Memory:     remembering,
 		Knowledge:  reading,
+		Pricer:     prices,
 		Search:     finding,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
@@ -1746,11 +1768,27 @@ func buildVoices(
 	})
 }
 
+// newPrices is the price list every row this process records is priced by: the routing
+// config's rates, and the phone vendors' calls. Billable work it has no price for is logged
+// at start, so it can be priced before a row of it is recorded at nothing.
+func newPrices(capabilities routing.Config, vendorConfig phone.Config, logger *slog.Logger) (*pricing.List, error) {
+	prices, err := pricing.NewList("config", append(routing.PriceEntries(capabilities), phone.PriceEntries(vendorConfig)...), logger)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range prices.Unpriced(routing.Items(capabilities)) {
+		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
+	}
+	return prices, nil
+}
+
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a
 // number, so a deployment without them still lists vendors and searches for numbers, and
 // the operations that need them say so.
 func buildPhone(
 	settings config.Config,
+	vendorConfig phone.Config,
+	prices *pricing.List,
 	pgStore *store.Store,
 	liveClient *live.Client,
 	stream *streamapp.Clients,
@@ -1758,17 +1796,13 @@ func buildPhone(
 	secrets *auth.Sealer,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
-	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
-	if err != nil {
-		return nil, err
-	}
 	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
 		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
 	}
 
 	var recorder *routing.Recorder
 	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
+		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, prices, logger)
 	}
 
 	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without

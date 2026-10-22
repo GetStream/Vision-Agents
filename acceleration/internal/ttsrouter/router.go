@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -36,7 +37,9 @@ type Options struct {
 	Live      *live.Client
 	Voices    routing.VoiceResolver
 	Gate      routing.Gate
-	Logger    *slog.Logger
+	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is what a caller wants said.
@@ -80,6 +83,7 @@ func New(options Options) (*Router, error) {
 		Live:     options.Live,
 		Voices:   options.Voices,
 		Gate:     options.Gate,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {

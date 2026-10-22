@@ -3,9 +3,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // SearchSuite covers the one routed modality with no socket: a question and what came back.
@@ -32,6 +37,25 @@ func (s *SearchSuite) TestAQuestionComesBackAnsweredAndWithWhatItWasAnsweredFrom
 	s.Equal("Pricing", *found.Results[0].Title)
 	s.Equal("how much does a call cost", *found.Results[0].Text, "the question reached the provider")
 	s.InDelta(0.9, *found.Results[0].Score, 1e-6)
+}
+
+func (s *SearchSuite) TestASearchIsBilledPerRequest() {
+	probe := s.utils.uuid()
+	s.search(SearchRequest{Query: "how much does a call cost", Tags: &map[string]string{"probe": probe}})
+
+	var recorded store.Request
+	s.Require().Eventually(func() bool {
+		var rows []store.Request
+		err := s.store.ShardDB().NewSelect().Model(&rows).Where("tags->>'probe' = ?", probe).Scan(context.Background())
+		if err != nil || len(rows) != 1 {
+			return false
+		}
+		recorded = rows[0]
+		return true
+	}, 5*time.Second, 50*time.Millisecond)
+	s.EqualValues(5_000, recorded.CostMicros, "$5 a thousand searches is half a cent for one")
+	s.Equal(pricing.Quantities{pricing.Requests: 1}, recorded.Meters)
+	s.True(recorded.Billable)
 }
 
 func (s *SearchSuite) TestAQuestionOfNothingIsRefused() {

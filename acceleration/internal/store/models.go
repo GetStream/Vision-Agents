@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -49,15 +50,47 @@ type Request struct {
 	// InputParts is what the prompt was made of, estimated and scaled to InputTokens.
 	InputParts InputParts `bun:"embed:input_"`
 	// Images is how many pictures were drawn.
-	Images    int64    `bun:"images,notnull"`
-	LatencyMs *float64 `bun:"latency_ms"`
+	Images int64 `bun:"images,notnull"`
+	// Meters are the priced quantities with no column of their own: cache writes, speech to
+	// speech by modality, requests, pixels.
+	Meters pricing.Quantities `bun:"meters,type:jsonb,nullzero"`
+	// Attributes chose the price (a service tier, a country) or explain the row.
+	Attributes map[string]string `bun:"attributes,type:jsonb,nullzero"`
+	LatencyMs  *float64          `bun:"latency_ms"`
 	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
 	CostMicros int64 `bun:"cost_micros,notnull"`
 	// OutputCostMicros is the part of CostMicros the generated tokens were priced at.
-	OutputCostMicros int64  `bun:"output_cost_micros,notnull"`
-	Success          bool   `bun:"success,notnull"`
-	ErrorCode        string `bun:"error_code,nullzero"`
-	ErrorMessage     string `bun:"error_message,nullzero"`
+	OutputCostMicros int64 `bun:"output_cost_micros,notnull"`
+	// Billable is false for free and local work, which counts toward no spend.
+	Billable     bool   `bun:"billable,notnull"`
+	Success      bool   `bun:"success,notnull"`
+	ErrorCode    string `bun:"error_code,nullzero"`
+	ErrorMessage string `bun:"error_message,nullzero"`
+}
+
+// Quantities is what the row is priced by: the typed columns as pricing meters, the prompt
+// split into tokens read fresh, read from cache and written to it, then Meters. Zero
+// quantities are left out.
+func (r Request) Quantities() pricing.Quantities {
+	used := pricing.Quantities{}
+	add := func(meter pricing.Meter, quantity int64) {
+		if quantity != 0 {
+			used[meter] += quantity
+		}
+	}
+	// Cached and cache-written tokens are part of the prompt, so they are billed once at
+	// their own rate rather than twice.
+	fresh := max(r.InputTokens-r.CachedInputTokens-r.Meters[pricing.CacheWriteInputTokens], 0)
+	add(pricing.AudioMs, r.AudioMs)
+	add(pricing.Characters, r.Characters)
+	add(pricing.InputTokens, fresh)
+	add(pricing.CachedInputTokens, r.CachedInputTokens)
+	add(pricing.OutputTokens, r.OutputTokens)
+	add(pricing.Images, r.Images)
+	for meter, quantity := range r.Meters {
+		add(meter, quantity)
+	}
+	return used
 }
 
 // InputParts splits an LLM prompt by what it carried. No provider reports this, so it is

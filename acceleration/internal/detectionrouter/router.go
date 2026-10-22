@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -41,7 +42,9 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	Gate     routing.Gate
-	Logger   *slog.Logger
+	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
 }
 
 // Request is an image to look at and who pays for it.
@@ -88,6 +91,7 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Gate:     options.Gate,
+		Pricer:   options.Pricer,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -222,7 +226,7 @@ func (r *Router) look(
 		detected.Box = detected.Box.Clamped()
 		found.Detections = append(found.Detections, detected)
 	}
-	found.CostMicros = config.Price.CostMicros(usage)
+	found.CostMicros = r.Quote(config, usage).CostMicros
 	return found, nil
 }
 

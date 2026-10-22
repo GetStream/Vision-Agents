@@ -1,0 +1,115 @@
+//go:build integration
+
+package routing
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+)
+
+// RecorderSuite records rows into Postgres and reads back what was stored.
+type RecorderSuite struct {
+	suite.Suite
+	ctx    context.Context
+	store  *store.Store
+	prices *pricing.List
+}
+
+func TestRecorderSuite(t *testing.T) {
+	suite.Run(t, new(RecorderSuite))
+}
+
+// priced bills cache writes at their own rate, pixels by the megapixel, and half price for
+// work the vendor served at its flex tier. gifted is free.
+var (
+	priced = ProviderConfig{Provider: "vendor", Model: "priced", Price: Price{
+		PerMillionInputTokens:           2,
+		PerMillionCachedInputTokens:     0.2,
+		PerMillionCacheWriteInputTokens: 2.5,
+		PerMillionOutputTokens:          12,
+		PerMegapixel:                    0.02,
+		ServiceTiers:                    map[string]float64{"flex": 0.5},
+	}}
+	gifted = ProviderConfig{Provider: "vendor", Model: "gifted", Price: Price{Free: true}}
+)
+
+func (s *RecorderSuite) SetupSuite() {
+	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
+	if dsn == "" {
+		s.T().Skip("ROUTER_POSTGRES_DSN not set")
+	}
+	s.ctx = context.Background()
+	opened, err := store.Open(testenv.Database(dsn, "routing"))
+	s.Require().NoError(err)
+	s.Require().NoError(opened.Migrate(s.ctx))
+	s.store = opened
+	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
+	s.prices, err = Prices(Config{LLM: {Providers: []ProviderConfig{priced, gifted}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.Require().NoError(err)
+}
+
+// recorded records the stat and returns the row it stored, written once the recorder has
+// drained.
+func (s *RecorderSuite) recorded(config ProviderConfig, stat Stat) store.Request {
+	stat.CustomerID = uuid.NewString()
+	recorder := NewRecorder(LLM, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	recorder.Record(config, stat)
+	recorder.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", stat.CustomerID).Scan(s.ctx))
+	s.Require().Len(rows, 1)
+	return rows[0]
+}
+
+func (s *RecorderSuite) TestTheRowStoresWhatPricedIt() {
+	row := s.recorded(priced, Stat{
+		Usage:      Usage{InputTokens: 2_400, CachedInputTokens: 11, OutputTokens: 22, Pixels: 1_000_000},
+		Meters:     pricing.Quantities{pricing.CacheWriteInputTokens: 2_386},
+		Attributes: map[string]string{"service_tier": "flex"},
+		Success:    true,
+	})
+
+	s.Equal(pricing.Quantities{pricing.CacheWriteInputTokens: 2_386, pricing.Pixels: 1_000_000}, row.Meters)
+	s.Equal(map[string]string{"service_tier": "flex"}, row.Attributes)
+	// 3 fresh, 11 cached, 2,386 written and 22 generated tokens and a megapixel, at half
+	// price: (6 + 2.2 + 5,965 + 264 + 20,000) / 2.
+	s.EqualValues(13_119, row.CostMicros)
+	s.EqualValues(132, row.OutputCostMicros)
+	repriced := s.prices.Quote(ItemOf(LLM, priced, row.Attributes), row.Quantities())
+	s.Equal(row.CostMicros, repriced.CostMicros, "the row alone prices to what it was charged")
+}
+
+func (s *RecorderSuite) TestAFreeRowIsNotBillable() {
+	free := s.recorded(gifted, Stat{Usage: Usage{InputTokens: 1_000}, Success: true})
+	paid := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000}, Success: true})
+
+	s.False(free.Billable)
+	s.Zero(free.CostMicros)
+	s.True(paid.Billable)
+	s.EqualValues(2_000, paid.CostMicros)
+}
+
+func (s *RecorderSuite) TestARowWithNothingBeyondItsColumnsStoresNoMeters() {
+	row := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000}, Success: true})
+
+	s.Empty(row.Meters)
+	s.Empty(row.Attributes)
+}
+
+func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsBillable() {
+	row := s.recorded(ProviderConfig{Provider: "vendor", Model: "number"}, Stat{CostMicros: 1_150_000, Success: true})
+
+	s.EqualValues(1_150_000, row.CostMicros)
+	s.True(row.Billable)
+}

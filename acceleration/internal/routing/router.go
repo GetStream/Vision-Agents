@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -175,7 +176,9 @@ type Options[P Provider] struct {
 	// customer's own.
 	Models ModelResolver
 	// Gate enforces the customer's policies. Nil enforces nothing.
-	Gate   Gate
+	Gate Gate
+	// Pricer prices every row the router records. Nil prices them from Config's own rates.
+	Pricer pricing.Pricer
 	Logger *slog.Logger
 }
 
@@ -338,13 +341,21 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	pricer := options.Pricer
+	if pricer == nil {
+		list, err := Prices(Config{options.Modality: options.Config}, logger)
+		if err != nil {
+			return nil, err
+		}
+		pricer = list
+	}
 
 	return &Router[P]{
 		validate: options.Validate,
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
-		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, logger),
+		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, pricer, logger),
 		live:     options.Live,
 		voices:   options.Voices,
 		models:   options.Models,
@@ -361,6 +372,11 @@ func (r *Router[P]) Config() ModalityConfig { return r.config }
 
 // Recorder is where a modality's session writes its stat rows.
 func (r *Router[P]) Recorder() *Recorder { return r.recorder }
+
+// Quote is what that usage of the provider costs, priced as its row is.
+func (r *Router[P]) Quote(config ProviderConfig, usage Usage) pricing.Quote {
+	return r.recorder.Quote(config, usage)
+}
 
 // Builds reports whether a provider has a factory registered here. It does not build
 // anything, so a provider whose factory would fail (a missing key) still reports true. A

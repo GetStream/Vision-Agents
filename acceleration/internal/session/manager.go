@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -118,6 +119,8 @@ type ManagerOptions struct {
 	// which case every read is a query, which is what a deployment without Redis does.
 	Configs *appconfig.Store
 	Live    *live.Client
+	// Pricer prices what an agent's memory and knowledge record. Nil prices nothing.
+	Pricer pricing.Pricer
 	// Directory is where this node says which sessions it is running, so the deployment's
 	// other nodes can forward what only this one can answer. Nil keeps a session
 	// reachable on this node alone.
@@ -670,6 +673,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			MemoryFilter:       spec.Memory.Filter,
 			Store:              m.options.Store,
 			Live:               m.options.Live,
+			Pricer:             m.options.Pricer,
 			Logger:             m.logger,
 		})
 	}

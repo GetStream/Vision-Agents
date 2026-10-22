@@ -41,6 +41,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -640,7 +641,12 @@ func release(ctx context.Context, arguments []string) error {
 func build(ctx context.Context) (*phone.Service, func(), error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	registry, err := registry()
+	config, err := phone.LoadConfig(os.Getenv(phoneConfigEnvVar))
+	if err != nil {
+		return nil, nil, err
+	}
+	registry := vendors.Registry(config)
+	prices, err := pricing.NewList("config", phone.PriceEntries(config), logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -677,7 +683,7 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 
 	var recorder *routing.Recorder
 	if pgStore != nil || liveClient != nil {
-		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
+		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, prices, logger)
 		closers = append(closers, recorder.Close)
 	}
 

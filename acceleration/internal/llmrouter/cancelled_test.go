@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -40,6 +41,9 @@ func (k *statSink) Record(_ routing.ProviderConfig, row routing.Stat) {
 	defer k.mu.Unlock()
 	k.rows = append(k.rows, row)
 }
+
+// Quote prices nothing: the rows, not what they cost, are under test.
+func (k *statSink) Quote(routing.ProviderConfig, routing.Usage) pricing.Quote { return pricing.Quote{} }
 
 // only is the single row the session wrote.
 func (k *statSink) only(t *testing.T) routing.Stat {

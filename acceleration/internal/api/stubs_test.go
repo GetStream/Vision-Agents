@@ -68,6 +68,14 @@ func routableConfig() routing.ModalityConfig {
 	}
 }
 
+// searchConfig is routableConfig at a price per search, so what a search is billed can be
+// read off its row.
+func searchConfig() routing.ModalityConfig {
+	config := routableConfig()
+	config.Providers[0].Price = routing.Price{PerThousandRequests: 5}
+	return config
+}
+
 // recordingConfig adds the batch half a whole recording is served by, so a job sent to the
 // live shortcut can be told apart from one that reached the recorded one.
 func recordingConfig() routing.ModalityConfig {

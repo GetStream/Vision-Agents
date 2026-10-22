@@ -67,6 +67,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -854,7 +855,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.T().Cleanup(recordings.Close)
 
 	finding, err := searchrouter.New(searchrouter.Options{
-		Config: routableConfig(), Registry: searchRegistry(), Store: s.store, Live: s.live, Gate: gate,
+		Config: searchConfig(), Registry: searchRegistry(), Store: s.store, Live: s.live, Gate: gate,
 		Logger: logger,
 	})
 	s.Require().NoError(err)
@@ -955,11 +956,13 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	// here is the HTTP surface in front of them.
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
+	phonePrices, err := pricing.NewList("config", phone.PriceEntries(config), logger)
+	s.Require().NoError(err)
 
 	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(config),
 		Store:     s.store,
-		Recorder:  routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Recorder:  routing.NewRecorder(routing.Phone, s.store, s.live, phonePrices, logger),
 		Gate:      s.gate,
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
