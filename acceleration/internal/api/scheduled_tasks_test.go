@@ -458,6 +458,7 @@ func (s *ScheduledTasksSuite) TestTheAgentSchedulesATaskForItsUser() {
 	s.Equal("Remind them to stretch.", task.Instructions)
 	s.Equal(store.ScheduledTaskActive, task.State)
 	s.Equal("agent", task.CreatedBy)
+	s.Equal("authenticated", task.CallerKind)
 	s.Equal(config, task.ConfigID)
 	s.Equal(opened.Id, task.SessionID)
 	s.Require().NotNil(task.NextRunAt)
