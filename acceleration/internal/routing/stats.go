@@ -223,6 +223,13 @@ func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Clien
 	return r
 }
 
+// For is a recorder of another modality writing through this one's writer, gate and prices,
+// for work one session does in a modality of its own, such as the text model a voice session
+// hands its reasoning to. Closing it leaves the writer open.
+func (r *Recorder) For(modality Modality) *Recorder {
+	return &Recorder{modality: modality, pricer: r.pricer, logger: r.logger, gate: r.gate, writer: r.writer}
+}
+
 // Quote is what that usage of the provider costs, priced as Record prices a row.
 func (r *Recorder) Quote(config ProviderConfig, usage Usage) pricing.Quote {
 	return r.QuoteStat(config, Stat{Usage: usage})

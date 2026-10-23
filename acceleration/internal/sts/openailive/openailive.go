@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -98,6 +99,7 @@ const (
 const (
 	eventSessionStarted    = "session.started"
 	eventSessionClosed     = "session.closed"
+	eventUsageUpdated      = "session.usage.updated"
 	eventAudioDelta        = "session.output_audio.delta"
 	eventInputTranscript   = "session.input_transcript.delta"
 	eventOutputTranscript  = "session.output_transcript.delta"
@@ -109,6 +111,8 @@ const (
 // Nested Responses event types, inside a response.event envelope.
 const (
 	nestedOutputItemDone = "response.output_item.done"
+	nestedCompleted      = "response.completed"
+	nestedIncomplete     = "response.incomplete"
 	nestedFailed         = "response.failed"
 	nestedError          = "error"
 )
@@ -232,12 +236,44 @@ type serverEvent struct {
 	DelegationID string          `json:"delegation_id"`
 	Event        json.RawMessage `json:"event"`
 	Error        *apiError       `json:"error"`
+	// Usage is the seconds the session has been open, on session.usage.updated and, finally,
+	// session.closed. It is what the voice is billed by.
+	Usage *sessionUsage `json:"usage"`
+}
+
+// sessionUsage is sent as a number with a fraction, such as 2.0, so it is read as one: a
+// frame that failed to decode over it would be dropped whole, session.closed included.
+type sessionUsage struct {
+	Seconds float64 `json:"seconds"`
 }
 
 // nestedEvent is the Responses event inside a response.event envelope.
 type nestedEvent struct {
-	Type string      `json:"type"`
-	Item *outputItem `json:"item"`
+	Type     string           `json:"type"`
+	Item     *outputItem      `json:"item"`
+	Response *backendResponse `json:"response"`
+}
+
+// backendResponse is a settled response of the backend, which is billed on top of the voice.
+type backendResponse struct {
+	ID          string         `json:"id"`
+	Model       string         `json:"model"`
+	ServiceTier string         `json:"service_tier"`
+	Usage       *backendTokens `json:"usage"`
+}
+
+// backendTokens is a Responses usage block.
+type backendTokens struct {
+	InputTokens        int64 `json:"input_tokens"`
+	InputTokensDetails struct {
+		CachedTokens     int64 `json:"cached_tokens"`
+		CacheWriteTokens int64 `json:"cache_write_tokens"`
+	} `json:"input_tokens_details"`
+	OutputTokens        int64 `json:"output_tokens"`
+	OutputTokensDetails struct {
+		ReasoningTokens int64 `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
+	TotalTokens int64 `json:"total_tokens"`
 }
 
 type outputItem struct {
@@ -361,8 +397,8 @@ func Serves(model string) bool { return strings.HasPrefix(model, modelPrefix) }
 // It hears no images and has no turn detector to tune: listening and speaking are the
 // model's own business, so neither endpointing nor semantic_turns is anything this package
 // could send. Its instructions are fixed at startup; the backend's tools are not. Usage is
-// session seconds rather than tokens per reply, so it is not reported here, and OpenAI has
-// published no session limit.
+// session seconds rather than tokens per reply, reported as SessionUsage, with each backend
+// response as BackendUsage; OpenAI has published no session limit.
 func CapabilitiesFor(string) sts.Capabilities {
 	return sts.Capabilities{
 		Text:             true,
@@ -371,6 +407,7 @@ func CapabilitiesFor(string) sts.Capabilities {
 		InputTranscript:  true,
 		OutputTranscript: true,
 		ToolsMidSession:  true,
+		SessionBilled:    true,
 	}
 }
 
@@ -795,11 +832,14 @@ func (s *STS) handleMessage(event serverEvent) {
 		s.delegated(event)
 	case eventDelegationCreated:
 		s.logger.Debug("the model delegated work")
+	case eventUsageUpdated:
+		s.billed(event.Usage)
 	case eventSessionClosed:
 		s.mu.Lock()
 		s.ended = true
 		s.mu.Unlock()
 		s.settleTurn(true)
+		s.billed(event.Usage)
 		s.emitter.Send(sts.Disconnected{
 			Provider: ProviderName,
 			Model:    s.options.Model,
@@ -828,6 +868,8 @@ func (s *STS) delegated(envelope serverEvent) {
 	}
 
 	switch nested.Type {
+	case nestedCompleted, nestedIncomplete:
+		s.backendBilled(nested.Response)
 	case nestedOutputItemDone:
 		if nested.Item == nil || nested.Item.Type != "function_call" {
 			return
@@ -851,6 +893,40 @@ func (s *STS) delegated(envelope serverEvent) {
 			Context:  "delegation",
 		})
 	}
+}
+
+// billed reports the seconds the session has been open, which the voice is billed by. The
+// running total is rounded, so the rows its growth bills add up to the last one rounded.
+func (s *STS) billed(usage *sessionUsage) {
+	if usage == nil {
+		return
+	}
+	s.emitter.Send(sts.SessionUsage{Seconds: int64(math.Round(usage.Seconds))})
+}
+
+// backendBilled reports a settled backend response, billed on top of the voice at the rates
+// of the model the session delegated to, which is the name it is reported under rather than the
+// one the response carries, since that is the name the price list knows.
+func (s *STS) backendBilled(response *backendResponse) {
+	if response == nil || response.Usage == nil || response.ID == "" {
+		return
+	}
+	used := response.Usage
+	s.emitter.Send(sts.BackendUsage{
+		ResponseID:  response.ID,
+		Model:       s.options.Backend,
+		ServiceTier: response.ServiceTier,
+		Usage: llm.Usage{
+			InputTokens: used.InputTokens,
+			InputTokensDetails: llm.InputTokensDetails{
+				CachedTokens:     used.InputTokensDetails.CachedTokens,
+				CacheWriteTokens: used.InputTokensDetails.CacheWriteTokens,
+			},
+			OutputTokens:        used.OutputTokens,
+			OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: used.OutputTokensDetails.ReasoningTokens},
+			TotalTokens:         used.TotalTokens,
+		},
+	})
 }
 
 // heard is a piece of what the caller is saying. The first piece since the model last

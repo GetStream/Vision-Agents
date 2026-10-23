@@ -32,6 +32,9 @@ type Meter struct {
 	Free bool
 	// Attributes are stored with the row, such as the session a row belongs to.
 	Attributes map[string]string
+	// OperationID names what the row is part of, such as the voice session whose seconds it
+	// bills. Empty names nothing.
+	OperationID string
 }
 
 // Call makes one request to a vendor and records it however it ends: one row for a result, an
@@ -74,7 +77,7 @@ func Settle(meter Meter, work pricing.Metered) error {
 
 // stat is the row of work the meter records, before it has used anything.
 func (m Meter) stat(started time.Time) Stat {
-	stat := Stat{Owner: m.Owner, UsageID: m.UsageID, StartedAt: started.UTC(), Free: m.Free}
+	stat := Stat{Owner: m.Owner, UsageID: m.UsageID, StartedAt: started.UTC(), Free: m.Free, OperationID: m.OperationID}
 	for name, value := range m.Attributes {
 		stat.Attribute(name, value)
 	}

@@ -1,8 +1,10 @@
 package ttsrouter
 
 import (
+	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -24,9 +26,16 @@ type Session struct {
 	mu sync.Mutex
 	// inFlight tracks utterances that have not been settled into a stat row yet.
 	inFlight map[string]*utterance
+	// sent is the characters handed to the provider for each utterance not settled yet,
+	// which is what it is billed for, whatever the adapter counted.
+	sent map[string]int64
 
 	closeOnce sync.Once
 }
+
+// miscounted is the provider and model names whose adapter was seen counting characters other
+// than those sent, each logged once a process.
+var miscounted sync.Map
 
 // utterance is what the session remembers about one synthesis until it completes.
 type utterance struct {
@@ -56,14 +65,34 @@ func newSession(
 		recorder: recorder,
 		events:   make(chan tts.Event, 64),
 		inFlight: map[string]*utterance{},
+		sent:     map[string]int64{},
 	}
 	go session.forward()
 	return session
 }
 
-// Synthesize sends text to the selected provider.
+// Synthesize sends text to the selected provider. A request with no id is given one here
+// rather than by the provider, so what is sent can be counted against the utterance it
+// settles as.
 func (s *Session) Synthesize(request tts.Request) error {
-	return s.provider.Synthesize(request)
+	if request.ID == "" {
+		request.ID = tts.NewSynthesisID()
+	}
+	characters := int64(utf8.RuneCountInString(request.Text))
+	s.mu.Lock()
+	s.sent[request.ID] += characters
+	s.mu.Unlock()
+
+	err := s.provider.Synthesize(request)
+	if err != nil {
+		// Refused, it was never sent.
+		s.mu.Lock()
+		if s.sent[request.ID] -= characters; s.sent[request.ID] <= 0 {
+			delete(s.sent, request.ID)
+		}
+		s.mu.Unlock()
+	}
+	return err
 }
 
 // Interrupt drops audio in flight so the agent can stop mid-sentence.
@@ -100,9 +129,6 @@ func (s *Session) Performs() bool { return s.provider.Performs() }
 // caller can report a cost without reaching for the router's prices.
 func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
-// TTS exposes the underlying provider so callers can reach provider-specific features.
-func (s *Session) TTS() tts.TTS { return s.provider }
-
 // Close ends the session. The event channel closes once the provider's events are drained.
 func (s *Session) Close() error {
 	var err error
@@ -131,6 +157,13 @@ func (s *Session) observe(event tts.Event) {
 		// One utterance is one unit of billable work, the way one turn is for
 		// speech-to-text. An interrupted one still produced audio and still cost money.
 		settled := s.settle(typed.SynthesisID)
+		characters := typed.Characters
+		if settled.sent {
+			characters = settled.characters
+			if characters != typed.Characters {
+				s.warnMiscounted(typed.Characters, characters)
+			}
+		}
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:       s.owner,
 			StartedAt:   settled.startedAt,
@@ -138,7 +171,7 @@ func (s *Session) observe(event tts.Event) {
 			Purpose:     "speech",
 			DurationMs:  float64(time.Since(settled.startedAt).Microseconds()) / 1000,
 			Usage: routing.Usage{
-				Characters: typed.Characters,
+				Characters: characters,
 				AudioMs:    int64(typed.AudioDurationMs),
 			},
 			// Time to first byte is what the listener actually waited for; the rest of
@@ -179,18 +212,43 @@ func (s *Session) fail(synthesisID, code string) bool {
 	return true
 }
 
+// settled is an utterance taken out of flight, and the characters sent for it.
+type settled struct {
+	utterance
+	characters int64
+	// sent is false for an utterance that never went through Synthesize here, whose
+	// characters only the adapter counted.
+	sent bool
+}
+
 // settle takes an utterance out of flight, so a late duplicate completion cannot bill
 // twice. An utterance the session never saw start is stamped with now.
-func (s *Session) settle(synthesisID string) utterance {
+func (s *Session) settle(synthesisID string) settled {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	characters, sent := s.sent[synthesisID]
+	delete(s.sent, synthesisID)
 	current, ok := s.inFlight[synthesisID]
 	if !ok {
-		return utterance{startedAt: time.Now().UTC()}
+		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent}
 	}
 	delete(s.inFlight, synthesisID)
-	return utterance{startedAt: current.startedAt.UTC(), errorCode: current.errorCode}
+	return settled{
+		utterance:  utterance{startedAt: current.startedAt.UTC(), errorCode: current.errorCode},
+		characters: characters,
+		sent:       sent,
+	}
+}
+
+// warnMiscounted logs, once a process for each provider and model, an adapter counting
+// characters other than those it was sent.
+func (s *Session) warnMiscounted(counted, sent int64) {
+	if _, logged := miscounted.LoadOrStore(s.config.Name(), true); logged {
+		return
+	}
+	slog.Warn("the voice counted characters other than those it was sent; the row bills what was sent",
+		"provider", s.config.Provider, "model", s.config.Model, "counted", counted, "sent", sent)
 }
 
 func errorCode(failure tts.Error) string {

@@ -292,7 +292,7 @@ func (f *flow) run(asked *candidate) {
 
 	stopExpiry := context.AfterFunc(asked.ctx, func() { _ = stream.Close() })
 	defer stopExpiry()
-	f.consume(asked, stream, model.LLM())
+	f.consume(asked, stream, model)
 }
 
 // advance starts the newest waiting turn, or marks the controller idle.
@@ -451,7 +451,7 @@ func (f *flow) setModel(model *llmrouter.Session) {
 }
 
 // consume waits for one decision and reports it.
-func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
+func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.Session) {
 	candidateID := asked.turn.ID
 	response, err := llm.Collect(stream)
 	if f.forget(candidateID) == nil {
@@ -499,7 +499,7 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary llm.LLM) {
 		// A stream is stamped by the provider that wrote it, and a hedge or a failover is
 		// another provider or model behind the same session.
 		ruler = Primary
-		if response.Provider != primary.Provider() || response.Model != primary.Model() {
+		if !primary.Wrote(response) {
 			ruler = Fallback
 		}
 	}

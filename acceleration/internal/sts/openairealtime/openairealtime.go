@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -358,10 +359,17 @@ func (d *statusDetails) UnmarshalJSON(raw []byte) error {
 }
 
 type usage struct {
+	// Type is "tokens" on a transcription's usage, and "duration" for a transcriber billed
+	// by the second, which reports no tokens.
+	Type               string        `json:"type"`
 	InputTokens        int64         `json:"input_tokens"`
 	OutputTokens       int64         `json:"output_tokens"`
 	InputTokenDetails  *tokenDetails `json:"input_token_details"`
 	OutputTokenDetails *tokenDetails `json:"output_token_details"`
+	// BillableAudioSeconds is xAI's running total of the audio it bills the session for,
+	// rounded to the second: the audio sent and received, or the wall clock on a line that
+	// streams all the time. Nil where the vendor keeps none.
+	BillableAudioSeconds *float64 `json:"billable_audio_seconds"`
 }
 
 type tokenDetails struct {
@@ -441,6 +449,9 @@ type STS struct {
 	asked   clientEvent
 	started bool
 	closed  bool
+	// billedSeconds is the last running total of billable audio xAI reported, which each
+	// reply reports the growth since.
+	billedSeconds float64
 }
 
 // New validates the settings and returns an unstarted provider.
@@ -1105,6 +1116,7 @@ func (s *STS) handleMessage(event serverEvent) {
 
 	case eventInputCompleted:
 		s.heardTranscript(strings.TrimSpace(event.Transcript))
+		s.transcribed(event)
 
 	case eventResponseCreated:
 		s.startTurn(event)
@@ -1187,6 +1199,25 @@ func (s *STS) heardTranscript(text string) {
 	participant := s.participant
 	s.mu.Unlock()
 	s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: mode, Text: text})
+}
+
+// transcribed reports what writing down a caller turn cost, where OpenAI bills its transcriber
+// on top of the conversation, by the tokens it read and wrote.
+func (s *STS) transcribed(event serverEvent) {
+	used := event.Usage
+	if s.dialect != DialectOpenAI || used == nil || used.Type == "duration" || event.ItemID == "" {
+		return
+	}
+	cost := sts.Usage{InputTokens: used.InputTokens, OutputTokens: used.OutputTokens, OutputTextTokens: used.OutputTokens}
+	if input := used.InputTokenDetails; input != nil {
+		cost.InputTextTokens, cost.InputAudioTokens = input.TextTokens, input.AudioTokens
+	} else {
+		cost.InputAudioTokens = used.InputTokens
+	}
+	if cost.InputTokens == 0 && cost.OutputTokens == 0 {
+		return
+	}
+	s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: s.transcription().Model, Usage: cost})
 }
 
 // settleHeard settles a restatement nothing followed. The reply beginning to speak is the
@@ -1273,6 +1304,13 @@ func (s *STS) finishTurn(event serverEvent) {
 		}
 	}
 	cost = usageOf(reported)
+	if reported != nil && reported.BillableAudioSeconds != nil {
+		s.mu.Lock()
+		grown := max(*reported.BillableAudioSeconds-s.billedSeconds, 0)
+		s.billedSeconds = max(*reported.BillableAudioSeconds, s.billedSeconds)
+		s.mu.Unlock()
+		cost.BilledAudioMs, cost.AudioBilled = int64(math.Round(grown*1000)), true
+	}
 
 	if status == "failed" {
 		err := error(failure)

@@ -113,6 +113,10 @@ func (q Quantities) Zero() bool {
 	return true
 }
 
+// Used is the quantities themselves, for work counted by whoever records it rather than
+// reported by a result of its own.
+func (q Quantities) Used() Quantities { return q }
+
 // Metered is a result that says what its work used, in the units it is priced by. Recording
 // a call takes only results that implement it, so a new result type that cannot say what it
 // used does not compile where it would be recorded.

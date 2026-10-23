@@ -149,8 +149,12 @@ func (s *Session) QuoteResponse(response llm.Response) pricing.Quote {
 // its config does not say.
 func (s *Session) ContextWindow() int64 { return s.config.ContextWindow }
 
-// LLM exposes the underlying provider so callers can reach provider-specific features.
-func (s *Session) LLM() llm.LLM { return s.provider }
+// Wrote reports whether the session's own provider wrote the response, rather than a hedge or
+// a failover behind the session. A response is stamped with the names its adapter gives, which
+// need not be the ones the session is routed under.
+func (s *Session) Wrote(response llm.Response) bool {
+	return response.Provider == s.provider.Provider() && response.Model == s.provider.Model()
+}
 
 // Close ends the session, abandoning anything still in flight.
 func (s *Session) Close() error {

@@ -44,6 +44,10 @@ type Session struct {
 	readAhead chan chan struct{}
 	done      chan struct{}
 
+	// streamedMs is the audio handed to the provider since the last settled turn, which is
+	// what a turn the vendor did not measure is billed for. Guarded by mu.
+	streamedMs float64
+
 	closeOnce sync.Once
 }
 
@@ -77,7 +81,10 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 	if s.failed.Load() {
 		return nil
 	}
-	provider := s.STT()
+	s.mu.Lock()
+	provider := s.provider
+	s.streamedMs += pcm.DurationMs()
+	s.mu.Unlock()
 	err := provider.ProcessAudio(pcm, participant)
 	if err != nil && s.toldOf(provider) {
 		// The provider failed while this frame was on its way to it. The caller hears of
@@ -98,7 +105,7 @@ func (s *Session) toldOf(provider stt.STT) bool {
 		<-read
 	case <-s.done:
 	}
-	return s.failed.Load() || provider != s.STT()
+	return s.failed.Load() || provider != s.current()
 }
 
 // Events returns the provider's events. The channel closes when the session closes.
@@ -118,8 +125,18 @@ func (s *Session) Model() string {
 	return s.config.Model
 }
 
-// STT exposes the underlying provider so callers can reach provider-specific features.
-func (s *Session) STT() stt.STT {
+// SetKeyterms tells the transcriber which words to expect, where it can be told mid-session,
+// and does nothing where it cannot.
+func (s *Session) SetKeyterms(terms []string) error {
+	retuner, ok := s.current().(stt.Retuner)
+	if !ok {
+		return nil
+	}
+	return retuner.SetKeyterms(terms)
+}
+
+// current is the provider serving the session, which a failover replaces.
+func (s *Session) current() stt.STT {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.provider
@@ -288,13 +305,24 @@ func (s *Session) observe(config routing.ProviderConfig, event stt.Event) {
 		if !typed.Final() {
 			return
 		}
-		s.recorder.Record(config, routing.Stat{
+		s.mu.Lock()
+		streamedMs := s.streamedMs
+		s.streamedMs = 0
+		s.mu.Unlock()
+		stat := routing.Stat{
 			Owner:     s.owner,
 			StartedAt: time.Now().UTC(),
 			Usage:     routing.Usage{AudioMs: int64(typed.AudioDurationMs)},
 			LatencyMs: typed.ProcessingTimeMs,
 			Success:   true,
-		})
+		}
+		if stat.AudioMs == 0 {
+			// The vendor did not say how much audio the turn took: it is billed for what was
+			// streamed since the last turn settled, and marked, so the adapter gets fixed.
+			stat.AudioMs = int64(streamedMs)
+			stat.Estimated()
+		}
+		s.recorder.Record(config, stat)
 
 	case stt.Error:
 		stat := routing.Stat{

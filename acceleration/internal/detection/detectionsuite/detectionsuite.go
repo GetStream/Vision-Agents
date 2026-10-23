@@ -97,6 +97,18 @@ func (s *Suite) TestTheCatIsFoundAndItsBoxCoversIt() {
 	s.Greater(cats[0].Confidence, 0.0)
 }
 
+// TestTheWorkIsBilled: what came back says what it used, at least the image it looked at,
+// which is what the detection is billed by.
+func (s *Suite) TestTheWorkIsBilled() {
+	image := cat
+	if s.FacesOnly {
+		image = face
+	}
+	found := s.Detect(detection.Request{Image: image, Classes: []string{"cat"}})
+
+	s.False(found.Used().Zero(), "the detection should say what it used")
+}
+
 func (s *Suite) TestEveryFaceCarriesAnEmbedding() {
 	if !s.Embeds {
 		s.T().Skip("returns no embeddings")

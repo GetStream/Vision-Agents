@@ -72,6 +72,36 @@ func (s *Suite) TestTheModelHearsTheCallerAndAnswersInItsOwnVoice() {
 	}
 }
 
+// TestTheWorkIsBilled: a reply says what it cost in tokens, in and out, where the model is
+// billed by the token, and a model billed by the session's seconds says how long it was open
+// once it closes. A model priced on the caller's audio alone is billed on the router's count.
+func (s *Suite) TestTheWorkIsBilled() {
+	provider := s.Started(Ask{Instructions: briefly})
+	defer s.Hangup(provider)
+	capabilities := provider.Capabilities()
+	if !capabilities.Usage && !capabilities.SessionBilled {
+		s.T().Skip("priced on the caller's audio, which the router counts")
+	}
+
+	s.Speak(provider)
+	reply := s.Spoken(provider)
+
+	if capabilities.Usage {
+		s.Positive(reply.Complete.Usage.InputTokens, "the reply should say what it read")
+		s.Positive(reply.Complete.Usage.OutputTokens, "the reply should say what it generated")
+	}
+	if capabilities.SessionBilled {
+		s.Require().NoError(provider.Close())
+		var seconds int64
+		for event := range provider.Events() {
+			if usage, ok := event.(sts.SessionUsage); ok {
+				seconds = usage.Seconds
+			}
+		}
+		s.Positive(seconds, "the session should say how long it was open as it closes")
+	}
+}
+
 func (s *Suite) TestTheModelHearsAndAnswersWhileTheCallerIsStillSpeaking() {
 	capabilities := s.New(Ask{}).Capabilities()
 	if !capabilities.FullDuplex {

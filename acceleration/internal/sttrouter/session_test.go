@@ -410,7 +410,7 @@ func (s *SessionSuite) TestAWriteTheNextModelFailsBehindTheFailoverIsDropped() {
 		provider.emitter.Send(stt.Transcript{Text: "hel", Mode: stt.ModeReplacement})
 	}
 	provider.emitter.Send(refused())
-	s.Require().Eventually(func() bool { return session.STT() == next }, 3*time.Second, time.Millisecond)
+	s.Require().Eventually(func() bool { return session.current() == next }, 3*time.Second, time.Millisecond)
 
 	s.NoError(s.write(session), "the caller heard of a write the next model failed, rather than of the model after it taking over")
 	for range cap(session.events) {

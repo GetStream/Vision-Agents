@@ -55,7 +55,7 @@ type heldSynthesis struct {
 func (o *inOrder) Synthesize(request Request) error {
 	// The order is kept by id, so the sentence needs one before the provider is asked.
 	if request.ID == "" {
-		request.ID = NewSynthesis("").ID
+		request.ID = NewSynthesisID()
 	}
 	o.mu.Lock()
 	o.queue = append(o.queue, request.ID)
