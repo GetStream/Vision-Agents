@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // A binding's require_approval: what the configs endpoints accept (ConfigsSuite), and a
@@ -259,15 +260,16 @@ func (s *SessionConnectorsSuite) TestACallWithoutApprovalAsksNobody() {
 	s.Equal([]string{"running", "completed"}, statuses)
 }
 
-// heldCall is a session of user's whose config binds crm with require_approval on echo, asked
-// something by user's backend under request, so the model reaches for crm__echo, with user's
-// socket and the provider's MCP hits before the call.
-func (s *SessionConnectorsSuite) heldCall(user *testClient) heldConnectorCall {
+// heldCall is a session of user's whose config binds crm with require_approval on echo, and
+// beside, asked something by user's backend under request, so the model reaches for crm__echo,
+// with user's socket and the provider's MCP hits before the call.
+func (s *SessionConnectorsSuite) heldCall(user *testClient, beside ...map[string]any) heldConnectorCall {
 	connector := s.connector()
 	mine, echo := s.connection(user, connector)
 	binding := s.binding("crm", connector, "session", "", echo)
 	binding["require_approval"] = []string{"echo"}
-	opened := user.createSession(s.session(s.config(binding), map[string]string{"crm": mine}))
+	opened := user.createSession(s.session(s.config(append([]map[string]any{binding}, beside...)...),
+		map[string]string{"crm": mine}))
 	held := heldConnectorCall{id: opened.Id, events: user.opens("/v1/agents/sessions/" + opened.Id + "/events"),
 		request: s.utils.uuid(), before: s.provider.Hits(fakeprovider.PathMCP)}
 	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(user).do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
@@ -350,4 +352,221 @@ func echoStepIn(frame map[string]any) map[string]any {
 		}
 	}
 	return nil
+}
+
+// Beside a sensitive connector (nessy), a write tool whose every call waits for a person is no
+// path out with nobody asked, so the config check takes require_approval as it takes
+// read_only_tools.
+
+// approving is binding with require_approval set to entries.
+func approving(binding map[string]any, entries ...string) map[string]any {
+	binding["require_approval"] = entries
+	return binding
+}
+
+// patterned is sessionGitHub granting patterns as tool_patterns.
+func patterned(alias string, patterns ...string) map[string]any {
+	binding := sessionGitHub(alias, false)
+	binding["tool_patterns"] = patterns
+	return binding
+}
+
+// nessyBeside answers a new config of the internal app binding nessy and beside.
+func (s *ConfigsSuite) nessyBeside(beside ...map[string]any) (int, string) {
+	s.useInternalApp()
+	return s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{"name": "athena",
+		"connectors": append([]map[string]any{sessionNessy("customers")}, beside...)})
+}
+
+// google_drive.yaml lists read_file_content in read_only_tools and not create_file.
+func (s *ConfigsSuite) TestNessyBesideAWriteToolThatRequiresApprovalIsAccepted() {
+	status, failure := s.nessyBeside(approving(
+		sessionGranting("google_drive", "files", "read_file_content", "create_file"), "create_file"))
+
+	s.Equal(http.StatusCreated, status, failure)
+}
+
+func (s *ConfigsSuite) TestNessyBesideAWriteToolWithoutApprovalIsRefusedNamingIt() {
+	status, failure := s.nessyBeside(sessionGranting("google_drive", "files", "read_file_content", "create_file"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and connector binding "files" can send data out with no person's approval: take them out of `+
+		`this config, or add to each binding's require_approval its tools that do not only read: "files" create_file`)
+	s.NotContains(failure, "read_file_content")
+}
+
+// Only the binding's own require_approval holds its calls (store.ConnectorBinding.RequiresApproval).
+func (s *ConfigsSuite) TestApprovalOnAnotherBindingDoesNotHoldAWriteTool() {
+	status, failure := s.nessyBeside(
+		sessionGranting("google_drive", "files", "create_file"),
+		approving(sessionGranting("google_drive", "drafts", "create_file"), "create_file"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `require_approval its tools that do not only read: "files" create_file`)
+	s.NotContains(failure, `"drafts" create_file`)
+}
+
+// A hold on a pattern as written holds every tool it matches, as * matches whatever the
+// pattern's own * stands for.
+func (s *ConfigsSuite) TestNessyBesideAPatternBindingWhoseApprovalHoldsEveryPatternIsAccepted() {
+	status, failure := s.nessyBeside(approving(patterned("code", "list_*", "create_*"), "*"))
+
+	s.Equal(http.StatusCreated, status, failure)
+}
+
+func (s *ConfigsSuite) TestNessyBesideAPatternBindingHeldInPartIsRefusedNamingWhatIsNot() {
+	status, failure := s.nessyBeside(approving(patterned("code", "list_*", "create_*"), "create_*"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `require_approval its tools that do not only read: "code" list_*`)
+	s.NotContains(failure, "create_*")
+}
+
+// path.Match takes each entry as matching its pattern, yet create_? and create_[^_] hold
+// create_a and not create_issue, create_\* only a tool called create_*, and * no tool
+// create_[/]* reaches with a /: none of them holds what its pattern grants.
+func (s *ConfigsSuite) TestAnApprovalThatMayMissAToolItsPatternReachesDoesNotHoldIt() {
+	status, failure := s.nessyBeside(
+		approving(patterned("single", "create_*"), "create_?"),
+		approving(patterned("negated", "create_*"), "create_[^_]"),
+		approving(patterned("escaped", "create_*"), `create_\*`),
+		approving(patterned("classed", "create_[a-z]*"), "*"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `require_approval its tools that do not only read: "single" create_*; "negated" create_*; `+
+		`"escaped" create_*; "classed" create_[a-z]*`)
+}
+
+// Code in the sandbox calls the connector's API, which no require_approval holds; a write tool
+// beside it is named, the sandbox binding is not.
+func (s *ConfigsSuite) TestASandboxBindingBesideNessyNamesNoToolToHold() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "sandbox": "daytona", "connectors": []map[string]any{sessionNessy("customers"),
+			sessionGitHub("code", true), sessionGranting("google_drive", "files", "create_file")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and connector binding "code", connector binding "files" can send data out`)
+	s.Contains(failure, `require_approval its tools that do not only read: "files" create_file`)
+	s.NotContains(failure, `"code" `)
+}
+
+// TestACallBesideNessyIsHeldForApproval: the config the check now accepts holds the write
+// tool's call, as heldCall's does without nessy.
+func (s *SessionConnectorsSuite) TestACallBesideNessyIsHeldForApproval() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	held := s.heldCall(s.client, sessionNessy("customers"))
+	step := s.awaitingApprovalOn(held.events)
+
+	s.Equal(s.client.userID, step["target_user_id"])
+	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before the answer")
+}
+
+// TestAPatternCallBesideNessyIsHeldByAWildcardEntry: the session holds the call through
+// store.ConnectorBinding.RequiresApproval, not the config check's holdsPattern, so "*" must hold
+// the ec* pattern's echo in the session too.
+func (s *SessionConnectorsSuite) TestAPatternCallBesideNessyIsHeldByAWildcardEntry() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	binding := s.binding("crm", connector, "session", "", echo)
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{"ec*"}
+	binding["require_approval"] = []string{"*"}
+	opened := s.client.createSession(s.session(s.config(binding, sessionNessy("customers")), map[string]string{"crm": mine}))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	request := s.utils.uuid()
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", RespondRequest{Text: "ask the crm", RequestId: &request}, nil))
+	step := s.awaitingApprovalOn(events)
+
+	s.Equal(s.client.userID, step["target_user_id"])
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before the answer")
+}
+
+// TestAHoldAsOpenedOutlivesAnUpdateDroppingIt: a session opened on nessy and a held tool read
+// nessy's data; a PUT that drops nessy and the hold is accepted, and the open session still holds
+// the call (the opened binding's leg of checkedCall).
+func (s *SessionConnectorsSuite) TestAHoldAsOpenedOutlivesAnUpdateDroppingIt() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	binding := s.binding("crm", connector, "session", "", echo)
+	binding["require_approval"] = []string{"echo"}
+	config := s.config(binding, sessionNessy("customers"))
+	opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
+	delete(binding, "require_approval")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config, map[string]any{
+		"name": "connectors-" + s.utils.uuid(), "llm": "connecting/connector-model", "connectors": []map[string]any{binding}}, nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	request := s.utils.uuid()
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", RespondRequest{Text: "ask the crm", RequestId: &request}, nil))
+	s.awaitingApprovalOn(events)
+
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before the answer")
+}
+
+// TestAHoldAddedAfterTheSessionOpenedHoldsItsNextCall: the config's require_approval, read again
+// at each call (the current config's leg of checkedCall), holds a tool the session opened without.
+func (s *SessionConnectorsSuite) TestAHoldAddedAfterTheSessionOpenedHoldsItsNextCall() {
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	binding := s.binding("crm", connector, "session", "", echo)
+	config := s.config(binding)
+	opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
+	binding["require_approval"] = []string{"echo"}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config, map[string]any{
+		"name": "connectors-" + s.utils.uuid(), "llm": "connecting/connector-model", "connectors": []map[string]any{binding}}, nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	request := s.utils.uuid()
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", RespondRequest{Text: "ask the crm", RequestId: &request}, nil))
+	s.awaitingApprovalOn(events)
+
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before the answer")
+}
+
+// A tool named create_file, held by the pattern create_*, is held as the session holds it.
+func (s *ConfigsSuite) TestNessyBesideAWriteToolHeldByAWildcardEntryIsAccepted() {
+	status, failure := s.nessyBeside(approving(
+		sessionGranting("google_drive", "files", "read_file_content", "create_file"), "create_*"))
+
+	s.Equal(http.StatusCreated, status, failure)
+}
+
+// TestARefusalNamingNoConnectorToolSaysWhatItSaidBefore is a control: f38926d2 answered this
+// 400 with the same message (ai-1847/author-1.md, «Base probe»).
+func (s *ConfigsSuite) TestARefusalNamingNoConnectorToolSaysWhatItSaidBefore() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(`connector binding "customers" binds "nessy", whose tools read private data, and MCP server `+
+		`"tablejourney" can send data out with no person's approval: take them out of this config`, failure)
+}
+
+// TestAPatternBindingOfAConnectorThatOnlyReadsNeedsNoApproval is a control: nessy.yaml's source
+// says outbound: false, and f38926d2 answered 201 (ai-1847/author-1.md, «Base probe»).
+func (s *ConfigsSuite) TestAPatternBindingOfAConnectorThatOnlyReadsNeedsNoApproval() {
+	more := sessionNessy("more")
+	more["tools"] = []map[string]any{}
+	more["tool_patterns"] = []string{"*"}
+
+	status, failure := s.nessyBeside(more)
+
+	s.Equal(http.StatusCreated, status, failure)
 }

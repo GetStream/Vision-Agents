@@ -28,6 +28,9 @@ func NewRegistry() *Registry { return routing.NewRegistry[stt.STT]() }
 // supports.
 func DefaultRegistry() *Registry {
 	registry := NewRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
 
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		settings := deepgramSettings{}
@@ -38,7 +41,7 @@ func DefaultRegistry() *Registry {
 		options := deepgram.Options{
 			Model:             spec.Model,
 			Keyterms:          spec.Keyterms,
-			MipOptOut:         trainingRefused(spec),
+			MipOptOut:         optsOut(spec),
 			EotThreshold:      settings.EotThreshold,
 			EagerEotThreshold: fluxEagerEotThreshold(spec, settings),
 			Logger:            spec.Logger,
@@ -354,14 +357,15 @@ type assemblyaiSettings struct {
 	MaxTurnSilenceMs int    `json:"max_turn_silence"`
 }
 
-// trainingRefused reports whether this request asked not to be trained on.
+// optsOut reports whether this request has to carry Deepgram's mip_opt_out.
 //
-// Deepgram takes it per request rather than per account, so unlike the retention half of
-// the same policy it is something to send. It is sent whenever the caller asked, and the
-// declaration in router.yaml is what promises the request carries it.
-func trainingRefused(spec routing.Spec) bool {
-	allowed := spec.STT.DataPolicy.AllowTraining
-	return allowed != nil && !*allowed
+// Deepgram takes it per request rather than per account. It is what keeps the request out
+// of training, and also what their retention promise applies to, so a policy that refuses
+// training or names any retention sends it. The declaration in router.yaml is what
+// promises the request carries it.
+func optsOut(spec routing.Spec) bool {
+	allowed := spec.DataPolicy.AllowTraining
+	return allowed != nil && !*allowed || spec.DataPolicy.Retention != ""
 }
 
 // fluxEagerThreshold is Deepgram's suggested starting point for eager_eot_threshold.

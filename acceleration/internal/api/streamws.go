@@ -1168,32 +1168,38 @@ func (s *socket) failed(err error) {
 	s.frame(frame{"type": "error", "error": err.Error()})
 }
 
-// end sends the close frame after the last frame and reads until the caller answers it.
-//
-// A connection dropped without a close frame reaches the caller as 1006, and one closed on
-// audio the router never read is reset, which can throw away the frames the caller had not
-// read yet: the refusal it was waiting for. So the caller is told how the socket ended, 1000
-// or a failure code with the failure as the reason, and what it sends meanwhile is read and
-// dropped. A request the router refused (routing.ErrRequest) is the caller's to change, so
-// it ends with 1008, policy violation; any other failure, as often a provider's as a
+// end sends the close frame after the last frame: 1000, or a failure code with the failure
+// as the reason. A request the router refused (routing.ErrRequest) is the caller's to change,
+// so it ends with 1008, policy violation; any other failure, as often a provider's as a
 // caller's, with 1011, an unexpected condition (RFC 6455 section 7.4.1,
-// https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1). A caller that closed first has
-// had its close answered already.
+// https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1).
 func (s *socket) end(failure error) {
 	code, reason := websocket.CloseNormalClosure, ""
 	if failure != nil {
-		code, reason = websocket.CloseInternalServerErr, closeReason(failure.Error())
+		code, reason = websocket.CloseInternalServerErr, failure.Error()
 		if errors.Is(failure, routing.ErrRequest) {
 			code = websocket.ClosePolicyViolation
 		}
 	}
+	closeSocket(s.connection, code, reason)
+}
+
+// closeSocket sends the close frame after the last frame and reads until the caller answers
+// it. It reads the connection, so nothing else may be reading it (gorilla allows one reader).
+//
+// A connection dropped without a close frame reaches the caller as 1006, and one closed on
+// audio the router never read is reset, which can throw away the frames the caller had not
+// read yet: the refusal it was waiting for. So the caller is told how the socket ended, and
+// what it sends meanwhile is read and dropped. A caller that closed first has had its close
+// answered already.
+func closeSocket(connection *websocket.Conn, code int, reason string) {
 	deadline := time.Now().Add(closeWait)
-	if err := s.connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), deadline); err != nil {
+	if err := connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, closeReason(reason)), deadline); err != nil {
 		return
 	}
-	s.connection.SetReadDeadline(deadline)
+	connection.SetReadDeadline(deadline)
 	for {
-		if _, _, err := s.connection.NextReader(); err != nil {
+		if _, _, err := connection.NextReader(); err != nil {
 			return
 		}
 	}

@@ -745,6 +745,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	// An incognito session is never handed the recorder, so nothing downstream has to
+	// remember to check the flag: there is simply nowhere for it to write.
+	//
+	// It is handed over before the fan-out starts, which reads it on every event. What the
+	// fan-out records is held until the row is queued below (startRecording).
+	if m.records != nil && !spec.Incognito {
+		created.records = m.records
+	}
+
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
@@ -781,14 +790,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.calls.Started(row(created))
 	}
 
-	// An incognito session is never handed the recorder, so nothing downstream has to
-	// remember to check the flag: there is simply nowhere for it to write.
-	if m.records != nil && !spec.Incognito {
-		created.records = m.records
+	// The row is queued once the session has joined, so a call that refused it leaves no
+	// session behind, and once search has started, so its tool is among the ones stored.
+	// The turns held until now, the greeting's among them, are written after it.
+	if created.records != nil {
 		created.closers = append(created.closers, func() {
 			m.records.Closed(created.id, time.Now().UTC())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
+		created.startRecording()
 	}
 
 	m.mu.Lock()

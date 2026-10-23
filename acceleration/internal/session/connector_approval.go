@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path"
-	"slices"
 	"sync"
 	"time"
 
@@ -54,14 +52,6 @@ type approvalAnswer struct {
 // asksIn has the approvals ask in conv, the session's own conversation.
 func (a *approvals) asksIn(conv *persistent.Conversation) {
 	a.await, a.waits, a.decide = conv.AwaitApproval, conv.AwaitsApproval, conv.DecideApproval
-}
-
-// requiresApproval reports whether binding's require_approval names tool.
-func requiresApproval(binding store.ConnectorBinding, tool string) bool {
-	return slices.ContainsFunc(binding.RequireApproval, func(pattern string) bool {
-		matched, _ := path.Match(pattern, tool)
-		return matched
-	})
 }
 
 // holdForApproval holds a call until the session's user allows it on its step, and reports

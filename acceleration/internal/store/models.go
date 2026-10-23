@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"path"
 	"slices"
 	"time"
 
@@ -457,6 +458,15 @@ type ConnectorBinding struct {
 	// allow each one before it is sent. The field is JSON inside agent_configs.connectors, so
 	// an older router drops it and sends those calls with nobody asked.
 	RequireApproval []string `json:"require_approval,omitempty"`
+}
+
+// RequiresApproval reports whether the binding's require_approval names tool, by its name at
+// the provider.
+func (b ConnectorBinding) RequiresApproval(tool string) bool {
+	return slices.ContainsFunc(b.RequireApproval, func(pattern string) bool {
+		matched, _ := path.Match(pattern, tool)
+		return matched
+	})
 }
 
 // The values of BindingPolicy.OnInterrupt. Empty lets the call outlive an interruption, and

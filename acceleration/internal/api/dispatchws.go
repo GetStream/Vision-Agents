@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -80,14 +82,13 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	// channel until a call arrives. Without being told, it would sit there until the next
 	// ping failed and hold the worker's place in the rotation for that whole time, which
 	// is calls handed to a socket nobody is on the other end of.
-	gone := make(chan struct{})
+	gone := make(chan error, 1)
 	pongs := make(chan float64)
 	replies := make(chan frame)
 	writerDone := make(chan struct{})
 	defer close(writerDone)
 	go func() {
-		defer close(gone)
-		s.readWorker(connection, worker, pongs, replies, writerDone)
+		gone <- s.readWorker(connection, worker, pongs, replies, writerDone)
 	}()
 	s.writeCalls(connection, worker, gone, pongs, replies)
 
@@ -139,8 +140,8 @@ func registrationOf(r *http.Request) (dispatch.Registration, string) {
 
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
 // the socket breaks. Both queues close together, so either arm reporting a closed channel
-// means the worker was released.
-func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}, pongs <-chan float64, replies <-chan frame) {
+// means the worker was released. gone carries why the reader stopped.
+func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan error, pongs <-chan float64, replies <-chan frame) {
 	connection.SetWriteDeadline(time.Now().Add(writeWait))
 	ready := frame{"type": "ready", "worker_id": worker.ID}
 	if err := connection.WriteJSON(ready); err != nil {
@@ -223,7 +224,10 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				websocket.FormatCloseMessage(websocket.CloseGoingAway, "router restarting"))
 			return
 
-		case <-gone:
+		case stopped := <-gone:
+			if errors.Is(stopped, errUnreadableFrame) {
+				refuseUnreadable(connection)
+			}
 			return
 		}
 	}
@@ -232,9 +236,10 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 // readWorker applies what the worker sends back, which is how it is doing and whether it
 // took the call.
 //
-// A frame it cannot read is reported and skipped rather than closing the socket: dropping a
-// worker over one bad message would take the calls it is already in with it.
-func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, replies chan<- frame, writerDone <-chan struct{}) {
+// A message of a type it does not know is reported and skipped rather than closing the
+// socket: dropping a worker over one bad message would take the calls it is already in with
+// it. A frame that is not JSON at all returns errUnreadableFrame.
+func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, replies chan<- frame, writerDone <-chan struct{}) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -266,13 +271,17 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			Output string `json:"output"`
 			Error  string `json:"error"`
 		}
-		if err := connection.ReadJSON(&report); err != nil {
+		_, payload, err := connection.ReadMessage()
+		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("dispatch socket read failed", "worker", worker.ID, "error", err)
 			}
-			return
+			return nil
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
+		if json.Unmarshal(payload, &report) != nil {
+			return errUnreadableFrame
+		}
 
 		switch report.Type {
 		case "load":
@@ -290,7 +299,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			select {
 			case pongs <- report.At:
 			case <-writerDone:
-				return
+				return nil
 			}
 
 		case "host_tools":
@@ -298,7 +307,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			select {
 			case replies <- reply:
 			case <-writerDone:
-				return
+				return nil
 			}
 
 		case "tool_result":

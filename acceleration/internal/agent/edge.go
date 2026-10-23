@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -15,6 +16,10 @@ type InboundAudio struct {
 	// Whatever the transport carried is the edge's problem to convert.
 	Audio audio.PcmData
 }
+
+// ErrCallLeft is what an edge's PublishAudio returns once the call is over. The caller hanging
+// up mid-reply ends the reply, which is no failure of the agent's.
+var ErrCallLeft = errors.New("the call has been left")
 
 // Edge is where the conversation happens. It is deliberately four methods wide, so the
 // agent's flow can be exercised in-process against a loopback rather than only against a
