@@ -781,11 +781,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// and two sessions sharing one stub would each consume the other's turns. The first
 	// open is the one a test reads back.
 	s.model = &scriptedLLM{reply: "Hello."}
-	var opened int
+	var opened atomic.Int64
 	reasoning := llmrouter.NewRegistry()
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		defer func() { opened++ }()
-		if opened == 0 {
+		if opened.Add(1) == 1 {
 			return s.model, nil
 		}
 		return &scriptedLLM{}, nil
