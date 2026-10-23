@@ -97,36 +97,110 @@ func (s *StoreSuite) TestGrantsAreListedNewestFirst() {
 	s.Equal([]int64{a.ID}, idsOf(next))
 }
 
-func (s *StoreSuite) TestGrantUsedSumsTheBillableRowsNamingEachGrant() {
-	row := func(store *Store, grants []int64, cost int64, billable bool) {
-		s.Require().NoError(store.RecordRequest(s.ctx, &Request{
-			UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
-			StartedAt: s.base, CostMicros: cost, Billable: billable, Success: true, LimitGrants: grants,
-		}))
+// grantRow is a request row that names grants, written as the writer writes it.
+func (s *StoreSuite) grantRow(store *Store, grants []int64, cost int64, billable bool) Request {
+	row := Request{
+		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
+		StartedAt: s.base, CostMicros: cost, Billable: billable, Success: true, LimitGrants: grants,
 	}
-	row(s.store, []int64{7}, 100, true)
-	row(s.store, []int64{7, 8}, 200, true)
-	row(s.store, []int64{7}, 400, false)
-	row(s.store, nil, 800, true)
-
-	used, err := s.store.GrantUsed(s.ctx, []int64{7, 8, 9})
-
-	s.Require().NoError(err)
-	s.Equal(map[int64]int64{7: 300, 8: 200}, used, "billable rows only, a row naming two counts for both")
+	s.Require().NoError(store.RecordRequest(s.ctx, &row))
+	return row
 }
 
-func (s *ShardedStoreSuite) TestGrantUsedSumsAcrossShards() {
+// used is what the grant has paid for, as its row says.
+func (s *StoreSuite) used(id int64) int64 {
+	grant, err := s.store.Grant(s.ctx, "", id)
+	s.Require().NoError(err)
+	return grant.UsedMicros
+}
+
+func (s *StoreSuite) TestAWrittenRowCountsTowardEachGrantItNames() {
+	a, b := s.grant(LimitGrant{AmountMicros: 10_000}), s.grant(LimitGrant{AmountMicros: 10_000})
+
+	s.grantRow(s.store, []int64{a.ID}, 100, true)
+	s.grantRow(s.store, []int64{a.ID, b.ID}, 200, true)
+	s.grantRow(s.store, []int64{a.ID}, 400, false)
+	s.grantRow(s.store, nil, 800, true)
+
+	s.EqualValues(300, s.used(a.ID), "billable rows only")
+	s.EqualValues(200, s.used(b.ID), "a row naming two counts for both")
+}
+
+func (s *StoreSuite) TestARowWrittenTwiceCountsOnceTowardItsGrant() {
+	grant := s.grant(LimitGrant{AmountMicros: 10_000})
+	row := s.grantRow(s.store, []int64{grant.ID}, 300, true)
+
+	again := row
+	again.ID = 0
+	written, err := s.store.RecordRequests(s.ctx, []Request{again, again})
+	s.Require().NoError(err)
+	s.Empty(written, "the shard has it")
+	counted, err := s.store.AddGrantUses(s.ctx, []GrantUse{{GrantID: grant.ID, UsageID: row.UsageID, Micros: 300}})
+	s.Require().NoError(err)
+	s.Zero(counted, "nor does counting it again")
+
+	s.EqualValues(300, s.used(grant.ID))
+	fresh := Request{
+		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
+		StartedAt: s.base, CostMicros: 50, Billable: true, Success: true, LimitGrants: []int64{grant.ID},
+	}
+	_, err = s.store.RecordRequests(s.ctx, []Request{fresh, fresh})
+	s.Require().NoError(err)
+	s.EqualValues(350, s.used(grant.ID), "a row sent twice in one batch counts once")
+}
+
+func (s *StoreSuite) TestAUsedUpGrantIsNotLiveAndLeavesRoomForAnother() {
+	for range MaxLiveGrants - 1 {
+		s.grant(LimitGrant{OrganizationID: "org-used"})
+	}
+	used := s.grant(LimitGrant{OrganizationID: "org-used", AmountMicros: 300})
+	extra := LimitGrant{OrganizationID: "org-used", Subject: usage.SubjectOrganization, AmountMicros: 5, Reason: "r", Actor: "a"}
+	s.Require().ErrorIs(s.store.AddGrant(s.ctx, &extra, LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI}), ErrTooManyGrants)
+
+	s.grantRow(s.store, []int64{used.ID}, 300, true)
+
+	live, err := s.store.LiveGrants(s.ctx, []string{"org-used"}, time.Now())
+	s.Require().NoError(err)
+	s.NotContains(idsOf(live), used.ID, "used up, it is not read")
+	s.Len(live, MaxLiveGrants-1)
+	s.Require().NoError(s.store.AddGrant(s.ctx, &extra, LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI}),
+		"nor counted toward the cap")
+	yes := true
+	listed, err := s.store.ListGrants(s.ctx, GrantFilter{OrganizationID: "org-used", Used: &yes}, 0, 50)
+	s.Require().NoError(err)
+	s.Equal([]int64{used.ID}, idsOf(listed))
+}
+
+func (s *ShardedStoreSuite) TestRowsInEveryShardCountTowardTheirGrant() {
+	grant := s.grant(LimitGrant{AmountMicros: 10_000})
 	for _, store := range []*Store{s.store, s.other} {
-		s.Require().NoError(store.RecordRequest(s.ctx, &Request{
-			UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
-			StartedAt: s.base, CostMicros: 300, Billable: true, Success: true, LimitGrants: []int64{42},
-		}))
+		s.grantRow(store, []int64{grant.ID}, 300, true)
 	}
 
-	used, err := s.store.GrantUsed(s.ctx, []int64{42})
+	s.EqualValues(600, s.used(grant.ID))
+}
 
+func (s *ShardedStoreSuite) TestAReconcileCountsARowItsWriterDidNot() {
+	grant := s.grant(LimitGrant{AmountMicros: 10_000})
+	s.grantRow(s.store, []int64{grant.ID}, 300, true)
+	// Written to the shard by a process that stopped before counting it.
+	lost := Request{
+		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
+		StartedAt: s.base, CostMicros: 70, Billable: true, Success: true, LimitGrants: []int64{grant.ID},
+	}
+	s.Require().NoError(prepareRequest(&lost))
+	_, err := s.other.ShardDB().NewInsert().Model(&lost).Exec(s.ctx)
 	s.Require().NoError(err)
-	s.Equal(int64(600), used[42])
+	s.EqualValues(300, s.used(grant.ID))
+
+	added, err := s.store.ReconcileGrantUses(s.ctx, []int64{grant.ID})
+	s.Require().NoError(err)
+	s.Equal(1, added, "the row the writer counted is not counted again")
+	s.EqualValues(370, s.used(grant.ID))
+	added, err = s.store.ReconcileGrantUses(s.ctx, []int64{grant.ID})
+	s.Require().NoError(err)
+	s.Zero(added)
+	s.EqualValues(370, s.used(grant.ID))
 }
 
 func idsOf(grants []LimitGrant) []int64 {

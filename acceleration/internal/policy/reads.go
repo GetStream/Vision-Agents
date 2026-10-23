@@ -79,9 +79,7 @@ func (e *Enforcer) LimitsChanged(ctx context.Context, organization string) {
 		return
 	}
 	m := &e.money
-	for _, key := range []string{organization, appAccount(organization)} {
-		m.readGrants(ctx, db, []string{organization}, map[string]string{organization: key})
-	}
+	m.readGrants(ctx, db, []string{organization, appAccount(organization)})
 	limits, err := db.LimitsFor(ctx, []string{organization})
 	if err != nil {
 		m.failedRead("could not read a customer's spend limits again after a write", err, "organization", organization)

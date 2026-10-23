@@ -489,9 +489,13 @@ func (w *Writer) writeRows(rows []pending) {
 		ctx, cancel := w.attempt()
 		written, err := w.store.RecordRequests(ctx, requests)
 		cancel()
-		if err == nil || errors.Is(err, store.ErrRequestLogsMissing) {
-			if err != nil {
+		if err == nil || errors.Is(err, store.ErrRequestLogsMissing) || errors.Is(err, store.ErrGrantUsesMissing) {
+			if errors.Is(err, store.ErrRequestLogsMissing) {
 				w.logger.Warn("usage rows written without some of their agent log rows", "error", err)
+			}
+			if errors.Is(err, store.ErrGrantUsesMissing) {
+				// Before Written, which lets go of what this process holds against the grants.
+				w.countGrants(store.GrantUsesOf(requests, written), err)
 			}
 			if unknown > 0 {
 				usageUnresolved.Add(float64(unknown))
@@ -538,6 +542,31 @@ func (w *Writer) writeRows(rows []pending) {
 		}
 		delay = min(delay*2, retryMost)
 		taken = 0
+	}
+}
+
+// countGrants counts rows the shard took toward their grants, trying again until it lands or
+// the writer stops; a row left uncounted then is counted by the next reconcile of its grant.
+func (w *Writer) countGrants(uses []store.GrantUse, err error) {
+	delay := retryFirst
+	for {
+		usageWriteErrors.Inc()
+		if w.throttled(&w.errorLogged, errorLogEvery) {
+			w.logger.Error("could not count usage rows toward their grants, trying again", "uses", len(uses), "retry_in", delay, "error", err)
+		}
+		select {
+		case <-time.After(delay):
+		case <-w.ctx.Done():
+			w.logger.Warn("usage rows written and not counted toward their grants, which the next reconcile counts", "uses", len(uses))
+			return
+		}
+		delay = min(delay*2, retryMost)
+		ctx, cancel := w.attempt()
+		_, err = w.store.AddGrantUses(ctx, uses)
+		cancel()
+		if err == nil {
+			return
+		}
 	}
 }
 

@@ -234,8 +234,9 @@ func (s *Server) registerLimitGrants(api huma.API) {
 	})
 }
 
-// grantOf is a stored grant as the API reads it, with what it paid for at now.
-func grantOf(grant store.LimitGrant, used int64, now time.Time) LimitGrant {
+// grantOf is a stored grant as the API reads it at now.
+func grantOf(grant store.LimitGrant, now time.Time) LimitGrant {
+	used := grant.UsedMicros
 	subject, team, category := apiSubject(grant.Subject, grant.Category)
 	answer := LimitGrant{
 		Id: grant.ID, Subject: subject, AppId: grant.AppID, ApiKey: grant.APIKey, UserId: grant.UserID, Team: team,
@@ -291,7 +292,7 @@ func (s *Server) createGrant(ctx context.Context, organization string, sent Limi
 		return nil, err
 	}
 	s.policies.LimitsChanged(ctx, organization)
-	return &createdGrantResponse{Status: http.StatusCreated, Body: grantOf(grant, 0, now)}, nil
+	return &createdGrantResponse{Status: http.StatusCreated, Body: grantOf(grant, now)}, nil
 }
 
 func (s *Server) listGrants(ctx context.Context, organization string, request *ListGrantsParams) (*grantPageResponse, error) {
@@ -325,47 +326,26 @@ func (s *Server) listGrants(ctx context.Context, organization string, request *L
 		filter.Revoked = &yes
 	case GrantExpired:
 		filter.Revoked, filter.Expired = &no, &yes
-	case GrantLive, GrantUsed:
-		filter.Revoked, filter.Expired = &no, &no
+	case GrantUsed:
+		filter.Revoked, filter.Expired, filter.Used = &no, &no, &yes
+	case GrantLive:
+		filter.Revoked, filter.Expired, filter.Used = &no, &no, &no
 	}
 	var position int64
 	if before != nil {
 		position = before.ID
 	}
-	// Live and used differ by what each paid for, which the store does not filter by, so pages are
-	// read until this one is full or the grants run out.
-	size := store.LimitPage(request.Limit)
-	answer := LimitGrantPage{Items: []LimitGrant{}}
-	for full := false; !full; {
-		rows, err := s.store.ListGrants(ctx, filter, position, request.Limit)
-		if err != nil {
-			return nil, err
-		}
-		batch, more := page(rows, size)
-		ids := make([]int64, len(batch))
-		for i, row := range batch {
-			ids[i] = row.ID
-		}
-		used, err := s.store.GrantUsed(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		for i, row := range batch {
-			position = row.ID
-			if read := grantOf(row, used[row.ID], now); request.State == "" || read.State == request.State {
-				answer.Items = append(answer.Items, read)
-			}
-			if full = len(answer.Items) == size; full {
-				answer.HasMore = more || i < len(batch)-1
-				break
-			}
-		}
-		if !more {
-			break
-		}
+	rows, err := s.store.ListGrants(ctx, filter, position, request.Limit)
+	if err != nil {
+		return nil, err
 	}
-	if answer.HasMore {
-		answer.NextCursor = encodeCursor(grantPosition{ID: position})
+	batch, more := page(rows, store.LimitPage(request.Limit))
+	answer := LimitGrantPage{Items: make([]LimitGrant, 0, len(batch)), HasMore: more}
+	for _, row := range batch {
+		answer.Items = append(answer.Items, grantOf(row, now))
+	}
+	if more {
+		answer.NextCursor = encodeCursor(grantPosition{ID: batch[len(batch)-1].ID})
 	}
 	return &grantPageResponse{Body: answer}, nil
 }
@@ -379,11 +359,7 @@ func (s *Server) revokeGrant(ctx context.Context, organization string, request *
 		return nil, err
 	}
 	s.policies.LimitsChanged(ctx, revoked.OrganizationID)
-	used, err := s.store.GrantUsed(ctx, []int64{revoked.ID})
-	if err != nil {
-		return nil, err
-	}
-	return &grantResponse{Body: grantOf(revoked, used[revoked.ID], time.Now())}, nil
+	return &grantResponse{Body: grantOf(revoked, time.Now())}, nil
 }
 
 // subjectGrants are the subject's grants live at now, each with what it paid for.
@@ -393,17 +369,9 @@ func (s *Server) subjectGrants(ctx context.Context, ref usage.SubjectRef, now ti
 		return nil, err
 	}
 	live = slices.DeleteFunc(live, func(grant store.LimitGrant) bool { return grant.Ref() != ref })
-	ids := make([]int64, len(live))
-	for i, grant := range live {
-		ids[i] = grant.ID
-	}
-	used, err := s.store.GrantUsed(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
 	grants := make([]LimitGrant, 0, len(live))
 	for _, grant := range live {
-		grants = append(grants, grantOf(grant, used[grant.ID], now))
+		grants = append(grants, grantOf(grant, now))
 	}
 	return grants, nil
 }

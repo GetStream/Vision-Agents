@@ -325,6 +325,54 @@ func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
 		"once the row is written and summed, what it paid for is the grant's")
 }
 
+// lockGrants holds limit_grants from another session until the test ends, as a long migration
+// or a stuck transaction would.
+func (s *PolicySuite) lockGrants() {
+	locked, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = locked.Rollback() })
+	_, err = locked.ExecContext(s.ctx, "LOCK TABLE limit_grants IN ACCESS EXCLUSIVE MODE")
+	s.Require().NoError(err)
+}
+
+func (s *PolicySuite) TestALockedGrantsTableKeepsTheLastGrantsAndTheLimitsRead() {
+	limit := s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	s.eventually(func() bool { return len(s.admitted().Grants) > 0 }, 5*time.Second, 10*time.Millisecond, "admitted on the grant")
+
+	s.lockGrants()
+
+	s.never(func() bool { admitted := s.admitted(); return admitted.Spend != nil || len(admitted.Grants) == 0 },
+		2*grantsTimeout, 20*time.Millisecond, "the last grants read keeps answering while the next cannot land")
+	start, _ := usage.Window(usage.Daily, time.Now())
+	s.Require().NoError(s.store.AddResets(s.ctx, []store.UsageReset{{
+		OrganizationID: s.org, Subject: limit.Subject, AppID: s.app, Interval: usage.Daily, WindowStart: start,
+		BaselineMicros: 1_000_000, Reason: "test", Actor: "test",
+	}}, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	s.eventually(func() bool { admitted := s.admitted(); return admitted.Spend == nil && len(admitted.Grants) == 0 },
+		grantsTimeout/2, 10*time.Millisecond, "the resets are read on time, so the work fits and draws no grant")
+}
+
+func (s *PolicySuite) TestAGrantNeverReadIsNeverDrawnAndTheLimitStillRefuses() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 1_000_000)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil)
+	s.lockGrants()
+
+	started := time.Now()
+	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
+	s.Less(time.Since(started), grantsTimeout, "the limits are read without waiting on the grants")
+	s.never(func() bool { return s.admit(enforcer, s.app).Spend == nil }, 2*grantsTimeout, 20*time.Millisecond,
+		"an app past its limit is not admitted while its grants cannot be read")
+}
+
 // admitted is the app's admission now, which refuses nothing outright.
 func (s *PolicySuite) admitted() routing.Admission {
 	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))

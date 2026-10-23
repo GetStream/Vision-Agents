@@ -125,7 +125,6 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 	organizations := slices.Sorted(mapsKeys(due))
 	call, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
-	m.readGrants(call, db, organizations, due)
 	limits, err := db.LimitsFor(call, organizations)
 	if err != nil {
 		m.failedRead("could not read the customers' spend limits, answering with the last ones read", err, "organizations", len(organizations))
@@ -154,25 +153,49 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 	}
 }
 
-// readGrants reads the organizations' live grants and what each paid for, and keeps them under
-// the accounts due names by organization. A read that fails keeps the last ones, and is a
-// failed read for the holds against them.
-func (m *money) readGrants(ctx context.Context, db *store.Store, organizations []string, due map[string]string) {
-	from := time.Now()
-	grants, err := db.LiveGrants(ctx, organizations, m.settings.Now())
-	var used map[int64]int64
-	if err == nil {
-		ids := make([]int64, len(grants))
-		for i, grant := range grants {
-			ids[i] = grant.ID
-		}
-		used, err = db.GrantUsed(ctx, ids)
+// grantsPass reads the live grants of every account with a limit, every Fresh, on a loop of its
+// own: a slow or failed read of them never delays or skips the limits and resets, which their
+// loop reads apart. Every reconcileEvery it also counts again, from the shards, the rows naming
+// each live grant, for a row a writer stopped before counting.
+func (m *money) grantsPass(ctx context.Context) {
+	db := m.enforcer.config.DB()
+	if db == nil {
+		return
 	}
+	m.mu.Lock()
+	var keys []string
+	for key, acct := range m.accounts {
+		if acct.limited {
+			keys = append(keys, key)
+		}
+	}
+	m.mu.Unlock()
+	if len(keys) == 0 {
+		return
+	}
+	slices.Sort(keys)
+	m.readGrants(ctx, db, keys)
+	m.reconcileGrants(ctx, db)
+}
+
+// readGrants reads the live grants of the accounts' organizations, within grantsTimeout, and
+// keeps them under each account. A read that fails keeps the last ones read, is a failed read
+// for the holds against them, and leaves an account never read with no grant to draw.
+func (m *money) readGrants(ctx context.Context, db *store.Store, keys []string) {
+	organizations := make([]string, 0, len(keys))
+	for _, key := range keys {
+		organizations = append(organizations, limitsOrganization(key))
+	}
+	organizations = slices.Compact(slices.Sorted(slices.Values(organizations)))
+	from := time.Now()
+	call, cancel := context.WithTimeout(ctx, grantsTimeout)
+	grants, err := db.LiveGrants(call, organizations, m.settings.Now())
+	cancel()
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
-		for _, key := range due {
+		for _, key := range keys {
 			if acct := m.accounts[key]; acct != nil {
 				acct.grantsFailed = now
 			}
@@ -184,17 +207,68 @@ func (m *money) readGrants(ctx context.Context, db *store.Store, organizations [
 	for _, grant := range grants {
 		byOrganization[grant.OrganizationID] = append(byOrganization[grant.OrganizationID], grant)
 	}
-	for organization, key := range due {
+	for _, key := range keys {
 		if acct := m.accounts[key]; acct != nil {
-			acct.keepGrants(byOrganization[organization], used, from)
+			acct.keepGrants(byOrganization[limitsOrganization(key)], from)
 		}
 	}
 }
 
-// keepLimits replaces an account's limits and resets, under m.mu.
+// reconcileGrants counts again, from the shards, the rows naming each live grant last counted
+// reconcileEvery ago or never by this process. With one database the writer counts a row in the
+// transaction that writes it, so there is nothing to reconcile.
+func (m *money) reconcileGrants(ctx context.Context, db *store.Store) {
+	if !db.Sharded() {
+		return
+	}
+	now := time.Now()
+	live := map[int64]bool{}
+	var due []int64
+	m.mu.Lock()
+	for _, acct := range m.accounts {
+		for _, grant := range acct.grants {
+			id := grant.grant.ID
+			live[id] = true
+			if now.Sub(m.reconciled[id]) >= reconcileEvery {
+				due = append(due, id)
+			}
+		}
+	}
+	for id := range m.reconciled {
+		if !live[id] {
+			delete(m.reconciled, id)
+		}
+	}
+	m.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	slices.Sort(due)
+	call, cancel := context.WithTimeout(ctx, readTimeout)
+	counted, err := db.ReconcileGrantUses(call, slices.Compact(due))
+	cancel()
+	if err != nil {
+		m.failedRead("could not count the rows naming the customers' grants again", err, "grants", len(due))
+		return
+	}
+	if counted > 0 {
+		m.enforcer.logger.Warn("counted usage rows toward their grants that their writer had not", "rows", counted)
+	}
+	m.mu.Lock()
+	for _, id := range due {
+		m.reconciled[id] = now
+	}
+	m.mu.Unlock()
+}
+
+// keepLimits replaces an account's limits and resets, under m.mu. An account that has a limit
+// and whose grants were never read has them read at once.
 func (m *money) keepLimits(acct *account, limits []store.Limit, resets []store.UsageReset, landed time.Time) {
 	acct.limits, acct.resets, acct.limitsRead = indexLimits(limits), resets, landed
 	acct.limited = len(limits) > 0
+	if acct.limited && acct.grantsFrom.IsZero() && m.kickGrants != nil {
+		nudge(m.kickGrants)
+	}
 	if acct.limited && m.kickLimits != nil {
 		for _, subject := range acct.subjects {
 			if subject.read.IsZero() && limited(acct.limits, subject.ref) {

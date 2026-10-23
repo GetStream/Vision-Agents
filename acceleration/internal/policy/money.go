@@ -83,8 +83,12 @@ const (
 	standingsChunk = 100
 	// readTimeout bounds one standings call, one read of limits or counters, and one sum.
 	readTimeout = 5 * time.Second
-	// passTimeout bounds one pass of either loop.
+	// passTimeout bounds one pass of any loop.
 	passTimeout = time.Minute
+	// grantsTimeout bounds one read of the grants, on their own loop.
+	grantsTimeout = 2 * time.Second
+	// reconcileEvery is how often each live grant's rows are counted again from the shards.
+	reconcileEvery = 10 * time.Minute
 	// sumReads is how many subjects' spend is summed from Postgres at once, with no usage
 	// service. Each is a sum over the request rows of every shard since its window began, so a
 	// few at a time keep a slow Postgres from being asked for all of them together.
@@ -151,11 +155,13 @@ type money struct {
 	failModes map[string]usage.FailMode
 	// shippedAt is when the limits loop last asked the shard which held rows it shipped.
 	shippedAt time.Time
+	// reconciled is when each live grant's rows were last counted again from the shards.
+	reconciled map[int64]time.Time
 
-	kick, kickLimits chan struct{}
-	cancel           context.CancelFunc
-	loops            sync.WaitGroup
-	stopped          sync.Once
+	kick, kickLimits, kickGrants chan struct{}
+	cancel                       context.CancelFunc
+	loops                        sync.WaitGroup
+	stopped                      sync.Once
 
 	errorLogged once
 	refusals    throttle
@@ -177,10 +183,10 @@ type account struct {
 	resets     []store.UsageReset
 	limitsRead time.Time
 	limited    bool
-	// grants are its live grants, read with the limits, each with what the request rows naming
-	// it had paid for; grantsFrom is when that read was asked for, which counts every row the
-	// shards had written by then, and grantsFailed when one last did not land. grantHeld is
-	// what the holds count against each grant, by id.
+	// grants are its live grants, read every Fresh apart from the limits once it has one, each
+	// with what it had paid for; grantsFrom is when that read was asked for, which counts every
+	// row written by then, and grantsFailed when one last did not land. grantHeld is what the
+	// holds count against each grant, by id.
 	grants       []grantState
 	grantsFrom   time.Time
 	grantsFailed time.Time
@@ -251,16 +257,19 @@ func (s *subjectSpend) spentIn(interval usage.Interval, start time.Time) int64 {
 func (m *money) start(e *Enforcer) {
 	m.enforcer, m.settings = e, e.settings
 	m.accounts, m.holdOf, m.failModes = map[string]*account{}, map[uuid.UUID]string{}, map[string]usage.FailMode{}
+	m.reconciled = map[int64]time.Time{}
 	if m.settings.Mode == config.LimitsOff {
 		return
 	}
-	m.kick, m.kickLimits = make(chan struct{}, 1), make(chan struct{}, 1)
+	m.kick, m.kickLimits, m.kickGrants = make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	enforcers.Store(e, struct{}{})
-	m.loops.Add(2)
+	m.loops.Add(3)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
 	go m.every(ctx, m.settings.SpendEvery, m.kickLimits, m.limitsPass)
+	// Grants have a loop of their own, so a slow read of them never holds up the limits'.
+	go m.every(ctx, m.settings.Fresh, m.kickGrants, m.grantsPass)
 }
 
 // stop ends the loops and waits for their passes to finish.
