@@ -124,7 +124,7 @@ func (d *dispatcher) checkedCall(ctx context.Context, r route, call llm.ToolCall
 		d.record(r, call, started, failure{kind: store.InvocationDenied}, err)
 		return nil, err
 	}
-	if requiresApproval(r.binding, r.tool) || requiresApproval(current, r.tool) {
+	if r.binding.RequiresApproval(r.tool) || current.RequiresApproval(r.tool) {
 		allowed, parts, how, err := d.holdForApproval(ctx, r, call)
 		if !allowed {
 			d.record(r, call, started, how, err)

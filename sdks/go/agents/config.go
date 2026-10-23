@@ -372,6 +372,7 @@ func connectorBinding(ctx context.Context, client *acceleration.ClientWithRespon
 		Required:     entry.Required,
 		Connection:   acceleration.AgentConnectorSelection{Type: acceleration.AgentConnectorSelectionTypeSession},
 	}
+	binding.RequireApproval = entry.RequireApproval
 	if entry.Sandbox {
 		binding.Sandbox = &entry.Sandbox
 	}

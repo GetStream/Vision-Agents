@@ -169,6 +169,11 @@ nothing reaches the provider before they answer with `tool_approval` (`tool_call
 minutes, the call is not sent and the model is told. A session with nobody to ask (incognito, a
 run, a shared chat, an MCP event's) refuses the call at once. An entry must match a tool the
 binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
+Beside a sensitive connector (Nessy), a binding's write tool needs `require_approval`: the
+config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a
+`tool_patterns` binding needs an entry such as `*` that matches each pattern as written
+(`api/configs.go`, `sensitiveBindingsComplaint`). In agent.yaml it is `require_approval:` on
+the connector entry.
 
 For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
