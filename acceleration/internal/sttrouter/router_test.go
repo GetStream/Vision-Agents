@@ -456,13 +456,16 @@ func (s *STTRouterSuite) TestRegistryBuildsWithoutOverwrites() {
 func (s *STTRouterSuite) TestDeepgramOptsOutOfTrainingOnlyWhenAsked() {
 	no, yes := false, true
 
-	s.True(trainingRefused(routing.Spec{
-		STT: options.STT{DataPolicy: options.DataPolicy{AllowTraining: &no}},
-	}))
-	s.False(trainingRefused(routing.Spec{
-		STT: options.STT{DataPolicy: options.DataPolicy{AllowTraining: &yes}},
-	}))
-	s.False(trainingRefused(routing.Spec{}), "a request that asked nothing is not a request to opt out")
+	s.True(optsOut(routing.Spec{DataPolicy: options.DataPolicy{AllowTraining: &no}}))
+	s.False(optsOut(routing.Spec{DataPolicy: options.DataPolicy{AllowTraining: &yes}}))
+	s.False(optsOut(routing.Spec{}), "a request that asked nothing is not a request to opt out")
+}
+
+func (s *STTRouterSuite) TestDeepgramOptsOutForAnyRetention() {
+	// Deepgram's retention promise covers only an opted-out request, so a retention asked
+	// of it without a word about training still has to opt out.
+	s.True(optsOut(routing.Spec{DataPolicy: options.DataPolicy{Retention: options.RetentionNone}}))
+	s.True(optsOut(routing.Spec{DataPolicy: options.DataPolicy{Retention: "30d"}}))
 }
 
 func (s *STTRouterSuite) TestGeminiIsAskedForTheModeTheRequestNamed() {

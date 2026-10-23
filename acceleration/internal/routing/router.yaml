@@ -28,9 +28,10 @@
 
 stt:
   providers:
-    # Deepgram do not store transcripts, and a request that asked not to be trained on
-    # carries mip_opt_out=true, which is what excludes it from the Model Improvement
-    # Partnership Program - their only route from an API request into a training set.
+    # Deepgram do not store transcripts, and a request whose data policy, its own or its
+    # customer's, refuses training or names a retention carries mip_opt_out=true, which is
+    # what excludes it from the Model Improvement Partnership Program - their only route
+    # from an API request into a training set.
     # Opted-out requests are "retained only for the duration necessary to process the
     # request", and show as opted out in their own usage logs, so this is auditable
     # rather than taken on trust.
