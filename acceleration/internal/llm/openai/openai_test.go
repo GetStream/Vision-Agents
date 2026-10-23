@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -229,6 +231,79 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed","se
 		OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: 7},
 		TotalTokens:         2411,
 	}, response.Usage)
+}
+
+// answering is a server that streams the opening of an answer and then nothing, until the
+// request is given up on.
+func answering() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\n"+
+			`data: {"type":"response.output_text.delta","item_id":"m","output_index":0,"content_index":0,"delta":"Hello","sequence_number":1}`+"\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+}
+
+// drained reads a stream to its end and returns what it settled as.
+func drained(stream *llm.Stream) llm.Response {
+	for stream.Next() {
+	}
+	return stream.Response()
+}
+
+func (s *OpenAISuite) TestACallersDeadlineCutsTheResponseShort() {
+	server := answering()
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+	ctx, cancel := context.WithTimeout(s.T().Context(), 300*time.Millisecond)
+	defer cancel()
+
+	stream, err := provider.Create(ctx, llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response := drained(stream)
+
+	s.True(response.TimedOut)
+	s.Equal(llm.StatusFailed, response.Status, "whoever waited still sees it fail")
+	s.Equal("Hello", response.OutputText)
+	s.ErrorIs(stream.Err(), context.DeadlineExceeded)
+}
+
+func (s *OpenAISuite) TestTheProvidersOwnLimitCutsTheResponseShort() {
+	server := answering()
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL, Timeout: 300 * time.Millisecond})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response := drained(stream)
+
+	s.True(response.TimedOut)
+	s.Equal("Hello", response.OutputText)
+}
+
+func (s *OpenAISuite) TestAResponseTheVendorFailedIsNotCutShort() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.failed\n"+
+			`data: {"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"server_error","message":"the model fell over"}}}`+"\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	response := drained(stream)
+
+	s.False(response.TimedOut)
+	s.Equal(llm.StatusFailed, response.Status)
+	s.ErrorContains(stream.Err(), "the model fell over")
 }
 
 // sendMessage is Slack's MCP slack_send_message input schema as its server listed it on

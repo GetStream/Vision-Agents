@@ -318,6 +318,8 @@ type ResponseWriter struct {
 	reasoning          strings.Builder
 	deltas             int
 	usage              Usage
+	usageReported      bool
+	timedOut           bool
 	serviceTier        string
 	status             ResponseStatus
 	incompleteReason   string
@@ -409,12 +411,13 @@ func (w *ResponseWriter) FunctionCall(index int64, callID, name, arguments, sign
 }
 
 // Usage records what the provider reported. Providers that repeat a cumulative usage frame
-// on every chunk can call it as often as they like; the last one wins.
+// on every chunk can call it as often as they like; the last one wins, and a response cut
+// short keeps it.
 func (w *ResponseWriter) Usage(usage Usage) {
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
-	w.usage = usage
+	w.usage, w.usageReported = usage, true
 }
 
 // ServiceTier records the tier the provider says it served the response at.
@@ -434,6 +437,13 @@ func (w *ResponseWriter) Incomplete(reason string) {
 func (w *ResponseWriter) Cancelled() {
 	w.status = StatusCancelled
 	w.incompleteReason = ""
+}
+
+// TimedOut records that the response ran past a deadline before the model finished. The
+// provider still reports the deadline as the stream's failure, so whoever was waiting sees it
+// fail as before.
+func (w *ResponseWriter) TimedOut() {
+	w.timedOut = true
 }
 
 // Fail reports a provider failure. The stream still settles afterwards, so a caller
@@ -479,6 +489,8 @@ func (w *ResponseWriter) settle(failure error) {
 		ReasoningText:      w.reasoning.String(),
 		ToolCalls:          w.assembled(),
 		Usage:              w.usage,
+		UsageReported:      w.usageReported,
+		TimedOut:           w.timedOut,
 		ServiceTier:        w.serviceTier,
 		Status:             w.status,
 		IncompleteReason:   w.incompleteReason,

@@ -569,10 +569,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	shard := cmp.Or(settings.Shard, routing.Unsharded)
 	host, _ := os.Hostname()
 	source := routing.Source(shard, host)
-	// Started before the writer, so it stops after the writer has closed and still sends what
-	// the shutdown lost.
+	// Started before the writer, so they stop after the writer has closed and still send what
+	// the shutdown lost, and what the rows recorded while it drained said, before Sentry is
+	// flushed.
 	stopAlerts := startUsageAlerts(ctx, source, shard, logger)
 	defer stopAlerts()
+	stopMeteringAlerts := startMeteringAlerts(ctx, source, shard, logger)
+	defer stopMeteringAlerts()
 	// Every recorder of the process writes through this one writer, so there is one queue to
 	// drain at shutdown. Deferred here, it closes after everything that records and before
 	// the store and Redis.

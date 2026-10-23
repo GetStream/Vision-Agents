@@ -17,7 +17,6 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -191,26 +190,12 @@ func (r *Router) look(
 ) (Found, error) {
 	defer provider.Close()
 
-	started := time.Now()
-	result, err := provider.Detect(ctx, request)
-
-	var usage routing.Usage
-	if err == nil {
-		usage.Images = int64(max(result.Billed, 1))
-	}
-	stat := routing.Stat{
-		Owner:     owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Usage:     usage,
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = string(detection.CodeOf(err))
-		stat.ErrorMessage = err.Error()
-	}
-	r.Recorder().Record(config, stat)
-
+	result, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: owner,
+		Code: func(err error) string { return string(detection.CodeOf(err)) },
+	}, func(ctx context.Context) (detection.Result, error) {
+		return provider.Detect(ctx, request)
+	})
 	found := Found{Provider: config.Provider, Model: config.Model}
 	if err != nil {
 		return found, err
@@ -228,7 +213,7 @@ func (r *Router) look(
 		detected.Box = detected.Box.Clamped()
 		found.Detections = append(found.Detections, detected)
 	}
-	found.CostMicros = r.Quote(config, usage).CostMicros
+	found.CostMicros = r.Quote(config, result.Used()).CostMicros
 	return found, nil
 }
 

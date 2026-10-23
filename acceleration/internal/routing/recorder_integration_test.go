@@ -3,15 +3,22 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -23,6 +30,8 @@ type RecorderSuite struct {
 	ctx    context.Context
 	store  *store.Store
 	prices *pricing.List
+	// logs is what the recorders of the test logged.
+	logs *bytes.Buffer
 }
 
 func TestRecorderSuite(t *testing.T) {
@@ -43,6 +52,13 @@ var (
 	}}
 	gifted = ProviderConfig{Provider: "vendor", Model: "gifted", Price: Price{Free: true}}
 	number = ProviderConfig{Provider: "vendor", Model: "number", Price: Price{Free: true}}
+	// realtime is speech to speech priced by its tokens alone, and hosted runs on the
+	// deployment's own machines with no price.
+	realtime = ProviderConfig{Provider: "vendor", Model: "realtime", Price: Price{Rates: map[pricing.Meter]pricing.Rate{
+		pricing.InputAudioTokens:  {USD: 32, Per: 1_000_000},
+		pricing.OutputAudioTokens: {USD: 64, Per: 1_000_000},
+	}}}
+	hosted = ProviderConfig{Provider: "vendor", Model: "hosted", Local: true}
 )
 
 func (s *RecorderSuite) SetupSuite() {
@@ -56,8 +72,15 @@ func (s *RecorderSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.prices, err = Prices(Config{LLM: {Providers: []ProviderConfig{priced, gifted, number}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.prices, err = Prices(Config{
+		LLM: {Providers: []ProviderConfig{priced, gifted, number, hosted}},
+		STS: {Providers: []ProviderConfig{realtime}},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
+}
+
+func (s *RecorderSuite) SetupTest() {
+	s.logs = &bytes.Buffer{}
 }
 
 // recorded records the stat and returns the row it stored, written once the recorder has
@@ -68,15 +91,174 @@ func (s *RecorderSuite) recorded(config ProviderConfig, stat Stat) store.Request
 
 // recordedAt is recorded with the rows priced by prices.
 func (s *RecorderSuite) recordedAt(prices pricing.Pricer, config ProviderConfig, stat Stat) store.Request {
-	stat.CustomerID = uuid.NewString()
-	recorder := NewRecorder(LLM, s.store, nil, prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	recorder.Record(config, stat)
+	return s.recordedAs(LLM, prices, config, stat)[0]
+}
+
+// recordedAs records the stats through one recorder of the modality, logging to s.logs and
+// pricing by prices, and returns the rows they stored once it has drained.
+func (s *RecorderSuite) recordedAs(modality Modality, prices pricing.Pricer, config ProviderConfig, stats ...Stat) []store.Request {
+	customer := uuid.NewString()
+	recorder := NewRecorder(modality, s.store, nil, prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	for _, stat := range stats {
+		stat.CustomerID = customer
+		recorder.Record(config, stat)
+	}
 	recorder.Close()
 
 	var rows []store.Request
-	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", stat.CustomerID).Scan(s.ctx))
-	s.Require().Len(rows, 1)
-	return rows[0]
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", customer).Scan(s.ctx))
+	s.Require().Len(rows, len(stats))
+	return rows
+}
+
+// counted is how many rows a metering counter has counted for the item of config.
+func counted(counter *prometheus.CounterVec, modality Modality, config ProviderConfig, labels ...string) float64 {
+	return alerts.Total(counter.WithLabelValues(append([]string{string(modality), config.Provider, config.Model}, labels...)...))
+}
+
+func (s *RecorderSuite) TestBillableWorkWithNoQuantityRaisesTheAlarm() {
+	before := counted(usageMissing, LLM, priced)
+
+	s.recordedAs(LLM, s.prices, priced, Stat{Success: true}, Stat{Success: true})
+
+	s.Equal(before+2, counted(usageMissing, LLM, priced), "every row is counted")
+	s.Equal(1, strings.Count(s.logs.String(), `msg="billable work recorded no usage" modality=llm provider=vendor model=priced`),
+		"and the item is logged once")
+}
+
+func (s *RecorderSuite) TestRealtimeAudioWithoutTokensRaisesTheAlarm() {
+	before := counted(usageMissing, STS, realtime)
+
+	s.recordedAs(STS, s.prices, realtime, Stat{Usage: Usage{AudioMs: 5_000}, Success: true})
+
+	s.Equal(before+1, counted(usageMissing, STS, realtime), "the audio heard is not what the model is priced by")
+}
+
+func (s *RecorderSuite) TestWorkThatReportedWhatItIsPricedByIsQuiet() {
+	before := counted(usageMissing, LLM, priced)
+
+	s.recorded(priced, Stat{Usage: Usage{InputTokens: 1}, Success: true})
+
+	s.Equal(before, counted(usageMissing, LLM, priced), "a token too cheap to cost a micro is still usage")
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
+func (s *RecorderSuite) TestFreeWorkWithNoQuantityIsQuiet() {
+	before := counted(usageMissing, LLM, gifted)
+
+	s.recorded(gifted, Stat{Success: true})
+
+	s.Equal(before, counted(usageMissing, LLM, gifted))
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
+func (s *RecorderSuite) TestAFailureWithNoQuantityIsQuiet() {
+	before := counted(usageMissing, LLM, priced)
+
+	s.recorded(priced, Stat{ErrorCode: "provider_error"})
+
+	s.Equal(before, counted(usageMissing, LLM, priced), "a failure is not billed, so it reports nothing")
+}
+
+func (s *RecorderSuite) TestBillableWorkWithNoPriceIsCounted() {
+	unpriced := ProviderConfig{Provider: "vendor", Model: "unpriced"}
+	before, missing := counted(usageUnpriced, LLM, unpriced), counted(usageMissing, LLM, unpriced)
+
+	s.recordedAs(LLM, s.prices, unpriced, Stat{Usage: Usage{InputTokens: 1_000}, Success: true}, Stat{Success: true})
+
+	s.Equal(before+2, counted(usageUnpriced, LLM, unpriced), "every row is counted")
+	s.Equal(missing, counted(usageMissing, LLM, unpriced), "a row with no price raises one alarm, not two")
+}
+
+func (s *RecorderSuite) TestLocalWorkWithNoPriceIsQuiet() {
+	before, missing := counted(usageUnpriced, LLM, hosted), counted(usageMissing, LLM, hosted)
+
+	s.recorded(hosted, Stat{Success: true})
+
+	s.Equal(before, counted(usageUnpriced, LLM, hosted))
+	s.Equal(missing, counted(usageMissing, LLM, hosted))
+}
+
+func (s *RecorderSuite) TestAnEstimateIsBilledCountedAndLogged() {
+	before, missing := counted(usageEstimated, LLM, priced, estimatedMissing), counted(usageMissing, LLM, priced)
+
+	row := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000}, Success: true,
+		Attributes: map[string]string{AttributeUsageEstimated: "true"}})
+
+	s.EqualValues(2_000, row.CostMicros)
+	s.True(row.Billable)
+	s.Equal(before+1, counted(usageEstimated, LLM, priced, estimatedMissing))
+	s.Equal(missing, counted(usageMissing, LLM, priced))
+	s.Contains(s.logs.String(), `msg="billable work recorded an estimate" modality=llm provider=vendor model=priced`)
+}
+
+func (s *RecorderSuite) TestAnEstimateOfWorkCutShortIsCountedQuietly() {
+	before := counted(usageEstimated, LLM, priced, estimatedCancelled)
+
+	row := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000}, ErrorCode: ErrorCancelled,
+		Attributes: map[string]string{AttributeUsageEstimated: "true"}})
+
+	s.EqualValues(2_000, row.CostMicros, "what the vendor read before the cut is billed")
+	s.Equal(before+1, counted(usageEstimated, LLM, priced, estimatedCancelled))
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
+func (s *RecorderSuite) TestAnEstimateOfWorkADeadlineCutShortIsCountedQuietly() {
+	before, missing := counted(usageEstimated, LLM, priced, estimatedTimeout), counted(usageEstimated, LLM, priced, estimatedMissing)
+
+	row := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000}, ErrorCode: ErrorTimeout,
+		Attributes: map[string]string{AttributeUsageEstimated: "true"}})
+
+	s.EqualValues(2_000, row.CostMicros)
+	s.Equal(before+1, counted(usageEstimated, LLM, priced, estimatedTimeout))
+	s.Equal(missing, counted(usageEstimated, LLM, priced, estimatedMissing))
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
+func (s *RecorderSuite) TestTokensThatDoNotAddUpToTheVendorsTotalAreCounted() {
+	before := counted(usageMismatch, LLM, priced)
+
+	s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_301, OutputTokens: 21}, VendorTotalTokens: 2_747, Success: true})
+	s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_301, OutputTokens: 1_446}, VendorTotalTokens: 2_747, Success: true})
+
+	s.Equal(before+1, counted(usageMismatch, LLM, priced), "only the row that misses part of the total")
+	s.Contains(s.logs.String(), "vendor_total_tokens=2747 input_tokens=1301 output_tokens=21")
+}
+
+func (s *RecorderSuite) TestEachItemTheRecorderCountedIsAnAlertOfItsOwn() {
+	alarmed := ProviderConfig{Provider: "vendor", Model: "alarmed", Price: Price{PerMillionInputTokens: 2}}
+	cut := ProviderConfig{Provider: "vendor", Model: "cut", Price: Price{PerMillionInputTokens: 2}}
+	prices, err := Prices(Config{LLM: {Providers: []ProviderConfig{alarmed, cut}}}, nil)
+	s.Require().NoError(err)
+	s.recordedAs(LLM, prices, alarmed, Stat{Success: true}, Stat{Success: true})
+	s.recordedAs(LLM, prices, cut, Stat{Usage: Usage{InputTokens: 10}, ErrorCode: ErrorCancelled,
+		Attributes: map[string]string{AttributeUsageEstimated: "true"}})
+
+	var mu sync.Mutex
+	var sent []*sentry.Event
+	client, err := sentry.NewClient(sentry.ClientOptions{BeforeSend: func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+		mu.Lock()
+		defer mu.Unlock()
+		sent = append(sent, event)
+		return nil
+	}})
+	s.Require().NoError(err)
+	loop := alerts.New(alerts.Options{Hub: sentry.NewHub(client, sentry.NewScope()), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Every: time.Hour, Limit: time.Hour}, MeteringAlerts(time.Hour)...)
+	ctx, cancel := context.WithTimeout(s.ctx, 50*time.Millisecond)
+	defer cancel()
+	loop.Run(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	var fingerprints []string
+	for _, event := range sent {
+		if item := event.Tags["item"]; item == "llm/vendor/alarmed" || item == "llm/vendor/cut" {
+			fingerprints = append(fingerprints, event.Fingerprint...)
+		}
+	}
+	s.Equal([]string{"usage_missing:llm/vendor/alarmed"}, fingerprints,
+		"two rows of one item are one alert, and a response cut short is none")
 }
 
 func (s *RecorderSuite) TestTheRowStoresWhatPricedIt() {

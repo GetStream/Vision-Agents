@@ -109,6 +109,90 @@ func TestAStreamClosedAfterItsFirstTokenIsStillBilledForWhatItGenerated(t *testi
 		"the first token did arrive, so what the caller waited for it is known")
 }
 
+func TestAStreamCutBeforeItsUsageArrivedIsBilledOnAnEstimate(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).OutputText("half a sen")
+	require.True(t, stream.Next())
+	require.True(t, stream.Next())
+	require.NoError(t, stream.Close())
+	require.Equal(t, llm.StatusCancelled, drain(stream).Status)
+
+	row := sink.only(t)
+	require.Equal(t, routing.ErrorCancelled, row.ErrorCode)
+	require.EqualValues(t, 1, row.Usage.InputTokens, "the prompt the vendor read")
+	require.EqualValues(t, 3, row.Usage.OutputTokens, "and what it said before the cut")
+	require.Equal(t, map[string]string{routing.AttributeUsageEstimated: "true"}, row.Attributes)
+}
+
+func TestTheTimingLogShowsWhatAnEstimatedResponseIsBilled(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	session, provider, _ := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).OutputText("half a sen")
+	require.True(t, stream.Next())
+	require.True(t, stream.Next())
+	require.NoError(t, stream.Close())
+	drain(stream)
+
+	logged := timingLogged(t, &logs)
+	require.True(t, logged.Estimated)
+	require.EqualValues(t, 1, logged.InputTokens, "what the row bills, not the nothing the vendor said")
+	require.EqualValues(t, 3, logged.OutputTokens)
+}
+
+func TestAStreamCutAfterItsUsageArrivedKeepsTheVendorsCount(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).OutputText("half a sen")
+	provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 4})
+	require.True(t, stream.Next())
+	require.True(t, stream.Next())
+	require.NoError(t, stream.Close())
+	drain(stream)
+
+	row := sink.only(t)
+	require.EqualValues(t, 10, row.Usage.InputTokens)
+	require.EqualValues(t, 4, row.Usage.OutputTokens)
+	require.Empty(t, row.Attributes, "a vendor that repeats its usage on every chunk has said")
+}
+
+func TestAFailedStreamIsNotEstimated(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).OutputText("half a sen")
+	provider.script(0).Fail(errors.New("upstream reset"), "stream")
+	drain(stream)
+
+	row := sink.only(t)
+	require.Zero(t, row.Usage.InputTokens)
+	require.Empty(t, row.Attributes)
+}
+
+func TestAnAnswerThatSaidNothingAndReportedNothingIsLeftForTheAlarm(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).Done()
+	drain(stream)
+
+	row := sink.only(t)
+	require.Zero(t, row.Usage.InputTokens, "nothing came back to estimate from")
+	require.Empty(t, row.Attributes)
+}
+
 func TestAStreamThatRanToItsEndIsASuccessWithItsLatency(t *testing.T) {
 	session, provider, sink := sinkSession(t)
 
@@ -174,9 +258,12 @@ func TestOnlyAFirstTokenMakesALatency(t *testing.T) {
 
 // loggedTiming is a line the session logged, read back from JSON.
 type loggedTiming struct {
-	Message   string `json:"msg"`
-	Success   bool   `json:"success"`
-	ErrorCode string `json:"error_code"`
+	Message      string `json:"msg"`
+	Success      bool   `json:"success"`
+	ErrorCode    string `json:"error_code"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	Estimated    bool   `json:"estimated"`
 }
 
 // timingLogged is the one "model call timing" line among those logged.

@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -222,6 +223,16 @@ func Accepted(err error) bool {
 // Result is what a provider drew.
 type Result struct {
 	Images []Image
+}
+
+// Used is the pictures counted as they came back, not as they were asked for, and the pixels
+// they hold between them for a model billed by the megapixel.
+func (r Result) Used() pricing.Quantities {
+	used := pricing.Quantities{pricing.Images: int64(len(r.Images))}
+	for _, picture := range r.Images {
+		used[pricing.Pixels] += int64(picture.Width) * int64(picture.Height)
+	}
+	return used
 }
 
 // Provider is an image generation provider.

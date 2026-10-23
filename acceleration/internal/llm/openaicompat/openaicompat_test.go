@@ -11,11 +11,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 type OpenAICompatSuite struct {
@@ -327,6 +330,108 @@ func (s *OpenAICompatSuite) TestUsageIsReportedForBilling() {
 	s.EqualValues(8, response.Usage.InputTokensDetails.CachedTokens)
 	s.EqualValues(64, response.Usage.OutputTokens)
 	s.EqualValues(47, response.Usage.OutputTokensDetails.ReasoningTokens)
+}
+
+// TestReasoningOutsideCompletionIsCounted is xAI's "think" frame: its thinking is in the total
+// and in reasoning_tokens, not in completion_tokens, and its own cost comes beside the counts.
+func (s *OpenAICompatSuite) TestReasoningOutsideCompletionIsCounted() {
+	s.frames = []string{textFrame("4"), frame([]any{}, map[string]any{
+		"prompt_tokens":             1_301,
+		"completion_tokens":         21,
+		"total_tokens":              2_747,
+		"prompt_tokens_details":     map[string]any{"cached_tokens": 1_152},
+		"completion_tokens_details": map[string]any{"reasoning_tokens": 1_425},
+		"cost_in_usd_ticks":         95_500_000,
+	})}
+	provider := s.provider(Options{Provider: "xai", Model: "grok-4.7"})
+
+	response, _ := s.ask(provider, hello())
+
+	s.EqualValues(1_446, response.Usage.OutputTokens, "the answer and the thinking, once")
+	s.EqualValues(1_425, response.Usage.OutputTokensDetails.ReasoningTokens)
+	s.EqualValues(9_550, response.Usage.VendorCostMicros)
+	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, nil)
+	s.Require().NoError(err)
+	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7"}, response.Used())
+	s.EqualValues(9_550, quote.BaseCostMicros, "priced at the vendor's rates, it is what xAI charged")
+}
+
+func (s *OpenAICompatSuite) TestThinkingCountedOnlyInTheTotalIsOutput() {
+	// Gemini's compatible endpoint reports no reasoning_tokens: its thinking shows only as the
+	// total running past the prompt and the completion.
+	s.frames = []string{textFrame("Paris"), frame([]any{}, map[string]any{
+		"prompt_tokens":     10,
+		"completion_tokens": 11,
+		"total_tokens":      123,
+	})}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.EqualValues(113, response.Usage.OutputTokens)
+	s.EqualValues(102, response.Usage.OutputTokensDetails.ReasoningTokens)
+	s.EqualValues(123, response.Usage.TotalTokens, "the vendor's own total is kept")
+	s.Zero(response.Usage.VendorCostMicros, "a vendor that sends no cost has none")
+}
+
+func (s *OpenAICompatSuite) TestRejectedPredictionsAreNotBilled() {
+	// Baseten reports the speculative tokens it threw away, and bills completion_tokens alone.
+	s.frames = []string{textFrame("hi"), frame([]any{}, map[string]any{
+		"prompt_tokens":             20,
+		"completion_tokens":         48,
+		"total_tokens":              68,
+		"completion_tokens_details": map[string]any{"rejected_prediction_tokens": 26},
+	})}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.EqualValues(48, response.Usage.OutputTokens)
+	s.Zero(response.Usage.OutputTokensDetails.ReasoningTokens)
+}
+
+func (s *OpenAICompatSuite) TestACallersDeadlineCutsTheResponseShort() {
+	s.frames = []string{textFrame("Hello")}
+	s.hold = make(chan struct{})
+	provider := s.provider(Options{})
+	ctx, cancel := context.WithTimeout(s.T().Context(), 300*time.Millisecond)
+	defer cancel()
+
+	stream, err := provider.Create(ctx, hello())
+	s.Require().NoError(err)
+	for stream.Next() {
+	}
+	response := stream.Response()
+
+	s.True(response.TimedOut)
+	s.Equal(llm.StatusFailed, response.Status, "whoever waited still sees it fail")
+	s.Equal("Hello", response.OutputText)
+	s.ErrorIs(stream.Err(), context.DeadlineExceeded)
+}
+
+func (s *OpenAICompatSuite) TestTheProvidersOwnLimitCutsTheResponseShort() {
+	s.frames = []string{textFrame("Hello")}
+	s.hold = make(chan struct{})
+	provider := s.provider(Options{Timeout: 300 * time.Millisecond})
+
+	response, _ := s.ask(provider, hello())
+
+	s.True(response.TimedOut)
+	s.Equal("Hello", response.OutputText)
+}
+
+func (s *OpenAICompatSuite) TestAStreamTheVendorBrokeIsNotCutShort() {
+	s.frames = []string{textFrame("Hello"), "{not json"}
+	provider := s.provider(Options{})
+
+	stream, err := provider.Create(s.T().Context(), hello())
+	s.Require().NoError(err)
+	for stream.Next() {
+	}
+
+	s.False(stream.Response().TimedOut)
+	s.Equal(llm.StatusFailed, stream.Response().Status)
+	s.Error(stream.Err())
 }
 
 func (s *OpenAICompatSuite) TestCumulativeUsageFramesSettleOnTheLastOne() {

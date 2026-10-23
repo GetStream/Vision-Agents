@@ -7,8 +7,10 @@ package alerts
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -35,12 +37,20 @@ func (l Level) sentryLevel() sentry.Level {
 // Check reports whether a condition holds at now, and the numbers to send with it.
 type Check func(now time.Time) (holds bool, extra map[string]any)
 
+// ItemCheck reports the items a condition holds for at now, such as the models whose usage
+// went missing, each with the numbers to send.
+type ItemCheck func(now time.Time) map[string]map[string]any
+
 // Condition is one named thing that should never be true.
 type Condition struct {
 	// Name is the alert's name, which Sentry's rules and the fingerprint use.
 	Name  string
 	Level Level
 	Check Check
+	// Items, in place of Check, is a condition that holds for items not known in advance. Each
+	// item is its own alert, fingerprinted usage_<name>:<item> and limited on its own, so one
+	// item that keeps failing does not hide another.
+	Items ItemCheck
 }
 
 // Options configure a Loop.
@@ -112,6 +122,10 @@ func (l *Loop) Run(ctx context.Context) {
 func (l *Loop) check() {
 	now := l.options.Now()
 	for _, condition := range l.conditions {
+		if condition.Items != nil {
+			l.checkItems(now, condition)
+			continue
+		}
 		holds, extra := condition.Check(now)
 		if !holds {
 			continue
@@ -120,18 +134,37 @@ func (l *Loop) check() {
 			continue
 		}
 		l.sent[condition.Name] = now
-		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, condition.Level, extra)
+		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, "", condition.Level, extra)
+	}
+}
+
+// checkItems sends each item the condition holds for that was not sent within the limit, in
+// order so the events of one check go out the same way every time.
+func (l *Loop) checkItems(now time.Time, condition Condition) {
+	held := condition.Items(now)
+	for _, item := range slices.Sorted(maps.Keys(held)) {
+		key := condition.Name + ":" + item
+		if last, ok := l.sent[key]; ok && now.Sub(last) < l.options.Limit {
+			continue
+		}
+		l.sent[key] = now
+		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, item, condition.Level, held[item])
 	}
 }
 
 // Send sends one alert now, for a short-lived process (a job) that has no loop. It goes to
 // the current hub, tagged with the binary's name; the caller flushes Sentry before it exits.
 func Send(name string, level Level, extra map[string]any) {
-	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, level, extra)
+	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, "", level, extra)
 }
 
-func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]string, name string, level Level, extra map[string]any) {
-	logger.Error("usage alert", "alert", name, "level", level, "source", source, "extra", extra)
+// send sends one alert, of one item of the condition when item is not empty.
+func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]string, name, item string, level Level, extra map[string]any) {
+	fields := []any{"alert", name, "level", level, "source", source, "extra", extra}
+	if item != "" {
+		fields = append(fields, "item", item)
+	}
+	logger.Error("usage alert", fields...)
 	event := sentry.NewEvent()
 	event.Level = level.sentryLevel()
 	event.Message = "usage alert: " + name
@@ -139,6 +172,11 @@ func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]s
 	event.Tags = map[string]string{}
 	for key, value := range tags {
 		event.Tags[key] = value
+	}
+	if item != "" {
+		event.Message += " " + item
+		event.Fingerprint = []string{"usage_" + name + ":" + item}
+		event.Tags["item"] = item
 	}
 	event.Tags["usage_alert"] = name
 	event.Tags["source"] = source

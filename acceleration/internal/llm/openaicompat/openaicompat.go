@@ -51,6 +51,13 @@ const reasoningField = "reasoning_content"
 // replayedReasoningField is where vLLM's chat templates read an earlier turn's thinking.
 const replayedReasoningField = "reasoning"
 
+// costTicksField is where xAI puts what a completion cost it, beside the token counts, in
+// ticks of which ticksPerMicro make a millionth of a dollar.
+const (
+	costTicksField = "cost_in_usd_ticks"
+	ticksPerMicro  = 10_000
+)
+
 // A signing provider nests its signature under extra_content, keyed by vendor. Gemini is
 // the one that does, and it refuses a replayed call that comes back without it.
 const (
@@ -340,17 +347,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 		// Some providers repeat a cumulative usage frame on every chunk rather than
 		// sending one at the end, so the writer keeps the last one it is told.
-		w.Usage(llm.Usage{
-			InputTokens: chunk.Usage.PromptTokens,
-			InputTokensDetails: llm.InputTokensDetails{
-				CachedTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
-			},
-			OutputTokens: chunk.Usage.CompletionTokens,
-			OutputTokensDetails: llm.OutputTokensDetails{
-				ReasoningTokens: chunk.Usage.CompletionTokensDetails.ReasoningTokens,
-			},
-			TotalTokens: chunk.Usage.TotalTokens,
-		})
+		w.Usage(usageOf(chunk.Usage))
 	}
 
 	for _, choice := range chunk.Choices {
@@ -481,11 +478,17 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 		}
 	}
 
-	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		p.err = err
-	} else if err != nil {
+	switch err := p.upstream.Err(); {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
 		// A cancelled stream is barge-in or shutdown, not a provider failure.
 		w.Cancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Ours or the caller's: the provider billed what it generated until then.
+		w.TimedOut()
+		p.err = err
+	default:
+		p.err = err
 	}
 
 	p.upstream.Close()
@@ -754,6 +757,43 @@ func incomplete(reason string) string {
 	default:
 		return ""
 	}
+}
+
+// usageOf is what a usage frame says the completion consumed.
+//
+// xAI and Gemini count their thinking in total_tokens and not in completion_tokens, so the
+// output is what the total holds beyond the prompt whenever that is more. xAI also reports the
+// thinking as reasoning_tokens and Gemini does not, so the reasoning is the larger of the two
+// rather than their sum, which would count xAI's twice. Baseten's rejected_prediction_tokens
+// are never added: its bill is completion_tokens alone.
+func usageOf(usage openai.CompletionUsage) llm.Usage {
+	return llm.Usage{
+		InputTokens: usage.PromptTokens,
+		InputTokensDetails: llm.InputTokensDetails{
+			CachedTokens: usage.PromptTokensDetails.CachedTokens,
+		},
+		OutputTokens: max(usage.CompletionTokens, usage.TotalTokens-usage.PromptTokens),
+		OutputTokensDetails: llm.OutputTokensDetails{
+			ReasoningTokens: max(usage.CompletionTokensDetails.ReasoningTokens,
+				usage.TotalTokens-usage.PromptTokens-usage.CompletionTokens),
+		},
+		TotalTokens:      usage.TotalTokens,
+		VendorCostMicros: costTicksMicros(usage.JSON.ExtraFields),
+	}
+}
+
+// costTicksMicros reads xAI's own cost off a usage frame, in ticks of a ten-billionth of a
+// dollar, as millionths rounded half up. Zero for the providers that send none.
+func costTicksMicros(extra map[string]respjson.Field) int64 {
+	field, ok := extra[costTicksField]
+	if !ok {
+		return 0
+	}
+	var ticks int64
+	if err := json.Unmarshal([]byte(field.Raw()), &ticks); err != nil || ticks <= 0 {
+		return 0
+	}
+	return (ticks + ticksPerMicro/2) / ticksPerMicro
 }
 
 // reasoning reads the non-standard thinking field off a delta, returning empty when the
