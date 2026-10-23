@@ -1601,6 +1601,17 @@ components:
         - from_number
         - name
       type: object
+    CancelPriceChangeInput:
+      additionalProperties: false
+      properties:
+        reason:
+          description: Why the change is called off.
+          maxLength: 2000
+          minLength: 1
+          type: string
+      required:
+        - reason
+      type: object
     Candidate:
       properties:
         can_record:
@@ -5294,6 +5305,460 @@ components:
         - digits
         - vendor
       type: object
+    PriceChange:
+      properties:
+        cancel_reason:
+          type: string
+        cancelled_at:
+          format: date-time
+          type: string
+        cancelled_by:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          description: The actor that made it, or the router release that loaded it.
+          type: string
+        effective_at:
+          format: date-time
+          type: string
+        entries:
+          description: The entries it wrote. Absent from a list of changes.
+          items:
+            $ref: '#/components/schemas/PriceChangeEntry'
+          nullable: true
+          type: array
+        kind:
+          $ref: '#/components/schemas/PriceChangeKind'
+        markup_bps:
+          description: The list's markup from effective_at on. Absent left it as it was.
+          format: int64
+          type: integer
+        name:
+          description: '<UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price.'
+          type: string
+        reason:
+          type: string
+        source:
+          type: string
+      required:
+        - name
+        - kind
+        - reason
+        - source
+        - effective_at
+        - created_by
+        - created_at
+      type: object
+    PriceChangeEntry:
+      properties:
+        free:
+          type: boolean
+        markup_bps:
+          description: The entry's own markup in basis points. Absent takes the list's.
+          format: int64
+          type: integer
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: The vendor's rates, by meter.
+          type: object
+        tiers:
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+        withdrawn:
+          description: The change stopped pricing the item under its when.
+          type: boolean
+      required:
+        - modality
+        - provider
+        - model
+      type: object
+    PriceChangeInput:
+      additionalProperties: false
+      properties:
+        confirm:
+          description: Required when the preview answers confirmation_required.
+          type: boolean
+        effective_at:
+          description: When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
+          format: date-time
+          type: string
+        entries:
+          description: 'Each replaces its item''s entry under its when whole: every rate, tier and markup it has.'
+          items:
+            $ref: '#/components/schemas/PriceEntryInput'
+          maxItems: 1000
+          nullable: true
+          type: array
+        markup_bps:
+          description: The list's markup in basis points from effective_at on. Absent leaves it.
+          format: int64
+          maximum: 100000
+          minimum: 0
+          type: integer
+        name:
+          description: 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it.
+          pattern: ^[a-z0-9_]{1,48}$
+          type: string
+        reason:
+          description: What changed, from what to what. At least one sentence; trimmed, and refused when blank.
+          maxLength: 2000
+          minLength: 1
+          type: string
+        source:
+          description: The vendor's page and the date it was read, or the operator's own decision. Trimmed, and refused when blank.
+          maxLength: 1000
+          minLength: 1
+          type: string
+      required:
+        - name
+        - reason
+        - source
+      type: object
+    PriceChangeKind:
+      description: 'What wrote the change: seed is a database''s first load from the router''s price files, release the items a release''s price files had that the database lacked, and api a change made through the management API.'
+      enum:
+        - seed
+        - release
+        - api
+      type: string
+    PriceChangePage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/PriceChange'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    PriceEntry:
+      properties:
+        charged_markup_bps:
+          description: 'The markup the entry is sold at: its own, else the list''s.'
+          format: int64
+          type: integer
+        charged_rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: 'What customers are charged: each rate with the markup added, to 12 significant digits.'
+          type: object
+        charged_tiers:
+          description: What customers are charged for long prompts.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        effective_at:
+          description: When the entry took effect, or takes effect.
+          format: date-time
+          type: string
+        free:
+          description: The vendor charges nothing for it.
+          type: boolean
+        local:
+          description: The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+          type: boolean
+        markup_bps:
+          description: The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+          format: int64
+          type: integer
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: The vendor's rates, by meter.
+          type: object
+        tiers:
+          description: The vendor's rates for long prompts.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        version:
+          description: The price change that wrote the entry, which every row it prices names as its price_version.
+          type: string
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+      required:
+        - charged_markup_bps
+        - modality
+        - provider
+        - model
+      type: object
+    PriceEntryInput:
+      additionalProperties: false
+      properties:
+        free:
+          description: The vendor charges nothing for it.
+          type: boolean
+        local:
+          description: 'Refused with invalid_price: a model is local when the routing config says so.'
+          type: boolean
+        markup_bps:
+          description: The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
+          format: int64
+          type: integer
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: 'The vendor''s rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused.'
+          type: object
+        tiers:
+          description: Rates for long prompts. Each tier rates every meter the entry does.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        version:
+          description: 'Refused with invalid_price: an entry''s version is the change that writes it.'
+          type: string
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+        withdrawn:
+          description: Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate.
+          type: boolean
+      required:
+        - modality
+        - provider
+        - model
+      type: object
+    PriceItem:
+      properties:
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+      required:
+        - modality
+        - provider
+        - model
+      type: object
+    PriceList:
+      properties:
+        at:
+          description: The moment the list is read at.
+          format: date-time
+          type: string
+        entries:
+          items:
+            $ref: '#/components/schemas/PriceEntry'
+          type: array
+        markup_bps:
+          description: The list's markup in basis points, added to every entry with none of its own.
+          format: int64
+          type: integer
+        unpriced:
+          description: 'The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free.'
+          items:
+            $ref: '#/components/schemas/PriceItem'
+          type: array
+        upcoming:
+          description: The entries of the changes not cancelled that take effect after at, soonest first.
+          items:
+            $ref: '#/components/schemas/UpcomingPriceEntry'
+          type: array
+      required:
+        - at
+        - markup_bps
+        - entries
+        - unpriced
+        - upcoming
+      type: object
+    PricePreview:
+      properties:
+        confirmation_required:
+          description: 'createPriceChange answers 409 confirmation_required without confirm: true.'
+          type: boolean
+        effective_at:
+          description: When the change would take effect.
+          format: date-time
+          type: string
+        items:
+          items:
+            $ref: '#/components/schemas/PricePreviewItem'
+          type: array
+        markup_bps_after:
+          format: int64
+          type: integer
+        markup_bps_before:
+          format: int64
+          type: integer
+        needs_confirmation:
+          description: The items that make it so.
+          items:
+            $ref: '#/components/schemas/PriceItem'
+          nullable: true
+          type: array
+      required:
+        - effective_at
+        - markup_bps_before
+        - markup_bps_after
+        - items
+        - confirmation_required
+      type: object
+    PricePreviewItem:
+      properties:
+        after:
+          $ref: '#/components/schemas/PricedEntry'
+          description: How it is priced after. Absent when nothing will.
+        before:
+          $ref: '#/components/schemas/PricedEntry'
+          description: How it is priced before the change. Absent when nothing prices it.
+        markup_factor:
+          description: The factor the markup it is sold at moves by. Absent when either is 0.
+          format: double
+          type: number
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        needs_confirmation:
+          type: boolean
+        provider:
+          type: string
+        rate_factors:
+          additionalProperties:
+            format: double
+            type: number
+          description: By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
+          type: object
+        unpriced:
+          description: It is priced before the change and billable with no rate after.
+          type: boolean
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+      required:
+        - modality
+        - provider
+        - model
+      type: object
+    PriceRate:
+      additionalProperties: false
+      properties:
+        increment:
+          description: The quantity is rounded up to a multiple of this before it is priced, such as 60 for a call billed by the started minute.
+          format: int64
+          type: integer
+        minimum:
+          description: The least quantity billed once anything is used.
+          format: int64
+          type: integer
+        per:
+          description: 'The units the rate is for: 1000000 for a rate per million tokens, 1 for one per image.'
+          format: int64
+          type: integer
+        usd:
+          description: US dollars for every per units.
+          format: double
+          type: number
+      required:
+        - usd
+        - per
+      type: object
+    PriceTier:
+      additionalProperties: false
+      properties:
+        above_input_tokens:
+          description: A prompt longer than this many input tokens is priced at these rates, for the whole request.
+          format: int64
+          type: integer
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: By meter.
+          type: object
+      required:
+        - above_input_tokens
+        - rates
+      type: object
+    PricedEntry:
+      properties:
+        charged_rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          type: object
+        charged_tiers:
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        free:
+          type: boolean
+        local:
+          type: boolean
+        markup_bps:
+          description: The markup it is sold at.
+          format: int64
+          type: integer
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: The vendor's rates.
+          type: object
+        tiers:
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        version:
+          description: The change that wrote it. Absent for the change previewed.
+          type: string
+      required:
+        - markup_bps
+      type: object
     Provider:
       properties:
         benchmark:
@@ -8235,6 +8700,76 @@ components:
         - bucket
         - interrupted_count
         - turn_count
+      type: object
+    UpcomingPriceEntry:
+      properties:
+        charged_markup_bps:
+          description: 'The markup the entry is sold at: its own, else the list''s.'
+          format: int64
+          type: integer
+        charged_rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: 'What customers are charged: each rate with the markup added, to 12 significant digits.'
+          type: object
+        charged_tiers:
+          description: What customers are charged for long prompts.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        effective_at:
+          description: When the entry took effect, or takes effect.
+          format: date-time
+          type: string
+        free:
+          description: The vendor charges nothing for it.
+          type: boolean
+        local:
+          description: The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+          type: boolean
+        markup_bps:
+          description: The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+          format: int64
+          type: integer
+        modality:
+          description: Such as llm, stt, tts, sms or phone.
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        rates:
+          additionalProperties:
+            $ref: '#/components/schemas/PriceRate'
+          description: The vendor's rates, by meter.
+          type: object
+        reason:
+          description: The change's reason.
+          type: string
+        tiers:
+          description: The vendor's rates for long prompts.
+          items:
+            $ref: '#/components/schemas/PriceTier'
+          nullable: true
+          type: array
+        version:
+          description: The price change that wrote the entry, which every row it prices names as its price_version.
+          type: string
+        when:
+          additionalProperties:
+            type: string
+          description: 'The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item''s default entry.'
+          type: object
+        withdrawn:
+          description: The item under its when stops being priced at effective_at.
+          type: boolean
+      required:
+        - reason
+        - charged_markup_bps
+        - modality
+        - provider
+        - model
       type: object
     UpdateScheduledTaskRequest:
       properties:
@@ -15342,6 +15877,282 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Draw pictures from a prompt, and return them
+  /v1/manage/price-lists/active:
+    get:
+      description: |-
+        Every entry in force at `at` (default now): the vendor's rates, the entry's own markup or none, the rates customers are charged, and the change that wrote it, which is the `price_version` of every row it prices. `unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` the entries of the changes scheduled after `at`.
+
+        Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
+      operationId: getActivePriceList
+      parameters:
+        - description: The moment to read the list at, RFC 3339. Omitted is now.
+          explode: false
+          in: query
+          name: at
+          schema:
+            description: The moment to read the list at, RFC 3339. Omitted is now.
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceList'
+          description: The price list in force
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Read the price list in force
+      tags:
+        - Staff
+  /v1/manage/price-lists/changes:
+    get:
+      description: |-
+        Every write to the price list, newest first: the first load, each release's new items, and every change made through this API, cancelled ones included.
+
+        Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
+      operationId: listPriceChanges
+      parameters:
+        - description: Only changes of this kind. Omitted is every kind.
+          explode: false
+          in: query
+          name: kind
+          schema:
+            $ref: '#/components/schemas/PriceChangeKind'
+            description: Only changes of this kind. Omitted is every kind.
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same kind.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceChangePage'
+          description: A page of price changes
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: List the price changes
+      tags:
+        - Staff
+    post:
+      description: |-
+        Writes a change, its entries and an audit row in one transaction. Each entry replaces its item's entry under its `when` whole, at the vendor's rates; `markup_bps` sets the list's markup. Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a newer change, and a scheduled one can be cancelled.
+
+        An entry setting `local` or `version`, or entries that do not make a price list, are a 400 `invalid_price` naming the item. A change the preview says needs confirming is a 409 `confirmation_required` without `confirm: true`. Before the router's first start has loaded its price files the list is not seeded, and every change is a 503 `price_list_not_seeded`. A change that waits more than 5 seconds for another write to the price list is a 503 `price_list_busy`, to send again after `Retry-After`.
+
+        It is made once per `Idempotency-Key` (required, 1 to 255 characters): the same key and body again answer 200 with the change already written and write nothing; the same key with another body is a 409 `idempotency_key_reused`. A retry sends the same body: the same entries in the same order, since entries listed in another order are another body.
+
+        Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
+      operationId: createPriceChange
+      parameters:
+        - description: 'Required: 1 to 255 characters. The change is written once under it.'
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: 'Required: 1 to 255 characters. The change is written once under it.'
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceChangeInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceChange'
+          description: The change already written under the Idempotency-Key; nothing changed
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceChange'
+          description: The change written
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      security:
+        - ManageKey: []
+      summary: Change the price list
+      tags:
+        - Staff
+  /v1/manage/price-lists/changes/{name}:
+    get:
+      description: |-
+        The change with the entries it wrote. A name nobody made is a 404 `price_change_not_found`.
+
+        Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
+      operationId: getPriceChange
+      parameters:
+        - description: The change's name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: The change's name.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceChange'
+          description: The price change
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Read a price change
+      tags:
+        - Staff
+  /v1/manage/price-lists/changes/{name}/cancel:
+    post:
+      description: |-
+        Calls off a change made through this API that is not yet in force, with an audit row, and every router stops scheduling it as `createPriceChange` says. A change in force, or one a router's start loaded, is a 409 `price_change_in_force`: write a new change instead. A change already cancelled is answered as it stands, with who cancelled it and why, and nothing is written, so a cancel sent again changes nothing. `Idempotency-Key` is optional and stores nothing. A cancel that waits more than 5 seconds for another write is a 503 `price_list_busy`.
+
+        Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
+      operationId: cancelPriceChange
+      parameters:
+        - description: The change's name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: The change's name.
+            type: string
+        - description: 'Optional: 1 to 255 characters. A change is cancelled once whatever it says; a cancel sent again changes nothing.'
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: 'Optional: 1 to 255 characters. A change is cancelled once whatever it says; a cancel sent again changes nothing.'
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelPriceChangeInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceChange'
+          description: The change, cancelled
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      security:
+        - ManageKey: []
+      summary: Cancel a scheduled price change
+      tags:
+        - Staff
+  /v1/manage/price-lists/changes/preview:
+    post:
+      description: |-
+        What `createPriceChange` would do with the same body, writing nothing: for every item it moves, the vendor rates, markup and charged rates before and after, the factor each rate moves by, and whether it becomes unpriced. `confirmation_required` is true, naming the items, when a vendor rate, its `increment` or `minimum`, or the markup an item is sold at moves by a factor of 2 or more either way (to or from 0 included), a long-prompt tier is added or dropped, or a routed model that is not local would become unpriced. A body whose entries do not make a price list is a 400 `invalid_price`; a preview never answers 409.
+
+        Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
+      operationId: previewPriceChange
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceChangeInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricePreview'
+          description: What the change would do
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Preview a price change
+      tags:
+        - Staff
   /v1/manage/status:
     get:
       description: |-

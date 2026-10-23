@@ -4665,6 +4665,10 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        readonly CancelPriceChangeInput: {
+            /** @description Why the change is called off. */
+            readonly reason: string;
+        };
         readonly Candidate: {
             /** @description Whether RecordSpeech can use this candidate. Only set for text to speech: most of its vendors only stream, and a recording passes over them. */
             readonly can_record?: boolean;
@@ -6786,6 +6790,280 @@ export type components = {
             /** @description Who is carrying the call, e.g. "telnyx". */
             readonly vendor: string;
         };
+        readonly PriceChange: {
+            readonly cancel_reason?: string;
+            /** Format: date-time */
+            readonly cancelled_at?: string;
+            readonly cancelled_by?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The actor that made it, or the router release that loaded it. */
+            readonly created_by: string;
+            /** Format: date-time */
+            readonly effective_at: string;
+            /** @description The entries it wrote. Absent from a list of changes. */
+            readonly entries?: readonly components["schemas"]["PriceChangeEntry"][] | null;
+            readonly kind: components["schemas"]["PriceChangeKind"];
+            /**
+             * Format: int64
+             * @description The list's markup from effective_at on. Absent left it as it was.
+             */
+            readonly markup_bps?: number;
+            /** @description <UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price. */
+            readonly name: string;
+            readonly reason: string;
+            readonly source: string;
+        };
+        readonly PriceChangeEntry: {
+            readonly free?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+            /** @description The change stopped pricing the item under its when. */
+            readonly withdrawn?: boolean;
+        };
+        readonly PriceChangeInput: {
+            /** @description Required when the preview answers confirmation_required. */
+            readonly confirm?: boolean;
+            /**
+             * Format: date-time
+             * @description When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
+             */
+            readonly effective_at?: string;
+            /** @description Each replaces its item's entry under its when whole: every rate, tier and markup it has. */
+            readonly entries?: readonly components["schemas"]["PriceEntryInput"][] | null;
+            /**
+             * Format: int64
+             * @description The list's markup in basis points from effective_at on. Absent leaves it.
+             */
+            readonly markup_bps?: number;
+            /** @description 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it. */
+            readonly name: string;
+            /** @description What changed, from what to what. At least one sentence; trimmed, and refused when blank. */
+            readonly reason: string;
+            /** @description The vendor's page and the date it was read, or the operator's own decision. Trimmed, and refused when blank. */
+            readonly source: string;
+        };
+        /**
+         * @description What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
+         * @enum {string}
+         */
+        readonly PriceChangeKind: "seed" | "release" | "api";
+        readonly PriceChangePage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["PriceChange"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly PricedEntry: {
+            readonly charged_rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            readonly free?: boolean;
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The markup it is sold at.
+             */
+            readonly markup_bps: number;
+            /** @description The vendor's rates. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The change that wrote it. Absent for the change previewed. */
+            readonly version?: string;
+        };
+        readonly PriceEntry: {
+            /**
+             * Format: int64
+             * @description The markup the entry is sold at: its own, else the list's.
+             */
+            readonly charged_markup_bps: number;
+            /** @description What customers are charged: each rate with the markup added, to 12 significant digits. */
+            readonly charged_rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description What customers are charged for long prompts. */
+            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /**
+             * Format: date-time
+             * @description When the entry took effect, or takes effect.
+             */
+            readonly effective_at?: string;
+            /** @description The vendor charges nothing for it. */
+            readonly free?: boolean;
+            /** @description The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing. */
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description The vendor's rates for long prompts. */
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The price change that wrote the entry, which every row it prices names as its price_version. */
+            readonly version?: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PriceEntryInput: {
+            /** @description The vendor charges nothing for it. */
+            readonly free?: boolean;
+            /** @description Refused with invalid_price: a model is local when the routing config says so. */
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description Rates for long prompts. Each tier rates every meter the entry does. */
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description Refused with invalid_price: an entry's version is the change that writes it. */
+            readonly version?: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+            /** @description Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate. */
+            readonly withdrawn?: boolean;
+        };
+        readonly PriceItem: {
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PriceList: {
+            /**
+             * Format: date-time
+             * @description The moment the list is read at.
+             */
+            readonly at: string;
+            readonly entries: readonly components["schemas"]["PriceEntry"][];
+            /**
+             * Format: int64
+             * @description The list's markup in basis points, added to every entry with none of its own.
+             */
+            readonly markup_bps: number;
+            /** @description The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free. */
+            readonly unpriced: readonly components["schemas"]["PriceItem"][];
+            /** @description The entries of the changes not cancelled that take effect after at, soonest first. */
+            readonly upcoming: readonly components["schemas"]["UpcomingPriceEntry"][];
+        };
+        readonly PricePreview: {
+            /** @description createPriceChange answers 409 confirmation_required without confirm: true. */
+            readonly confirmation_required: boolean;
+            /**
+             * Format: date-time
+             * @description When the change would take effect.
+             */
+            readonly effective_at: string;
+            readonly items: readonly components["schemas"]["PricePreviewItem"][];
+            /** Format: int64 */
+            readonly markup_bps_after: number;
+            /** Format: int64 */
+            readonly markup_bps_before: number;
+            /** @description The items that make it so. */
+            readonly needs_confirmation?: readonly components["schemas"]["PriceItem"][] | null;
+        };
+        readonly PricePreviewItem: {
+            /** @description How it is priced after. Absent when nothing will. */
+            readonly after?: components["schemas"]["PricedEntry"];
+            /** @description How it is priced before the change. Absent when nothing prices it. */
+            readonly before?: components["schemas"]["PricedEntry"];
+            /**
+             * Format: double
+             * @description The factor the markup it is sold at moves by. Absent when either is 0.
+             */
+            readonly markup_factor?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly needs_confirmation?: boolean;
+            readonly provider: string;
+            /** @description By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after. */
+            readonly rate_factors?: {
+                readonly [key: string]: number;
+            };
+            /** @description It is priced before the change and billable with no rate after. */
+            readonly unpriced?: boolean;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PriceRate: {
+            /**
+             * Format: int64
+             * @description The quantity is rounded up to a multiple of this before it is priced, such as 60 for a call billed by the started minute.
+             */
+            readonly increment?: number;
+            /**
+             * Format: int64
+             * @description The least quantity billed once anything is used.
+             */
+            readonly minimum?: number;
+            /**
+             * Format: int64
+             * @description The units the rate is for: 1000000 for a rate per million tokens, 1 for one per image.
+             */
+            readonly per: number;
+            /**
+             * Format: double
+             * @description US dollars for every per units.
+             */
+            readonly usd: number;
+        };
+        readonly PriceTier: {
+            /**
+             * Format: int64
+             * @description A prompt longer than this many input tokens is priced at these rates, for the whole request.
+             */
+            readonly above_input_tokens: number;
+            /** @description By meter. */
+            readonly rates: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+        };
         readonly Provider: {
             readonly benchmark?: components["schemas"]["ProviderBenchmark"];
             /** @description What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none. */
@@ -8585,6 +8863,53 @@ export type components = {
             readonly tts_ttfb_p95_ms?: number | null;
             /** Format: int64 */
             readonly turn_count: number;
+        };
+        readonly UpcomingPriceEntry: {
+            /**
+             * Format: int64
+             * @description The markup the entry is sold at: its own, else the list's.
+             */
+            readonly charged_markup_bps: number;
+            /** @description What customers are charged: each rate with the markup added, to 12 significant digits. */
+            readonly charged_rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description What customers are charged for long prompts. */
+            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /**
+             * Format: date-time
+             * @description When the entry took effect, or takes effect.
+             */
+            readonly effective_at?: string;
+            /** @description The vendor charges nothing for it. */
+            readonly free?: boolean;
+            /** @description The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing. */
+            readonly local?: boolean;
+            /**
+             * Format: int64
+             * @description The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+             */
+            readonly markup_bps?: number;
+            /** @description Such as llm, stt, tts, sms or phone. */
+            readonly modality: string;
+            readonly model: string;
+            readonly provider: string;
+            /** @description The vendor's rates, by meter. */
+            readonly rates?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description The change's reason. */
+            readonly reason: string;
+            /** @description The vendor's rates for long prompts. */
+            readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description The price change that wrote the entry, which every row it prices names as its price_version. */
+            readonly version?: string;
+            /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
+            readonly when?: {
+                readonly [key: string]: string;
+            };
+            /** @description The item under its when stops being priced at effective_at. */
+            readonly withdrawn?: boolean;
         };
         readonly UpdateScheduledTaskRequest: {
             /** @description Replaces where an occurrence is delivered, in order. An empty list is the conversation alone. */

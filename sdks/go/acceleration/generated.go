@@ -1617,6 +1617,27 @@ func (e PluginConnectionStatus) Valid() bool {
 	}
 }
 
+// Defines values for PriceChangeKind.
+const (
+	PriceChangeKindApi     PriceChangeKind = "api"
+	PriceChangeKindRelease PriceChangeKind = "release"
+	PriceChangeKindSeed    PriceChangeKind = "seed"
+)
+
+// Valid indicates whether the value is a known member of the PriceChangeKind enum.
+func (e PriceChangeKind) Valid() bool {
+	switch e {
+	case PriceChangeKindApi:
+		return true
+	case PriceChangeKindRelease:
+		return true
+	case PriceChangeKindSeed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RecordingStatus.
 const (
 	RecordingStatusCompleted RecordingStatus = "completed"
@@ -3616,6 +3637,12 @@ type CampaignRequest struct {
 	FromNumber string             `json:"from_number"`
 	Name       string             `json:"name"`
 	Tags       *map[string]string `json:"tags,omitempty"`
+}
+
+// CancelPriceChangeInput defines model for CancelPriceChangeInput.
+type CancelPriceChangeInput struct {
+	// Reason Why the change is called off.
+	Reason string `json:"reason"`
 }
 
 // Candidate defines model for Candidate.
@@ -5991,6 +6018,272 @@ type PressDigitsRequest struct {
 	Vendor string `json:"vendor"`
 }
 
+// PriceChange defines model for PriceChange.
+type PriceChange struct {
+	CancelReason *string    `json:"cancel_reason,omitempty"`
+	CancelledAt  *time.Time `json:"cancelled_at,omitempty"`
+	CancelledBy  *string    `json:"cancelled_by,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+
+	// CreatedBy The actor that made it, or the router release that loaded it.
+	CreatedBy   string    `json:"created_by"`
+	EffectiveAt time.Time `json:"effective_at"`
+
+	// Entries The entries it wrote. Absent from a list of changes.
+	Entries *[]PriceChangeEntry `json:"entries,omitempty"`
+
+	// Kind What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
+	Kind PriceChangeKind `json:"kind"`
+
+	// MarkupBps The list's markup from effective_at on. Absent left it as it was.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+
+	// Name <UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price.
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+	Source string `json:"source"`
+}
+
+// PriceChangeEntry defines model for PriceChangeEntry.
+type PriceChangeEntry struct {
+	Free *bool `json:"free,omitempty"`
+
+	// MarkupBps The entry's own markup in basis points. Absent takes the list's.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality string `json:"modality"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// Rates The vendor's rates, by meter.
+	Rates *map[string]PriceRate `json:"rates,omitempty"`
+	Tiers *[]PriceTier          `json:"tiers,omitempty"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+
+	// Withdrawn The change stopped pricing the item under its when.
+	Withdrawn *bool `json:"withdrawn,omitempty"`
+}
+
+// PriceChangeInput defines model for PriceChangeInput.
+type PriceChangeInput struct {
+	// Confirm Required when the preview answers confirmation_required.
+	Confirm *bool `json:"confirm,omitempty"`
+
+	// EffectiveAt When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
+	EffectiveAt *time.Time `json:"effective_at,omitempty"`
+
+	// Entries Each replaces its item's entry under its when whole: every rate, tier and markup it has.
+	Entries *[]PriceEntryInput `json:"entries,omitempty"`
+
+	// MarkupBps The list's markup in basis points from effective_at on. Absent leaves it.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+
+	// Name 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it.
+	Name string `json:"name"`
+
+	// Reason What changed, from what to what. At least one sentence; trimmed, and refused when blank.
+	Reason string `json:"reason"`
+
+	// Source The vendor's page and the date it was read, or the operator's own decision. Trimmed, and refused when blank.
+	Source string `json:"source"`
+}
+
+// PriceChangeKind What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
+type PriceChangeKind string
+
+// PriceChangePage defines model for PriceChangePage.
+type PriceChangePage struct {
+	HasMore bool          `json:"has_more"`
+	Items   []PriceChange `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// PriceEntry defines model for PriceEntry.
+type PriceEntry struct {
+	// ChargedMarkupBps The markup the entry is sold at: its own, else the list's.
+	ChargedMarkupBps int64 `json:"charged_markup_bps"`
+
+	// ChargedRates What customers are charged: each rate with the markup added, to 12 significant digits.
+	ChargedRates *map[string]PriceRate `json:"charged_rates,omitempty"`
+
+	// ChargedTiers What customers are charged for long prompts.
+	ChargedTiers *[]PriceTier `json:"charged_tiers,omitempty"`
+
+	// EffectiveAt When the entry took effect, or takes effect.
+	EffectiveAt *time.Time `json:"effective_at,omitempty"`
+
+	// Free The vendor charges nothing for it.
+	Free *bool `json:"free,omitempty"`
+
+	// Local The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+	Local *bool `json:"local,omitempty"`
+
+	// MarkupBps The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality string `json:"modality"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// Rates The vendor's rates, by meter.
+	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Tiers The vendor's rates for long prompts.
+	Tiers *[]PriceTier `json:"tiers,omitempty"`
+
+	// Version The price change that wrote the entry, which every row it prices names as its price_version.
+	Version *string `json:"version,omitempty"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+}
+
+// PriceEntryInput defines model for PriceEntryInput.
+type PriceEntryInput struct {
+	// Free The vendor charges nothing for it.
+	Free *bool `json:"free,omitempty"`
+
+	// Local Refused with invalid_price: a model is local when the routing config says so.
+	Local *bool `json:"local,omitempty"`
+
+	// MarkupBps The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality string `json:"modality"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// Rates The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused.
+	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Tiers Rates for long prompts. Each tier rates every meter the entry does.
+	Tiers *[]PriceTier `json:"tiers,omitempty"`
+
+	// Version Refused with invalid_price: an entry's version is the change that writes it.
+	Version *string `json:"version,omitempty"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+
+	// Withdrawn Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate.
+	Withdrawn *bool `json:"withdrawn,omitempty"`
+}
+
+// PriceItem defines model for PriceItem.
+type PriceItem struct {
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality string `json:"modality"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+}
+
+// PriceList defines model for PriceList.
+type PriceList struct {
+	// At The moment the list is read at.
+	At      time.Time    `json:"at"`
+	Entries []PriceEntry `json:"entries"`
+
+	// MarkupBps The list's markup in basis points, added to every entry with none of its own.
+	MarkupBps int64 `json:"markup_bps"`
+
+	// Unpriced The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free.
+	Unpriced []PriceItem `json:"unpriced"`
+
+	// Upcoming The entries of the changes not cancelled that take effect after at, soonest first.
+	Upcoming []UpcomingPriceEntry `json:"upcoming"`
+}
+
+// PricePreview defines model for PricePreview.
+type PricePreview struct {
+	// ConfirmationRequired createPriceChange answers 409 confirmation_required without confirm: true.
+	ConfirmationRequired bool `json:"confirmation_required"`
+
+	// EffectiveAt When the change would take effect.
+	EffectiveAt     time.Time          `json:"effective_at"`
+	Items           []PricePreviewItem `json:"items"`
+	MarkupBpsAfter  int64              `json:"markup_bps_after"`
+	MarkupBpsBefore int64              `json:"markup_bps_before"`
+
+	// NeedsConfirmation The items that make it so.
+	NeedsConfirmation *[]PriceItem `json:"needs_confirmation,omitempty"`
+}
+
+// PricePreviewItem defines model for PricePreviewItem.
+type PricePreviewItem struct {
+	After  *PricedEntry `json:"after,omitempty"`
+	Before *PricedEntry `json:"before,omitempty"`
+
+	// MarkupFactor The factor the markup it is sold at moves by. Absent when either is 0.
+	MarkupFactor *float64 `json:"markup_factor,omitempty"`
+
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality          string `json:"modality"`
+	Model             string `json:"model"`
+	NeedsConfirmation *bool  `json:"needs_confirmation,omitempty"`
+	Provider          string `json:"provider"`
+
+	// RateFactors By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
+	RateFactors *map[string]float64 `json:"rate_factors,omitempty"`
+
+	// Unpriced It is priced before the change and billable with no rate after.
+	Unpriced *bool `json:"unpriced,omitempty"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+}
+
+// PriceRate defines model for PriceRate.
+type PriceRate struct {
+	// Increment The quantity is rounded up to a multiple of this before it is priced, such as 60 for a call billed by the started minute.
+	Increment *int64 `json:"increment,omitempty"`
+
+	// Minimum The least quantity billed once anything is used.
+	Minimum *int64 `json:"minimum,omitempty"`
+
+	// Per The units the rate is for: 1000000 for a rate per million tokens, 1 for one per image.
+	Per int64 `json:"per"`
+
+	// Usd US dollars for every per units.
+	Usd float64 `json:"usd"`
+}
+
+// PriceTier defines model for PriceTier.
+type PriceTier struct {
+	// AboveInputTokens A prompt longer than this many input tokens is priced at these rates, for the whole request.
+	AboveInputTokens int64 `json:"above_input_tokens"`
+
+	// Rates By meter.
+	Rates map[string]PriceRate `json:"rates"`
+}
+
+// PricedEntry defines model for PricedEntry.
+type PricedEntry struct {
+	ChargedRates *map[string]PriceRate `json:"charged_rates,omitempty"`
+	ChargedTiers *[]PriceTier          `json:"charged_tiers,omitempty"`
+	Free         *bool                 `json:"free,omitempty"`
+	Local        *bool                 `json:"local,omitempty"`
+
+	// MarkupBps The markup it is sold at.
+	MarkupBps int64 `json:"markup_bps"`
+
+	// Rates The vendor's rates.
+	Rates *map[string]PriceRate `json:"rates,omitempty"`
+	Tiers *[]PriceTier          `json:"tiers,omitempty"`
+
+	// Version The change that wrote it. Absent for the change previewed.
+	Version *string `json:"version,omitempty"`
+}
+
 // Provider defines model for Provider.
 type Provider struct {
 	// Benchmark What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it.
@@ -7951,6 +8244,53 @@ type TurnStatsBucket struct {
 	TtsTtfbP50Ms    *float64 `json:"tts_ttfb_p50_ms,omitempty"`
 	TtsTtfbP95Ms    *float64 `json:"tts_ttfb_p95_ms,omitempty"`
 	TurnCount       int64    `json:"turn_count"`
+}
+
+// UpcomingPriceEntry defines model for UpcomingPriceEntry.
+type UpcomingPriceEntry struct {
+	// ChargedMarkupBps The markup the entry is sold at: its own, else the list's.
+	ChargedMarkupBps int64 `json:"charged_markup_bps"`
+
+	// ChargedRates What customers are charged: each rate with the markup added, to 12 significant digits.
+	ChargedRates *map[string]PriceRate `json:"charged_rates,omitempty"`
+
+	// ChargedTiers What customers are charged for long prompts.
+	ChargedTiers *[]PriceTier `json:"charged_tiers,omitempty"`
+
+	// EffectiveAt When the entry took effect, or takes effect.
+	EffectiveAt *time.Time `json:"effective_at,omitempty"`
+
+	// Free The vendor charges nothing for it.
+	Free *bool `json:"free,omitempty"`
+
+	// Local The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+	Local *bool `json:"local,omitempty"`
+
+	// MarkupBps The entry's own markup in basis points, replacing the list's. Absent takes the list's.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+
+	// Modality Such as llm, stt, tts, sms or phone.
+	Modality string `json:"modality"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// Rates The vendor's rates, by meter.
+	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Reason The change's reason.
+	Reason string `json:"reason"`
+
+	// Tiers The vendor's rates for long prompts.
+	Tiers *[]PriceTier `json:"tiers,omitempty"`
+
+	// Version The price change that wrote the entry, which every row it prices names as its price_version.
+	Version *string `json:"version,omitempty"`
+
+	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
+	When *map[string]string `json:"when,omitempty"`
+
+	// Withdrawn The item under its when stops being priced at effective_at.
+	Withdrawn *bool `json:"withdrawn,omitempty"`
 }
 
 // UpdateScheduledTaskRequest defines model for UpdateScheduledTaskRequest.

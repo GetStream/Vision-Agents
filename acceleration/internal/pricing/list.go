@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -21,7 +22,9 @@ func keyOf(item Item) key { return key{item.Modality, item.Provider, item.Model}
 type List struct {
 	version string
 	entries map[key][]Entry
-	logger  *slog.Logger
+	// markup is the list's markup in basis points, added to every entry with none of its own.
+	markup int64
+	logger *slog.Logger
 	// warned is when each unpriced item was last logged, so a busy one is not logged on
 	// every row. It is logged again once unpricedEvery has passed, by now.
 	warned        sync.Map
@@ -30,12 +33,16 @@ type List struct {
 }
 
 // NewList checks the entries and returns the list they make. version names it on every
-// quote.
-func NewList(version string, entries []Entry, logger *slog.Logger) (*List, error) {
+// quote, and markupBps is added to every entry with no markup of its own: 0 sells at the
+// vendors' rates.
+func NewList(version string, entries []Entry, markupBps int64, logger *slog.Logger) (*List, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	list := &List{version: version, entries: map[key][]Entry{}, logger: logger, unpricedEvery: 10 * time.Minute, now: time.Now}
+	if !ValidMarkup(markupBps) {
+		return nil, fmt.Errorf("pricing: a list markup of %d basis points, outside 0 to %d", markupBps, MaxMarkupBps)
+	}
+	list := &List{version: version, entries: map[key][]Entry{}, markup: markupBps, logger: logger, unpricedEvery: 10 * time.Minute, now: time.Now}
 	for _, entry := range entries {
 		if err := validate(entry); err != nil {
 			return nil, err
@@ -90,6 +97,8 @@ func validateRates(entry Entry, rates map[Meter]Rate) error {
 			return fmt.Errorf("pricing: %s rates %s per %d units; a rate needs a unit", name(entry), meter, rate.Per)
 		case rate.USD < 0 || rate.Increment < 0 || rate.Minimum < 0:
 			return fmt.Errorf("pricing: %s rates %s below zero", name(entry), meter)
+		case math.IsNaN(rate.USD) || math.IsInf(rate.USD, 0) || rate.USD/float64(rate.Per) > MaxUSDPerUnit:
+			return fmt.Errorf("pricing: %s rates %s at more than $%d a unit", name(entry), meter, MaxUSDPerUnit)
 		}
 	}
 	return nil
@@ -144,12 +153,33 @@ func (l *List) Quote(item Item, used Quantities) Quote {
 	if !ok {
 		entry = Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model}
 	}
-	quote := entry.Quote(used)
+	quote := entry.quote(used, markupOf(entry, l.markup))
 	quote.Version = l.versionOf(entry, ok)
 	if quote.Unpriced {
 		l.warn(item)
 	}
 	return quote
+}
+
+// Quoted resells an amount the vendor quoted outright for the item, such as a number's
+// monthly rental, which no rate prices: the amount plus the markup the item's entry is sold
+// at, the list's when it has none of its own or no entry.
+func (l *List) Quoted(item Item, micros int64) Quote {
+	entry, _ := l.match(item)
+	markup := markupOf(entry, l.markup)
+	cost := roundHalfUp(marked(float64(micros), markup))
+	return Quote{
+		CostMicros:     cost,
+		BaseCostMicros: micros,
+		MarkupBps:      markup,
+		Version:        QuotedVersion,
+		Billable:       micros > 0,
+	}
+}
+
+// MarkupBps is the list's markup in basis points.
+func (l *List) MarkupBps() int64 {
+	return l.markup
 }
 
 // versionOf is what a quote at the entry names as its price: the change that wrote the
@@ -209,6 +239,16 @@ func (l *List) Entry(item Item) (Entry, bool) {
 		entry.MarkupBps = &markup
 	}
 	return entry, true
+}
+
+// Charged is the item's entry at the rates customers are charged under this list's markup,
+// which is what a customer is shown: never the vendor's rates.
+func (l *List) Charged(item Item) (Entry, bool) {
+	entry, ok := l.Entry(item)
+	if !ok {
+		return Entry{}, false
+	}
+	return Charged(entry, l.markup), true
 }
 
 // Unpriced is the items that are billable and have no rate: what a deployment should

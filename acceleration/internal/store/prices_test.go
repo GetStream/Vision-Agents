@@ -51,7 +51,7 @@ func (s *StoreSuite) activeList() (*pricing.List, []PriceEntry) {
 	for _, row := range active {
 		entries = append(entries, row.Entry())
 	}
-	list, err := pricing.NewList("database", entries, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("database", entries, 0, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	return list, active
 }

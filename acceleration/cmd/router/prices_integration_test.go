@@ -22,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
@@ -89,9 +90,17 @@ func (s *PriceSyncSuite) releasedAs(name string) {
 
 // startRouter loads the price files as a router's start does.
 func (s *PriceSyncSuite) startRouter(pgStore *store.Store) {
+	s.startPrices(s.ctx, pgStore, time.Hour)
+}
+
+// startPrices starts the price list as a router's start does, retrying a failed load every
+// retry, and reading the list again every hour, so only a retry's load reads it sooner.
+func (s *PriceSyncSuite) startPrices(ctx context.Context, pgStore *store.Store, retry time.Duration) *pricing.Active {
 	load, err := loadPriceFiles(s.settings)
 	s.Require().NoError(err)
-	startPriceSync(s.ctx, pgStore, load, time.Hour, s.logger)
+	fallback, err := newPrices(routing.Config{}, load, pricesVersion(s.settings), s.logger)
+	s.Require().NoError(err)
+	return startPrices(ctx, pgStore, routing.Config{}, fallback, load, true, retry, time.Hour, s.logger)
 }
 
 func (s *PriceSyncSuite) changes(pgStore *store.Store) []store.PriceChange {
@@ -266,19 +275,48 @@ func (s *PriceSyncSuite) TestAHeldPricesLockDoesNotKeepTheRouterFromServing() {
 	s.Require().NoError(err)
 	_, err = held.ExecContext(s.ctx, "SELECT pg_advisory_xact_lock(hashtextextended('router.prices', 0))")
 	s.Require().NoError(err)
-	load, err := loadPriceFiles(s.settings)
-	s.Require().NoError(err)
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
 	began := time.Now()
-	startPriceSync(ctx, pgStore, load, 200*time.Millisecond, s.logger)
+	active := s.startPrices(ctx, pgStore, 200*time.Millisecond)
 
 	s.Less(time.Since(began), 10*time.Second, "the start's load gave up on the lock")
 	s.Empty(s.changes(pgStore))
+	s.Error(active.Ready(), "the list is empty until the load")
 	s.Require().NoError(held.Rollback())
 	s.Eventually(func() bool { return len(s.changes(pgStore)) == 1 }, 15*time.Second, 100*time.Millisecond,
 		"the retry loads the list once the lock is let go")
+}
+
+// TestARouterWhoseFirstLoadLostTheLockGoesReadyRightAfterTheRetry: the start's load gives up on
+// a held lock and the list reads empty. Once the retry seeds it, the list is read again at once,
+// not an interval (here an hour) later.
+func (s *PriceSyncSuite) TestARouterWhoseFirstLoadLostTheLockGoesReadyRightAfterTheRetry() {
+	pgStore := s.started()
+	holder, err := store.Open(s.settings.Postgres.DSN)
+	s.Require().NoError(err)
+	defer holder.Close()
+	held, err := holder.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	_, err = held.ExecContext(s.ctx, "SELECT pg_advisory_xact_lock(hashtextextended('router.prices', 0))")
+	s.Require().NoError(err)
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+
+	active := s.startPrices(ctx, pgStore, 200*time.Millisecond)
+	s.Require().Error(active.Ready())
+	s.Require().NoError(held.Rollback())
+
+	s.Require().Eventually(func() bool { return len(s.changes(pgStore)) == 1 }, 15*time.Second, 20*time.Millisecond)
+	seeded := time.Now()
+	s.Eventually(func() bool { return active.Ready() == nil }, 2*time.Second, 10*time.Millisecond,
+		"ready right after the seed")
+	s.Less(time.Since(seeded), 2*time.Second)
+	s.NotEqual(prices.EmbeddedVersion("dev"), active.Quote(pricing.Item{Modality: prices.Vendor().Entries[0].Modality,
+		Provider: prices.Vendor().Entries[0].Provider, Model: prices.Vendor().Entries[0].Model,
+		Attributes: prices.Vendor().Entries[0].When}, pricing.Quantities{pricing.InputTokens: 1}).Version,
+		"priced from the database, not the files")
 }
 
 func (s *PriceSyncSuite) TestAFailedSyncIsRetried() {
@@ -290,12 +328,10 @@ func (s *PriceSyncSuite) TestAFailedSyncIsRetried() {
 	s.settings.Postgres.DSN = through.String()
 	pgStore := s.started()
 	forwarder.close()
-	load, err := loadPriceFiles(s.settings)
-	s.Require().NoError(err)
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	startPriceSync(ctx, pgStore, load, 100*time.Millisecond, s.logger)
+	s.startPrices(ctx, pgStore, 100*time.Millisecond)
 	s.Empty(s.directChanges(upstream.String()), "the database could not be reached")
 	forwarder.open()
 

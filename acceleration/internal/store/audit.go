@@ -49,9 +49,12 @@ const (
 	AuditUpdated = "updated"
 	AuditDeleted = "deleted"
 	AuditSynced  = "synced"
+	// AuditCancelled is a scheduled price change called off before it took effect
+	// (20261110140000_audit_log_cancelled.sql).
+	AuditCancelled = "cancelled"
 )
 
-var auditActions = []string{AuditCreated, AuditUpdated, AuditDeleted, AuditSynced}
+var auditActions = []string{AuditCreated, AuditUpdated, AuditDeleted, AuditSynced, AuditCancelled}
 
 // Which client made it (AuditEntry.Source), from X-Stream-Client.
 const (

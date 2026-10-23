@@ -114,6 +114,15 @@ const (
 	codeConcurrencyLimited      = "concurrency_limited"
 	codeModelFailed             = "model_failed"
 	codeImageUnavailable        = "image_unavailable"
+	// The price list's management operations (price_lists.go).
+	codeInvalidPrice         = "invalid_price"
+	codeConfirmationRequired = "confirmation_required"
+	codeIdempotencyKeyReused = "idempotency_key_reused"
+	codePriceChangeInForce   = "price_change_in_force"
+	codePriceChangeNotFound  = "price_change_not_found"
+	codePriceChangeExists    = "price_change_exists"
+	codePriceListNotSeeded   = "price_list_not_seeded"
+	codePriceListBusy        = "price_list_busy"
 )
 
 // APIError is a failure an operation answers with on purpose: its type decides the

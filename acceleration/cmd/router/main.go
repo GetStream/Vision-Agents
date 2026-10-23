@@ -474,10 +474,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	prices, err := newPrices(capabilities, priceFiles, pricesVersion(settings), logger)
+	fallbackPrices, err := newPrices(capabilities, priceFiles, pricesVersion(settings), logger)
 	if err != nil {
 		return err
 	}
+	// Without a database the price files are the price list; with one they only seed it.
+	var prices pricing.Pricer = fallbackPrices
 
 	// Traces go nowhere unless the deployment names a collector in the environment, so
 	// this is a no-op on a laptop and on every deployment that has not asked for them.
@@ -508,13 +510,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Postgres and Redis are optional so the API can be brought up for inspection before
 	// the data stores exist. /health reports what is missing.
 	var pgStore *store.Store
+	var activePrices *pricing.Active
 	if settings.Postgres.DSN != "" {
 		pgStore, err = openStore(ctx, settings)
 		if err != nil {
 			return err
 		}
 		defer pgStore.Close()
-		startPriceSync(ctx, pgStore, priceFiles, priceRetry, logger)
+		activePrices = startPrices(ctx, pgStore, capabilities, fallbackPrices, priceFiles, settings.PricesFile != "",
+			priceRetry, priceReload, logger)
+		prices = activePrices
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
 	}
@@ -1135,6 +1140,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	options := api.Options{
 		Routers:               routers,
 		Pricer:                prices,
+		Prices:                activePrices,
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
@@ -1645,7 +1651,7 @@ func buildSessions(
 	stream *streamapp.Clients,
 	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
-	prices *pricing.List,
+	prices pricing.Pricer,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1806,9 +1812,10 @@ func buildVoices(
 	})
 }
 
-// newPrices is the price list every row this process records is priced by: the price files
-// the router loads (the deployment's own over the embedded vendor.json), at the vendors'
-// rates, with the models the routing config runs itself marked local. A price: block in the
+// newPrices is the price list of the price files the router loads (the deployment's own over
+// the embedded vendor.json), at the vendors' rates with no markup, with the models the
+// routing config runs itself marked local: every row is priced by it on a router with no
+// database, and until the database is read on one with. A price: block in the
 // routing config is no longer read, which is said at start, and so is billable work the
 // list has no price for, so it can be priced before a row of it is recorded at nothing.
 func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
@@ -1817,7 +1824,7 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
 			"providers", ignored)
 	}
-	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
+	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), 0, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1827,13 +1834,30 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 	return list, nil
 }
 
+// newActivePrices is the price list every row is priced by on a router with a database: the
+// one in force in it, read every interval and at each scheduled change, with the models the
+// routing config runs itself marked local. Until a read answers any entry it prices with
+// fallback, which has no markup, so a deployment with its own price file (requireEntries)
+// reports not ready until then rather than serve on it.
+func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities routing.Config, fallback *pricing.List,
+	requireEntries bool, interval time.Duration, logger *slog.Logger) *pricing.Active {
+	return pricing.NewActive(ctx, pricing.ActiveOptions{
+		Source:         pgStore.PriceSource(),
+		Fallback:       fallback,
+		Local:          routing.LocalItems(capabilities),
+		Interval:       interval,
+		RequireEntries: requireEntries,
+		Logger:         logger,
+	})
+}
+
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a
 // number, so a deployment without them still lists vendors and searches for numbers, and
 // the operations that need them say so.
 func buildPhone(
 	settings config.Config,
 	vendorConfig phone.Config,
-	prices *pricing.List,
+	prices pricing.Pricer,
 	pgStore *store.Store,
 	liveClient *live.Client,
 	usageWriter *routing.Writer,

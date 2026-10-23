@@ -48,7 +48,7 @@ func (s *RoutingSuite) TestAServiceTierThePriceListDoesNotNameIsPricedAtTheDefau
 		PerMillionInputTokens: 2,
 		ServiceTiers:          map[string]float64{"flex": 0.5},
 	}}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
+	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0, nil)
 	s.Require().NoError(err)
 	used := row(LLM, provider, Stat{Usage: Usage{InputTokens: 1_000_000}}).Quantities()
 
@@ -61,7 +61,7 @@ func (s *RoutingSuite) TestATierThePriceListDoesNotNameIsLoggedOnce() {
 		PerMillionInputTokens: 2,
 		ServiceTiers:          map[string]float64{"flex": 0.5},
 	}}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
+	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0, nil)
 	s.Require().NoError(err)
 	logs := &bytes.Buffer{}
 	// Its writer runs no stage, so every stat stays in the queue rather than being written.
@@ -178,7 +178,7 @@ func (s *RoutingSuite) TestADefaultListTakesTheConfigsOwnRateThenTheVendorFile()
 
 func (s *RoutingSuite) TestACustomersOwnModelIsPricedFromItsOwnConfig() {
 	own := ProviderConfig{Provider: CustomProvider, Model: "mine", Price: Price{PerMillionInputTokens: 1, PerMillionOutputTokens: 2}}
-	list, err := pricing.NewList("config", nil, nil)
+	list, err := pricing.NewList("config", nil, 0, nil)
 	s.Require().NoError(err)
 
 	quote := quoted(list, LLM, own, Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000})
@@ -191,7 +191,7 @@ func (s *RoutingSuite) TestACustomersOwnModelIsPricedFromItsOwnConfig() {
 
 func (s *RoutingSuite) TestACustomersOwnModelWithNoRatesIsFree() {
 	logs := &bytes.Buffer{}
-	list, err := pricing.NewList("config", nil, slog.New(slog.NewTextHandler(logs, nil)))
+	list, err := pricing.NewList("config", nil, 0, slog.New(slog.NewTextHandler(logs, nil)))
 	s.Require().NoError(err)
 
 	quote := quoted(list, LLM, ProviderConfig{Provider: CustomProvider, Model: "mine"}, Usage{InputTokens: 1_000, OutputTokens: 1_000})
@@ -208,7 +208,7 @@ func (s *RoutingSuite) TestARowPricesTheMetersItStores() {
 		PerMillionCacheWriteInputTokens: 2.5,
 		PerMegapixel:                    0.02,
 	}}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
+	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0, nil)
 	s.Require().NoError(err)
 
 	request := row(LLM, provider, Stat{
@@ -303,7 +303,7 @@ func (s *RoutingSuite) TestCostPricesASearchByTheRequest() {
 // costOf is what a row with that usage costs on a provider with that price.
 func (s *RoutingSuite) costOf(price Price, usage Usage) int64 {
 	provider := ProviderConfig{Provider: "vendor", Model: "model", Price: price}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}),
+	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 	return quoted(list, LLM, provider, usage).CostMicros

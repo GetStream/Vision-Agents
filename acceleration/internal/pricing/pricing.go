@@ -152,22 +152,41 @@ type Entry struct {
 	Version string `json:"version,omitempty"`
 }
 
+// QuotedVersion is the version of a quote for an amount the vendor quoted outright, such as
+// a number's monthly rental: no entry of the list priced it, only its markup.
+const QuotedVersion = "quoted"
+
 // Quote is what one unit of work costs, in millionths of a dollar, and the price list
 // version that priced it. Billable is false for free and local work, which counts toward
 // no spend; Unpriced is billable work no rate priced.
 type Quote struct {
-	CostMicros       int64
+	// CostMicros is what the work is charged: its cost at the vendor's rates plus the
+	// markup, rounded once.
+	CostMicros int64
+	// OutputCostMicros is the share of CostMicros the generated tokens cost, markup included.
 	OutputCostMicros int64
-	Version          string
-	Billable         bool
-	Unpriced         bool
+	// BaseCostMicros is the cost at the vendor's rates, before any markup, so the margin on a
+	// row is CostMicros - BaseCostMicros.
+	BaseCostMicros int64
+	// MarkupBps is the markup CostMicros carries, in basis points.
+	MarkupBps int64
+	Version   string
+	Billable  bool
+	Unpriced  bool
 }
 
 // Pricer prices units of work.
 type Pricer interface {
 	Quote(item Item, used Quantities) Quote
+	// Quoted resells an amount the vendor quoted outright for the item: the amount plus the
+	// item's markup, versioned QuotedVersion.
+	Quoted(item Item, micros int64) Quote
 	Billable(item Item) bool
+	// Entry is the item's entry at the vendor's rates.
 	Entry(item Item) (Entry, bool)
+	// Charged is the item's entry at the rates customers are charged: Charged of Entry
+	// with the list's markup.
+	Charged(item Item) (Entry, bool)
 }
 
 // priced reports whether the entry has a rate above zero.
@@ -193,9 +212,30 @@ func (e Entry) Billable() bool {
 	return e.priced() || (!e.Free && !e.Local)
 }
 
-// Quote prices used at this entry's rates. It is how an item whose price travels with it,
-// such as a customer's own model, is priced without a list; a List matches the entry first.
+// Quote prices used at this entry's rates, plus its own markup when it has one. It is how an
+// item whose price travels with it, such as a customer's own model, is priced without a list;
+// a List matches the entry first and adds its markup to an entry with none of its own.
 func (e Entry) Quote(used Quantities) Quote {
+	return e.quote(used, markupOf(e, 0))
+}
+
+// markupOf is the markup an entry is sold at under a list with listMarkupBps: its own when it
+// has one, else the list's.
+func markupOf(entry Entry, listMarkupBps int64) int64 {
+	if entry.MarkupBps != nil {
+		return *entry.MarkupBps
+	}
+	return listMarkupBps
+}
+
+// marked is micros with a markup of markupBps added, unrounded.
+func marked(micros float64, markupBps int64) float64 {
+	return micros * float64(10_000+markupBps) / 10_000
+}
+
+// quote prices used at this entry's rates and adds markupBps once, to the unrounded sum, so
+// the markup never multiplies a rounding.
+func (e Entry) quote(used Quantities, markupBps int64) Quote {
 	if !e.priced() {
 		billable := !e.Free && !e.Local
 		return Quote{Billable: billable, Unpriced: billable}
@@ -226,10 +266,12 @@ func (e Entry) Quote(used Quantities) Quote {
 			outputMicros += cost
 		}
 	}
-	cost := roundHalfUp(micros)
+	cost := roundHalfUp(marked(micros, markupBps))
 	return Quote{
 		CostMicros:       cost,
-		OutputCostMicros: min(roundHalfUp(outputMicros), cost),
+		OutputCostMicros: min(roundHalfUp(marked(outputMicros, markupBps)), cost),
+		BaseCostMicros:   roundHalfUp(micros),
+		MarkupBps:        markupBps,
 		Billable:         true,
 	}
 }
@@ -253,6 +295,12 @@ func split(used Quantities) Quantities {
 		delete(kept, OutputTokens)
 	}
 	return kept
+}
+
+// RateOf is the rate a meter is priced at among rates: its own, or the one its fallback
+// leads to, as a cached token with no rate of its own costs a fresh one.
+func RateOf(rates map[Meter]Rate, meter Meter) (Rate, bool) {
+	return rateOf(rates, meter)
 }
 
 // rateOf is the meter's rate, or the one its fallback leads to.

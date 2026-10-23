@@ -337,6 +337,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerDLC(api)
 	s.registerSuspensions(api)
 	s.registerManage(api)
+	s.registerPriceLists(api)
 	return api
 }
 

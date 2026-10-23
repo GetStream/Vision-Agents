@@ -91,7 +91,11 @@ func (f File) check() error {
 			return fmt.Errorf("%s sets a version, which only the price list's changes have", Name(entry))
 		}
 	}
-	_, err := pricing.NewList("check", f.Entries, slog.New(slog.DiscardHandler))
+	var markup int64
+	if f.MarkupBps != nil {
+		markup = *f.MarkupBps
+	}
+	_, err := pricing.NewList("check", f.Entries, markup, slog.New(slog.DiscardHandler))
 	return err
 }
 
@@ -133,19 +137,7 @@ func Merge(files ...File) []pricing.Entry {
 // WithLocal marks the items a deployment runs itself: each of their entries is local, and an
 // item with none gets one with no rate, so its work is free rather than unpriced.
 func WithLocal(entries []pricing.Entry, local []pricing.Item) []pricing.Entry {
-	marked := slices.Clone(entries)
-	for _, item := range local {
-		found := false
-		for i := range marked {
-			if marked[i].Modality == item.Modality && marked[i].Provider == item.Provider && marked[i].Model == item.Model {
-				marked[i].Local, found = true, true
-			}
-		}
-		if !found {
-			marked = append(marked, pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Local: true})
-		}
-	}
-	return marked
+	return pricing.WithLocal(entries, local)
 }
 
 // EmbeddedVersion is the version a list built from the embedded vendor.json names on every
@@ -158,7 +150,7 @@ func EmbeddedVersion(release string) string {
 }
 
 // Embedded is the price list of the vendor list embedded in the binary, at the vendors'
-// rates, with the items the deployment runs itself marked local.
+// rates with no markup, with the items the deployment runs itself marked local.
 func Embedded(local []pricing.Item, release string, logger *slog.Logger) (*pricing.List, error) {
-	return pricing.NewList(EmbeddedVersion(release), WithLocal(Vendor().Entries, local), logger)
+	return pricing.NewList(EmbeddedVersion(release), WithLocal(Vendor().Entries, local), 0, logger)
 }
