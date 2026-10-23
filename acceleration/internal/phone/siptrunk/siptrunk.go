@@ -74,6 +74,9 @@ func newProvider(options Options, dial dialer) *Provider {
 	return &Provider{dial: dial, logger: options.Logger, ctx: ctx, stop: stop, calls: map[string]call{}}
 }
 
+// StreamLeg is the number's own line, with the call id on the leg.
+func (p *Provider) StreamLeg() phone.StreamLeg { return phone.StreamLegShared }
+
 // Dial starts the call and returns before anyone answers, as every vendor's API does. What
 // happens after, including a call that never connects, is in the logs under its
 // vendor_call_id.

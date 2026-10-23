@@ -1,6 +1,7 @@
 package sipbridge
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -258,6 +259,21 @@ func TestA2xxCrossingOurCancelWithAnOfferIsACKedWithAnAnswerThatRejectsIt(t *tes
 		"a=rtpmap:8 PCMA/8000\r\n"+
 		"a=ptime:20\r\n"+
 		"a=inactive\r\n", string(ack))
+}
+
+func TestDialGivesTheCallIDToTheStreamLegOnly(t *testing.T) {
+	ua, err := sipgo.NewUA()
+	require.NoError(t, err)
+	t.Cleanup(func() { ua.Close() })
+	client, err := sipgo.NewClient(ua)
+	require.NoError(t, err)
+	cfg := Config{Call: CallParams{From: "+15550000301", To: "+15550000302", CallID: "abc"}, Logger: slog.New(slog.DiscardHandler)}
+	uri := sip.Uri{User: "+15550000301", Host: "sip.test"}
+
+	customer, stream := newLegs(cfg, client, client, uri, uri)
+
+	require.Equal(t, "abc", stream.newInvite(nil).GetHeader(CallIDHeader).Value())
+	require.Nil(t, customer.newInvite(nil).GetHeader(CallIDHeader))
 }
 
 func TestTheStreamInviteCarriesTheCallID(t *testing.T) {

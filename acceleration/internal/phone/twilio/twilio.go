@@ -343,6 +343,9 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 	return p.do(ctx, http.MethodPost, p.baseURL, path, nil, form, nil)
 }
 
+// StreamLeg is the number's own line, with the call id on the leg.
+func (p *Provider) StreamLeg() phone.StreamLeg { return phone.StreamLegShared }
+
 // Dial places a call and bridges the answered leg into the Stream trunk. Stream's SIP is
 // inbound only, so the vendor originates and the agent is already waiting on the trunk.
 //

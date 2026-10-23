@@ -365,6 +365,10 @@ func (s *TwilioSuite) TestDiallingOutBridgesTheAnsweredCallIntoTheTrunk() {
 	s.Equal("queued", placed.Status)
 }
 
+func (s *TwilioSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
 func (s *TwilioSuite) TestTheTrunkLegCarriesTheCallID() {
 	s.answer(`{"sid":"CA1","status":"queued"}`)
 

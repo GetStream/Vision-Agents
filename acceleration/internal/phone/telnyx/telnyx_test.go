@@ -232,6 +232,10 @@ func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
 	s.Equal("queued", placed.Status)
 }
 
+func (s *TelnyxSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
 func (s *TelnyxSuite) TestTheTrunkLegCarriesTheCallID() {
 	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
 	placing := s.outbound()

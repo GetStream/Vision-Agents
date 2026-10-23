@@ -168,6 +168,10 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	s.Equal(want, got)
 }
 
+func (s *SIPTrunkSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
 func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheCallID() {
 	placing := outbound()
 	placing.CallID = "abc"
