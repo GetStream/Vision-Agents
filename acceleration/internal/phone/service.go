@@ -676,7 +676,9 @@ type Placed struct {
 // Stream's SIP is inbound only, so the vendor originates the call and connects it to a
 // trunk, rather than Stream dialling out. The trunk alone is not enough: without a routing
 // rule the answered leg arrives with nothing pointing it at a call, so this creates both and
-// pins the rule to the call the agent is waiting in, the way Transfer does.
+// pins the rule to the call the agent is waiting in, the way Transfer does. A vendor that
+// names the call on its leg goes out on the number's shared line instead, since Stream lets a
+// number be on one trunk only.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
 	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
 		return Placed{}, err
@@ -742,42 +744,59 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 	callID, callType := sessionID, defaultCallType
 
-	trunkID, bridge, err := stream.CreateTrunk(ctx, Trunk{
-		Name:       "call-" + callID,
-		Numbers:    []string{request.From},
-		AllowedIPs: allowedIPs,
-	})
+	line, shared, err := s.sharedLine(ctx, stream, pin, provider, held)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
-
-	var routeID string
+	var trunkID, routeID string
 	committed := false
-	defer func() {
-		if committed {
-			return
+	if shared {
+		// The number's rule names no call, so the call and what the agent reads on it are
+		// made here, before the leg arrives.
+		if len(request.Custom) > 0 {
+			if err := stream.CreateCall(ctx, callType, callID, request.Custom); err != nil {
+				return Placed{}, err
+			}
 		}
-		// Roll back what this call created but never placed, so a call that did not
-		// start does not leave a billable Stream trunk behind. Best-effort: a cleanup
-		// error is logged, never returned, so it cannot mask the real failure.
-		s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a call that did not place")
-	}()
+		trunkID, routeID = line.TrunkID, line.RouteID
+		outbound.Bridge, outbound.CallID = line.Bridge, callID
+	} else {
+		var bridge Bridge
+		trunkID, bridge, err = stream.CreateTrunk(ctx, Trunk{
+			Name:       "call-" + callID,
+			Numbers:    []string{request.From},
+			AllowedIPs: allowedIPs,
+		})
+		if err != nil {
+			return Placed{}, stack.Wrap(err)
+		}
 
-	routeID, err = stream.CreateRoute(ctx, Route{
-		Name:          "call-" + callID,
-		TrunkIDs:      []string{trunkID},
-		CalledNumbers: []string{request.From},
-		CallID:        callID,
-		CallType:      callType,
-		Custom:        request.Custom,
-	})
-	if err != nil {
-		return Placed{}, stack.Wrap(err)
-	}
+		defer func() {
+			if committed {
+				return
+			}
+			// Roll back what this call created but never placed, so a call that did not
+			// start does not leave a billable Stream trunk behind. Best-effort: a cleanup
+			// error is logged, never returned, so it cannot mask the real failure.
+			s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a call that did not place")
+		}()
 
-	outbound.Bridge, err = bridge.WithNumber(request.From)
-	if err != nil {
-		return Placed{}, stack.Wrap(err)
+		routeID, err = stream.CreateRoute(ctx, Route{
+			Name:          "call-" + callID,
+			TrunkIDs:      []string{trunkID},
+			CalledNumbers: []string{request.From},
+			CallID:        callID,
+			CallType:      callType,
+			Custom:        request.Custom,
+		})
+		if err != nil {
+			return Placed{}, stack.Wrap(err)
+		}
+
+		outbound.Bridge, err = bridge.WithNumber(request.From)
+		if err != nil {
+			return Placed{}, stack.Wrap(err)
+		}
 	}
 	if err := outbound.Validate(); err != nil {
 		return Placed{}, stack.Wrap(err)
@@ -798,10 +817,30 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 	}
 
+	resource := &store.CallResource{
+		TrunkID:     trunkID,
+		RouteID:     routeID,
+		CallType:    callType,
+		CallID:      callID,
+		CustomerID:  request.Owner.CustomerID,
+		StreamAppPK: pin,
+		Shared:      shared,
+	}
+	// A shared line outlives the call, so its row costs nothing to undo when the dial fails,
+	// and the call's app (CallPin) is known before its leg arrives.
+	if shared {
+		if err := s.store.RecordCallResource(ctx, resource); err != nil {
+			return Placed{}, stack.Wrap(err)
+		}
+	}
+
 	dialed, err := routing.Call(ctx, s.dialMeter(held.Vendor, request.Owner), func(ctx context.Context) (Dialed, error) {
 		return provider.Dial(ctx, outbound)
 	})
 	if err != nil {
+		if shared {
+			s.forgetCallResource(ctx, resource)
+		}
 		return Placed{}, stack.Wrap(err)
 	}
 
@@ -818,19 +857,14 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 	s.logger.Info("placed a phone call", append([]any{"session_id", sessionID,
 		"vendor_call_id", dialed.VendorCallID, "vendor", held.Vendor}, sites.logged()...)...)
-	if err := s.store.RecordCallResource(ctx, &store.CallResource{
-		TrunkID:     trunkID,
-		RouteID:     routeID,
-		CallType:    callType,
-		CallID:      callID,
-		CustomerID:  request.Owner.CustomerID,
-		StreamAppPK: pin,
-	}); err != nil {
-		// The call is placed and connecting; deleting its trunk now would drop a live
-		// call. A logged, rare leak beats that. session_ended cannot clean a trunk it
-		// has no row for, which is the cost of this failing.
-		s.logger.Error("could not record a call's trunk for cleanup; it may leak",
-			"trunk", trunkID, "call", callID, "error", err)
+	if !shared {
+		if err := s.store.RecordCallResource(ctx, resource); err != nil {
+			// The call is placed and connecting; deleting its trunk now would drop a live
+			// call. A logged, rare leak beats that. session_ended cannot clean a trunk it
+			// has no row for, which is the cost of this failing.
+			s.logger.Error("could not record a call's trunk for cleanup; it may leak",
+				"trunk", trunkID, "call", callID, "error", err)
+		}
 	}
 	s.recordPlaced(context.WithoutCancel(ctx), request.Owner.CustomerID, sessionID, dialed, held.Vendor, sites)
 	return Placed{
@@ -1019,6 +1053,9 @@ func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callTyp
 		return fmt.Errorf("phone: release call resources: %w", err)
 	}
 	for _, resource := range resources {
+		if resource.Shared {
+			continue
+		}
 		s.unwire(ctx, resource.CustomerID, resource.StreamAppPK, resource.RouteID, resource.TrunkID, "a call ended")
 	}
 	return nil
@@ -1071,6 +1108,33 @@ func (s *Service) allowlistFor(vendor string) ([]string, error) {
 	return trunkAllowlist(declared)
 }
 
+// sharedLine is the line a call from the number goes out on, or false when the call makes a
+// trunk and rule of its own: the vendor cannot name the call on its leg, there is no key to
+// seal a shared trunk's password with, or the number was attached before its password was
+// kept.
+func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, provider Provider, held store.PhoneNumber) (TrunkLine, bool, error) {
+	if StreamLegOf(provider) != StreamLegShared {
+		return TrunkLine{}, false, nil
+	}
+	line, err := s.line(ctx, stream, pin, held)
+	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) {
+		return TrunkLine{}, false, nil
+	}
+	if err != nil {
+		return TrunkLine{}, false, err
+	}
+	return line, true, nil
+}
+
+// forgetCallResource deletes the row of a leg on a shared line that was never placed.
+// Best-effort: a failure is logged, never returned, so it cannot mask the dial's own.
+func (s *Service) forgetCallResource(ctx context.Context, resource *store.CallResource) {
+	if err := s.store.DeleteCallResource(ctx, resource.CallType, resource.CallID, resource.TrunkID); err != nil {
+		s.logger.Error("could not delete the row of a leg that did not place",
+			"trunk", resource.TrunkID, "call", resource.CallID, "error", err)
+	}
+}
+
 // provider is the provider of a vendor name, which for sip_trunk is not in the registry.
 func (s *Service) provider(vendor string) (Provider, error) {
 	if vendor != SIPTrunkVendor {
@@ -1118,7 +1182,8 @@ type TransferRequest struct {
 // the human joins this conversation rather than whichever one their number would have
 // landed in. It is created per transfer because a trunk's password is only readable when
 // the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
-// making a second trunk.
+// making a second trunk. A vendor that names the call on its leg uses the number's shared
+// line instead.
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
 	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
 		return Dialed{}, err
@@ -1167,27 +1232,6 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(err)
 	}
 
-	trunkID, bridge, err := stream.CreateTrunk(ctx, Trunk{
-		Name:       "transfer-" + request.CallID,
-		Numbers:    []string{request.From},
-		AllowedIPs: allowedIPs,
-	})
-	if err != nil {
-		return Dialed{}, stack.Wrap(err)
-	}
-
-	var routeID string
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		// Roll back what this transfer created but never placed, so a transfer that did
-		// not start does not leave a billable Stream trunk behind. Best-effort: a cleanup
-		// error is logged, never returned, so it cannot mask the real failure.
-		s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a transfer that did not place")
-	}()
-
 	// Resolve the call type the same way CreateRoute does, so the row recorded below
 	// carries the concrete type that session_ended's call_cid will name. A transfer joins
 	// an existing call whose type was fixed at creation; storing the raw empty type would
@@ -1197,26 +1241,78 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		callType = defaultCallType
 	}
 
-	routeID, err = stream.CreateRoute(ctx, Route{
-		Name:          "transfer-" + request.CallID,
-		TrunkIDs:      []string{trunkID},
-		CalledNumbers: []string{request.From},
-		CallID:        request.CallID,
-		CallType:      callType,
-	})
+	line, shared, err := s.sharedLine(ctx, stream, request.StreamApp, provider, held)
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}
+	var trunkID, routeID string
+	var bridge Bridge
+	committed := false
+	if shared {
+		trunkID, routeID, bridge = line.TrunkID, line.RouteID, line.Bridge
+	} else {
+		trunkID, bridge, err = stream.CreateTrunk(ctx, Trunk{
+			Name:       "transfer-" + request.CallID,
+			Numbers:    []string{request.From},
+			AllowedIPs: allowedIPs,
+		})
+		if err != nil {
+			return Dialed{}, stack.Wrap(err)
+		}
 
-	bridge, err = bridge.WithNumber(request.From)
-	if err != nil {
-		return Dialed{}, stack.Wrap(err)
+		defer func() {
+			if committed {
+				return
+			}
+			// Roll back what this transfer created but never placed, so a transfer that did
+			// not start does not leave a billable Stream trunk behind. Best-effort: a cleanup
+			// error is logged, never returned, so it cannot mask the real failure.
+			s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a transfer that did not place")
+		}()
+
+		routeID, err = stream.CreateRoute(ctx, Route{
+			Name:          "transfer-" + request.CallID,
+			TrunkIDs:      []string{trunkID},
+			CalledNumbers: []string{request.From},
+			CallID:        request.CallID,
+			CallType:      callType,
+		})
+		if err != nil {
+			return Dialed{}, stack.Wrap(err)
+		}
+
+		bridge, err = bridge.WithNumber(request.From)
+		if err != nil {
+			return Dialed{}, stack.Wrap(err)
+		}
 	}
 
+	resource := &store.CallResource{
+		TrunkID:     trunkID,
+		RouteID:     routeID,
+		CallType:    callType,
+		CallID:      request.CallID,
+		CustomerID:  request.Owner.CustomerID,
+		StreamAppPK: request.StreamApp,
+		Shared:      shared,
+	}
+	if shared {
+		if err := s.store.RecordCallResource(ctx, resource); err != nil {
+			return Dialed{}, stack.Wrap(err)
+		}
+	}
+
+	outbound := Outbound{From: request.From, To: request.To, Bridge: bridge, Trunk: trunk}
+	if shared {
+		outbound.CallID = request.CallID
+	}
 	placed, err := routing.Call(ctx, s.dialMeter(held.Vendor, request.Owner), func(ctx context.Context) (Dialed, error) {
-		return provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge, Trunk: trunk})
+		return provider.Dial(ctx, outbound)
 	})
 	if err != nil {
+		if shared {
+			s.forgetCallResource(ctx, resource)
+		}
 		return Dialed{}, stack.Wrap(err)
 	}
 
@@ -1227,19 +1323,14 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
 		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
-	if err := s.store.RecordCallResource(ctx, &store.CallResource{
-		TrunkID:     trunkID,
-		RouteID:     routeID,
-		CallType:    callType,
-		CallID:      request.CallID,
-		CustomerID:  request.Owner.CustomerID,
-		StreamAppPK: request.StreamApp,
-	}); err != nil {
-		// The transfer leg is placed and connecting; deleting its trunk now would drop
-		// a live call. A logged, rare leak beats that. session_ended cannot clean a
-		// trunk it has no row for, which is the cost of this failing.
-		s.logger.Error("could not record a transfer's trunk for cleanup; it may leak",
-			"trunk", trunkID, "call", request.CallID, "error", err)
+	if !shared {
+		if err := s.store.RecordCallResource(ctx, resource); err != nil {
+			// The transfer leg is placed and connecting; deleting its trunk now would drop
+			// a live call. A logged, rare leak beats that. session_ended cannot clean a
+			// trunk it has no row for, which is the cost of this failing.
+			s.logger.Error("could not record a transfer's trunk for cleanup; it may leak",
+				"trunk", trunkID, "call", request.CallID, "error", err)
+		}
 	}
 	return placed, nil
 }

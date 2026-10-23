@@ -596,7 +596,11 @@ type stub struct {
 	// was told to take back.
 	ordered  int
 	released []string
+	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
+	leg StreamLeg
 }
+
+func (s *stub) StreamLeg() StreamLeg { return s.leg }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 	s.searched++

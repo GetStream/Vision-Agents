@@ -66,7 +66,7 @@ func (s *AppsSuite) SetupTest() {
 	s.customer = "customer-" + uuid.NewString()
 	s.e164 = aNumber()
 
-	vendor := &stub{vendor: "twilio"}
+	vendor := &stub{vendor: "twilio", leg: StreamLegShared}
 	s.vendor = vendor
 	registry := NewRegistry(s.config())
 	registry.Register(vendor.vendor, func() (Provider, error) { return vendor, nil })
@@ -1098,4 +1098,150 @@ func (s *AppsSuite) TestOneNumberLinedTwiceAtOnceIsOnItsTrunkOnce() {
 	s.Require().Len(trunks, 1)
 	s.Equal([]string{s.e164}, s.own.TrunkNumbers(trunks[0]))
 	s.Len(s.own.Rules(), 1)
+}
+
+// callFrom places a call from one of the suite customer's numbers.
+func (s *AppsSuite) callFrom(e164 string) (Placed, error) {
+	return s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
+	})
+}
+
+func (s *AppsSuite) TestTwoCallsFromOneNumberAtOncePlaceBoth() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+
+	_, first := s.callFrom(s.e164)
+	_, second := s.callFrom(s.e164)
+
+	s.Require().NoError(first)
+	s.Require().NoError(second, "Stream lets a number be on one trunk only")
+	s.Len(s.own.Trunks(), 1)
+}
+
+func (s *AppsSuite) TestACallFromAnAttachedNumberPlaces() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	_, err = s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	s.Equal([]string{attached.TrunkID}, s.own.Trunks())
+}
+
+func (s *AppsSuite) TestSixtyNumbersPlacingCallsStayUnderTheTrunkCap() {
+	s.ownApp()
+	s.sealed()
+	s.own.CapTrunks(25)
+	numbers := []string{s.e164}
+	for range 59 {
+		numbers = append(numbers, s.anotherNumber(s.customer, s.vendor.vendor))
+	}
+
+	for _, e164 := range numbers {
+		_, err := s.callFrom(e164)
+		s.Require().NoError(err)
+	}
+
+	s.Len(s.own.Trunks(), 2)
+}
+
+func (s *AppsSuite) TestACallsCustomIsOnItsStreamCall() {
+	s.ownApp()
+	s.sealed()
+	custom := map[string]string{"lead": "42"}
+
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111", Custom: custom,
+	})
+
+	s.Require().NoError(err)
+	made := s.own.Call(placed.CallType, placed.CallID)
+	s.Require().NotNil(made, "the call the leg lands in is made before it is dialled")
+	s.Equal(map[string]any{"lead": "42"}, made["data"].(map[string]any)["custom"])
+}
+
+func (s *AppsSuite) TestTheVendorIsGivenTheSessionAsTheCallID() {
+	s.sealed()
+
+	placed, err := s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	s.Equal(placed.SessionID, s.vendor.dialed.CallID)
+}
+
+func (s *AppsSuite) TestACallOnAVendorWithoutTheHeaderGetsATrunkOfItsOwn() {
+	plivo := s.numberOn("plivo")
+	s.sealed()
+
+	placed, err := s.callFrom(plivo)
+
+	s.Require().NoError(err)
+	s.Len(s.deployment.Trunks(), 1)
+	s.Equal([]string{placed.CallID}, s.pinnedCalls(), "the rule names the call, as the leg cannot")
+}
+
+func (s *AppsSuite) TestWithoutAKeyACallStillPlacesOnATrunkOfItsOwn() {
+	placed, err := s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	s.Len(s.deployment.Trunks(), 1)
+	s.Equal([]string{placed.CallID}, s.pinnedCalls())
+	s.Empty(s.vendor.dialed.CallID)
+}
+
+// pinnedCalls are the calls the deployment app's rules send their legs into.
+func (s *AppsSuite) pinnedCalls() []string {
+	var calls []string
+	for _, id := range s.deployment.Rules() {
+		calls = append(calls, s.deployment.Rule(id)["direct_routing_configs"].(map[string]any)["call_id"].(string))
+	}
+	return calls
+}
+
+func (s *AppsSuite) TestAFailedDialLeavesNoCallResource() {
+	s.sealed()
+	s.vendor.err = errors.New("the vendor refused")
+	session := uuid.NewString()
+
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111", SessionID: session,
+	})
+
+	s.Require().Error(err)
+	resources, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, defaultCallType, session)
+	s.Require().NoError(err)
+	s.Empty(resources)
+}
+
+func (s *AppsSuite) TestEndingASharedCallKeepsItsTrunk() {
+	s.sealed()
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.ReleaseCall(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID))
+
+	s.Len(s.deployment.Trunks(), 1, "the number's other calls use it")
+	s.Len(s.deployment.Rules(), 1)
+}
+
+func (s *AppsSuite) TestATransferFromANumberWithALiveCallPlaces() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+	placed, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+
+	_, err = s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550002222",
+		CallID: placed.CallID, CallType: placed.CallType, StreamApp: placed.StreamApp,
+	})
+
+	s.Require().NoError(err)
+	s.Len(s.own.Trunks(), 1)
+	s.Equal(placed.CallID, s.vendor.dialed.CallID, "the human joins the call the agent is on")
 }
