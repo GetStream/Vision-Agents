@@ -210,6 +210,48 @@ func (s *TelnyxChannelSuite) TestARetriedOccurrenceIsNotTextedTwice() {
 	s.Never(func() bool { return len(s.telnyx.sent()) > sent+1 }, dropped, 20*time.Millisecond)
 }
 
+// A reply the line refuses fails the run, which may be tried again; the retry sends the reply
+// the thread holds, without running the task again.
+func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry() {
+	task, _ := s.scheduledInThread("+13125550001")
+	sent := len(s.telnyx.sent())
+	s.telnyx.refuse(http.StatusUnprocessableEntity, nil)
+
+	run, _, err := s.deliverTask(task)
+
+	s.Require().Error(err)
+	s.Equal(scheduling.ReasonFailed, scheduling.ReasonOf(err))
+	var failure *scheduling.Failure
+	s.False(errors.As(err, &failure) && failure.Final, "final")
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("sms", deliveredTo)
+	s.Equal("Done.", s.took(sent + 1)[sent].text)
+	s.Equal(1, s.scheduledTurns())
+}
+
+// A person who texts STOP while the reply is being sent is texted nothing, and the run is
+// final: the line answers the first send 503, the STOP lands, and the bridge sends no more.
+func (s *TelnyxChannelSuite) TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried() {
+	person := "+13125550001"
+	task, _ := s.scheduledInThread(person)
+	sent := len(s.telnyx.sent())
+	s.telnyx.refuse(http.StatusServiceUnavailable, func() {
+		s.Require().NoError(s.store.OptOut(context.Background(), &store.OptOut{
+			CustomerID: task.CustomerID, Recipient: person, Channel: "sms", Source: "keyword",
+		}))
+	})
+
+	_, _, err := s.deliverTask(task)
+
+	s.failedAs(err, scheduling.ReasonUnreachable, true)
+	s.Equal(1, s.scheduledTurns())
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+}
+
 // A turn that fails texts nothing, and the run may be tried again.
 func (s *TelnyxChannelSuite) TestATaskWhoseTurnFailsTextsNothing() {
 	task, _ := s.scheduledInThread("+13125550001")

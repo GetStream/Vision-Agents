@@ -28,12 +28,14 @@ import (
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
+//	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
+//	                                                            refused: delivery_failed
 //	close the session it opened; let go of the lease
 //	delivered_to sms | whatsapp
 
 // deliverOnThread carries out an occurrence of a task made in a thread in that thread, and
-// answers where it landed once the agent's reply in the thread channel is finished: the bridge
-// sends it from there, off the delivery, as it sends any reply.
+// answers where it landed once the bridge sent the agent's reply: the delivery holds the reply
+// back from Bridge.Reply and sends it through the same path (Bridge.Send).
 func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery, channelID string) (string, string, error) {
 	if s.store == nil {
 		return "", "", errors.New("this router has no store to find a task's thread in")
@@ -80,13 +82,31 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 			}
 		}()
 	}
+	// The delivery sends the reply itself, to settle the run on whether it went out.
+	replies, release := s.channelBridge.Hold(delivery.CommandID)
+	defer release()
 	// A retried occurrence whose turn the thread already holds is a duplicate follow-up, which
-	// runs nothing (Session.FollowUp); its reply is read back.
+	// runs nothing (Session.FollowUp); its reply is read back, and sent unless it went out.
+	_, _, retried := found.FollowUpReply(delivery.CommandID)
 	if err := followUpWithin(turn, found, delivery); err != nil {
 		return "", "", err
 	}
-	if _, err := readBackReply(turn, found, delivery.CommandID); err != nil {
+	text, err := readBackReply(turn, found, delivery.CommandID)
+	if err != nil {
 		return "", "", err
+	}
+	reply := conversation.FinishedReply{Customer: delivery.CustomerID, CID: chatlog.ChannelType + ":" + thread.ChannelID,
+		MessageID: found.FollowUpMessage(delivery.CommandID), CommandID: delivery.CommandID, Text: text}
+	if !retried {
+		// The reply as the conversation stored it, with its files.
+		select {
+		case reply = <-replies:
+		case <-turn.Done():
+			return "", "", turn.Err()
+		}
+	}
+	if err := s.channelBridge.Send(reply); err != nil {
+		return "", "", threadUnreachable(err)
 	}
 	return personalThreads[thread.ConnectorID], found.ID(), nil
 }

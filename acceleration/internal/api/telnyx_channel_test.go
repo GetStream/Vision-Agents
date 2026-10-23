@@ -538,6 +538,17 @@ type fakeTelnyx struct {
 
 	mu       sync.Mutex
 	messages []telnyxMessage
+	// refusals are the statuses the next sends are answered with instead of being taken;
+	// refused, when set, is called as each is answered.
+	refusals []int
+	refused  func()
+}
+
+// refuse has the fake answer the next send with status, calling then as it does.
+func (f *fakeTelnyx) refuse(status int, then func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refusals, f.refused = append(f.refusals, status), then
 }
 
 // telnyxMessage is one message the fake took.
@@ -573,6 +584,16 @@ func (f *fakeTelnyx) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	if len(f.refusals) > 0 {
+		status, then := f.refusals[0], f.refused
+		f.refusals = f.refusals[1:]
+		f.mu.Unlock()
+		if then != nil {
+			then()
+		}
+		w.WriteHeader(status)
+		return
+	}
 	f.messages = append(f.messages, telnyxMessage{from: sent.From, to: sent.To, text: sent.Text, authorization: r.Header.Get("Authorization")})
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")

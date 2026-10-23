@@ -663,6 +663,15 @@ func (s *Session) FollowUpReply(id string) (state, text string, known bool) {
 	return s.persisted.FollowUpReply(id)
 }
 
+// FollowUpMessage is the id of the reply to the follow-up under id, or "" when the
+// conversation holds no such follow-up.
+func (s *Session) FollowUpMessage(id string) string {
+	if s.persisted == nil {
+		return ""
+	}
+	return s.persisted.FollowUpMessage(id)
+}
+
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering
 // it. It is for an agent that leaves text to dispatch: the end user's message is recorded
 // and shown as being answered, and the model answers once the server calls RespondCommand

@@ -194,6 +194,8 @@ type Bridge struct {
 	working sync.WaitGroup
 	mu      sync.Mutex
 	turns   map[string]*holder
+	// held are the replies callers send themselves (Hold), by the command they answer.
+	held map[string]chan conversation.FinishedReply
 }
 
 // New validates the options and returns a Bridge.
@@ -224,6 +226,7 @@ func New(options Options) (*Bridge, error) {
 		gate:       options.Gate,
 		logger:     logger,
 		turns:      map[string]*holder{},
+		held:       map[string]chan conversation.FinishedReply{},
 	}, nil
 }
 
@@ -321,6 +324,14 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 // may have posted it. It runs off the caller, which is the conversation's writer; a reply it
 // cannot send is logged.
 func (b *Bridge) Reply(reply conversation.FinishedReply) {
+	b.mu.Lock()
+	held, holding := b.held[reply.CommandID]
+	delete(b.held, reply.CommandID)
+	b.mu.Unlock()
+	if holding {
+		held <- reply
+		return
+	}
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
@@ -329,6 +340,30 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
+}
+
+// Hold hands the reply that answers commandID to the caller instead of sending it, so the
+// caller sends it (Send) and learns whether it went out, as a scheduled task's delivery
+// records. release stops holding it.
+func (b *Bridge) Hold(commandID string) (replies <-chan conversation.FinishedReply, release func()) {
+	held := make(chan conversation.FinishedReply, 1)
+	b.mu.Lock()
+	b.held[commandID] = held
+	b.mu.Unlock()
+	return held, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.held[commandID] == held {
+			delete(b.held, commandID)
+		}
+	}
+}
+
+// Send sends a reply as Reply does, on the caller, and answers why it did not go out:
+// ErrOptedOut or ErrHeldBack, the provider refusing it, or the store failing. A reply sent
+// already is nil.
+func (b *Bridge) Send(reply conversation.FinishedReply) error {
+	return b.reply(reply)
 }
 
 // reply finds the thread a finished reply is in, claims it, and sends it, again on a failure
