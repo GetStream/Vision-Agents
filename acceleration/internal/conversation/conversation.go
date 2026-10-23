@@ -327,6 +327,8 @@ type FinishedReply struct {
 	Customer  string
 	CID       string
 	MessageID string
+	// CommandID is the command or follow-up the reply answers, if any (Message.CommandID).
+	CommandID string
 	Text      string
 	// Files are what the agent's own code made for the reply (Message.Files), stored in
 	// Stream Chat, which the bridge sends on as links (T62a, AI-921).
@@ -1935,8 +1937,8 @@ func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 		!c.thread {
 		return FinishedReply{}, false
 	}
-	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,
-		Files: append([]sandbox.Attachment(nil), m.Files...)}, true
+	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, CommandID: m.CommandID,
+		Text: m.Text, Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
 
 // retire takes a conversation released retireAfter ago, with nothing left to write, out of

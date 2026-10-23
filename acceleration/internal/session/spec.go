@@ -57,8 +57,11 @@ type Spec struct {
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.
 	// Only the Router sets them (api.threadSession); a Slack or Linq thread has neither.
-	ThreadPerson     string
-	ThreadChannel    string
+	ThreadPerson  string
+	ThreadChannel string
+	// ThreadDelivery is the channel the thread reaches its person on, sms or whatsapp: where
+	// the tasks they schedule there are delivered (api.personalThreads).
+	ThreadDelivery   string
 	ContextTruncated bool
 	// CallID is the call the agent is on while voice is started: agent:<ID>, which joining
 	// creates, unless the caller named a call of its own. Empty while the conversation is

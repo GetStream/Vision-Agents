@@ -801,7 +801,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// A model that runs the tool calls its test queued in the suite's schedulingScript,
 	// one call per person who speaks, for the scheduling tools' tests.
 	reasoning.Register("scheduling", func(routing.Spec) (llmrouter.Provider, error) {
-		model := &schedulingModel{script: &s.schedulingScript}
+		model := &schedulingModel{script: &s.schedulingScript, failing: s.schedulingScript.failingTurns()}
 		s.scheduledMu.Lock()
 		s.scheduled = append(s.scheduled, model)
 		s.scheduledMu.Unlock()
