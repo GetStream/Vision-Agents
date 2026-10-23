@@ -5,8 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	kms "cloud.google.com/go/kms/apiv1"
+	"cloud.google.com/go/kms/apiv1/kmspb"
+	"google.golang.org/api/option"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // kekAADFormat is the additional authenticated data a key of version n is wrapped with,
@@ -25,16 +30,52 @@ type kekUnwrapper interface {
 	Unwrap(ctx context.Context, ciphertext, aad []byte) ([]byte, error)
 }
 
-// newKEKUnwrapper is the unwrapper for the KMS key auth.kms_key names, or nil when it is
-// unset.
-func newKEKUnwrapper(_ context.Context, settings config.Config) (kekUnwrapper, error) {
-	if settings.Auth.KMSKey == "" {
-		return nil, nil
+// kmsClientOptions are added to the options of the KMS client the router opens: none in the
+// binary, which reaches Cloud KMS with Application Default Credentials. A test points them at
+// a fake server.
+var kmsClientOptions []option.ClientOption
+
+// cloudKMS unwraps with Decrypt under one Cloud KMS key. The client's default Decrypt call
+// gives up after 60 s and retries only Unavailable and DeadlineExceeded
+// (defaultKeyManagementCallOptions in cloud.google.com/go/kms/apiv1), so a KMS that does not
+// answer fails startup rather than holding it.
+type cloudKMS struct {
+	client *kms.KeyManagementClient
+	// key is the CryptoKey's resource name, projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>:
+	// Decrypt takes the key, never a version, and the server finds the version
+	// (kmspb.DecryptRequest.Name, cloud.google.com/go/kms v1.26.0).
+	key string
+}
+
+// newKEKUnwrapper opens a Cloud KMS client for key, the CryptoKey auth.kms_key names. The
+// caller closes it.
+func newKEKUnwrapper(ctx context.Context, key string) (*cloudKMS, error) {
+	// The client's own logger is silenced: with GOOGLE_SDK_GO_LOGGING_LEVEL=debug it logs the
+	// Decrypt request and response, which carry the ciphertext and the plaintext key
+	// (executeRPC in cloud.google.com/go/kms v1.26.0, apiv1/helpers.go).
+	options := append([]option.ClientOption{option.WithLogger(slog.New(slog.DiscardHandler))}, kmsClientOptions...)
+	client, err := kms.NewKeyManagementClient(ctx, options...)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("auth.kms_key: open a Cloud KMS client: %w", err))
 	}
-	// Refused rather than ignored: a deployment that set it has taken its plain key away,
-	// and starting without the wrapped one leaves every sealed row unreadable.
-	return nil, errors.New("auth.kms_key is set, but this build has no KMS client to unwrap a key with: " +
-		"unset it and set " + authKEKEnvVar + "_V<n>")
+	return &cloudKMS{client: client, key: key}, nil
+}
+
+func (c *cloudKMS) Unwrap(ctx context.Context, ciphertext, aad []byte) ([]byte, error) {
+	response, err := c.client.Decrypt(ctx, &kmspb.DecryptRequest{
+		Name:                        c.key,
+		Ciphertext:                  ciphertext,
+		AdditionalAuthenticatedData: aad,
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("cloud kms: decrypt with %s: %w", c.key, err))
+	}
+	return response.GetPlaintext(), nil
+}
+
+// Close closes the client's connection.
+func (c *cloudKMS) Close() error {
+	return c.client.Close()
 }
 
 // unwrapKEK unwraps the base64 ciphertext of the key of version n into the key itself, the

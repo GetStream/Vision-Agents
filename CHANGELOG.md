@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### The Go SDK refuses `plugins:` and `plugin_events:` in agent.yaml
+
+`agents.Load` and `agents.New` refuse a folder whose agent.yaml names `plugins:` or `plugin_events:`, with an error that names the key and points to `connectors:`. An empty or null list still loads and sends nothing, as before. Folder sync no longer sends `plugins` or `plugin_events`, and `Settings.Plugins`, `Settings.PluginEvents`, `PluginSettings` and `PluginEventSettings` are gone. Move each plugin to a `connectors:` entry (AI-1784, #1161).
+
 ### The Python SDK refuses `plugins` and `plugin_events` in agent.yaml
 
 Connectors replaced plugins. `plugins.stream` now fails to load an agent folder whose `agent.yaml` names `plugins` or `plugin_events`, with a `ValueError` that points to `connectors`, and never sends either to the router. An empty key (`plugins: []`, or the key with nothing after it) names nothing and loads (AI-1785).
@@ -642,6 +646,7 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+- The router can keep its key encryption key in Google Cloud KMS: set `ROUTER_AUTH_KMS_KEY` to the Cloud KMS key and `ROUTER_AUTH_KEK_V<n>_WRAPPED` to the key it wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK`. The router unwraps it with one `Decrypt` at each start, so the rows sealed under the plain key still open; with neither set, nothing changes (AI-1747, #1157; AI-1748, #1165).
 - An agent.yaml `connectors:` entry takes `sandbox: true`, which the Go SDK's folder sync (`Agent.Sync`) sends on that binding, so code in the agent's sandbox may call the connector's API with the binding's connection. Left out or false, no `sandbox` key is sent and the body is as before; a value that is not a boolean is refused (AI-1578, #1141).
 - Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601, #1100).
 - The `gemma` provider sends `GEMMA_API_KEY` as its bearer token, so `GEMMA_BASE_URL` can point at any OpenAI-compatible vLLM host, not only Baseten; with it unset, `BASETEN_API_KEY` is sent as before (AI-1664, #1115).

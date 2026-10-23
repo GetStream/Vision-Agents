@@ -3,6 +3,7 @@ module github.com/GetStream/Vision-Agents/acceleration
 go 1.27.0
 
 require (
+	cloud.google.com/go/kms v1.26.0
 	github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09
 	github.com/GetStream/getstream-go/v5 v5.2.0
 	github.com/GetStream/protocol v1.49.0
@@ -49,6 +50,7 @@ require (
 	gocloud.dev v0.46.0
 	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
+	google.golang.org/api v0.272.0
 	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
@@ -61,6 +63,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.5.3 // indirect
+	cloud.google.com/go/longrunning v0.8.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
 	cloud.google.com/go/storage v1.61.3 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 // indirect
@@ -185,7 +188,6 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/api v0.272.0 // indirect
 	google.golang.org/genproto v0.0.0-20260316180232-0b37fe3546d5 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
