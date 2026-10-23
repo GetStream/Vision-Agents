@@ -189,8 +189,10 @@ func (s *CallSuite) TestFreeWorkIsPricedButNotBilled() {
 	s.Require().NoError(err)
 
 	row := s.only(meter)
-	s.EqualValues(2_000, row.CostMicros)
+	s.Zero(row.CostMicros, "nothing is charged, so no total of what customers pay counts it")
+	s.Zero(row.OutputCostMicros)
 	s.False(row.Billable)
+	s.Equal("2000", row.Attributes[AttributeFreeCostMicros], "what it would have cost is kept beside it")
 }
 
 func (s *CallSuite) TestSettledWorkIsBilledOnceByItsUsageID() {

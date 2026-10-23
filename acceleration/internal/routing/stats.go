@@ -80,7 +80,8 @@ type Stat struct {
 	// Usage, such as a phone number's monthly charge, where the vendor quotes the price
 	// outright rather than a rate to multiply. Zero leaves the pricing to the rates.
 	CostMicros int64
-	// Free records the work priced as usual and not billed, for work given away.
+	// Free records the work given away: priced as usual, written at no cost and not billed,
+	// with what it would have cost in attributes.free_cost_micros.
 	Free bool
 	// VendorTotalTokens is the vendor's own count of every token the work used, where it
 	// sent one. It is not stored: a row whose tokens do not add up to it is counted, since
@@ -272,7 +273,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
-	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured, free: entry.Free})
+	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured})
 }
 
 // lose prices the stat as Record would and loses its row at once, logged in full and counted
@@ -300,10 +301,24 @@ func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pri
 		request.Billable = priced.Billable || resold.Billable
 	}
 	if entry.Free {
-		request.Billable = false
+		// Given away: nothing is charged, so every sum of what customers pay leaves it out
+		// without asking. What it would have cost is kept beside it, for analysis; what the
+		// vendor charged (BaseCostMicros) is never a charge and stays.
+		if request.CostMicros != 0 {
+			request.Attributes = maps.Clone(request.Attributes)
+			if request.Attributes == nil {
+				request.Attributes = map[string]string{}
+			}
+			request.Attributes[AttributeFreeCostMicros] = strconv.FormatInt(request.CostMicros, 10)
+		}
+		request.CostMicros, request.OutputCostMicros, request.Billable = 0, 0, false
 	}
 	return request, priced
 }
+
+// AttributeFreeCostMicros is what a row given away (Stat.Free) would have cost, in micros: its
+// cost is written as zero, so no total of what customers pay counts it.
+const AttributeFreeCostMicros = "free_cost_micros"
 
 // warnUnnamedTier logs a service tier the vendor served at that the price list has no entry
 // for, which is priced at the default rates: how a vendor renaming a tier shows up. A

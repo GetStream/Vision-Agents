@@ -28,7 +28,8 @@ type Meter struct {
 	// CostMicros sets the cost outright, for a fee the vendor quoted, such as a number's
 	// month. Zero prices what the work used from the price list.
 	CostMicros int64
-	// Free records the work priced as usual and not billed, for work that is given away.
+	// Free records work that is given away at no cost and not billed, with what it would have
+	// cost in attributes.free_cost_micros.
 	Free bool
 	// Attributes are stored with the row, such as the session a row belongs to.
 	Attributes map[string]string

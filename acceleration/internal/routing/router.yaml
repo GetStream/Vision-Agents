@@ -404,7 +404,7 @@ stt:
     # does ink-whisper is where the other languages are, on the batch endpoint.
     #
     # Billed by the second of audio input, silence included, at Cartesia's published rate of
-    # $0.0067275 a minute (about $0.40365 an hour). A turn says nothing of how long it was, so
+    # $0.00672757 a minute (about $0.40365 an hour). A turn says nothing of how long it was, so
     # the audio the router streams to it is the bill.
     - provider: cartesia
       model: ink-2

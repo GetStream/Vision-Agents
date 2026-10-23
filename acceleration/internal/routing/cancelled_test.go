@@ -45,17 +45,6 @@ func TestACancelledRequestStillAddsWhatItSpentToTheLiveCounters(t *testing.T) {
 	}
 }
 
-func TestWorkGivenAwayAddsNoCostToTheLiveSpend(t *testing.T) {
-	reply := store.Request{Modality: "sts", CustomerID: "acme", Provider: "openai", Model: "gpt-live-1",
-		AudioMs: 2_000, CostMicros: 1_667, Success: true}
-
-	usage := queued{request: reply, free: true}.live()
-
-	if usage.CostMicros != 0 || usage.AudioMs != 2_000 || usage.Cancelled {
-		t.Fatalf("a reply its session bills by the second was spent as though billed: %+v", usage)
-	}
-}
-
 func TestWorkThatMeasuresNoProviderIsSpentAndKeptOutOfHealth(t *testing.T) {
 	seconds := store.Request{Modality: "sts", CustomerID: "acme", Provider: "openai", Model: "gpt-live-1",
 		CostMicros: 10_833, Success: true, Billable: true}

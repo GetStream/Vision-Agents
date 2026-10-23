@@ -169,13 +169,16 @@ func (s *MeteringSuite) session(provider sts.STS, name string) (*Session, *routi
 	s.Require().NoError(provider.Start(ctx))
 	customer := uuid.NewString()
 	recorder := routing.NewRecorder(routing.STS, s.store, s.live, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	owner := routing.Owner{CustomerID: customer, Attribution: attributed}
+	owner := routing.Owner{CustomerID: customer, AgentID: agentID, Attribution: attributed}
 	return newSession(provider, s.builtIn(name), owner, recorder, recorder.For(routing.LLM)), recorder, customer
 }
 
 // attributed is who every session here is billed to and asked for by, which every row it
 // writes, its side rows included, names.
 var attributed = routing.Attribution{OrganizationID: "org-1", APIKey: "key-1", UserID: "user-1"}
+
+// agentID is the agent every session here talks for.
+const agentID = "agent-1"
 
 // requireAttributed checks a row names who the session was billed to and asked for by.
 func (s *MeteringSuite) requireAttributed(row store.Request) {
@@ -277,12 +280,68 @@ func (s *MeteringSuite) TestGPTLiveBillsSessionSecondsAndTheBackend() {
 
 	s.Require().Len(replies, 1, "the reply is still recorded, for its timing")
 	s.False(replies[0].Billable, "the seconds are the bill")
-	s.EqualValues(833, replies[0].CostMicros, "priced as a pod that has not taken this code yet bills it")
+	s.Zero(replies[0].CostMicros, "given away, so it costs nothing on the row")
+	s.Equal("833", replies[0].Attributes[routing.AttributeFreeCostMicros], "priced as a pod that has not taken this code yet bills it")
 
 	s.Equal(voiceHealth+1, s.health(routing.STS, "openai", "gpt-live-1"), "only the reply measures the voice")
 	s.Equal(backendHealth, s.health(routing.LLM, "openai", "gpt-5.6-luna"), "a relayed backend response times nothing")
 	s.EqualValues(10_833+12_500+833, s.spent(routing.STS, customer), "the seconds are spent, and the free reply is not")
 	s.EqualValues(215+207, s.spent(routing.LLM, customer), "the backend is spent though it measures nothing")
+}
+
+// TestGPTLiveBillsOnlyItsSecondsWhenTheCallerSpeaksAfterTheLastReply: a 10-second session,
+// one reply, and 2 s of the caller after it. The seconds are the whole bill: the reply is free,
+// and the audio after it is no row of its own, in the table or in any sum of what was paid.
+func (s *MeteringSuite) TestGPTLiveBillsOnlyItsSecondsWhenTheCallerSpeaksAfterTheLastReply() {
+	socket := s.vendorSocket("", map[string]string{
+		"session.start": `{"type":"session.started","session":{"id":"sess_1","model":"gpt-live-1"}}`,
+		"session.close": `{"type":"session.closed","reason":"close_requested","usage":{"seconds":10.0}}`,
+	})
+	provider, err := openailive.New(openailive.Options{
+		APIKey: "k", URL: socket.url(), HandshakeTimeout: 5 * time.Second, ReplyGap: 50 * time.Millisecond,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.Require().NoError(err)
+	since := time.Now().Add(-time.Minute)
+	session, recorder, customer := s.session(provider, "openai/gpt-live-1")
+	<-socket.open
+	caller := func(ms int) sts.PcmData {
+		return sts.PcmData{Samples: make([]int16, sts.InputSampleRate*ms/1000), SampleRate: sts.InputSampleRate, Channels: 1}
+	}
+
+	s.Require().NoError(session.ProcessAudio(caller(1_000), sts.Participant{}))
+	socket.send(`{"type":"session.output_audio.delta","delta":"` + audible(200) + `"}`)
+	for event := range session.Events() {
+		if _, ok := event.(sts.ResponseComplete); ok {
+			break
+		}
+	}
+	s.Require().NoError(session.ProcessAudio(caller(2_000), sts.Participant{}))
+	s.closed(session, recorder)
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 2, "the reply and the seconds, and no row of the audio after the reply")
+	var reply, seconds store.Request
+	for _, row := range rows {
+		if row.Meters[pricing.SessionSeconds] != 0 {
+			seconds = row
+		} else {
+			reply = row
+		}
+	}
+	s.EqualValues(8_333, seconds.CostMicros, "10 s at $0.05 a minute")
+	s.Zero(reply.CostMicros, "the reply is given away, so it costs nothing on the row")
+	s.Zero(reply.OutputCostMicros)
+	s.False(reply.Billable)
+	s.Equal("833", reply.Attributes[routing.AttributeFreeCostMicros], "what the caller's second would have cost")
+
+	spent, err := s.store.SpendSince(s.ctx, customer, since)
+	s.Require().NoError(err)
+	s.EqualValues(8_333, spent, "a budget sees only the seconds")
+	used, err := s.store.CallUsage(s.ctx, customer, agentID, since, nil)
+	s.Require().NoError(err)
+	s.EqualValues(8_333, used.CostMicros, "the call's cost is only the seconds")
+	s.EqualValues(8_333, s.spent(routing.STS, customer))
 }
 
 // TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns plays back a recorded push-to-talk session

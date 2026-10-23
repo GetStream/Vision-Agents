@@ -203,12 +203,16 @@ func (s *Session) forward() {
 // recordTrailing records what the session streamed after its last reply settled, which no
 // event reports: the caller's audio and the typed turns since. It is recorded only where the
 // price list bills it, the vendors priced on the caller's audio or on each message, and is
-// marked as the router's own count.
+// marked as the router's own count. A vendor that bills the session's seconds has none: the
+// seconds are the whole bill, the time after the last reply included.
 func (s *Session) recordTrailing() {
 	s.mu.Lock()
 	heardMs, typed := s.heardMs, s.typed
 	s.heardMs, s.typed = 0, 0
 	s.mu.Unlock()
+	if s.provider.Capabilities().SessionBilled {
+		return
+	}
 
 	stat := routing.Stat{
 		Owner:       s.owner,
