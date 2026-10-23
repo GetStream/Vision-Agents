@@ -226,6 +226,9 @@ type ConnectorSettings struct {
 	// Sandbox is whether code in the agent's sandbox may call the connector's API with
 	// the binding's connection. False sends no sandbox key.
 	Sandbox bool `yaml:"sandbox"`
+	// RequireApproval are names or path.Match patterns of the tools whose every call waits for
+	// the session's user to allow it. Nil sends no require_approval key.
+	RequireApproval *[]string `yaml:"require_approval"`
 }
 
 func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {

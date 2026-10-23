@@ -725,6 +725,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		TTS:             request.TTS,
 		STS:             request.STS,
 		Search:          request.Search,
+		DataPolicy:      request.DataPolicy,
 		Overwrites:      r.overwrites(request, candidate.Config.Provider),
 		Endpoint:        candidate.endpoint,
 		Logger:          r.logger,

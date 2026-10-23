@@ -40,6 +40,9 @@ type Spec struct {
 	TTS    options.TTS
 	STS    options.STS
 	Search options.Search
+	// DataPolicy is the request's own policy merged with the floor its customer's policies
+	// set. The policy in an option block above is the caller's alone.
+	DataPolicy options.DataPolicy
 	// Overwrites is this provider's own block from the request's overwrites, and nobody
 	// else's. A factory that has one decodes it into a struct of its own with Settings,
 	// which is what makes an unrecognised field an error rather than a setting that was

@@ -37,7 +37,7 @@ func DefaultTranscriberRegistry() *Transcribers {
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.Transcriber, error) {
 		return deepgram.NewPrerecorded(deepgram.PrerecordedOptions{
 			Model:     spec.Model,
-			MipOptOut: trainingRefused(spec),
+			MipOptOut: optsOut(spec),
 			Logger:    spec.Logger,
 		})
 	})
