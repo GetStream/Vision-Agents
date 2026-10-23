@@ -69,9 +69,13 @@ That shape has consequences worth knowing:
 - Both legs stay billed after the agent goes, since the call continues to run through
   Stream rather than being handed back to the carrier.
 
-The trunk is made per transfer rather than reused. `CreateTrunk` returns the SIP password
-once and it is not stored, so reusing the attached number's bridge would mean a migration
-holding SIP credentials at rest — a worse trade than a second trunk.
+For Twilio, Telnyx and `sip_trunk`, a transfer dials through the From number's line on a
+shared trunk. The header carries the id of the call the agent is already on, so nothing is
+made per transfer and no credentials are stored for it. See [shared trunks](shared-trunks.md).
+The trunk is still made per transfer for the other five vendors, and for a call of any type but
+`default`. `CreateTrunk` returns the SIP password once and it is not stored, so reusing the
+attached number's bridge there would mean a migration holding SIP credentials at rest, a worse
+trade than a second trunk.
 
 Cold and warm are the same call to the same tool. A `summary` argument makes it warm: the
 agent waits until it hears a voice it has not heard before, says the summary, and leaves.
