@@ -3,7 +3,9 @@ package ledger
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,10 +48,10 @@ var (
 	// ErrDefaultTier is a delete of the default tier, which answers for every tier string
 	// with no row and so cannot go.
 	ErrDefaultTier = errors.New("ledger: the default tier cannot be deleted")
-	// ErrIdempotencyKeyReused is a credit written under a key that already holds another
-	// organization's entry, or one of another kind or amount: a writer's bug, since a retry
-	// sends the same entry.
-	ErrIdempotencyKeyReused = errors.New("ledger: the idempotency key holds another credit entry")
+	// ErrIdempotencyKeyReused is an account write made under a key that already holds a
+	// request of another operation or organization, or with another body (for a credit,
+	// another kind or amount): a writer's bug, since a retry sends the same request.
+	ErrIdempotencyKeyReused = errors.New("ledger: the idempotency key holds another request")
 )
 
 // InvalidError is a write refused for what it holds, with what is wrong.
@@ -146,6 +148,70 @@ type ManageAudit struct {
 	Before         json.RawMessage `bun:"before,type:jsonb,notnull"`
 	After          json.RawMessage `bun:"after,type:jsonb,notnull"`
 	CreatedAt      time.Time       `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// ManageRequest is an account write made under an idempotency key: a credit, a suspension, a
+// restore or an override. Its operation is the action the write audits.
+type ManageRequest struct {
+	bun.BaseModel `bun:"table:manage_requests,alias:mr"`
+
+	IdempotencyKey string `bun:"idempotency_key,pk"`
+	Operation      string `bun:"operation,notnull"`
+	OrganizationID string `bun:"organization_id,notnull"`
+	// RequestSHA256 is the hex SHA-256 of what the request asks for, as newRequest has it.
+	RequestSHA256 string    `bun:"request_sha256,notnull"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// newRequest is the request of operation on organization under key, asking for body, whose
+// JSON encoding is its digest.
+func newRequest(key, operation, organization string, body any) (ManageRequest, error) {
+	if err := checkKey(key); err != nil {
+		return ManageRequest{}, err
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return ManageRequest{}, fmt.Errorf("ledger: %s: %w", operation, err)
+	}
+	digest := sha256.Sum256(encoded)
+	return ManageRequest{IdempotencyKey: key, Operation: operation, OrganizationID: organization, RequestSHA256: hex.EncodeToString(digest[:])}, nil
+}
+
+// checkKey refuses an idempotency key that is not 1 to 255 characters of UTF-8 without a
+// control character. Postgres stores invalid UTF-8 replaced, so two different keys would be
+// one, and the second request answered as a replay of the first.
+func checkKey(key string) error {
+	if n := utf8.RuneCountInString(key); n == 0 || n > MaxIdempotencyKeyLength {
+		return invalid("an idempotency key is required: 1 to %d characters", MaxIdempotencyKeyLength)
+	}
+	if !utf8.ValidString(key) || strings.ContainsFunc(key, unicode.IsControl) {
+		return invalid("the idempotency key is not UTF-8 or holds a control character")
+	}
+	return nil
+}
+
+// claim records the request under its key in tx and reports whether it is the key's first. A
+// key holding a request of another operation, organization or body is ErrIdempotencyKeyReused.
+// Two writers of one key wait on each other here, and the second finds the first's request
+// once it commits.
+func claim(ctx context.Context, tx bun.Tx, request ManageRequest) (bool, error) {
+	var inserted []ManageRequest
+	if err := tx.NewInsert().Model(&request).On("CONFLICT (idempotency_key) DO NOTHING").
+		Returning("*").Scan(ctx, &inserted); err != nil {
+		return false, fmt.Errorf("ledger: %s: %w", request.Operation, err)
+	}
+	if len(inserted) > 0 {
+		return true, nil
+	}
+	var existing ManageRequest
+	if err := tx.NewSelect().Model(&existing).Where("idempotency_key = ?", request.IdempotencyKey).Scan(ctx); err != nil {
+		return false, fmt.Errorf("ledger: %s: %w", request.Operation, err)
+	}
+	if existing.Operation != request.Operation || existing.OrganizationID != request.OrganizationID ||
+		existing.RequestSHA256 != request.RequestSHA256 {
+		return false, ErrIdempotencyKeyReused
+	}
+	return false, nil
 }
 
 // audit records one management write in the transaction that makes it. A side that does
@@ -347,26 +413,46 @@ func (l *Ledger) LastTier(ctx context.Context, organization string) (string, boo
 	return tier, true, nil
 }
 
-// changeAccount locks the organization's account, writing it first when it has none, and
-// hands it to change, which updates it and returns the row after; then audits the change.
-func (l *Ledger) changeAccount(ctx context.Context, organization string, actor Actor, action, reason string,
+// changeAccount locks the request's account, writing it first when it has none, and claims
+// the request's key. The key's first request hands the account to change, which updates it
+// and returns the row after, and audits the change; a replay changes nothing and answers the
+// account as it is, with false.
+func (l *Ledger) changeAccount(ctx context.Context, request ManageRequest, actor Actor, reason string,
 	change func(ctx context.Context, tx bun.Tx, before Account) (Account, error),
-) (Account, error) {
+) (Account, bool, error) {
 	var after Account
+	applied := false
 	err := l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		before, err := lockAccount(ctx, tx, organization)
+		before, err := lockAccount(ctx, tx, request.OrganizationID)
 		if err != nil {
 			return err
+		}
+		first, err := claim(ctx, tx, request)
+		if err != nil {
+			return err
+		}
+		if !first {
+			after = before
+			return nil
+		}
+		// A credit written before manage_requests holds its key in credit_entries alone.
+		credited, err := tx.NewSelect().Model((*CreditEntry)(nil)).Where("idempotency_key = ?", request.IdempotencyKey).Exists(ctx)
+		if err != nil {
+			return fmt.Errorf("ledger: %s: %w", request.Operation, err)
+		}
+		if credited {
+			return ErrIdempotencyKeyReused
 		}
 		if after, err = change(ctx, tx, before); err != nil {
 			return err
 		}
-		return audit(ctx, tx, actor, organization, action, reason, before, after)
+		applied = true
+		return audit(ctx, tx, actor, request.OrganizationID, request.Operation, reason, before, after)
 	})
 	if err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
-	return after, nil
+	return after, applied, nil
 }
 
 // lockAccount writes the organization's account when it has none and locks it until the
@@ -384,13 +470,19 @@ func lockAccount(ctx context.Context, tx bun.Tx, organization string) (Account, 
 }
 
 // SetAccountLimits replaces the organization's own settings with overrides: a setting left
-// out goes back to its tier's, and none at all clears them.
-func (l *Ledger) SetAccountLimits(ctx context.Context, organization string, overrides usage.Limits, actor Actor) (Account, error) {
+// out goes back to its tier's, and none at all clears them. It is made once per key: a
+// replay with the same overrides changes nothing and answers the account as it is, with
+// false.
+func (l *Ledger) SetAccountLimits(ctx context.Context, organization string, overrides usage.Limits, key string, actor Actor) (Account, bool, error) {
 	if problem := overrides.Problem(); problem != "" {
-		return Account{}, invalid("%s", problem)
+		return Account{}, false, invalid("%s", problem)
 	}
 	overrides = overrides.Compact()
-	return l.changeAccount(ctx, organization, actor, ActionSetLimits, "", func(ctx context.Context, tx bun.Tx, before Account) (Account, error) {
+	request, err := newRequest(key, ActionSetLimits, organization, overrides)
+	if err != nil {
+		return Account{}, false, err
+	}
+	return l.changeAccount(ctx, request, actor, "", func(ctx context.Context, tx bun.Tx, before Account) (Account, error) {
 		after := before
 		after.LimitOverrides = overrides
 		if err := tx.NewUpdate().Model(&after).Column("limit_overrides").Set("updated_at = now()").
@@ -403,13 +495,15 @@ func (l *Ledger) SetAccountLimits(ctx context.Context, organization string, over
 
 // SetAccountStatus suspends or restores the organization, for reason, which the audit keeps.
 // Suspending sets the account's status reason, a suspended one's included; restoring clears
-// it, and restoring an active account changes nothing but is audited all the same.
-func (l *Ledger) SetAccountStatus(ctx context.Context, organization string, status usage.AccountStatus, reason string, actor Actor) (Account, error) {
+// it, and restoring an active account changes nothing but is audited all the same. It is
+// made once per key: a replay with the same reason changes nothing, is not audited, and
+// answers the account as it is, with false.
+func (l *Ledger) SetAccountStatus(ctx context.Context, organization string, status usage.AccountStatus, reason, key string, actor Actor) (Account, bool, error) {
 	if n := utf8.RuneCountInString(reason); n == 0 || n > MaxReasonLength {
-		return Account{}, invalid("a reason is required: 1 to %d characters", MaxReasonLength)
+		return Account{}, false, invalid("a reason is required: 1 to %d characters", MaxReasonLength)
 	}
 	if !storable(reason) {
-		return Account{}, invalid("reason is not UTF-8 or holds a NUL character")
+		return Account{}, false, invalid("reason is not UTF-8 or holds a NUL character")
 	}
 	action, statusReason := ActionSuspend, reason
 	switch status {
@@ -417,9 +511,13 @@ func (l *Ledger) SetAccountStatus(ctx context.Context, organization string, stat
 	case usage.AccountActive:
 		action, statusReason = ActionRestore, ""
 	default:
-		return Account{}, invalid("status %q is not active or suspended", status)
+		return Account{}, false, invalid("status %q is not active or suspended", status)
 	}
-	return l.changeAccount(ctx, organization, actor, action, reason, func(ctx context.Context, tx bun.Tx, before Account) (Account, error) {
+	request, err := newRequest(key, action, organization, statusRequest{Reason: reason})
+	if err != nil {
+		return Account{}, false, err
+	}
+	return l.changeAccount(ctx, request, actor, reason, func(ctx context.Context, tx bun.Tx, before Account) (Account, error) {
 		after := before
 		after.Status, after.StatusReason = status, statusReason
 		if err := tx.NewUpdate().Model(&after).Column("status", "status_reason").Set("updated_at = now()").
@@ -428,6 +526,18 @@ func (l *Ledger) SetAccountStatus(ctx context.Context, organization string, stat
 		}
 		return after, nil
 	})
+}
+
+// statusRequest is what a suspension or a restore asks for.
+type statusRequest struct {
+	Reason string `json:"reason"`
+}
+
+// creditRequest is what a credit asks for, as a replay is compared: an entry's reference
+// and note are not.
+type creditRequest struct {
+	Kind         usage.CreditKind `json:"kind"`
+	AmountMicros int64            `json:"amount_micros"`
 }
 
 // AddCredit writes the entry and adds its amount to the organization's credit, once per
@@ -441,13 +551,10 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 	if entry.AmountMicros > usage.MaxCostMicros || entry.AmountMicros < -usage.MaxCostMicros {
 		return CreditEntry{}, false, invalid("amount_micros is at most %d either way", int64(usage.MaxCostMicros))
 	}
-	if n := utf8.RuneCountInString(entry.IdempotencyKey); n == 0 || n > MaxIdempotencyKeyLength {
-		return CreditEntry{}, false, invalid("an idempotency key is required: 1 to %d characters", MaxIdempotencyKeyLength)
-	}
-	// Postgres stores invalid UTF-8 replaced, so two different keys would be one, and the
-	// second credit answered as a replay of the first.
-	if !utf8.ValidString(entry.IdempotencyKey) || strings.ContainsFunc(entry.IdempotencyKey, unicode.IsControl) {
-		return CreditEntry{}, false, invalid("the idempotency key is not UTF-8 or holds a control character")
+	request, err := newRequest(entry.IdempotencyKey, ActionAddCredit, entry.OrganizationID,
+		creditRequest{Kind: entry.Kind, AmountMicros: entry.AmountMicros})
+	if err != nil {
+		return CreditEntry{}, false, err
 	}
 	if utf8.RuneCountInString(entry.Reference) > maxReferenceLength || utf8.RuneCountInString(entry.Note) > maxNoteLength {
 		return CreditEntry{}, false, invalid("reference is at most %d characters and note at most %d", maxReferenceLength, maxNoteLength)
@@ -457,13 +564,23 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 	}
 	entry.ID, entry.CreatedAt = 0, time.Time{}
 	written := false
-	err := l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		before, err := lockAccount(ctx, tx, entry.OrganizationID)
 		if err != nil {
 			return err
 		}
-		// A key is unique across organizations. Two writers of one key wait on each other
-		// here, and the second finds the first's entry once it commits.
+		first, err := claim(ctx, tx, request)
+		if err != nil {
+			return err
+		}
+		if !first {
+			if err := tx.NewSelect().Model(&entry).Where("idempotency_key = ?", entry.IdempotencyKey).Scan(ctx); err != nil {
+				return fmt.Errorf("ledger: add credit: %w", err)
+			}
+			return nil
+		}
+		// A credit written before manage_requests holds its key in credit_entries alone: it
+		// is answered as a replay when it is the same entry.
 		var inserted []CreditEntry
 		if err := tx.NewInsert().Model(&entry).On("CONFLICT (idempotency_key) DO NOTHING").
 			Returning("*").Scan(ctx, &inserted); err != nil {

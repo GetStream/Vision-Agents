@@ -73,7 +73,7 @@ func EmptyDatabase(t testing.TB, name string) string {
 func Empty(t testing.TB, opened *ledger.Ledger) {
 	t.Helper()
 	_, err := opened.DB().ExecContext(context.Background(),
-		"TRUNCATE usage_events, usage_windows, tiers, credit_entries, accounts, manage_audit")
+		"TRUNCATE usage_events, usage_windows, tiers, credit_entries, accounts, manage_audit, manage_requests")
 	require.NoError(t, err)
 }
 

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/server"
@@ -30,6 +32,9 @@ type failure struct {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// key is the Idempotency-Key header of a key no other write uses, for manage's headers.
+func key() []string { return []string{"Idempotency-Key", uuid.NewString()} }
 
 // manage calls the management API with the suite's manage key and an actor; headers, in
 // pairs, replace those, and an empty value leaves the header out.
@@ -322,7 +327,7 @@ func (s *ServerSuite) TestLimitOverridesAreLaidOverTheTier() {
 
 	var standing usage.Standing
 	s.ok(http.StatusOK, &standing, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits",
-		usage.Limits{Channels: map[string]usage.ChannelLimits{"voice": {Concurrent: ptr(100)}}})
+		usage.Limits{Channels: map[string]usage.ChannelLimits{"voice": {Concurrent: ptr(100)}}}, key()...)
 
 	tier := file.Tiers[1].Limits
 	s.Equal("tier-a", standing.OrganizationTier, "the tier its newest event carried")
@@ -334,7 +339,7 @@ func (s *ServerSuite) TestLimitOverridesAreLaidOverTheTier() {
 	s.Equal(standing, s.account(s.organization))
 
 	var cleared usage.Standing
-	s.ok(http.StatusOK, &cleared, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits", usage.Limits{})
+	s.ok(http.StatusOK, &cleared, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits", usage.Limits{}, key()...)
 	s.Equal(tier, cleared.Limits, "{} clears the overrides")
 	s.True(cleared.Overrides.IsZero())
 }
@@ -344,7 +349,7 @@ func (s *ServerSuite) TestOneOrganizationsOverrideLeavesItsTierAlone() {
 	other := usagetest.Organization()
 
 	s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits",
-		usage.Limits{Channels: map[string]usage.ChannelLimits{"voice": {Concurrent: ptr(100)}}})
+		usage.Limits{Channels: map[string]usage.ChannelLimits{"voice": {Concurrent: ptr(100)}}}, key()...)
 
 	s.Equal(ptr(100), s.standing(s.organization, "tier-a").Limits.Channels["voice"].Concurrent)
 	s.Equal(file.Tiers[1].Limits, s.standing(other, "tier-a").Limits)
@@ -360,7 +365,7 @@ func (s *ServerSuite) TestListTierOverridesAnswersThoseLastSeenOnIt() {
 		usagetest.Event(other, func(e *usage.Event) { e.OrganizationTier = "tier-b" }))
 	overrides := usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: ptr(int64(1))}}
 	for _, organization := range []string{s.organization, other} {
-		s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+organization+"/limits", overrides)
+		s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+organization+"/limits", overrides, key()...)
 	}
 
 	var page server.TierOverridePage
@@ -424,20 +429,20 @@ func (s *ServerSuite) TestAddCreditHasNoTopUpRule() {
 
 	s.Equal(http.StatusCreated, topUp("payment-1"))
 	s.Equal(http.StatusCreated, topUp("payment-2"))
-	s.ok(http.StatusOK, nil, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "a dispute"})
+	s.ok(http.StatusOK, nil, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "a dispute"}, key()...)
 	s.Equal(http.StatusCreated, topUp("payment-3"))
 
 	s.Equal(int64(30_000_000_000), s.account(s.organization).GrantedMicros)
 }
 
 func (s *ServerSuite) TestSuspendNeedsAReasonAndRestoreClearsIt() {
-	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{})
-	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: strings.Repeat("r", 501)})
+	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{}, key()...)
+	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: strings.Repeat("r", 501)}, key()...)
 
 	var suspended, restored usage.Standing
-	s.ok(http.StatusOK, &suspended, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "early fraud warning"})
+	s.ok(http.StatusOK, &suspended, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "early fraud warning"}, key()...)
 	s.Equal(usage.AccountSuspended, s.standing(s.organization, "").Status, "a suspension shows in the next standing")
-	s.ok(http.StatusOK, &restored, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/restore", server.StatusChange{Reason: "reviewed"})
+	s.ok(http.StatusOK, &restored, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/restore", server.StatusChange{Reason: "reviewed"}, key()...)
 
 	s.Equal(usage.AccountSuspended, suspended.Status)
 	s.Equal("early fraud warning", suspended.StatusReason)
@@ -538,7 +543,7 @@ func (s *ServerSuite) TestANewDayStartsTheDailyWindowAtZero() {
 func (s *ServerSuite) TestASpendHardLimitOverrideShowsInTheStanding() {
 	overrides := usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: ptr(int64(1_000_000))}}
 
-	s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits", overrides)
+	s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits", overrides, key()...)
 
 	for _, standing := range []usage.Standing{s.account(s.organization), s.standing(s.organization, "")} {
 		s.Equal(overrides, standing.Overrides)
@@ -646,7 +651,15 @@ func (s *ServerSuite) TestAnIdempotencyKeyPostgresWouldChangeIsRefused() {
 	}
 	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/credits",
 		server.CreditRequest{Kind: usage.CreditGrant, AmountMicros: 1, Note: "a\x00b"}, "Idempotency-Key", "k")
-	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "a\x00b"})
+	s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "a\x00b"}, key()...)
+	for _, path := range []string{"/suspend", "/restore"} {
+		answered := s.refused(http.StatusBadRequest, http.MethodPost, "/v1/manage/accounts/"+s.organization+path,
+			server.StatusChange{Reason: "fraud"}, "Idempotency-Key", "k\xfeey")
+		s.Contains(answered.Detail, "not UTF-8", path)
+	}
+	answered := s.refused(http.StatusBadRequest, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits",
+		usage.Limits{}, "Idempotency-Key", "k\xffey")
+	s.Contains(answered.Detail, "not UTF-8")
 	_, found, err := s.service.Ledger.Account(s.ctx, s.organization)
 	s.Require().NoError(err)
 	s.False(found)
@@ -654,7 +667,7 @@ func (s *ServerSuite) TestAnIdempotencyKeyPostgresWouldChangeIsRefused() {
 
 func (s *ServerSuite) TestAMisspeltFieldIsRefusedAndChangesNothing() {
 	overrides := usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: ptr(int64(1_000_000))}}
-	s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits", overrides)
+	s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/accounts/"+s.organization+"/limits", overrides, key()...)
 	s.ok(http.StatusOK, nil, http.MethodPut, "/v1/manage/tiers/tier-a", server.TierSettings{FailMode: usage.FailOpen})
 	audits := len(s.audits())
 
@@ -683,6 +696,120 @@ func (s *ServerSuite) TestAMisspeltFieldIsRefusedAndChangesNothing() {
 	s.Require().NoError(err)
 	s.Equal(usage.FailOpen, tier.FailMode)
 	s.Len(s.audits(), audits, "nothing written")
+}
+
+// keyedWrite is one account write that answers the standing, made under an Idempotency-Key.
+type keyedWrite struct {
+	method, path string
+	body         any
+}
+
+func (s *ServerSuite) keyedWrites(organization string) map[string]keyedWrite {
+	account := "/v1/manage/accounts/" + organization
+	return map[string]keyedWrite{
+		"suspend": {http.MethodPost, account + "/suspend", server.StatusChange{Reason: "fraud"}},
+		"restore": {http.MethodPost, account + "/restore", server.StatusChange{Reason: "reviewed"}},
+		"limits":  {http.MethodPut, account + "/limits", usage.Limits{LowBalanceMicros: ptr(int64(5))}},
+	}
+}
+
+func (s *ServerSuite) TestAStateChangeWithoutAnIdempotencyKeyIsRefused() {
+	for name, write := range s.keyedWrites(s.organization) {
+		for _, headers := range [][]string{nil, {"Idempotency-Key", strings.Repeat("k", 256)}} {
+			answered := s.refused(http.StatusBadRequest, write.method, write.path, write.body, headers...)
+			s.Equal("invalid_request", answered.Code, name)
+			s.Contains(answered.Detail, "Idempotency-Key", name)
+		}
+	}
+
+	s.Empty(s.audits())
+	_, found, err := s.service.Ledger.Account(s.ctx, s.organization)
+	s.Require().NoError(err)
+	s.False(found)
+}
+
+func (s *ServerSuite) TestAReplayedStateChangeChangesNothing() {
+	for name, write := range s.keyedWrites(s.organization) {
+		audits := len(s.audits())
+		headers := key()
+		var first, replayed usage.Standing
+		s.ok(http.StatusOK, &first, write.method, write.path, write.body, headers...)
+		s.ok(http.StatusOK, &replayed, write.method, write.path, write.body, headers...)
+
+		s.Equal(first, replayed, name)
+		s.Len(s.audits(), audits+1, "%s: one audit row", name)
+	}
+}
+
+func (s *ServerSuite) TestASuspensionReplayedAfterARestoreLeavesTheOrganizationActive() {
+	account := "/v1/manage/accounts/" + s.organization
+	s.ok(http.StatusOK, nil, http.MethodPost, account+"/suspend", server.StatusChange{Reason: "fraud"}, "Idempotency-Key", "k1")
+	s.ok(http.StatusOK, nil, http.MethodPost, account+"/restore", server.StatusChange{Reason: "reviewed"}, "Idempotency-Key", "k2")
+
+	var replayed usage.Standing
+	s.ok(http.StatusOK, &replayed, http.MethodPost, account+"/suspend", server.StatusChange{Reason: "fraud"}, "Idempotency-Key", "k1")
+
+	s.Equal(usage.AccountActive, replayed.Status, "the replay answers the standing as it is now")
+	s.Equal(usage.AccountActive, s.standing(s.organization, "").Status)
+	s.Len(s.audits(), 2)
+}
+
+func (s *ServerSuite) TestAnIdempotencyKeyIsOneSpaceAcrossTheAccountWrites() {
+	other := usagetest.Organization()
+	account := "/v1/manage/accounts/" + s.organization
+	s.ok(http.StatusOK, nil, http.MethodPost, account+"/suspend", server.StatusChange{Reason: "fraud"}, "Idempotency-Key", "suspend-1")
+	status, _ := s.grant(s.organization, 100, "credit-1")
+	s.Require().Equal(http.StatusCreated, status)
+	audits := len(s.audits())
+
+	for name, call := range map[string]keyedWrite{
+		"another body":         {http.MethodPost, account + "/suspend", server.StatusChange{Reason: "not fraud"}},
+		"another organization": {http.MethodPost, "/v1/manage/accounts/" + other + "/suspend", server.StatusChange{Reason: "fraud"}},
+		"another operation":    {http.MethodPost, account + "/restore", server.StatusChange{Reason: "fraud"}},
+		"limits":               {http.MethodPut, account + "/limits", usage.Limits{}},
+		"a credit":             {http.MethodPost, account + "/credits", server.CreditRequest{Kind: usage.CreditGrant, AmountMicros: 100}},
+	} {
+		answered := s.refused(http.StatusConflict, call.method, call.path, call.body, "Idempotency-Key", "suspend-1")
+		s.Equal("idempotency_key_reused", answered.Code, name)
+	}
+	for name, write := range s.keyedWrites(s.organization) {
+		answered := s.refused(http.StatusConflict, write.method, write.path, write.body, "Idempotency-Key", "credit-1")
+		s.Equal("idempotency_key_reused", answered.Code, "%s under a credit's key", name)
+	}
+	again, replayed := s.grant(s.organization, 100, "credit-1")
+
+	s.Equal(http.StatusOK, again, "a credit replay is still answered with its entry")
+	s.Equal("credit-1", replayed.IdempotencyKey)
+	standing := s.account(s.organization)
+	s.Equal(usage.AccountSuspended, standing.Status)
+	s.Equal("fraud", standing.StatusReason)
+	s.Equal(int64(100), standing.GrantedMicros)
+	s.True(standing.Overrides.IsZero())
+	s.Len(s.audits(), audits)
+	_, found, err := s.service.Ledger.Account(s.ctx, other)
+	s.Require().NoError(err)
+	s.False(found)
+}
+
+func (s *ServerSuite) TestOneStateChangeSentAtOnceIsMadeOnce() {
+	const callers = 8
+	headers := key()
+	var wg sync.WaitGroup
+	statuses := make([]int, callers)
+	for i := range callers {
+		wg.Go(func() {
+			statuses[i], _ = s.manage(http.MethodPost, "/v1/manage/accounts/"+s.organization+"/suspend", server.StatusChange{Reason: "fraud"}, headers...)
+		})
+	}
+	wg.Wait()
+
+	for _, status := range statuses {
+		s.Equal(http.StatusOK, status)
+	}
+	audits := s.audits()
+	s.Require().Len(audits, 1, "one change, one audit row")
+	s.Equal(ledger.ActionSuspend, audits[0].Action)
+	s.Equal(usage.AccountSuspended, s.account(s.organization).Status)
 }
 
 func (s *ServerSuite) TestACursorThatIsNotAPositionIsRefused() {
