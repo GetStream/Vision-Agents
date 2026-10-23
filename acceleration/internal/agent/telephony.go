@@ -210,21 +210,36 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	return "", false
 }
 
-// undoneStatuses are the statuses of a result saying nothing was done, as the router answers a
-// connector call it held back (internal/session: connector_login.go, step_up.go,
-// connector_approval.go) until the person signs in, grants a scope or approves it. Once they
-// have, the same call must run: the step-up's own result tells the model to call it again.
-var undoneStatuses = []string{
-	"authorization_required", "scope_required", "credential_rejected",
-	"declined", "expired", "failed", "stopped", "unavailable",
-}
+// routerStatuses are the statuses only the router answers a connector call it held back with
+// (internal/session: connector_login.go, step_up.go, connector_tools.go; internal/plugins:
+// user.go) until the person signs in or grants a scope. A tool does not use them for its own
+// results, so they count on the status alone.
+var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
 
-// undoneResult reports whether a tool result's status says nothing was done (undoneStatuses).
+// sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
+// without the person acting (internal/session: connector_login.go, connector_approval.go;
+// internal/plugins/user.go; internal/conversation/parts.go) but a third-party tool uses too:
+// {"status":"stopped","recording_id":"r1"} is a write that was done. They count only in the
+// router's own shape, exactly {status, message}.
+var sharedStatuses = []string{"declined", "expired", "failed", "stopped", "unavailable"}
+
+// undoneResult reports whether a tool result is one the router held back (routerStatuses,
+// sharedStatuses): nothing was done. Once the person has acted, the same call must run: the
+// step-up's own result tells the model to call it again.
 func undoneResult(content string) bool {
-	var body struct {
-		Status string `json:"status"`
+	var body map[string]json.RawMessage
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
 	}
-	return json.Unmarshal([]byte(content), &body) == nil && slices.Contains(undoneStatuses, body.Status)
+	var status string
+	if json.Unmarshal(body["status"], &status) != nil {
+		return false
+	}
+	if slices.Contains(routerStatuses, status) {
+		return true
+	}
+	_, hasMessage := body["message"]
+	return slices.Contains(sharedStatuses, status) && hasMessage && len(body) == 2
 }
 
 // refusedBefore returns the answer of an identical call the tool already refused on this
@@ -369,7 +384,7 @@ func succeeded(history []llm.Message, name string, passed bool) bool {
 			continue
 		}
 		content := strings.ReplaceAll(message.Content, " ", "")
-		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) ||
+		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) || undoneResult(message.Content) ||
 			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
 			continue
 		}

@@ -4894,6 +4894,37 @@ func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
 		s.False(answered(`{"status":"`+status+`","message":"Tell them to press it."}`), status)
 	}
 	s.True(answered(`{"status":"sent","message":"Nash heard the joke."}`), "a status that says it was done answers the call")
+
+	// A third-party write that was done and reports its new state under a generic status.
+	for _, result := range []string{
+		`{"status":"stopped","recording_id":"r1"}`,
+		`{"status":"declined","event_id":"e1"}`,
+		`{"status":"expired","id":"cs_1"}`,
+		`{"status":"failed","job_id":"j1","rows_written":120}`,
+		`{"status":"unavailable","message":"x","agent":"a1"}`,
+	} {
+		s.True(answered(result), result)
+	}
+}
+
+func (s *AgentSuite) TestAClaimIsNotBackedByACallTheRouterHeldBack() {
+	held := `{"status":"scope_required","message":"Tell them to press it."}`
+	done := `{"status":"sent","message":"Nash heard the joke."}`
+	history := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "Send it."},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "crm__send_message"}}},
+			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
+		}
+	}
+	s.False(calledInCall(history(held), "crm__send_message"))
+	s.True(calledInCall(history(done), "crm__send_message"))
+	s.False(changedSinceCaller(history(held), anyTool))
+	s.True(changedSinceCaller(history(done), anyTool))
+	s.False(toolRanSinceCaller(history(held)))
+	s.True(toolRanSinceCaller(history(done)))
+	s.False(succeeded(history(held), "crm__send_message", false))
+	s.True(succeeded(history(done), "crm__send_message", false))
 }
 
 func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {
