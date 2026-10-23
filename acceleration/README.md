@@ -1449,15 +1449,23 @@ counts them) and the MMS beside it (`media_messages`), priced by `direction`, th
 `country` and, for WhatsApp, its `category` (`service`: the agent only writes inside the
 24-hour window). A WhatsApp or iMessage line sends through the app's own Meta or Linq account,
 so its rows are priced and not billed (`vendor_account = "app"`). Each leg of a call (the call
-placed, each transfer into it, a call that arrived) is a `call_legs` row from when it connected
-until `call.session_ended`, then a `call_minutes` row of its `call_seconds`, billed to whoever
-placed the call, or the app under `phone:inbound`, and priced by direction and country; a leg
-nothing ended is ended at four hours and logged. Placing a call is a free `dial` row, for its
-latency and failures. A number is billed every month it is held, on the day it was bought, at
-the price its vendor quoted (`job:number_rental` after the first month), and a 10DLC brand, a
-campaign's review and each of its months at the registrar's fees (`job:dlc_fees`). While the
-10DLC sandbox holds an app, its texts and minutes are priced and given away
-(`dlc_sandbox = "true"`).
+placed, each transfer into it, a call that arrived) is a `call_legs` row. A placed call or a
+transfer rings from when the vendor takes the dial and starts when the person's phone joins the
+Stream call (`call.session_participant_joined`); a call that arrives starts at
+`call.session_started`, one leg per Stream session. A leg ends when its phone leaves
+(`call.session_participant_left`) or the call ends (`call.session_ended`), and is then a
+`call_minutes` row of its `call_seconds`, billed to whoever placed the call, or the app under
+`phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A
+leg still open after four hours is ended, logged at ERROR and given away, since nothing says how
+long it lasted. A leg whose row was lost is written again by the sweep, under the same usage id.
+The call hook has to deliver the participant events: run `go run ./cmd/phone hooks -url <router
+url>` again once. Placing a call is a free `dial` row, for its latency and failures. A number is
+billed every month it is held, on the day it was bought, at the price its vendor quoted (or the
+number's offer when the purchase names none; with neither, as work with no price); the month it
+was bought in under the buyer's key and each after it by `router usage numbers` under
+`job:number_rental`. A 10DLC brand, a campaign's review and its first three months are billed when
+it is registered, and each month after by `router usage dlc` under `job:dlc_fees`. While the 10DLC
+sandbox holds an app, its texts and minutes are priced and given away (`dlc_sandbox = "true"`).
 
 **The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
 an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
