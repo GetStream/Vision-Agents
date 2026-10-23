@@ -165,7 +165,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &forkSessionResponse{Body: sessionOf(created)}, nil
+	return &forkSessionResponse{Body: sessionOf(ctx, created)}, nil
 }
 
 // getSession returns one session, running or ended. A backend is also told what was made of
@@ -181,7 +181,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 
 	var rendered Session
 	if found.Live != nil {
-		rendered = sessionOf(found.Live)
+		rendered = sessionOf(ctx, found.Live)
 	} else {
 		rendered = storedSessionOf(*found.Stored)
 	}
@@ -369,7 +369,7 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 		}
 		return nil, invalidRequest(err.Error())
 	}
-	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
+	return &setSessionSettingsResponse{Body: sessionOf(ctx, found)}, nil
 }
 
 // errCardedSessionToNative is what setSessionSettings and updateSession answer a move onto a
@@ -566,12 +566,12 @@ func holdUntilAnswered(reopened *session.Session, events <-chan session.Event, d
 
 // sessionsOf renders a query's results, taking the live half where there is one: a session
 // in flight knows what routing resolved its models to, which the row does not carry.
-func sessionsOf(found []session.Found) []Session {
+func sessionsOf(ctx context.Context, found []session.Found) []Session {
 	listed := make([]Session, 0, len(found))
 	for _, one := range found {
 		switch {
 		case one.Live != nil:
-			rendered := sessionOf(one.Live)
+			rendered := sessionOf(ctx, one.Live)
 			// A live session that also has a row takes the row's afterthoughts: a title
 			// somebody set from another tab is on the row and not on the running spec.
 			if one.Stored != nil {
@@ -712,8 +712,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	return spec
 }
 
-// sessionOf renders a session for the wire.
-func sessionOf(found *session.Session) Session {
+// sessionOf renders a session for the wire. Its instructions go only to a backend: they are
+// the backend's to set, and a brief the person using the agent is not meant to see would be
+// read straight off their own session.
+func sessionOf(ctx context.Context, found *session.Session) Session {
 	spec := found.Spec()
 	stt, model, voice, think := found.Resolved()
 	instructions := spec.Instructions
@@ -755,7 +757,7 @@ func sessionOf(found *session.Session) Session {
 	rendered.Voice = optional(speaking)
 	mode := SessionMode(found.Mode())
 	rendered.Mode = &mode
-	if instructions != "" {
+	if instructions != "" && ServerSideFrom(ctx) {
 		rendered.Instructions = &instructions
 	}
 	return rendered
@@ -1081,7 +1083,8 @@ func (s *Server) registerSessions(api huma.API) {
 			"somebody else is reported as not found rather than refused, so this is not a way to " +
 			"find out whose an id is.\n" +
 			"A session that ended is read too. A backend is also given its summary, review and usage, " +
-			"which a device asks the backend for.",
+			"which a device asks the backend for, and the instructions of a running session, which a " +
+			"device is never given.",
 		Extensions: map[string]any{clientAccessibleExtension: true},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The session"},
