@@ -105,14 +105,10 @@ func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, c
 	if err != nil {
 		return err
 	}
-	connect := func() (store.Connection, error) {
-		leg, connection, err := s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, number, at, left)
-		if connection == store.LegConnected && leg.EndedAt != nil {
-			s.settleLegs(ctx, []store.CallLeg{leg})
-		}
-		return connection, err
+	if s.connecting != nil {
+		s.connecting()
 	}
-	connection, err := connect()
+	leg, connection, err := s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, number, at, left)
 	if err != nil || connection == store.LegKnown {
 		return err
 	}
@@ -123,11 +119,28 @@ func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, c
 			return err
 		}
 		// A leg opened between the two looks found nothing kept: it is connected here.
-		if connection, err = connect(); err != nil || connection == store.NothingWaiting {
+		leg, connection, err = s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, number, at, left)
+		switch {
+		case err != nil || connection == store.NothingWaiting:
 			return err
+		case connection == store.LegKnown:
+			return s.store.ForgetParticipant(ctx, scope, callType, callID, participant, nil)
 		}
 	}
-	return s.store.ForgetParticipant(ctx, scope, callType, callID, participant)
+	if leg.EndedAt != nil {
+		s.settleLegs(ctx, []store.CallLeg{leg})
+	} else if left, err = s.store.ParticipantLeft(ctx, scope, callType, callID, participant); err != nil {
+		return err
+	} else if left != nil {
+		// The phone's leave was kept between the first look and the connect, which did not
+		// see it: the leg ends at it, before the leave is forgotten.
+		ended, err := s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, *left)
+		if err != nil {
+			return err
+		}
+		s.settleLegs(ctx, ended)
+	}
+	return s.store.ForgetParticipant(ctx, scope, callType, callID, participant, left)
 }
 
 // Left ends the leg of a phone that left a call at at (or now, when zero), and bills its

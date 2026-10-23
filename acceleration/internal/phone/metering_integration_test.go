@@ -208,7 +208,8 @@ func (s *MeteringSuite) TestALeaveBeforeItsJoinEndsTheLegItConnects() {
 	s.Len(s.rows(ModelCallMinutes), 2)
 }
 
-// A leave and a join both delivered before the leg's row is written end the leg as it opens.
+// A leave and a join both delivered before the leg's row is written end the leg as it opens,
+// billing nothing: a leg starts no earlier than it was dialled.
 func (s *MeteringSuite) TestAJoinAndLeaveBeforeTheirLegEndItAsItOpens() {
 	callID := "call-" + uuid.NewString()
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
@@ -219,11 +220,12 @@ func (s *MeteringSuite) TestAJoinAndLeaveBeforeTheirLegEndItAsItOpens() {
 	s.transfer(callID, "+15125550124")
 
 	s.Empty(s.openLegs())
-	s.Equal(pricing.Quantities{pricing.CallSeconds: 40}, s.row(ModelCallMinutes).Meters)
+	s.Zero(s.row(ModelCallMinutes).Meters[pricing.CallSeconds])
+	s.Zero(s.kept(callID))
 }
 
 // A placed call's phone can join before the vendor's answer writes its leg: the leg takes
-// the join, and starts from it.
+// the join, and starts from when it was dialled.
 func (s *MeteringSuite) TestAJoinBeforeTheOutboundLegIsWrittenStartsItFromTheJoin() {
 	callID := "call-" + uuid.NewString()
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
@@ -235,7 +237,7 @@ func (s *MeteringSuite) TestAJoinBeforeTheOutboundLegIsWrittenStartsItFromTheJoi
 	s.joined(defaultCallType, callID, "human-1", "+15125550124")
 	s.ended(defaultCallType, callID)
 
-	s.Equal(pricing.Quantities{pricing.CallSeconds: 65}, s.row(ModelCallMinutes).Meters, "from when the phone joined")
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 60}, s.row(ModelCallMinutes).Meters, "from when it was dialled, after the join")
 	s.Zero(s.kept(callID), "the join was taken")
 }
 
@@ -273,8 +275,59 @@ func (s *MeteringSuite) TestACallersJoinBeforeSessionStartedIsTakenByTheInboundL
 	s.NotNil(legs[store.Inbound].EndedAt, "the caller hung up")
 	minutes := s.rowsWhen(ModelCallMinutes, 2)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 60}, minutes[1].Meters, "the transfer")
-	s.Equal(pricing.Quantities{pricing.CallSeconds: 92}, minutes[0].Meters, "the caller, from their join to their leave")
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 90}, minutes[0].Meters, "the caller, from the call arriving to their leave")
 	s.Zero(s.kept(callID))
+}
+
+// A leave kept between Connect reading the phone's leaves and connecting its leg ends the leg
+// at it, rather than being forgotten with the leg left open, and billed, until the call ends.
+func (s *MeteringSuite) TestALeaveRacingItsJoinEndsTheLeg() {
+	callID := "call-" + uuid.NewString()
+	s.transfer(callID, "+15125550124")
+	s.clock.advance(10 * time.Second)
+	s.service.connecting = func() {
+		s.service.connecting = nil
+		s.left(defaultCallType, callID, "human-1")
+	}
+
+	s.joined(defaultCallType, callID, "human-1", "+15125550124")
+
+	s.Empty(s.openLegs(), "the leg ended at the leave")
+	s.Zero(s.kept(callID), "the leave was applied, then forgotten")
+	s.clock.advance(time.Hour)
+	s.ended(defaultCallType, callID)
+	s.row(ModelCallMinutes)
+	time.Sleep(300 * time.Millisecond)
+	s.Len(s.rows(ModelCallMinutes), 1)
+	s.Zero(s.rows(ModelCallMinutes)[0].Meters[pricing.CallSeconds], "not the hour until the call ended")
+}
+
+// A phone's kept join is not taken by a leg another phone already has, nor does it move that
+// leg's start.
+func (s *MeteringSuite) TestAKeptJoinDoesNotMoveTheStartOfALegAnotherPhoneHas() {
+	callID := "call-" + uuid.NewString()
+	s.transfer(callID, "+15125550124")
+	s.clock.advance(10 * time.Second)
+	s.joined(defaultCallType, callID, "human-1", "+15125550124")
+	started := s.legsOf(callID)[store.Outbound].StartedAt.UTC()
+	joined := s.clock.now().Add(-time.Minute)
+	s.Require().NoError(s.store.RecordParticipant(s.ctx, everyApp, store.CallParticipant{
+		CallType: defaultCallType, CallID: callID, ParticipantSession: "human-2", Number: "+15125550124",
+		JoinedAt: &joined,
+	}, s.clock.now()))
+	s.clock.advance(time.Second)
+
+	s.transfer(callID, "+15125550124")
+
+	legs := s.openLegs()
+	s.Require().Len(legs, 2)
+	for _, leg := range legs {
+		if leg.ParticipantSession == "human-1" {
+			s.Equal(started, leg.StartedAt.UTC())
+		} else {
+			s.Equal("human-2", leg.ParticipantSession, "the second transfer takes the kept join")
+		}
+	}
 }
 
 func (s *MeteringSuite) TestTheSweepDeletesJoinsKeptForADay() {

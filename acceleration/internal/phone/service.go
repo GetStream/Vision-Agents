@@ -47,6 +47,9 @@ type Service struct {
 	// heard is the calls whose participant events this process recorded lately (Heard), and
 	// unhooked the apps it lately logged as not delivering them.
 	heard, unhooked recently
+	// connecting, when set, runs in Connect between reading the phone's kept leave and
+	// connecting its leg, where a leave delivered at the same moment lands.
+	connecting func()
 }
 
 // ServiceOptions configures a Service. Only the registry is required: without a store
