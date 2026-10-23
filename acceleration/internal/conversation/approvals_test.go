@@ -150,7 +150,8 @@ func (s *DisplaySuite) TestAHeldCallShowsLargeOrInvalidArgumentsAsAPreview() {
 	_, err := c.BeginCommand("command-a", "Tell Nash a joke on the crm", "")
 	s.Require().NoError(err)
 	large := `{"text":"` + strings.Repeat("e", maxClientArguments) + `"}`
-	for id, arguments := range map[string]string{"call-1": `{"text":`, "call-2": large} {
+	padded := strings.Repeat("\n", maxApprovalMessage+60) + `{"to":"x"`
+	for id, arguments := range map[string]string{"call-1": `{"text":`, "call-2": large, "call-3": padded} {
 		c.Observe(agent.ToolStarted{ID: id, Tool: "crm__echo", StartedAt: time.Now().UTC()})
 		_, asked := c.AwaitApproval("employee", id, arguments, allowEcho)
 		s.Require().True(asked)
@@ -166,6 +167,8 @@ func (s *DisplaySuite) TestAHeldCallShowsLargeOrInvalidArgumentsAsAPreview() {
 			s.Len([]rune(part.Approval.Message), maxApprovalMessage)
 			s.True(strings.HasPrefix(part.Approval.Message, `{"text":"eee`))
 			s.True(strings.HasSuffix(part.Approval.Message, "…"))
+		case "call-3":
+			s.Equal(`{"to":"x"`, part.Approval.Message)
 		}
 	}
 }
