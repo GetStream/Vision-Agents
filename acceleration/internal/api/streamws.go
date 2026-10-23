@@ -1193,8 +1193,28 @@ func (s *socket) end(failure error) {
 // what it sends meanwhile is read and dropped. A caller that closed first has had its close
 // answered already.
 func closeSocket(connection *websocket.Conn, code int, reason string) {
+	closeBeforeReader(connection, code, reason, noReader)
+}
+
+// noReader stands for a socket's reader that has already stopped.
+var noReader = func() <-chan struct{} {
+	stopped := make(chan struct{})
+	close(stopped)
+	return stopped
+}()
+
+// closeBeforeReader is closeSocket for a writer whose socket's reader may still be reading.
+// That reader takes the caller's answer, which ends its read, so the writer waits for it to
+// stop, as long as closeSocket waits for the answer. A reader that stopped first, on a
+// command or a frame it could not read, leaves the answer for the writer to read.
+func closeBeforeReader[T any](connection *websocket.Conn, code int, reason string, stopped <-chan T) {
 	deadline := time.Now().Add(closeWait)
 	if err := connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, closeReason(reason)), deadline); err != nil {
+		return
+	}
+	select {
+	case <-stopped:
+	case <-time.After(closeWait):
 		return
 	}
 	connection.SetReadDeadline(deadline)

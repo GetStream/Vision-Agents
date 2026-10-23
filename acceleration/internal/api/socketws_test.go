@@ -108,6 +108,66 @@ func (s *SocketSessionSuite) TestASocketThatDoesNotStartWithAStartFrameIsRefused
 	s.Contains(refused["error"], "start frame")
 }
 
+// A refusal is a close the caller is given time to answer, so a proxy does not drop the
+// error frame before it.
+func (s *SocketSessionSuite) TestARefusalWaitsForTheCallerToAnswerItsClose() {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "hello"}))
+
+	closed, held := s.unanswered(connection)
+
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
+	s.Empty(closed.Text)
+	s.heldUntilAnswered(held)
+}
+
+// A conversation the router ends closes the socket the same way.
+func (s *SocketSessionSuite) TestAConversationEndedByTheRouterWaitsForTheCallerToAnswerItsClose() {
+	connection, answered := s.starts(s.utils.uuid())
+	id := answered["session"].(map[string]any)["id"].(string)
+
+	// The router closes the socket while the DELETE is still being answered, so the close is
+	// read as it arrives rather than after the DELETE returns.
+	deleted := s.deletes(id)
+
+	closed, held := s.unanswered(connection)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Equal("the conversation is over", closed.Text)
+	s.heldUntilAnswered(held)
+	s.Equal(http.StatusNoContent, <-deleted)
+}
+
+// A caller that sends more after the router's close is still given time to answer it.
+func (s *SocketSessionSuite) TestACallerSpeakingAfterTheRoutersCloseIsGivenTimeToAnswerIt() {
+	connection, answered := s.starts(s.utils.uuid())
+	deleted := s.deletes(answered["session"].(map[string]any)["id"].(string))
+
+	closed, began := s.closeUnanswered(connection)
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "stop"}))
+
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.heldUntilAnswered(s.heldSince(connection, began))
+	s.Equal(http.StatusNoContent, <-deleted)
+}
+
+// A caller's stop ends the conversation with the same close as the router ending it.
+func (s *SocketSessionSuite) TestAStopEndsTheSocketWithTheConversationOver() {
+	connection, _ := s.starts(s.utils.uuid())
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "stop"}))
+
+	_, ended := s.socketEnd(connection)
+	closed := s.closedWith(ended, websocket.CloseNormalClosure)
+	s.Equal("the conversation is over", closed.Text)
+}
+
+// deletes ends a session from the backend, answering the DELETE's status once it returns.
+func (s *SocketSessionSuite) deletes(id string) <-chan int {
+	status := make(chan int, 1)
+	go func() { status <- s.serverClient.do(http.MethodDelete, "/v1/agents/sessions/"+id, nil, nil) }()
+	return status
+}
+
 func (s *SocketSessionSuite) TestACallerWithNoCredentialsIsRefused() {
 	_, status := s.unauthenticatedClient.watch("/v1/agents/socket")
 
@@ -171,6 +231,19 @@ func (s *SocketSessionSuite) TestTheSocketTakesNoCall() {
 
 	s.Equal("error", refused["type"])
 	s.Equal(errSocketCall.Message, refused["error"])
+}
+
+// A refused start frame that names a call waits for the caller to answer the close, as a refusal does.
+func (s *SocketSessionSuite) TestARefusedCallWaitsForTheCallerToAnswerItsClose() {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "session": map[string]any{"call": map[string]any{"type": "default", "id": s.utils.uuid()}},
+	}))
+
+	closed, held := s.unanswered(connection)
+
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
+	s.heldUntilAnswered(held)
 }
 
 // A socket session carries its own audio, so voice started on it names no Stream call either.

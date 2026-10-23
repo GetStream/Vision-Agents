@@ -144,6 +144,20 @@ func (s *SessionEventsSuite) TestASocketThatClosesTheSessionIsClosedNormally() {
 	}
 }
 
+// A session ended from outside the socket closes it with 1000, and the router waits for the
+// caller's answer before it hangs up.
+func (s *SessionEventsSuite) TestASessionEndedElsewhereClosesTheSocketAndWaitsForTheAnswer() {
+	opened := s.inWriting(CreateSessionRequest{})
+	watching := s.watch(opened.Id)
+
+	s.serverClient.stopSession(opened.Id)
+
+	closed, held := s.unanswered(watching)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Equal("the session ended", closed.Text)
+	s.heldUntilAnswered(held)
+}
+
 func (s *SessionEventsSuite) TestAFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
 	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
 	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("not json")))

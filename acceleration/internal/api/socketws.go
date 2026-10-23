@@ -83,15 +83,17 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		}
 		return stack.Wrap(write(websocket.TextMessage, payload))
 	}
+	// A refusal ends the socket with closeSocket: nothing else reads it yet, and the caller
+	// is held to answer the close so the error frame before it is not lost.
 	refuse := func(message string) {
 		_ = writeFrame(frame{"type": "error", "error": message})
-		_ = write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, ""))
+		closeSocket(connection, websocket.ClosePolicyViolation, "")
 	}
 	// refuseWith also names the failure's code and type, which are what
 	// POST /v1/agents/sessions answers the same failure with.
 	refuseWith := func(failure APIError) {
 		_ = writeFrame(frame{"type": "error", "error": failure.Message, "code": failure.Code, "error_type": failure.Type})
-		_ = write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, ""))
+		closeSocket(connection, websocket.ClosePolicyViolation, "")
 	}
 
 	_ = connection.SetReadDeadline(time.Now().Add(startWait))
@@ -154,13 +156,24 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The conversation ending is the other way the socket closes: the agent hangs up, and
-	// reading stops when the connection does.
+	// reading stops when the connection does. The close waits for the read loop below to take
+	// the caller's answer, and this handler waits for it before the connection is closed.
+	// When the read loop returns first, on a stop or a broken socket, detaching closes events,
+	// so the close is still sent; closeBeforeReader bounds the wait for it to closeWait.
 	events, detach := created.Watch()
-	defer detach()
+	readDone := make(chan struct{})
+	hungUp := make(chan struct{})
+	defer func() {
+		close(readDone)
+		detach()
+		<-hungUp
+	}()
 	go func() {
+		defer close(hungUp)
 		for range events {
 		}
-		_ = write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the conversation is over"))
+		closeBeforeReader(connection, websocket.CloseNormalClosure, "the conversation is over", readDone)
+		// A caller that never answers leaves the read loop reading; closing ends it.
 		_ = connection.Close()
 	}()
 
