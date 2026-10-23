@@ -1486,10 +1486,20 @@ func (s *Session) item(turnID, kind, text, tool string, payload map[string]any) 
 	responseID := turn.id
 	s.turnsMu.Unlock()
 
-	s.records.Item(store.AgentResponseItem{
+	item := store.AgentResponseItem{
 		ResponseID: responseID, Ordinal: ordinal, SessionID: s.id,
 		Kind: kind, Text: text, ToolName: tool, Payload: payload, At: time.Now().UTC(),
-	})
+	}
+	if kind == store.ItemToolCall || kind == store.ItemToolResult {
+		switch window, kept := s.spec.ToolOutputRetention.Window(); {
+		case kept && window == 0:
+			item.Redact()
+		case kept:
+			redactAt := item.At.Add(window)
+			item.RedactAt = &redactAt
+		}
+	}
+	s.records.Item(item)
 }
 
 // blockTurn marks a turn the guardrail refused.

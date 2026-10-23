@@ -859,3 +859,17 @@ func (s *SyncSuite) TestTwoSyncedSandboxBindingsGivingTheSandboxOneEnvVarAreRefu
 	s.Contains(failure, `connector bindings "code" and "docs" both set sandbox`)
 	s.Empty(s.configsNamed("builder"))
 }
+
+func (s *SyncSuite) TestSyncingAnAgentStoresHowLongItKeepsToolOutput() {
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "tools": map[string]any{"output_retention": "30d"}})
+	s.Equal("30d", value(result.Config.Tools.OutputRetention))
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	s.Equal("30d", value(again.Config.Tools.OutputRetention), "a directory that says nothing leaves what is stored")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "concierge", "hash": "v3", "tools": map[string]any{"output_retention": "3651d"},
+	})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "tools.output_retention")
+}

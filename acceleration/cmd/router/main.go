@@ -959,7 +959,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, policies, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
 		sessionConnectors, logger)
 	if err != nil {
 		return err
@@ -1070,6 +1070,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// has to finish in, and then they are somebody's storage bill for nothing.
 	if pgStore != nil {
 		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
+	}
+	// A tool item's output is taken out once the retention its session was held to runs out.
+	if pgStore != nil {
+		go redactToolOutput(ctx, pgStore, logger)
 	}
 
 	// A session lives in one process's memory, so a deployment running more than one
@@ -1550,6 +1554,45 @@ func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.
 	}
 }
 
+// How often and how much tool output redaction does. A run stops at a ceiling, so one
+// shard's backlog after a long outage is worked off over several runs instead of in one
+// burst of writes; 100 batches of 1,000 every ten minutes keeps up with 600,000 tool items
+// an hour falling due on a shard.
+const (
+	redactInterval = 10 * time.Minute
+	redactBatch    = 1000
+	redactBatches  = 100
+)
+
+// redactToolOutput takes the arguments and output out of the tool items in this router's
+// shard whose retention has run out, every redactInterval until the process stops.
+func redactToolOutput(ctx context.Context, pgStore *store.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(redactInterval)
+	defer ticker.Stop()
+	for {
+		var redacted int64
+		for range redactBatches {
+			rows, err := pgStore.RedactToolOutput(ctx, time.Now().UTC(), redactBatch)
+			if err != nil {
+				logger.Error("could not redact tool output", "error", err)
+				break
+			}
+			redacted += rows
+			if rows < redactBatch {
+				break
+			}
+		}
+		if redacted > 0 {
+			logger.Info("redacted tool output", "rows", redacted, "ceiling", redactBatch*redactBatches)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 // openStore opens the database and brings the schema up to date. Every command that
 // touches a customer's rows starts here, so migrating is part of opening rather than
 // something only serving does.
@@ -1635,6 +1678,7 @@ func buildSessions(
 	streams *api.Streams,
 	pgStore *store.Store,
 	configs *appconfig.Store,
+	policies *policy.Enforcer,
 	liveClient *live.Client,
 	directory *node.Directory,
 	telephony *phone.Service,
@@ -1682,6 +1726,7 @@ func buildSessions(
 		UnifiedReplies:     settings.Agent.UnifiedReplies,
 		Stream:             stream,
 		Store:              pgStore,
+		Policies:           policies,
 		Live:               liveClient,
 		Logger:             logger,
 		Edge:               edgeFor(stream),

@@ -412,6 +412,12 @@ type AgentConfig struct {
 	// sends a tool's full description the first time it is called instead of running it
 	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
 	ProgressiveTools bool `bun:"progressive_tools,notnull"`
+	// ToolOutputRetention is how long the config's sessions keep what their tools were
+	// given and gave back on the turns they record: options.RetentionNone for not at all, a
+	// duration such as 30d, or empty for as long as the session. The app's and the
+	// organization's policies can shorten it and never lengthen it
+	// (20261107120000_tool_output_retention.sql).
+	ToolOutputRetention options.Retention `bun:"tool_output_retention,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1766,6 +1772,35 @@ type AgentResponseItem struct {
 	// guardrail's reason, the attachments behind an answer.
 	Payload map[string]any `bun:"payload,type:jsonb,nullzero"`
 	At      time.Time      `bun:"at,notnull"`
+	// RedactAt is when a tool call's or a tool result's arguments and output are taken out
+	// (RedactToolOutput), stamped from the session's tool output retention when it is
+	// written. Nil is never, which every item recorded without a retention is.
+	RedactAt *time.Time `bun:"redact_at"`
+}
+
+// redactedToolKeys are what a redacted tool item keeps of its payload: what ties a call to
+// its result and says which product and SDK ran it. Anything else the payload carries,
+// the arguments above all, goes. An error is kept as having happened, not as its text.
+var redactedToolKeys = []string{"call_id", "product", "sdk"}
+
+// Redact takes out what a tool item carried of the call itself: its text (the result, or
+// a search's query), its arguments, and the wording of its error. What is left still says
+// which tool ran, when, whether it failed and which call a result answers, so a list of
+// items reads the same and tool usage still counts it. redactToolOutputSQL is the same
+// thing for rows already written, and the two are tested against each other.
+func (i *AgentResponseItem) Redact() {
+	payload := map[string]any{"redacted": true}
+	for _, key := range redactedToolKeys {
+		if value, ok := i.Payload[key]; ok && value != nil {
+			payload[key] = value
+		}
+	}
+	if _, failed := i.Payload["error"]; failed {
+		payload["error"] = "redacted"
+	}
+	i.Text = ""
+	i.Payload = payload
+	i.RedactAt = nil
 }
 
 // The kinds of end user a row records. They are the verified kinds of auth.Kind: an

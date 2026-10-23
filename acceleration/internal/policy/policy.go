@@ -69,6 +69,8 @@ type decision struct {
 	screen  bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
+	// toolOutput is the longest a session keeps what its tools were given and gave back.
+	toolOutput options.Retention
 	// messages and tokens are the daily limits per end user the app's policy sets, nil
 	// where it sets none.
 	messages *int64
@@ -154,6 +156,21 @@ func (e *Enforcer) RequiresOwnStreamApp(ctx context.Context, customerID string) 
 	return decided.ownApp, nil
 }
 
+// ToolOutputRetention is the longest a customer's sessions may keep what their tools were
+// given and gave back: the shorter of the app's and the organization's, empty when neither
+// says. It fails closed, as RequiresOwnStreamApp does: a policy that could not be read keeps
+// nothing, since the other answer stores what a customer may have said must not be.
+func (e *Enforcer) ToolOutputRetention(ctx context.Context, customerID string) (options.Retention, error) {
+	if e == nil || customerID == "" {
+		return "", nil
+	}
+	decided := e.decide(ctx, customerID)
+	if decided.unread != nil {
+		return options.RetentionNone, decided.unread
+	}
+	return decided.toolOutput, nil
+}
+
 // Save replaces a scope's policy and drops the decisions it may have changed.
 func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string, document store.PolicyDocument) error {
 	if err := e.config.SavePolicy(ctx, scope, id, document); err != nil {
@@ -234,7 +251,8 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 		tags:   routing.Admission{Tags: organization.Tags}.Labelled(app.Tags),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
-		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		ownApp:     enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
+		toolOutput: organization.ToolOutputRetention.Shorter(app.ToolOutputRetention),
 	}
 	if app.Quota != nil {
 		decided.messages = app.Quota.MessagesPerUserPerDay

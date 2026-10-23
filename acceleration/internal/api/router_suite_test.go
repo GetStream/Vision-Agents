@@ -454,7 +454,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.transports = transports
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
-		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, logger)
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -902,6 +902,7 @@ func (s *RouterSuite) sessionManager(
 	streams *Streams,
 	directory *node.Directory,
 	connectors session.Connectors,
+	policies *policy.Enforcer,
 	logger *slog.Logger,
 ) *session.Manager {
 	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
@@ -925,6 +926,7 @@ func (s *RouterSuite) sessionManager(
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,
+		Policies:      policies,
 		Live:          s.live,
 		Configs:       s.configs,
 		Directory:     directory,

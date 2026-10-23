@@ -250,3 +250,11 @@ func (s *OptionsSuite) TestTheStricterPolicyKeepsTheShorterRetention() {
 }
 
 func intOf(value int) *int { return &value }
+
+func (s *OptionsSuite) TestTheShorterRetentionIsTheOneThatKeepsLess() {
+	s.Equal(Retention("24h"), Retention("30d").Shorter("24h"))
+	s.Equal(RetentionNone, Retention("1h").Shorter(RetentionNone))
+	s.Equal(Retention("30d"), Retention("").Shorter("30d"), "no opinion gives way")
+	s.Equal(Retention("30d"), Retention("30d").Shorter(""))
+	s.Equal(Retention(""), Retention("").Shorter(""))
+}

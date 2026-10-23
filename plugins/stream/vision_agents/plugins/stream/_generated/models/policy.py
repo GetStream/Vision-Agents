@@ -50,6 +50,14 @@ class Policy:
             tags (PolicyTags | Unset): Labels recorded on every row of usage, over whatever the request labelled it with, so
                 spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags. Example:
                 {'application': 'support'}.
+            tool_output_retention (str | Unset): How long a session keeps what its tools were given and gave back on the
+                turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none
+                records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call
+                and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it
+                failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it
+                is kept as long as the session. The shortest of the organization's, the app's and the agent config's
+                tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls
+                recorded after it is set. Deleting a session deletes all of it at once. Example: 30d.
     """
 
     allowed_models: list[str] | Unset = UNSET
@@ -59,6 +67,7 @@ class Policy:
     quota: Quota | Unset = UNSET
     require_own_stream_app: bool | Unset = UNSET
     tags: PolicyTags | Unset = UNSET
+    tool_output_retention: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +95,8 @@ class Policy:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
+        tool_output_retention = self.tool_output_retention
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -103,6 +114,8 @@ class Policy:
             field_dict["require_own_stream_app"] = require_own_stream_app
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if tool_output_retention is not UNSET:
+            field_dict["tool_output_retention"] = tool_output_retention
 
         return field_dict
 
@@ -148,6 +161,8 @@ class Policy:
         else:
             tags = PolicyTags.from_dict(_tags)
 
+        tool_output_retention = d.pop("tool_output_retention", UNSET)
+
         policy = cls(
             allowed_models=allowed_models,
             budget=budget,
@@ -156,6 +171,7 @@ class Policy:
             quota=quota,
             require_own_stream_app=require_own_stream_app,
             tags=tags,
+            tool_output_retention=tool_output_retention,
         )
 
         policy.additional_properties = d

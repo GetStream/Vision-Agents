@@ -110,7 +110,8 @@ class SyncAgentRequest:
             stt (str | Unset):
             subagent (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
             tags (SyncAgentRequestTags | Unset):
-            tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
+            tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
+                is kept.
             tts (str | Unset):
             video (SessionVideo | Unset):
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or

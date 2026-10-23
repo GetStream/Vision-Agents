@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -113,6 +114,10 @@ type ManagerOptions struct {
 	Conversations *persistent.Service
 
 	Store *store.Store
+	// Policies is what each session's tool output retention is held to: the app's and the
+	// organization's, which its agent config can shorten and not lengthen. Nil holds it to
+	// the agent config alone.
+	Policies *policy.Enforcer
 	// Configs reads what a session is opened from -- the skills it names -- through
 	// whatever cache is in front of Postgres. Built over Store when it is not given, in
 	// which case every read is a query, which is what a deployment without Redis does.
@@ -301,6 +306,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if taken {
 			return nil, stack.Wrap(ErrSessionExists)
 		}
+	}
+
+	if m.records != nil && !spec.Incognito {
+		floor, err := m.options.Policies.ToolOutputRetention(ctx, spec.CustomerID)
+		if err != nil {
+			m.logger.Warn("could not read the tool output retention, keeping none",
+				"customer", spec.CustomerID, "session", spec.ID, "error", err)
+		}
+		spec.ToolOutputRetention = floor.Shorter(spec.ToolOutputRetention)
 	}
 
 	// The Stream app the session acts in is settled once, before anything is done there,

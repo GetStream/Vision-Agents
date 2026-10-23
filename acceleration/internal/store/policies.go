@@ -92,6 +92,9 @@ type PolicyDocument struct {
 	// written there for want of one of its own, and what it wrote there before can only be
 	// read. An organization's is set only by the operator.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
+	// ToolOutputRetention is the longest any of the scope's sessions keeps what its tools
+	// were given and gave back. An agent config can shorten it and never lengthen it.
+	ToolOutputRetention options.Retention `json:"tool_output_retention,omitempty"`
 }
 
 // Quota is what one end user of an app may spend in a UTC day. A nil field is no

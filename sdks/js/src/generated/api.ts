@@ -4267,7 +4267,7 @@ export type components = {
             readonly kind: "said" | "thought" | "tool_call" | "tool_result" | "answer" | "blocked" | "error";
             /** @description The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in. */
             readonly ordinal: number;
-            /** @description Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. */
+            /** @description Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. A tool item whose output a tool output retention took out has redacted: true, no arguments and no text, and error: redacted in place of an error's wording. */
             readonly payload?: {
                 readonly [key: string]: unknown;
             };
@@ -4326,8 +4326,13 @@ export type components = {
             /** @description One row per tool, most called first. */
             readonly tools: readonly components["schemas"]["ToolStats"][];
         };
-        /** @description How an agent is offered its plugin, MCP server and connector tools. */
+        /** @description How an agent is offered its tools, and how long what they were given and gave back is kept. */
         readonly AgentTools: {
+            /**
+             * @description How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
+             * @example 30d
+             */
+            readonly output_retention?: string;
             /** @description Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
             readonly progressive?: boolean;
         };
@@ -6894,6 +6899,11 @@ export type components = {
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /**
+             * @description How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+             * @example 30d
+             */
+            readonly tool_output_retention?: string;
         };
         readonly PostalAddress: {
             readonly city?: string;

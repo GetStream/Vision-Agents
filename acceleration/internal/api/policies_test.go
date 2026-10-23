@@ -267,3 +267,30 @@ func (s *PoliciesSuite) TestAnAppMayRequireItsOwnStreamApp() {
 	s.Require().NotNil(stored.RequireOwnStreamApp)
 	s.True(*stored.RequireOwnStreamApp)
 }
+
+func (s *PoliciesSuite) TestAToolOutputRetentionIsStoredAndReadBack() {
+	stored := s.put(map[string]any{"tool_output_retention": "30d"})
+	s.Equal("30d", value(stored.ToolOutputRetention))
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Equal("30d", value(read.ToolOutputRetention))
+
+	cleared := s.put(map[string]any{})
+	s.Nil(cleared.ToolOutputRetention, "a policy left out keeps tool output as long as the session again")
+}
+
+func (s *PoliciesSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefused() {
+	for _, retention := range []string{"3651d", "87601h"} {
+		status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/app",
+			map[string]any{"tool_output_retention": retention})
+		s.Equal(http.StatusBadRequest, status, retention)
+		s.Contains(failure, "tool_output_retention", retention)
+	}
+	for _, retention := range []string{"0d", "30m", "forever", "1w"} {
+		status, body := s.serverClient.call(http.MethodPut, "/v1/policies/app",
+			map[string]any{"tool_output_retention": retention})
+		s.Equal(http.StatusBadRequest, status, retention)
+		s.Contains(string(body), `"code":"validation_failed"`, retention)
+	}
+}

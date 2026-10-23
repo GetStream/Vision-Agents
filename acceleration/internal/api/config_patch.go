@@ -204,8 +204,12 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	applyDispatch(&config, patch.Dispatch)
 	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
+	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, patch.Tools)
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := outputRetentionComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	config.Tags = override(config.Tags, patch.Tags)
