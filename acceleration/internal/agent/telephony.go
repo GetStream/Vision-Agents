@@ -506,27 +506,31 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	tool, _ := a.availableTools().Lookup(requested.Call.Name)
 	// ran is whether the tool was called: the router refuses some calls itself, before it.
 	var ran bool
+	// What the caller said and the tools returned is checked against the whole call, not the
+	// history the model reads: compaction summarises that, and a value it summarised away
+	// was still said or returned.
+	record := a.record()
 	if earlier, repeated := answeredSinceCaller(a.History(), requested.Call); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, a.History()); first != "" {
+	} else if first := unmetPrerequisite(tool, a.availableTools().Tools, record); first != "" {
 		parts = llm.TextParts(fmt.Sprintf(runFirst, requested.Call.Name, first, first))
-	} else if key, value, known, unfound := unfoundID(a.History(), requested.Call, toolNames(a.availableTools())); unfound {
+	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
-	} else if key, known, missing := missingID(a.History(), requested.Call, a.availableTools()); missing {
+	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
 		parts = llm.TextParts(unfoundIDResult(key, "", known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
 	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
 		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
 	} else if key, value, misshapen := misshapenLastFour(requested.Call); misshapen {
-		parts = llm.TextParts(misshapenResult(key, value, a.History()))
-	} else if key, value, heard, unheard := unheardNumber(a.History(), requested.Call); unheard {
+		parts = llm.TextParts(misshapenResult(key, value, record))
+	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
-	} else if name, spelled, misspelled := misspelledName(a.History(), requested.Call); misspelled {
+	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
 		parts = llm.TextParts(misspelledResult(name, spelled))
-	} else if name, stand := placeholderName(a.History(), requested.Call); stand {
+	} else if name, stand := placeholderName(record, requested.Call); stand {
 		parts = llm.TextParts(placeholderResult(name))
 	} else if requested.Call.Name == sandbox.ToolName && a.runsCode() {
 		var said string
