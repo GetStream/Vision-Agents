@@ -4,7 +4,7 @@
 
 **Goal:** Outbound calls stop costing Stream SIP trunks. A customer's numbers share one Stream trunk per vendor, up to 50 numbers on each, so parallel calls from one number work (AI-1279, AI-894), trunks stop leaking toward Stream's cap of 25 (AI-1318), and every inbound caller still gets a call of their own (AI-988).
 
-**Architecture:** A number gets a *line*: a place on its group's shared trunk (Stream app + customer + vendor) and a routing rule of its own whose call id is `{{#if x_stream_call_id}}{{x_stream_call_id}}{{else}}{{uuid}}{{/if}}`. A provider that can carry the call id on its leg to Stream (Twilio, Telnyx, `sip_trunk`) dials through the line with the session id in `x-stream-call-id`. Every other provider keeps today's trunk per call. A placed call still records a `call_resources` row, marked shared, so call sites, sandbox minutes and the hook's "the router placed this" check keep working.
+**Architecture:** A number gets a *line*: a place on its group's shared trunk (Stream app + customer + vendor) and a routing rule of its own whose call id is `{{x_stream_call_id}}{{#unless x_stream_call_id}}{{uuid}}{{/unless}}`. A provider that can carry the call id on its leg to Stream (Twilio, Telnyx, `sip_trunk`) dials through the line with the session id in `x-stream-call-id`. Every other provider keeps today's trunk per call. A placed call still records a `call_resources` row, marked shared, so call sites, sandbox minutes and the hook's "the router placed this" check keep working.
 
 **Tech Stack:** Go 1.27 (`acceleration/`), bun + Postgres, goose migrations, `getstream-go/v5 v5.2.0`, testify suites, `chattest.Server` as the fake Stream.
 
@@ -124,7 +124,7 @@ Already settled, no need to test: Twilio and Telnyx carry the header (live, 2026
   - `CallResource.Shared bool`; `RecordCallResource` unchanged in signature; `func (s *Store) DeleteCallResource(ctx context.Context, callType, callID, trunkID string) error`.
 - Phone produces (`lines.go`):
   - `type Line struct { TrunkID, RouteID string; Bridge Bridge }` (`Bridge` already `WithNumber`, password opened).
-  - `const lineCallTemplate = "{{#if x_stream_call_id}}{{x_stream_call_id}}{{else}}{{uuid}}{{/if}}"`; `inboundCallTemplate` goes.
+  - `const lineCallTemplate = "{{x_stream_call_id}}{{#unless x_stream_call_id}}{{uuid}}{{/unless}}"` (Task 1: the `{{#if}}…{{else}}{{uuid}}` form is refused by Stream live); `inboundCallTemplate` goes.
   - `const trunkCapacity = 50`.
   - `func (s *Service) line(ctx context.Context, stream *Stream, pin int64, held store.PhoneNumber) (Line, error)`:
     1. Held number already on a trunk in this app with a `stream_trunks` row: return its line, nothing at Stream.
