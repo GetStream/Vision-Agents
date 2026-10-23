@@ -125,7 +125,8 @@ func (s *Server) failed(err error, doing string) error {
 	case errors.Is(err, ledger.ErrDefaultTier):
 		return problem(http.StatusConflict, codeDefaultTier, "the default tier answers for every tier string with no row of its own, and cannot be deleted")
 	case errors.Is(err, ledger.ErrIdempotencyKeyReused):
-		return problem(http.StatusConflict, codeKeyReused, "the "+idempotencyHeader+" already holds a credit entry of another organization, kind or amount")
+		return problem(http.StatusConflict, codeKeyReused, "the "+idempotencyHeader+" already holds a request of another operation "+
+			"or organization, or with another body (for a credit, another kind or amount)")
 	}
 	s.logger.Error("a management call failed", "doing", doing, "error", err)
 	return huma.Error503ServiceUnavailable("the service's database failed; try again")
@@ -153,6 +154,15 @@ func checkOrganization(id string) error {
 	if id == "" || len(id) > usage.MaxIDLength || strings.ContainsAny(id, "|{}") ||
 		!utf8.ValidString(id) || strings.ContainsFunc(id, unicode.IsControl) {
 		return invalidRequest(fmt.Sprintf("organization_id is 1 to %d bytes of UTF-8, without | { } or a control character", usage.MaxIDLength))
+	}
+	return nil
+}
+
+// checkIdempotencyKey refuses an account write without the key it is made once under; the
+// ledger refuses one Postgres would change.
+func checkIdempotencyKey(key, made string) error {
+	if n := utf8.RuneCountInString(key); n == 0 || n > ledger.MaxIdempotencyKeyLength {
+		return invalidRequest(fmt.Sprintf("%s once under its %s: 1 to %d characters", made, idempotencyHeader, ledger.MaxIdempotencyKeyLength))
 	}
 	return nil
 }
@@ -225,9 +235,10 @@ func (s *Server) registerManage(api huma.API) {
 	huma.Register(api, register(huma.Operation{
 		OperationID: "setAccountLimits", Method: http.MethodPut, Path: usage.PathManage + "/accounts/{organization_id}/limits",
 		Summary: "Set an organization's own settings",
+		Errors:  keyedFailures,
 	}, "Replaces the organization's overrides of its tier's settings, the spend hard limit included: a setting left "+
 		"out is the tier's again, and `{}` clears them all. An amount of 0 in the spend hard limit is no limit for "+
-		"that interval, whatever the tier's. Answers the standing."), s.setAccountLimits)
+		"that interval, whatever the tier's. Answers the standing. "+onceNote), s.setAccountLimits)
 	huma.Register(api, register(huma.Operation{
 		OperationID: "addCredit", Method: http.MethodPost, Path: usage.PathManage + "/accounts/{organization_id}/credits",
 		Summary: "Add to an organization's credit", DefaultStatus: http.StatusCreated,
@@ -235,11 +246,12 @@ func (s *Server) registerManage(api huma.API) {
 			Description: "The entry already written under the Idempotency-Key; nothing changed",
 			Content:     map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/CreditEntry"}}},
 		}},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable},
+		Errors: keyedFailures,
 	}, "Writes a credit entry and adds its amount to the organization's credit, once per `"+idempotencyHeader+"` "+
 		"(required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, "+
-		"which changes nothing. A key that holds another organization's entry, or one of another kind or amount, is a "+
-		"409 `idempotency_key_reused`. Only the sign is checked: `top_up`, `grant` and `dispute_reversal` are above 0, "+
+		"which changes nothing. A key that holds another organization's entry, one of another kind or amount, or a "+
+		"suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign is checked: "+
+		"`top_up`, `grant` and `dispute_reversal` are above 0, "+
 		"`refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one "+
 		"included: payment rules are the writer's."), s.addCredit)
 	huma.Register(api, register(huma.Operation{
@@ -249,15 +261,17 @@ func (s *Server) registerManage(api huma.API) {
 	huma.Register(api, register(huma.Operation{
 		OperationID: "suspendAccount", Method: http.MethodPost, Path: usage.PathManage + "/accounts/{organization_id}/suspend",
 		Summary: "Suspend an organization",
+		Errors:  keyedFailures,
 	}, "Every request of a suspended organization is refused, free work included, until it is restored. The reason "+
 		"(required, 1 to 500 characters) is the account's `status_reason` and is audited; suspending a suspended "+
-		"organization replaces it. Credit can still be written. Answers the standing."), s.suspendAccount)
+		"organization replaces it. Credit can still be written. Answers the standing. "+onceNote), s.suspendAccount)
 	huma.Register(api, register(huma.Operation{
 		OperationID: "restoreAccount", Method: http.MethodPost, Path: usage.PathManage + "/accounts/{organization_id}/restore",
 		Summary: "Restore a suspended organization",
+		Errors:  keyedFailures,
 	}, "Clears the suspension and its `status_reason`; the reason (required, 1 to 500 characters) is kept in the "+
 		"audit alone. Restoring an active organization changes nothing and is audited all the same. Answers the "+
-		"standing."), s.restoreAccount)
+		"standing. "+onceNote), s.restoreAccount)
 	huma.Register(api, register(huma.Operation{
 		OperationID: "listUsage", Method: http.MethodGet, Path: usage.PathManage + "/accounts/{organization_id}/usage",
 		Summary: "List an organization's usage events",
@@ -265,6 +279,15 @@ func (s *Server) registerManage(api huma.API) {
 		"category `team:<name>`, so it cannot be given with `category`; `user_id` needs `app_id`, since a user id is "+
 		"only unique within its app."), s.listUsage)
 }
+
+// keyedFailures are the failures of an account write made once per Idempotency-Key.
+var keyedFailures = []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable}
+
+// onceNote describes the Idempotency-Key of a write that answers the standing.
+const onceNote = "It is made once per `" + idempotencyHeader + "` (required, 1 to 255 characters), one key space with " +
+	"credits: a replay with the same organization and body changes nothing, is not audited, and answers the standing " +
+	"as it is now. A key already used for another operation or organization, or with another body, is a 409 " +
+	"`idempotency_key_reused`."
 
 // manageNote ends every management operation's description.
 const manageNote = "Management API: it takes the manage key in `" + manageKeyHeader + "`, never the ingest token, and " +
@@ -451,14 +474,18 @@ func (s *Server) getAccount(ctx context.Context, input *getAccountInput) (*stand
 
 type setAccountLimitsInput struct {
 	OrganizationPath
-	Body usage.Limits
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing."`
+	Body           usage.Limits
 }
 
 func (s *Server) setAccountLimits(ctx context.Context, input *setAccountLimitsInput) (*standingOutput, error) {
 	if err := checkOrganization(input.OrganizationID); err != nil {
 		return nil, err
 	}
-	if _, err := s.ledger.SetAccountLimits(ctx, input.OrganizationID, input.Body, actorFrom(ctx)); err != nil {
+	if err := checkIdempotencyKey(input.IdempotencyKey, "an organization's settings are set"); err != nil {
+		return nil, err
+	}
+	if _, _, err := s.ledger.SetAccountLimits(ctx, input.OrganizationID, input.Body, input.IdempotencyKey, actorFrom(ctx)); err != nil {
 		return nil, s.failed(err, "set account limits")
 	}
 	return s.standing(ctx, input.OrganizationID, "")
@@ -488,8 +515,8 @@ func (s *Server) addCredit(ctx context.Context, input *addCreditInput) (*addCred
 	if err := checkOrganization(input.OrganizationID); err != nil {
 		return nil, err
 	}
-	if n := utf8.RuneCountInString(input.IdempotencyKey); n == 0 || n > ledger.MaxIdempotencyKeyLength {
-		return nil, invalidRequest(fmt.Sprintf("a credit is written once under its %s: 1 to %d characters", idempotencyHeader, ledger.MaxIdempotencyKeyLength))
+	if err := checkIdempotencyKey(input.IdempotencyKey, "a credit is written"); err != nil {
+		return nil, err
 	}
 	actor := actorFrom(ctx)
 	entry, written, err := s.ledger.AddCredit(ctx, ledger.CreditEntry{
@@ -557,7 +584,8 @@ type StatusChange struct {
 
 type statusInput struct {
 	OrganizationPath
-	Body StatusChange
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing."`
+	Body           StatusChange
 }
 
 func (s *Server) suspendAccount(ctx context.Context, input *statusInput) (*standingOutput, error) {
@@ -572,7 +600,14 @@ func (s *Server) setStatus(ctx context.Context, input *statusInput, status usage
 	if err := checkOrganization(input.OrganizationID); err != nil {
 		return nil, err
 	}
-	if _, err := s.ledger.SetAccountStatus(ctx, input.OrganizationID, status, input.Body.Reason, actorFrom(ctx)); err != nil {
+	made := "a suspension is made"
+	if status == usage.AccountActive {
+		made = "a restore is made"
+	}
+	if err := checkIdempotencyKey(input.IdempotencyKey, made); err != nil {
+		return nil, err
+	}
+	if _, _, err := s.ledger.SetAccountStatus(ctx, input.OrganizationID, status, input.Body.Reason, input.IdempotencyKey, actorFrom(ctx)); err != nil {
 		return nil, s.failed(err, "set account status")
 	}
 	return s.standing(ctx, input.OrganizationID, "")

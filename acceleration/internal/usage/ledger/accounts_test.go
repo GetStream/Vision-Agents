@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
@@ -21,6 +24,9 @@ const devTiers = "../../../tiers/dev.json"
 var staff = ledger.Actor{ID: "staff-1", Name: "Ada"}
 
 func ptr[T any](v T) *T { return &v }
+
+// newKey is an idempotency key no other write uses.
+func newKey() string { return uuid.NewString() }
 
 // audits is every manage_audit row, oldest first.
 func (s *LedgerSuite) audits() []ledger.ManageAudit {
@@ -227,10 +233,10 @@ func (s *LedgerSuite) TestTierOverridesListsOrganizationsLastSeenOnTheTier() {
 		usagetest.Event("plain-b", func(e *usage.Event) { e.OrganizationTier = "tier-b" }),
 	)
 	for _, organization := range []string{"now-b", "now-c", "no-events"} {
-		_, err := s.ledger.SetAccountLimits(s.ctx, organization, overrides, staff)
+		_, _, err := s.ledger.SetAccountLimits(s.ctx, organization, overrides, newKey(), staff)
 		s.Require().NoError(err)
 	}
-	_, err := s.ledger.SetAccountLimits(s.ctx, "plain-b", usage.Limits{Sandbox: &usage.SandboxLimits{}}, staff)
+	_, _, err := s.ledger.SetAccountLimits(s.ctx, "plain-b", usage.Limits{Sandbox: &usage.SandboxLimits{}}, newKey(), staff)
 	s.Require().NoError(err)
 
 	tierB, more, err := s.ledger.TierOverrides(s.ctx, "tier-b", "", 10)
@@ -250,7 +256,7 @@ func (s *LedgerSuite) TestTheDefaultTiersOverridesIncludeTiersWithNoRow() {
 		usagetest.Event("on-b", func(e *usage.Event) { e.OrganizationTier = "tier-b" }),
 	)
 	for _, organization := range []string{"on-default", "on-unknown", "on-b"} {
-		_, err := s.ledger.SetAccountLimits(s.ctx, organization, usage.Limits{LowBalanceMicros: ptr(int64(1))}, staff)
+		_, _, err := s.ledger.SetAccountLimits(s.ctx, organization, usage.Limits{LowBalanceMicros: ptr(int64(1))}, newKey(), staff)
 		s.Require().NoError(err)
 	}
 
@@ -284,7 +290,7 @@ func (s *LedgerSuite) TestTheNewestEventOfTwoAtOneInstantIsTheOneWithTheGreaterU
 func (s *LedgerSuite) TestTierOverridesPages() {
 	for _, organization := range []string{"o1", "o2", "o3"} {
 		s.ingest(usagetest.Event(organization, func(e *usage.Event) { e.OrganizationTier = "tier-b" }))
-		_, err := s.ledger.SetAccountLimits(s.ctx, organization, usage.Limits{LowBalanceMicros: ptr(int64(1))}, staff)
+		_, _, err := s.ledger.SetAccountLimits(s.ctx, organization, usage.Limits{LowBalanceMicros: ptr(int64(1))}, newKey(), staff)
 		s.Require().NoError(err)
 	}
 
@@ -383,7 +389,7 @@ func (s *LedgerSuite) TestAKeyHoldingAnotherEntryIsRefused() {
 }
 
 func (s *LedgerSuite) TestACreditForASuspendedAccountIsWritten() {
-	_, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "chargeback", staff)
+	_, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "chargeback", newKey(), staff)
 	s.Require().NoError(err)
 
 	_, topped, err := s.credit("o1", usage.CreditTopUp, 10_000_000, "top-up-1")
@@ -485,11 +491,11 @@ func (s *LedgerSuite) TestAFreeEventTouchesNoAccount() {
 
 func (s *LedgerSuite) TestEveryWriteIsAudited() {
 	s.setTier(usage.Tier{Name: "tier-a", FailMode: usage.FailOpen})
-	_, err := s.ledger.SetAccountLimits(s.ctx, "o1", usage.Limits{LowBalanceMicros: ptr(int64(5))}, staff)
+	_, _, err := s.ledger.SetAccountLimits(s.ctx, "o1", usage.Limits{LowBalanceMicros: ptr(int64(5))}, newKey(), staff)
 	s.Require().NoError(err)
-	_, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "a dispute", staff)
+	_, _, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "a dispute", newKey(), staff)
 	s.Require().NoError(err)
-	_, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountActive, "resolved", staff)
+	_, _, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountActive, "resolved", newKey(), staff)
 	s.Require().NoError(err)
 	_, _, err = s.credit("o1", usage.CreditGrant, 9, "grant")
 	s.Require().NoError(err)
@@ -531,8 +537,14 @@ func (s *LedgerSuite) TestTextPostgresWouldChangeIsRefused() {
 		OrganizationID: "o1", Kind: usage.CreditGrant, AmountMicros: 1, IdempotencyKey: "key", Note: "a\x00b",
 	})
 	s.Require().ErrorAs(err, &refused)
-	_, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "a\x00b", staff)
+	_, _, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "a\x00b", newKey(), staff)
 	s.Require().ErrorAs(err, &refused)
+	for _, key := range []string{"", "k\xfeey", "key\n", strings.Repeat("k", 256)} {
+		_, _, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "fraud", key, staff)
+		s.Require().ErrorAs(err, &refused, "%q", key)
+		_, _, err = s.ledger.SetAccountLimits(s.ctx, "o1", usage.Limits{}, key, staff)
+		s.Require().ErrorAs(err, &refused, "%q", key)
+	}
 
 	_, found, err := s.ledger.Account(s.ctx, "o1")
 	s.Require().NoError(err)
@@ -583,15 +595,15 @@ func (s *LedgerSuite) TestTwoWritersCreatingOneTierAuditACreateAndAnUpdate() {
 }
 
 func (s *LedgerSuite) TestSuspendNeedsAReasonAndRestoreClearsIt() {
-	_, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "", staff)
+	_, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "", newKey(), staff)
 	var refused *ledger.InvalidError
 	s.Require().ErrorAs(err, &refused)
 
-	suspended, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "first", staff)
+	suspended, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "first", newKey(), staff)
 	s.Require().NoError(err)
-	again, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "second", staff)
+	again, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "second", newKey(), staff)
 	s.Require().NoError(err)
-	restored, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountActive, "lifted", staff)
+	restored, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountActive, "lifted", newKey(), staff)
 	s.Require().NoError(err)
 
 	s.Equal("first", suspended.StatusReason)
@@ -678,7 +690,7 @@ func (s *LedgerSuite) TestStandingsAnswerAccountsTiersAndSpendWindows() {
 	}})
 	_, _, err := s.credit("o1", usage.CreditGrant, 10_000, "grant")
 	s.Require().NoError(err)
-	_, err = s.ledger.SetAccountLimits(s.ctx, "o1", usage.Limits{SpendHardLimit: &usage.SpendHardLimit{MonthlyMicros: ptr(int64(900))}}, staff)
+	_, _, err = s.ledger.SetAccountLimits(s.ctx, "o1", usage.Limits{SpendHardLimit: &usage.SpendHardLimit{MonthlyMicros: ptr(int64(900))}}, newKey(), staff)
 	s.Require().NoError(err)
 	s.ingest(usagetest.Event("o1", func(e *usage.Event) { e.CostMicros = 2500 }))
 
@@ -739,4 +751,135 @@ func (s *LedgerSuite) TestUsageFiltersAndPages() {
 	s.False(more)
 	s.Len(rest, 1)
 	s.True(page[0].OccurredAt.After(rest[0].OccurredAt) || page[0].OccurredAt.Equal(rest[0].OccurredAt), "newest first")
+}
+
+func (s *LedgerSuite) TestAStatusChangeIsMadeOnceUnderItsKey() {
+	suspended, applied, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "chargeback", "suspend-1", staff)
+	s.Require().NoError(err)
+	s.True(applied)
+	replayed, applied, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "chargeback", "suspend-1", staff)
+	s.Require().NoError(err)
+
+	s.False(applied)
+	s.Equal(suspended, replayed, "a replay answers the account as it is")
+	s.Len(s.audits(), 1, "a replay is not audited")
+}
+
+func (s *LedgerSuite) TestALimitsChangeIsMadeOnceUnderItsKey() {
+	first := usage.Limits{LowBalanceMicros: ptr(int64(5))}
+	second := usage.Limits{LowBalanceMicros: ptr(int64(9))}
+	_, applied, err := s.ledger.SetAccountLimits(s.ctx, "o1", first, "limits-1", staff)
+	s.Require().NoError(err)
+	s.True(applied)
+	_, _, err = s.ledger.SetAccountLimits(s.ctx, "o1", second, "limits-2", staff)
+	s.Require().NoError(err)
+
+	replayed, applied, err := s.ledger.SetAccountLimits(s.ctx, "o1", first, "limits-1", staff)
+
+	s.Require().NoError(err)
+	s.False(applied)
+	s.Equal(second, replayed.LimitOverrides, "the replay did not put the first overrides back")
+	s.Equal(second, s.account("o1").LimitOverrides)
+	s.Len(s.audits(), 2)
+}
+
+func (s *LedgerSuite) TestASuspensionReplayedAfterARestoreLeavesTheAccountActive() {
+	_, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "fraud", "k1", staff)
+	s.Require().NoError(err)
+	_, _, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountActive, "reviewed", "k2", staff)
+	s.Require().NoError(err)
+
+	account, applied, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "fraud", "k1", staff)
+
+	s.Require().NoError(err)
+	s.False(applied)
+	s.Equal(usage.AccountActive, account.Status)
+	s.Equal(usage.AccountActive, s.account("o1").Status)
+	s.Len(s.audits(), 2)
+}
+
+func (s *LedgerSuite) TestAKeyHoldingAnotherRequestIsRefusedWhateverTheOperation() {
+	_, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "fraud", "held", staff)
+	s.Require().NoError(err)
+	_, _, err = s.credit("o1", usage.CreditGrant, 5, "credited")
+	s.Require().NoError(err)
+	before := s.account("o1")
+
+	for name, write := range map[string]func(key string) error{
+		"another reason": func(key string) error {
+			_, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "not fraud", key, staff)
+			return err
+		},
+		"another organization": func(key string) error {
+			_, _, err := s.ledger.SetAccountStatus(s.ctx, "o2", usage.AccountSuspended, "fraud", key, staff)
+			return err
+		},
+		"a restore": func(key string) error {
+			_, _, err := s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountActive, "fraud", key, staff)
+			return err
+		},
+		"a limits change": func(key string) error {
+			_, _, err := s.ledger.SetAccountLimits(s.ctx, "o1", usage.Limits{}, key, staff)
+			return err
+		},
+		"a credit": func(key string) error {
+			_, _, err := s.credit("o1", usage.CreditGrant, 5, key)
+			return err
+		},
+	} {
+		s.Require().ErrorIs(write("held"), ledger.ErrIdempotencyKeyReused, name)
+		if name != "a credit" {
+			s.Require().ErrorIs(write("credited"), ledger.ErrIdempotencyKeyReused, "%s under a credit's key", name)
+		}
+	}
+
+	s.Equal(before, s.account("o1"), "nothing changed")
+	s.Len(s.audits(), 2)
+	_, found, err := s.ledger.Account(s.ctx, "o2")
+	s.Require().NoError(err)
+	s.False(found, "nothing written for the other organization")
+}
+
+func (s *LedgerSuite) TestACreditWrittenBeforeManageRequestsStillHoldsItsKey() {
+	_, err := s.ledger.DB().ExecContext(s.ctx, `INSERT INTO accounts (organization_id, granted_micros) VALUES ('o1', 7)`)
+	s.Require().NoError(err)
+	_, err = s.ledger.DB().ExecContext(s.ctx, `INSERT INTO credit_entries (organization_id, kind, amount_micros, idempotency_key)
+		VALUES ('o1', 'grant', 7, 'earlier')`)
+	s.Require().NoError(err)
+
+	_, _, err = s.ledger.SetAccountStatus(s.ctx, "o1", usage.AccountSuspended, "fraud", "earlier", staff)
+	s.Require().ErrorIs(err, ledger.ErrIdempotencyKeyReused)
+	_, _, err = s.credit("o1", usage.CreditGrant, 8, "earlier")
+	s.Require().ErrorIs(err, ledger.ErrIdempotencyKeyReused)
+	entry, written, err := s.credit("o1", usage.CreditGrant, 7, "earlier")
+	s.Require().NoError(err)
+
+	s.False(written, "the same entry is a replay")
+	s.Equal("earlier", entry.IdempotencyKey)
+	s.Equal(int64(7), s.account("o1").GrantedMicros)
+	s.Equal(usage.AccountActive, s.account("o1").Status)
+	s.Empty(s.audits())
+}
+
+func (s *LedgerSuite) TestOneStatusKeySentByTwoWritersAtOnceAppliesOnce() {
+	other, err := ledger.Open(ledger.Options{DSN: s.dsn})
+	s.Require().NoError(err)
+	defer other.Close() //nolint:errcheck // a pool the test is done with
+
+	for round := range 10 {
+		key := fmt.Sprintf("suspend-%d", round)
+		var wg sync.WaitGroup
+		applied := make([]bool, 2)
+		errs := make([]error, 2)
+		for i, pool := range []*ledger.Ledger{s.ledger, other} {
+			wg.Go(func() {
+				_, applied[i], errs[i] = pool.SetAccountStatus(s.ctx, fmt.Sprintf("o%d", round), usage.AccountSuspended, "fraud", key, staff)
+			})
+		}
+		wg.Wait()
+		s.Require().NoError(errors.Join(errs...))
+		s.True(applied[0] != applied[1], "exactly one applied it, round %d", round)
+	}
+
+	s.Len(s.audits(), 10, "one audit row per key")
 }

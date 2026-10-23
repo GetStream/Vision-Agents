@@ -1435,7 +1435,12 @@ organization's spend in the current day and month. The management API under `/v1
 (tiers, accounts, limits, credit, suspension, usage) takes `USAGE_MANAGE_KEY` in
 `X-Manage-Key` and an actor in `X-Stream-Actor-Id`, never the ingest token; without the key
 every route answers 404 `not_configured`. Each change is written to `manage_audit` with its
-actor. A credit is written once per `Idempotency-Key`, and only its sign is checked.
+actor. A credit is written once per `Idempotency-Key`, and only its sign is checked. A
+suspension, a restore and a change to an organization's settings need one too, so a request
+sent again cannot make its change a second time: a replay with the same organization and body
+changes nothing, writes no audit row and answers the standing as it is now. The key is one
+space across the four writes: a key already used for another operation, organization or body
+is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
 
 The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
 A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,

@@ -910,7 +910,7 @@ paths:
         - Staff
     post:
       description: |-
-        Writes a credit entry and adds its amount to the organization's credit, once per `Idempotency-Key` (required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, which changes nothing. A key that holds another organization's entry, or one of another kind or amount, is a 409 `idempotency_key_reused`. Only the sign is checked: `top_up`, `grant` and `dispute_reversal` are above 0, `refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one included: payment rules are the writer's.
+        Writes a credit entry and adds its amount to the organization's credit, once per `Idempotency-Key` (required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, which changes nothing. A key that holds another organization's entry, one of another kind or amount, or a suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign is checked: `top_up`, `grant` and `dispute_reversal` are above 0, `refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one included: payment rules are the writer's.
 
         Management API: it takes the manage key in `X-Manage-Key`, never the ingest token, and answers 404 `not_configured` when the service has none. Every call names its actor in `X-Stream-Actor-Id` (1 to 256 characters) and may name a person in `X-Stream-Actor-Name`, percent-encoded when it is not printable ASCII; every change is recorded against them.
       operationId: addCredit
@@ -997,7 +997,7 @@ paths:
   /v1/manage/accounts/{organization_id}/limits:
     put:
       description: |-
-        Replaces the organization's overrides of its tier's settings, the spend hard limit included: a setting left out is the tier's again, and `{}` clears them all. An amount of 0 in the spend hard limit is no limit for that interval, whatever the tier's. Answers the standing.
+        Replaces the organization's overrides of its tier's settings, the spend hard limit included: a setting left out is the tier's again, and `{}` clears them all. An amount of 0 in the spend hard limit is no limit for that interval, whatever the tier's. Answers the standing. It is made once per `Idempotency-Key` (required, 1 to 255 characters), one key space with credits: a replay with the same organization and body changes nothing, is not audited, and answers the standing as it is now. A key already used for another operation or organization, or with another body, is a 409 `idempotency_key_reused`.
 
         Management API: it takes the manage key in `X-Manage-Key`, never the ingest token, and answers 404 `not_configured` when the service has none. Every call names its actor in `X-Stream-Actor-Id` (1 to 256 characters) and may name a person in `X-Stream-Actor-Name`, percent-encoded when it is not printable ASCII; every change is recorded against them.
       operationId: setAccountLimits
@@ -1008,6 +1008,12 @@ paths:
           required: true
           schema:
             description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
+            type: string
+        - description: 'Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing.'
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: 'Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing.'
             type: string
       requestBody:
         content:
@@ -1040,6 +1046,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorModel'
           description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Conflict
         "422":
           content:
             application/problem+json:
@@ -1066,7 +1078,7 @@ paths:
   /v1/manage/accounts/{organization_id}/restore:
     post:
       description: |-
-        Clears the suspension and its `status_reason`; the reason (required, 1 to 500 characters) is kept in the audit alone. Restoring an active organization changes nothing and is audited all the same. Answers the standing.
+        Clears the suspension and its `status_reason`; the reason (required, 1 to 500 characters) is kept in the audit alone. Restoring an active organization changes nothing and is audited all the same. Answers the standing. It is made once per `Idempotency-Key` (required, 1 to 255 characters), one key space with credits: a replay with the same organization and body changes nothing, is not audited, and answers the standing as it is now. A key already used for another operation or organization, or with another body, is a 409 `idempotency_key_reused`.
 
         Management API: it takes the manage key in `X-Manage-Key`, never the ingest token, and answers 404 `not_configured` when the service has none. Every call names its actor in `X-Stream-Actor-Id` (1 to 256 characters) and may name a person in `X-Stream-Actor-Name`, percent-encoded when it is not printable ASCII; every change is recorded against them.
       operationId: restoreAccount
@@ -1077,6 +1089,12 @@ paths:
           required: true
           schema:
             description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
+            type: string
+        - description: 'Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing.'
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: 'Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing.'
             type: string
       requestBody:
         content:
@@ -1109,6 +1127,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorModel'
           description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Conflict
         "422":
           content:
             application/problem+json:
@@ -1135,7 +1159,7 @@ paths:
   /v1/manage/accounts/{organization_id}/suspend:
     post:
       description: |-
-        Every request of a suspended organization is refused, free work included, until it is restored. The reason (required, 1 to 500 characters) is the account's `status_reason` and is audited; suspending a suspended organization replaces it. Credit can still be written. Answers the standing.
+        Every request of a suspended organization is refused, free work included, until it is restored. The reason (required, 1 to 500 characters) is the account's `status_reason` and is audited; suspending a suspended organization replaces it. Credit can still be written. Answers the standing. It is made once per `Idempotency-Key` (required, 1 to 255 characters), one key space with credits: a replay with the same organization and body changes nothing, is not audited, and answers the standing as it is now. A key already used for another operation or organization, or with another body, is a 409 `idempotency_key_reused`.
 
         Management API: it takes the manage key in `X-Manage-Key`, never the ingest token, and answers 404 `not_configured` when the service has none. Every call names its actor in `X-Stream-Actor-Id` (1 to 256 characters) and may name a person in `X-Stream-Actor-Name`, percent-encoded when it is not printable ASCII; every change is recorded against them.
       operationId: suspendAccount
@@ -1146,6 +1170,12 @@ paths:
           required: true
           schema:
             description: 'The organization: 1 to 255 bytes of UTF-8, without | { } or a control character.'
+            type: string
+        - description: 'Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing.'
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: 'Required: 1 to 255 characters. The change is made once under it; a replay changes nothing and answers the standing.'
             type: string
       requestBody:
         content:
@@ -1178,6 +1208,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorModel'
           description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorModel'
+          description: Conflict
         "422":
           content:
             application/problem+json:
