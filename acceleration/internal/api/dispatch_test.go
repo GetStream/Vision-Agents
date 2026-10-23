@@ -4,6 +4,7 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -342,6 +343,28 @@ func (s *DispatchSuite) TestADrainingRouterWaitsForTheWorkerToAnswerItsClose() {
 	s.Equal(websocket.CloseGoingAway, closed.Code)
 	s.Equal("router restarting", closed.Text)
 	s.heldUntilAnswered(held)
+}
+
+// A ping that crosses the router's close is not answered, and does not stop the router reading
+// the worker's answer to the close.
+func (s *DispatchSuite) TestAWorkerThatPingsAsTheRouterClosesHasItsAnswerRead() {
+	other, router := s.otherRouter(dispatch.NewPool())
+	worker := s.serverClient.on(other).opens("/v1/dispatch")
+	s.Equal("ready", s.next(worker)["type"])
+	worker.SetCloseHandler(func(int, string) error { return nil })
+	router.Drain()
+	s.Require().NoError(worker.SetReadDeadline(time.Now().Add(settleFor)))
+	_, _, err := worker.ReadMessage()
+	s.Require().True(websocket.IsCloseError(err, websocket.CloseGoingAway), "%v", err)
+
+	s.Require().NoError(worker.WriteJSON(frame{"type": "ping", "at": 1}))
+	answered := time.Now()
+	s.Require().NoError(worker.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")))
+
+	_, err = worker.UnderlyingConn().Read(make([]byte, 64))
+	s.Require().ErrorIs(err, io.EOF)
+	s.Less(time.Since(answered), closeWait/2, "the router did not read the answer behind the ping")
 }
 
 // worker opens the dispatch socket as a backend and waits until it is in the rotation, so a
