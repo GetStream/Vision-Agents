@@ -575,25 +575,39 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 			}
 		}
 	}
-	if err, ref, limit := acct.overLimits(refs, clock); err != nil {
+	verdict := acct.overLimits(refs, clock)
+	if verdict.refusal != nil {
 		reason := reasonLimit
-		if ref.Subject == usage.SubjectUser {
+		if verdict.ref.Subject == usage.SubjectUser {
 			reason = reasonUserLimit
 		}
-		return nil, err, reason, []any{"subject", ref.Subject, "level", limit.Level, "interval", limit.Interval, "limit_id", limit.ID}
+		return nil, verdict.refusal, reason, []any{"subject", verdict.ref.Subject, "level", verdict.limit.Level,
+			"interval", verdict.limit.Interval, "limit_id", verdict.limit.ID}
 	}
 	return nil, nil, "", nil
 }
 
-// overLimits is the refusal of the first of the subjects with no room under one of its limits,
-// in the order subjectsOf gives, each interval from the shortest; nil when every one has room.
-func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) (error, usage.SubjectRef, store.Limit) {
+// limitsVerdict is what the customer's limits say of one owner's work: the refusal of the first
+// subject with no room left under one of its limits, with that subject and limit.
+type limitsVerdict struct {
+	refusal error
+	ref     usage.SubjectRef
+	limit   store.Limit
+}
+
+// overLimits is what the limits say of the subjects, checked in the order subjectsOf gives. A
+// subject with no room under any of its limits is refused, naming of those spent the one whose
+// window ends last, which is when it may spend again (Retry-After for an end user).
+func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdict {
+	var verdict limitsVerdict
 	if len(a.limits) == 0 {
-		return nil, usage.SubjectRef{}, store.Limit{}
+		return verdict
 	}
 	for _, ref := range refs {
 		key := ref.Key(usage.CounterPrefix)
 		spend := a.subjects[key]
+		var spent store.Limit
+		var resets time.Time
 		for _, interval := range usage.Intervals {
 			limit, ok := resolve(a.limits, ref, interval)
 			if !ok {
@@ -605,10 +619,16 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) (error, usa
 			if room(limit, baseline, spend.spentIn(interval, start), held) > 0 {
 				continue
 			}
-			return limitRefusal(limit, ref, end), ref, limit
+			if end.After(resets) {
+				spent, resets = limit, end
+			}
+		}
+		if !resets.IsZero() {
+			verdict.refusal, verdict.ref, verdict.limit = limitRefusal(spent, ref, resets), ref, spent
+			return verdict
 		}
 	}
-	return nil, usage.SubjectRef{}, store.Limit{}
+	return verdict
 }
 
 // see notes, under m.mu, that work counted for the subjects, and asks the limits loop to read

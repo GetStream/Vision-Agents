@@ -90,12 +90,45 @@ func TestEveryCategoryIsChecked(t *testing.T) {
 	}
 	owner := routing.Owner{CustomerID: "a1", Attribution: routing.Attribution{UsageCategories: []string{"a", "b"}}}
 
-	err, ref, limit := acct.overLimits(subjectsOf(owner, "o1"), now)
+	verdict := acct.overLimits(subjectsOf(owner, "o1"), now)
 
-	require.ErrorIs(t, err, ErrBudgetSpent)
-	require.Equal(t, b, ref)
-	require.EqualValues(t, 2, limit.ID)
-	require.EqualError(t, err, "the daily limit of $0.00 on category b is spent; it resets at 2026-10-24T00:00:00Z")
+	require.ErrorIs(t, verdict.refusal, ErrBudgetSpent)
+	require.Equal(t, b, verdict.ref)
+	require.EqualValues(t, 2, verdict.limit.ID)
+	require.EqualError(t, verdict.refusal, "the daily limit of $0.00 on category b is spent; it resets at 2026-10-24T00:00:00Z")
+}
+
+func TestARefusalWithEveryWindowSpentResetsWhenTheLastEnds(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	ref := userRef("u1")
+	windows := map[usage.Interval]spentWindow{}
+	for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
+		start, _ := usage.Window(interval, now)
+		windows[interval] = spentWindow{start: start, micros: 10}
+	}
+	acct := &account{
+		limits: indexLimits([]store.Limit{
+			{ID: 1, Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: "o1", AppID: "a1", Interval: usage.Daily, LimitMicros: 10},
+			{ID: 2, Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: "o1", AppID: "a1", Interval: usage.Monthly, LimitMicros: 10},
+		}),
+		subjects: map[string]*subjectSpend{ref.Key(usage.CounterPrefix): {ref: ref, spent: windows}},
+	}
+	owner := routing.Owner{CustomerID: "a1", Attribution: routing.Attribution{UserID: "u1"}}
+
+	verdict := acct.overLimits(subjectsOf(owner, "o1"), now)
+
+	require.ErrorIs(t, verdict.refusal, ErrUserLimit)
+	require.EqualValues(t, 2, verdict.limit.ID, "the monthly one, which ends last")
+	at, ok := ResetsAt(verdict.refusal)
+	require.True(t, ok)
+	require.Equal(t, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), at, "spending again tomorrow is refused by the month")
+	require.ErrorContains(t, verdict.refusal, "the monthly limit of $0.00 on every user of app a1 is spent for user u1")
+
+	daily, _ := usage.Window(usage.Daily, now)
+	windows[usage.Monthly] = spentWindow{start: windows[usage.Monthly].start, micros: 1}
+	windows[usage.Daily] = spentWindow{start: daily, micros: 10}
+	at, _ = ResetsAt(acct.overLimits(subjectsOf(owner, "o1"), now).refusal)
+	require.Equal(t, time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC), at, "with the month's room left, tomorrow")
 }
 
 func TestASpendReadInAnEndedWindowCountsAsNothing(t *testing.T) {
@@ -109,9 +142,9 @@ func TestASpendReadInAnEndedWindowCountsAsNothing(t *testing.T) {
 		},
 	}
 
-	err, _, _ := acct.overLimits(subjectsOf(routing.Owner{CustomerID: "a1"}, "o1"), now)
+	verdict := acct.overLimits(subjectsOf(routing.Owner{CustomerID: "a1"}, "o1"), now)
 
-	require.NoError(t, err, "yesterday's spend is not today's")
+	require.NoError(t, verdict.refusal, "yesterday's spend is not today's")
 }
 
 func TestAUsersRefusalIsItsOwnKindAndSaysWhenItResets(t *testing.T) {
