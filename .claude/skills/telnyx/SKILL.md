@@ -51,6 +51,20 @@ Staging has a permanent SMS line since 2026-10-23.
 | Connection | `81112518ea0565808d658c1464ed801b`, app-owned, token `TELNYX_API_KEY` |
 | Config | `d6187808c0b169a2d2adf279d4aae97e` "staging-sms-line": text, `llm-fast`, `scheduling.enabled`, `default_timezone` America/Toronto, binding `sms` |
 
+**Only Canadian phones get a reply.** The number sends no SMS outside the US and Canada
+(`features.sms.international_outbound` is false on `GET /v2/phone_numbers/%2B12187021098/messaging`).
+It has no approved 10DLC campaign, so US carriers refuse every reply with Telnyx error
+40010, «Not 10DLC registered». The agent still answers; the carrier drops the text. On 2026-10-23 a US T-Mobile phone got no reply and a
+Canadian phone did. The Stream brand is verified, but its campaign
+(`4b3001a1-0de5-ae6e-5501-5f7aeb071f04`, "Internal Sandbox for Stream AI agents") is
+`TELNYX_FAILED` over its opt-in description and privacy policy, and the number is in no
+campaign. Check it:
+
+```bash
+curl -s -H "Authorization: Bearer $TELNYX_API_KEY" https://api.telnyx.com/10dlc/campaign/4b3001a1-0de5-ae6e-5501-5f7aeb071f04 | jq '{campaignStatus, failureReasons}'
+curl -sg -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/10dlc/phone_number_campaigns?filter[telnyx_phone_number]=%2B12187021098" | jq .totalRecords
+```
+
 To try it, text the number from your phone. To test a feature on it, change the config, or bind
 the connection to another config. Never make a second `telnyx` connection for this number: the
 bridge finds a connection by its number (`store.AppConnectionByAccount`).
@@ -138,7 +152,8 @@ The person must be a real phone. Our Twilio account cannot text US numbers: it a
 code 21408 (checked 2026-10-23). The repo `.env` sets `TWILIO_ACCOUNT_SID` twice, and the
 later one has no numbers. So ask a human to text the line, and give them the exact words.
 
-1. **A reply.** Text "hi". A short answer comes back within a few seconds.
+1. **A reply.** Text "hi" from a Canadian phone (see «Staging's SMS line»). A short
+   answer comes back within a few seconds.
 2. **A scheduled reminder** (scheduled tasks, AI-1842 and AI-1843). Text "Please remind me
    in 2 minutes to drink water". A confirmation comes back. About 2 minutes later the reminder
    comes back on the same thread. Check the task and its run:
@@ -179,6 +194,7 @@ ticket comments (AI-1842, AI-1843).
 | What you see | Where it stopped | What to do |
 | --- | --- | --- |
 | Nothing at all, and the router logs nothing | The profile's `webhook_url` points somewhere else (an old tunnel) | Read the profile (step 1). Point it at the router (step 5) |
+| The agent answered, but the phone got nothing | A US carrier refused the reply: Telnyx error 40010, the number has no approved 10DLC campaign | Read the outbound record's `errors` (below). Text from a Canadian phone, or get the number into an approved campaign (see «Staging's SMS line») |
 | The proxy answers 401 «api_key is required» | The staging proxy does not pass the route | The route passed on 2026-10-23. See the `connectors` skill, «When it does not work» |
 | The router answers 401 «not signed by the provider» to Telnyx | Wrong signing secret, or a clock older than 5 min | Register the provider app again with `TELNYX_PUBLIC_KEY` (step 2) |
 | 200, but no reply | No connection has this number, or no config binds it. Two configs that bind it: the oldest answers, so the newer one stays silent | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
@@ -187,6 +203,14 @@ ticket comments (AI-1842, AI-1843).
 | No reply after an earlier STOP | The person has an opt-out | Text START, or remove the opt-out |
 | The agent answers, but the time is wrong | The config's `default_timezone` | Set it, or name the zone in the text (AI-1910) |
 | A reminder never comes | Read the run's `error` | The reasons table in the `scheduled-tasks` skill |
+
+To see what Telnyx did with each text and reply today, with the error code of a failed one:
+
+```bash
+curl -sg -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/v2/detail_records?filter[record_type]=messaging&filter[date_range]=today&page[size]=20" | jq -c '.data[] | {created_at, direction, cld, status, errors, carrier}'
+```
+
+Error codes: https://developers.telnyx.com/docs/messaging/messages/error-codes
 
 ## Tests
 
