@@ -4,7 +4,7 @@
 
 ### `getstream` plugin: transport moves to the Rust-based stream-py
 
-`vision-agents` and `vision-agents-plugins-getstream` now require `getstream>=6.1.1` built on the Rust Video SDK ([stream-py#303](https://github.com/GetStream/stream-py/pull/303)) instead of the aiortc transport of 4.x. Building it from source needs the Rust toolchain from its `rust-toolchain.toml`, `cmake`, `pkg-config` and `libvpx`. The `StreamEdge` API does not change, but:
+`vision-agents` and `vision-agents-plugins-getstream` now require `getstream>=7.0.0`, whose `webrtc` extra runs on the Rust Video SDK ([stream-py#303](https://github.com/GetStream/stream-py/pull/303)) instead of the aiortc transport of 4.x. The Rust part ships as `getstream-rtc`, which has wheels only for macOS arm64 and for Linux x86_64 and aarch64 with glibc 2.28 or later, and no source distribution. Other platforms, such as Windows and Intel macOS, cannot install it. The `StreamEdge` API does not change, but:
 
 - Video tracks from `add_track_subscriber()` read the SDK's decoded frames, and each call returns an independent track.
 - The SDK decodes only VP8 and VP9 video. A participant that publishes only H.264 (for example RTMP or SRT ingress, or an app that forces H.264) gives the agent no video track. The demo link from `open_demo()` now asks the browser for VP8 (was H.264).
