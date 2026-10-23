@@ -238,7 +238,10 @@ type ProviderConfig struct {
 	// admin switched zero retention on. A request naming a data policy is only routed to
 	// a model that meets it.
 	DataPolicy options.DataHandling `yaml:"data_policy"`
-	Price      Price                `yaml:"price"`
+	// Price is what a customer's own model costs, which its stored config carries. The router
+	// prices every other model from its price list, so it ignores a price: block in its
+	// routing config, with a warning; router prices export moves one into a price file.
+	Price Price `yaml:"price"`
 	// Benchmark is what Artificial Analysis measured, for someone choosing a model.
 	// Routing never reads it.
 	Benchmark Benchmark `yaml:"benchmark"`

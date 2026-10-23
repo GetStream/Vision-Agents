@@ -83,8 +83,9 @@ Getting the most out of them:
   is a guardrail that allows everything, and nothing about the turn would say so.
 - **`Result.Model` is the version that answered, not the alias that was asked.** Aliases move
   when a release ships, and a threshold tuned against one version needs to know.
-- **Report usage and let config price it.** Report input and output tokens. The configured rates
-  turn them into cost; never compute cost in the provider.
+- **Report usage and let the price list price it.** Report input and output tokens. The price
+  list (`acceleration/prices/vendor.json`, then the database) turns them into cost; never
+  compute cost in the provider.
 - **Map failures onto the contract's errors.** A rate limit (429) wraps `ErrRateLimited`. An
   overloaded service (503, 529) or a network failure wraps `ErrUnavailable`. Anything else is
   the request's own fault. `/v1/classify` turns those into its status codes.
@@ -140,19 +141,20 @@ How they are routed:
   resolve to.
 - **Free endpoints** (`:free`) are capped at a few requests a minute and a few dozen a day. They
   are declared `realtime: false`, so a live route never lands on one, and they are priced with
-  `free: true` rather than no price. `TestDefaultConfigPricesEveryProvider` still catches a
-  price that was forgotten.
+  `free: true` in `prices/vendor.json` rather than no price. `TestEveryRoutedModelIsPriced`
+  still catches a price that was forgotten.
 - **Data policy.** Only TypeSafe declares one. What happens to an OpenRouter request depends on
   where OpenRouter forwards it, so its models declare none, and a customer who asks for a data
   policy is kept away from them.
 
 ## Adding a model
 
-On a vendor that already exists, it is a `router.yaml` entry:
+On a vendor that already exists, it is a `router.yaml` entry and its price:
 
 1. Add `provider`, `model` (exactly the vendor's model id), a one-sentence `description`,
-   `languages`, `realtime`, `tier` and `price.per_million_input_tokens`, read from the vendor's
-   price list and dated in a comment.
+   `languages`, `realtime` and `tier` to `router.yaml`, and its `input_tokens` rate to
+   `acceleration/prices/vendor.json`, read from the vendor's price list and dated in the
+   `router.yaml` comment.
 2. Choose a tier on purpose. `low-latency` is for the live path. `high-quality` is a slower
    model that is more accurate.
 3. Run the integration suite below against it. A model that cannot tell an SDK question from a

@@ -6,15 +6,28 @@ import (
 	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
-// Prices is the price list the config declares.
+// Prices is the price list for work on the config's providers when nobody passed one: the
+// rates the config sets itself, then the vendor list embedded in the binary, with the
+// providers it marks local. A router passes the list it was given instead.
 func Prices(config Config, logger *slog.Logger) (*pricing.List, error) {
-	return pricing.NewList("config", PriceEntries(config), logger)
+	var own []pricing.Entry
+	for _, entry := range PriceEntries(config) {
+		if entry.Free || len(entry.Rates) > 0 || len(entry.Tiers) > 0 {
+			entry.Local = false
+			entry.Version = "config"
+			own = append(own, entry)
+		}
+	}
+	entries := prices.Merge(prices.File{Entries: own}, prices.Vendor())
+	return pricing.NewList(prices.EmbeddedVersion(""), prices.WithLocal(entries, LocalItems(config)), logger)
 }
 
-// PriceEntries is the price list the config declares, at the vendors' rates: one entry per
-// provider in every modality, and one more for each service tier a provider names.
+// PriceEntries is the price list the config's price: blocks declare, at the vendors' rates:
+// one entry per provider in every modality, and one more for each service tier a provider
+// names.
 func PriceEntries(config Config) []pricing.Entry {
 	var entries []pricing.Entry
 	for _, modality := range slices.Sorted(maps.Keys(config)) {

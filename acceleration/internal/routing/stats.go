@@ -158,7 +158,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		return
 	}
 
-	r.warnUnnamedTier(config, entry.Attributes["service_tier"])
+	r.warnUnnamedTier(config, entry.Attributes)
 	request := row(r.modality, config, entry)
 	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
@@ -184,15 +184,21 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 }
 
-// warnUnnamedTier logs a service tier the vendor served at that the provider's price does
-// not name, which is priced at the default rates: how a vendor renaming a tier shows up.
+// warnUnnamedTier logs a service tier the vendor served at that the price list has no entry
+// for, which is priced at the default rates: how a vendor renaming a tier shows up. A
+// customer's own model is priced from its config, so its config is what must name the tier.
 // Rows are recorded from many goroutines, so the time is swapped in rather than read and
 // then written.
-func (r *Recorder) warnUnnamedTier(config ProviderConfig, tier string) {
+func (r *Recorder) warnUnnamedTier(config ProviderConfig, attributes map[string]string) {
+	tier := attributes["service_tier"]
 	if tier == "" || tier == "default" {
 		return
 	}
-	if _, named := config.Price.ServiceTiers[tier]; named {
+	if config.Provider == CustomProvider {
+		if _, named := config.Price.ServiceTiers[tier]; named {
+			return
+		}
+	} else if entry, ok := r.pricer.Entry(ItemOf(r.modality, config, attributes)); ok && entry.When["service_tier"] == tier {
 		return
 	}
 	key := [3]string{config.Provider, config.Model, tier}

@@ -6,8 +6,11 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/suite"
@@ -404,6 +407,88 @@ func (s *MigrationOrderSuite) TestTheAuditLogKeepsEveryRowAndTakesTheManagementA
 	s.Equal(11, rows())
 	s.Require().ErrorContains(audit("price_list", "api"), "audit_log_resource_type_check")
 	s.Require().ErrorContains(audit("policy", "manage"), "audit_log_source_check")
+}
+
+// priceTablesVersion is the price tables' migration.
+const priceTablesVersion int64 = 20261110130000
+
+// migrationBefore is the newest migration this binary carries older than version: what a
+// router built just before it had applied, whichever migration merged in between.
+func (s *MigrationOrderSuite) migrationBefore(version int64) int64 {
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	var before int64
+	for _, name := range carried {
+		prefix, _, _ := strings.Cut(name, "_")
+		found, err := strconv.ParseInt(prefix, 10, 64)
+		s.Require().NoError(err)
+		if found < version {
+			before = max(before, found)
+		}
+	}
+	s.Require().NotZero(before)
+	return before
+}
+
+// oldRequestInsert is how a router built before the price tables writes a request: none of the
+// columns they add.
+const oldRequestInsert = `INSERT INTO requests (modality, customer_id, provider, model, started_at, cost_micros, success)
+VALUES ('llm', 'app', 'openai', 'gpt', now(), 1234, true)`
+
+// TestThePreviousRouterRunsOnThePriceTables: a database the router before them wrote to takes
+// the price tables without rewriting requests; that router then still starts on it, with a
+// migration set that lacks them, and still writes its rows. Down takes them off and keeps the
+// rows.
+func (s *MigrationOrderSuite) TestThePreviousRouterRunsOnThePriceTables() {
+	db := s.open()
+	beforePriceTables := s.migrationBefore(priceTablesVersion)
+	s.upTo(db, beforePriceTables)
+	s.exec(db, oldRequestInsert)
+	filenode := func() int64 {
+		var node int64
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT pg_relation_filenode('requests')").Scan(&node))
+		return node
+	}
+	before := filenode()
+
+	s.upTo(db, priceTablesVersion)
+
+	s.Equal(before, filenode(), "adding the columns does not rewrite requests")
+	var version string
+	var base int64
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT price_version, base_cost_micros FROM requests").Scan(&version, &base))
+	s.Empty(version)
+	s.Zero(base)
+
+	previous := fstest.MapFS{}
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	for _, name := range carried {
+		version, _, _ := strings.Cut(name, "_")
+		if version >= strconv.FormatInt(priceTablesVersion, 10) {
+			continue
+		}
+		body, err := fs.ReadFile(migrations.FS, name)
+		s.Require().NoError(err)
+		previous[name] = &fstest.MapFile{Data: body}
+	}
+	goose.SetBaseFS(previous)
+	s.Require().NoError(goose.SetDialect("postgres"))
+	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
+	s.exec(db, oldRequestInsert)
+	s.Require().NoError(db.RecordRequest(s.ctx, &Request{Modality: "llm", CustomerID: "app", Provider: "openai", Model: "gpt",
+		StartedAt: time.Now(), CostMicros: 1, Success: true}))
+
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforePriceTables))
+	var exists bool
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, `SELECT to_regclass('public.price_entries') IS NOT NULL
+OR to_regclass('public.price_changes') IS NOT NULL`).Scan(&exists))
+	s.False(exists)
+	var rows int
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM requests").Scan(&rows))
+	s.Equal(3, rows)
+	s.exec(db, oldRequestInsert)
 }
 
 func (s *MigrationOrderSuite) auditRows(db *Store) int {

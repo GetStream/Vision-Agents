@@ -4,159 +4,16 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
-
-// legacyCostMicros is how a row was priced before the price list: every rate summed in
-// dollars and truncated to micros. The price list must agree with it within a micro.
-func legacyCostMicros(p Price, usage Usage) int64 {
-	freshInputTokens := usage.InputTokens - usage.CachedInputTokens
-	if freshInputTokens < 0 {
-		freshInputTokens = 0
-	}
-
-	dollars := p.PerMillionChars*float64(usage.Characters)/1_000_000 +
-		p.PerAudioHour*float64(usage.AudioMs)/3_600_000 +
-		p.PerMillionInputTokens*float64(freshInputTokens)/1_000_000 +
-		p.PerMillionCachedInputTokens*float64(usage.CachedInputTokens)/1_000_000 +
-		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000 +
-		p.PerImage*float64(usage.Images) +
-		p.PerMegapixel*float64(usage.Pixels)/1_000_000
-	return int64(dollars * 1_000_000)
-}
-
-// atItsContextTier is the price a prompt of that length is billed at: the legacy price knew
-// no long-prompt tier, so a usage past one is compared with the rates the tier multiplies.
-func atItsContextTier(p Price, usage Usage) Price {
-	billed := p
-	for _, tier := range p.ContextTiers {
-		if usage.InputTokens <= tier.AboveInputTokens {
-			continue
-		}
-		billed = p
-		billed.PerMillionInputTokens *= tier.Input
-		billed.PerMillionCachedInputTokens *= tier.Input
-		billed.PerMillionCacheWriteInputTokens *= tier.Input
-		billed.PerMillionOutputTokens *= tier.Output
-	}
-	return billed
-}
-
-// legacyRequestMicros is how a search was priced before: the rate per thousand set outright.
-func legacyRequestMicros(p Price) int64 {
-	return int64(p.PerThousandRequests * 1_000)
-}
-
-// legacyOutputCostMicros is the part of a legacy cost the generated tokens were priced at.
-func legacyOutputCostMicros(p Price, usage Usage) int64 {
-	return min(legacyCostMicros(p, Usage{OutputTokens: usage.OutputTokens}), legacyCostMicros(p, usage))
-}
-
-// cachedAtTheInputRate are the models with an input rate and no cached one. Their cache hits
-// were priced at nothing, and are now priced as fresh input.
-var cachedAtTheInputRate = []string{
-	"decision_model/openrouter/cloudflare/clef",
-	"decision_model/openrouter/cloudflare/clef-flash",
-	"decision_model/openrouter/inception/mercury-decide",
-	"decision_model/openrouter/jaredpalmer/kev-4b",
-	"decision_model/openrouter/liquid/d1",
-	"decision_model/openrouter/openai/gpt-6-luna-decisions",
-	"decision_model/openrouter/typesafe/jev-1.13",
-	"decision_model/perplexity/pplx-decider-v1-27b",
-	"decision_model/perplexity/pplx-decider-v1.1-27b",
-	"decision_model/typesafe/jev-latest",
-	"llm/gemma/gemma-4-26B-A4B-it",
-	"llm/moondream/moondream3-preview",
-	"llm/together/Qwen/Qwen3.8-Flash",
-	"sts/gemini/gemini-3.1-flash-live-preview",
-	"sts/gemini/gemini-3.8-live",
-	"sts/gemini/gemini-3.8-live-extended-thinking",
-}
-
-// defaultPrices is the price list the built-in config declares.
-func (s *RoutingSuite) defaultPrices() (Config, *pricing.List) {
-	config, err := DefaultConfig()
-	s.Require().NoError(err)
-	list, err := pricing.NewList("config", PriceEntries(config), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s.Require().NoError(err)
-	return config, list
-}
 
 // quoted is what a row recording usage on the provider is priced at, as Record prices it.
 func quoted(pricer pricing.Pricer, modality Modality, provider ProviderConfig, usage Usage) pricing.Quote {
 	return quote(pricer, modality, provider, nil, row(modality, provider, Stat{Usage: usage}).Quantities())
-}
-
-// requireLegacyCost fails unless the quote is within a micro of the legacy price, cost and
-// output cost both.
-func (s *RoutingSuite) requireLegacyCost(name string, price Price, usage Usage, quote pricing.Quote) {
-	s.InDeltaf(legacyCostMicros(price, usage), quote.CostMicros, 1, "%s on %+v", name, usage)
-	s.InDeltaf(legacyOutputCostMicros(price, usage), quote.OutputCostMicros, 1, "%s output on %+v", name, usage)
-}
-
-func (s *RoutingSuite) TestPriceEntriesCostWhatPriceCostMicrosDid() {
-	config, list := s.defaultPrices()
-	cached := Usage{InputTokens: 10_000, CachedInputTokens: 4_000, OutputTokens: 2_500}
-	usages := []Usage{
-		{},
-		{AudioMs: 1_234},
-		cached,
-		{Characters: 777},
-		{Images: 2, Pixels: 2 * 3_000_000},
-	}
-
-	var atTheInputRate []string
-	for modality, section := range config {
-		for _, provider := range section.Providers {
-			name := string(modality) + "/" + provider.Name()
-			for _, usage := range usages {
-				price := atItsContextTier(provider.Price, usage)
-				if usage == cached && price.PerMillionInputTokens != 0 && price.PerMillionCachedInputTokens == 0 {
-					atTheInputRate = append(atTheInputRate, name)
-					price.PerMillionCachedInputTokens = price.PerMillionInputTokens
-				}
-				s.requireLegacyCost(name, price, usage, quoted(list, modality, provider, usage))
-			}
-			if provider.Price.PerThousandRequests != 0 {
-				s.InDeltaf(legacyRequestMicros(provider.Price), quoted(list, modality, provider, Usage{Requests: 1}).CostMicros, 1,
-					"%s per request", name)
-			}
-		}
-	}
-	s.ElementsMatch(cachedAtTheInputRate, atTheInputRate,
-		"a model with an input rate and no cached one prices its cache hits as input; name a new one here")
-}
-
-// TestPriceEntriesCostWhatPriceCostMicrosDidForAnyUsage checks every provider against the
-// legacy price on usages drawn at random, from a fixed seed so a failure repeats.
-func (s *RoutingSuite) TestPriceEntriesCostWhatPriceCostMicrosDidForAnyUsage() {
-	config, list := s.defaultPrices()
-	random := rand.New(rand.NewPCG(1, 2))
-
-	for modality, section := range config {
-		for _, provider := range section.Providers {
-			for range 200 {
-				input := random.Int64N(400_000)
-				usage := Usage{
-					AudioMs:      random.Int64N(10_000_000),
-					Characters:   random.Int64N(100_000),
-					InputTokens:  input,
-					OutputTokens: random.Int64N(50_000),
-					Images:       random.Int64N(5),
-					Pixels:       random.Int64N(20_000_000),
-				}
-				price := atItsContextTier(provider.Price, usage)
-				if price.PerMillionCachedInputTokens != 0 {
-					usage.CachedInputTokens = random.Int64N(input + 1)
-				}
-				s.requireLegacyCost(string(modality)+"/"+provider.Name(), price, usage, quoted(list, modality, provider, usage))
-			}
-		}
-	}
 }
 
 func (s *RoutingSuite) TestPriceEntriesExpandServiceAndContextTiers() {
@@ -222,6 +79,35 @@ func (s *RoutingSuite) TestATierThePriceListDoesNotNameIsLoggedOnce() {
 	s.Contains(logs.String(), "model=gpt")
 }
 
+// TestABuiltInModelsTiersAreNamedByTheVendorFile: the built-in config sets no price, so the
+// tiers a model is priced at are the vendor file's entries, and only a tier with none is said.
+func (s *RoutingSuite) TestABuiltInModelsTiersAreNamedByTheVendorFile() {
+	config, list := s.defaultPrices()
+	var luna ProviderConfig
+	for _, provider := range config[LLM].Providers {
+		if provider.Name() == "openai/gpt-6-luna" {
+			luna = provider
+		}
+	}
+	s.Require().Equal("gpt-6-luna", luna.Model)
+	logs := &bytes.Buffer{}
+	done := make(chan struct{})
+	close(done)
+	// It keeps every stat in its queue rather than writing it anywhere.
+	recorder := &Recorder{modality: LLM, live: &live.Client{}, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil)),
+		queue: make(chan queued, 16), done: done}
+
+	for _, tier := range []string{"flex", "batch", "fast", "priority", "default"} {
+		recorder.Record(luna, Stat{Usage: Usage{InputTokens: 1_000}, Attributes: map[string]string{"service_tier": tier}})
+	}
+	s.Empty(logs.String(), "every tier vendor.json names is priced at its own rates, silently")
+
+	recorder.Record(luna, Stat{Usage: Usage{InputTokens: 1_000}, Attributes: map[string]string{"service_tier": "ultrafast"}})
+
+	s.Equal(1, strings.Count(logs.String(), "does not name"))
+	s.Contains(logs.String(), "service_tier=ultrafast")
+}
+
 func (s *RoutingSuite) TestConfigRejectsAServiceTierAtNoRate() {
 	config := s.config()
 	config.Providers[0].Price = Price{PerMillionInputTokens: 1, ServiceTiers: map[string]float64{"flex": 0}}
@@ -245,10 +131,51 @@ func (s *RoutingSuite) TestTheSelfHostedModelsAreMarkedLocal() {
 	}
 }
 
-func (s *RoutingSuite) TestTheBuiltInConfigHasNoBillableModelWithoutAPrice() {
+// defaultPrices is the built-in config and the price list it is priced by: the vendor list
+// embedded in the binary, with the models the config runs itself marked local.
+func (s *RoutingSuite) defaultPrices() (Config, *pricing.List) {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+	list, err := prices.Embedded(LocalItems(config), "test", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	return config, list
+}
+
+// TestEveryRoutedModelIsPriced: every provider the built-in config routes to is marked local,
+// or has a rate or free in vendor.json.
+func (s *RoutingSuite) TestEveryRoutedModelIsPriced() {
 	config, list := s.defaultPrices()
 
 	s.Empty(list.Unpriced(Items(config)))
+}
+
+func (s *RoutingSuite) TestTheBuiltInConfigSetsNoPrice() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for modality, section := range config {
+		for _, provider := range section.Providers {
+			s.Zerof(provider.Price, "%s/%s sets a price: it goes in prices/vendor.json", modality, provider.Name())
+		}
+	}
+}
+
+func (s *RoutingSuite) TestADefaultListTakesTheConfigsOwnRateThenTheVendorFile() {
+	vendor := prices.Vendor().Entries[0]
+	own := ProviderConfig{Provider: "own", Model: "model", Price: Price{PerMillionInputTokens: 3}}
+	listed := ProviderConfig{Provider: vendor.Provider, Model: vendor.Model}
+
+	list, err := Prices(Config{LLM: {Providers: []ProviderConfig{own}}, Modality(vendor.Modality): {Providers: []ProviderConfig{listed}}},
+		slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	fromConfig := quoted(list, LLM, own, Usage{InputTokens: 1_000_000})
+	s.EqualValues(3_000_000, fromConfig.CostMicros)
+	s.Equal("config", fromConfig.Version)
+	found, ok := list.Entry(ItemOf(Modality(vendor.Modality), listed, nil))
+	s.Require().True(ok)
+	s.Equal(vendor.Rates, found.Rates)
+	s.Equal("embedded", quoted(list, Modality(vendor.Modality), listed, Usage{InputTokens: 1_000_000}).Version)
 }
 
 func (s *RoutingSuite) TestACustomersOwnModelIsPricedFromItsOwnConfig() {

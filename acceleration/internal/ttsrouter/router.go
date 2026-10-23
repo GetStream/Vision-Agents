@@ -37,7 +37,7 @@ type Options struct {
 	Live      *live.Client
 	Voices    routing.VoiceResolver
 	Gate      routing.Gate
-	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
 	Pricer pricing.Pricer
 	Logger *slog.Logger
 }

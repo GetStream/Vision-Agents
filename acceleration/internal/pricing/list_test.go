@@ -402,3 +402,48 @@ func (s *PricingSuite) TestAnEntryPricesWithoutAList() {
 	s.True(quote.Billable)
 	s.Empty(quote.Version)
 }
+
+func (s *PricingSuite) TestAVersionFollowsOneRule() {
+	written := llmEntry("written", map[Meter]Rate{InputTokens: perMillion(1)})
+	written.Version = "20261110130000_seed"
+	listed := llmEntry("listed", map[Meter]Rate{InputTokens: perMillion(1)})
+	local := llmEntry("local", nil)
+	local.Local = true
+	list := s.list(written, listed, local)
+	used := Quantities{InputTokens: 1_000}
+
+	s.Equal("20261110130000_seed", list.Quote(llmItem("written", nil), used).Version, "the change that wrote the entry")
+	s.Equal("test", list.Quote(llmItem("listed", nil), used).Version, "the list's own version")
+	s.Empty(list.Quote(llmItem("local", nil), used).Version, "a local entry is priced by no change")
+	s.Empty(list.Quote(llmItem("unknown", nil), used).Version, "unpriced work is priced by nothing")
+}
+
+func (s *PricingSuite) TestNewListRefusesAMarkupOutOfRange() {
+	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1)})
+	markup := int64(MaxMarkupBps + 1)
+	entry.MarkupBps = &markup
+
+	_, err := NewList("test", []Entry{entry}, nil)
+
+	s.ErrorContains(err, "outside 0 to 100000")
+}
+
+func (s *PricingSuite) TestChargedAddsTheListsMarkupToEveryRate() {
+	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(4), OutputTokens: perMillion(20)})
+	entry.Tiers = []Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(8), OutputTokens: perMillion(30)}}}
+
+	charged := Charged(entry, 1_500)
+
+	s.InDelta(4.6, charged.Rates[InputTokens].USD, 1e-12)
+	s.InDelta(23.0, charged.Rates[OutputTokens].USD, 1e-12)
+	s.InDelta(9.2, charged.Tiers[0].Rates[InputTokens].USD, 1e-12)
+	s.InDelta(4.0, entry.Rates[InputTokens].USD, 1e-12, "the entry keeps the vendor's rate")
+}
+
+func (s *PricingSuite) TestChargedTakesAnEntrysOwnMarkup() {
+	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(4)})
+	none := int64(0)
+	entry.MarkupBps = &none
+
+	s.InDelta(4.0, Charged(entry, 1_500).Rates[InputTokens].USD, 1e-12)
+}
