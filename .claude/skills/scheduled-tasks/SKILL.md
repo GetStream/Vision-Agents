@@ -182,7 +182,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `schedule_unreadable` | The stored schedule no longer parses; the task is paused | no |
 | `user_on_call` | The user stayed on a call through the 10 min window | yes |
 | `channel_unreachable` | SMS, WhatsApp or iMessage would refuse: never wrote on it, opted out, outside WhatsApp's 24 h window, no line. On a thread task: opted out, or the sandbox gate holds it back | yes; not for a thread task's opted-out person |
-| `outside_window` | A WhatsApp thread task whose person last wrote over 24 h ago, with no template to send after the window | yes |
+| `outside_window` | A WhatsApp thread task whose person last wrote over 24 h ago, with no template to send after the window | no |
 | `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
 | `connection_removed` | A thread task's line (its connection) was removed | no |
 | `no_reply` | The agent said nothing to carry | yes |

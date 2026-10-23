@@ -387,7 +387,8 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadTaskWithinTheWindowIsSentOnThe
 }
 
 // A day after the person last wrote, WhatsApp takes no free text, and the manifest has no
-// template: nothing is sent, no turn is paid for, and the run says why.
+// template: nothing is sent, no turn is paid for, and the run says why. It is final: only the
+// person writing opens the window again.
 func (s *WhatsAppChannelSuite) TestAWhatsAppThreadTaskPastTheWindowIsNotSent() {
 	task, channel := s.scheduledOnWhatsApp("16505551234")
 	_, err := s.store.DB().ExecContext(context.Background(),
@@ -396,7 +397,7 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadTaskPastTheWindowIsNotSent() {
 
 	_, _, err = s.deliverTask(task)
 
-	s.failedAs(err, scheduling.ReasonOutsideWindow, false)
+	s.failedAs(err, scheduling.ReasonOutsideWindow, true)
 	s.Zero(s.scheduledTurns())
 	s.Never(func() bool { return len(s.meta.sent()) > 1 }, dropped, 20*time.Millisecond)
 }

@@ -178,7 +178,7 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
   person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), WhatsApp
   past 24 h since the person last wrote with no `after_window` template in the manifest
-  (`outside_window`). A thread row that is gone, of another customer, or of another person is
+  (`outside_window`, final). A thread row that is gone, of another customer, or of another person is
   `thread_gone`, final. A task without `channel_thread` is delivered as before.
   `TestTelnyxChannelSuite/TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread`,
   `TestTelnyxChannelSuite/TestARetriedOccurrenceIsNotTextedTwice`,

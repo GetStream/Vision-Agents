@@ -24,7 +24,7 @@ import (
 //	  connection removed                                        connection_removed, final
 //	  opted out                                                 channel_unreachable, final
 //	  sandbox gate                                              channel_unreachable
-//	  past WhatsApp's 24 h, no template                         outside_window
+//	  past WhatsApp's 24 h, no template                         outside_window, final
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
@@ -119,8 +119,9 @@ func (s *Server) taskThreadSession(ctx context.Context, delivery scheduledDelive
 }
 
 // threadUnreachable is the failure a run records for a thread the bridge would not reply on.
-// A removed line and an opted-out person stay so until somebody acts, so another attempt
-// would only repeat them.
+// A removed line, an opted-out person and a person past the window stay so until somebody
+// acts (the window opens again only when the person writes), so another attempt would only
+// repeat them.
 func threadUnreachable(err error) error {
 	switch {
 	case errors.Is(err, store.ErrNoConnectorConnection):
@@ -130,7 +131,7 @@ func threadUnreachable(err error) error {
 	case errors.Is(err, channelbridge.ErrHeldBack):
 		return undelivered(scheduling.ReasonUnreachable, err)
 	case errors.Is(err, channelbridge.ErrOutsideWindow):
-		return undelivered(scheduling.ReasonOutsideWindow, err)
+		return undeliveredFinally(scheduling.ReasonOutsideWindow, err)
 	}
 	return err
 }
