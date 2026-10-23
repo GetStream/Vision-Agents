@@ -230,11 +230,22 @@ type SourceRule struct {
 	// is taken to send data out, so it is true (SendsOut). Left out of the JSON when nil, so
 	// the JSON of every manifest stored before it stays as it was.
 	Outbound *bool `yaml:"outbound,omitempty" json:"outbound,omitempty"`
+	// ReadOnlyTools are the source's tools that only read, by the name the source lists each
+	// under, for a server that offers tools that write beside them. Each has a vendor source
+	// beside it in the manifest. A tool left out may write. Left out of the JSON when empty,
+	// so the JSON of every manifest stored before it stays as it was.
+	ReadOnlyTools []string `yaml:"read_only_tools,omitempty" json:"read_only_tools,omitempty"`
 }
 
 // SendsOut reports whether a tool of the source may send data out of the conversation.
 func (r SourceRule) SendsOut() bool {
 	return r.Outbound == nil || *r.Outbound
+}
+
+// SendsOutTool reports whether the source's tool called name may send data out of the
+// conversation: unless the source says outbound: false or lists it in read_only_tools.
+func (r SourceRule) SendsOutTool(name string) bool {
+	return r.SendsOut() && !slices.Contains(r.ReadOnlyTools, name)
 }
 
 // ToolRule is what a manifest says about one tool of a source.
@@ -717,6 +728,17 @@ func (m Manifest) Validate() error {
 			if len(tool.NeedsScopes) == 0 {
 				fail(field+".needs_scopes", "is required: a tool that needs no scope is left out")
 			}
+		}
+		readOnly := map[string]bool{}
+		for j, tool := range source.ReadOnlyTools {
+			field := fmt.Sprintf("%s.read_only_tools[%d]", field, j)
+			if tool == "" {
+				fail(field, "is empty")
+			}
+			if readOnly[tool] {
+				fail(field, "%q is named twice", tool)
+			}
+			readOnly[tool] = true
 		}
 	}
 
