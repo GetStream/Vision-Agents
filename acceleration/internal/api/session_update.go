@@ -122,7 +122,7 @@ func (s *Server) updateSession(ctx context.Context, request *updateSessionReques
 	if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
 		live.Describe(ctx, labels)
 	}
-	return &sessionResponse{Body: sessionOf(live)}, nil
+	return &sessionResponse{Body: sessionOf(ctx, live)}, nil
 }
 
 // settingsOf reads the models and voice an update asks for, and reports whether it asks
