@@ -452,11 +452,20 @@ by reason.
 Telephony asks the same admission: buying a number, placing or transferring a call, and every
 text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
 so a refusal of money refuses it (402, or 403 `account_suspended`). A call to one of the
-organization's numbers is left unanswered: rejected before it is answered on Telnyx, and
-answered by no agent over Stream SIP. Releasing a number is never refused. A campaign is
-refused at start, and one refused midway pauses with the refusal's code as `paused_reason`
-and keeps its contacts. A scheduled task that could not be delivered for money records the
-refusal's code.
+organization's numbers is refused: on Telnyx it is rejected before it is answered, so it is
+not billed. Over Stream SIP the bridge has already answered the caller when the router hears
+of the call, so no agent is dispatched and the call is ended through Stream at once; the few
+seconds it was up are billed by the vendor. The same holds for a telephony suspension.
+Releasing a number is never refused. A campaign is refused at start, and one refused midway
+pauses with the refusal's code as `paused_reason`, giving the contact it was about to ring
+back to be rung once it is started again. A scheduled task that could not be delivered for
+money records the refusal's code.
+
+Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
+remembering up to 100,000 folded usage ids (about 15 MB per account at most), and the process
+remembers at most 500,000 folded ids across every account (about 60 MB). A folded id past
+either cap is forgotten (`router_admission_folded_ids_forgotten_total`): it is then held
+until its fold's timer rather than its ack, which only ever refuses sooner.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.

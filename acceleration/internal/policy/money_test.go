@@ -106,11 +106,16 @@ type reading struct {
 }
 
 func (s *PolicySuite) billed(change ...func(*Settings)) *reading {
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	return s.billedOn(configs, change...)
+}
+
+// billedOn is billed, reading its policies and the shard through configs.
+func (s *PolicySuite) billedOn(configs *appconfig.Store, change ...func(*Settings)) *reading {
 	service := s.usage()
 	f := s.front(service)
 	client, err := usage.NewClient(usage.ClientOptions{URL: f.server.URL, Token: service.Token})
-	s.Require().NoError(err)
-	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
 	written := &logs{}
 	logger := slog.New(slog.NewTextHandler(written, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -647,6 +652,26 @@ func (s *PolicySuite) TestAnUnackedHoldGoesOnceTheShardSaysItShipped() {
 	s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
 		"let go once a standing asked for after the shard said so lands, long before its timer")
 	s.NotContains(enforcer.logs.String(), "expired before")
+}
+
+func (s *PolicySuite) TestAShardThatDoesNotAnswerKeepsUnackedHolds() {
+	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	configs, err := appconfig.New(appconfig.Options{Store: db})
+	s.Require().NoError(err)
+	enforcer := s.billedOn(configs)
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 400_000)
+
+	// Postgres is gone while the usage service answers: the writer could not have written
+	// the row, nor a sweeper shipped it.
+	s.Require().NoError(db.Close())
+
+	s.never(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 4*quick.PendingTTL, 10*time.Millisecond,
+		"its timer starts again at every pass the shard does not answer")
+	s.Contains(enforcer.logs.String(), "past its pending_ttl with no read of its balance to count it, so it is kept")
 }
 
 func (s *PolicySuite) TestBalanceHoldsGoOnTheStandingsWhileBudgetsCannotBeRead() {

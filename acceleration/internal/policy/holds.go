@@ -3,9 +3,12 @@ package policy
 import (
 	"context"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -17,16 +20,35 @@ const (
 	// which counts the same money and lets go of it no sooner.
 	maxHolds = 10_000
 	// maxFolded is the most usage ids one account remembers inside its folds, so that one
-	// recorded or acked again finds its fold. Past it, a folded id is forgotten: recorded
-	// again it is held a second time, and an ack for it waits for its fold's timer, so a
-	// forgotten id only ever refuses sooner.
-	maxFolded = 100_000
-	// shippedChunk is how many usage ids one question to the shard names.
-	shippedChunk = 1_000
+	// recorded or acked again finds its fold, and maxFoldedInProcess the most every account
+	// of every Enforcer in the process remembers together. Past either, a folded id is
+	// forgotten: recorded again it is held a second time, and an ack for it waits for its
+	// fold's timer, so a forgotten id only ever refuses sooner, never lets money go twice.
+	//
+	// A remembered id costs about 120 bytes (its entry in folded and in holdOf), and a hold
+	// kept apart about 250, so an account holds at most about 15 MB and the folded ids of the
+	// whole process at most about 60 MB.
+	maxFolded          = 100_000
+	maxFoldedInProcess = 500_000
+	// shippedChunk is how many usage ids one question to the shard names, and shippedPerPass
+	// how many the budget loop asks about at most each pass, the oldest first.
+	shippedChunk   = 1_000
+	shippedPerPass = 10_000
+	// shippedTimeout bounds asking the shard on each pass, apart from the budget sums'.
+	shippedTimeout = 15 * time.Second
 )
 
 // budgetIntervals is every interval a budget can reset on.
 var budgetIntervals = []store.BudgetInterval{store.BudgetHourly, store.BudgetDaily, store.BudgetWeekly, store.BudgetMonthly}
+
+// foldedInProcess is how many folded ids every account of every Enforcer remembers.
+var foldedInProcess atomic.Int64
+
+var forgottenFolded = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "router",
+	Name:      "admission_folded_ids_forgotten_total",
+	Help:      "Usage ids folded past what an account or the process remembers, which are then held until their fold's timer rather than their ack",
+})
 
 // hold is what one row this router recorded spent, kept until the ledgers count it. Keyed by
 // the row's usage id, so recording or acking it twice changes nothing. A hold made before the
@@ -244,8 +266,7 @@ func (m *money) settled(rows []routing.Acked, when func(*hold) *time.Time, has f
 		}
 		from := acct.holds[carried.into]
 		if from == nil {
-			delete(acct.folded, row.UsageID)
-			delete(m.holdOf, row.UsageID)
+			acct.forget(m, row.UsageID)
 			continue
 		}
 		state := from.state()
@@ -258,9 +279,9 @@ func (m *money) settled(rows []routing.Acked, when func(*hold) *time.Time, has f
 		into.micros += carried.micros
 		into.made = later(into.made, from.made)
 		into.ackedAt, into.writtenAt = later(into.ackedAt, from.ackedAt), later(into.writtenAt, from.writtenAt)
-		if at := when(into); at.IsZero() {
-			*at = now
-		}
+		// The fold this joins may have been acked before: it is let go only by a read asked for
+		// after this ack too, so what it already held waits with what just joined it.
+		*when(into) = now
 		acct.folded[row.UsageID] = folded{into: intoID, micros: carried.micros}
 		if from.micros == 0 {
 			acct.drop(carried.into, from)
@@ -287,7 +308,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 			switch {
 			case !held.ackedAt.IsZero() && held.ackedAt.Before(acct.standingFrom):
 				acct.letGoBalance(held)
-			case !acct.standingFrom.Before(later(held.made, acct.standingFailed).Add(ttl)):
+			case !acct.standingFrom.Before(later(held.made, acct.balanceFailed).Add(ttl)):
 				expired += held.micros
 				acct.letGoBalance(held)
 			case now.Sub(held.made) > ttl:
@@ -319,8 +340,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if len(emptied) > 0 {
 		for id, carried := range acct.folded {
 			if slices.Contains(emptied, carried.into) {
-				delete(acct.folded, id)
-				delete(m.holdOf, id)
+				acct.forget(m, id)
 			}
 		}
 	}
@@ -335,7 +355,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	}
 	if waiting > 0 && m.waiting.due(key, logEvery) {
 		logger.Warn("usage held against an "+noun(key)+" is past its pending_ttl with no read of its balance to count it, so it is kept",
-			append(who(key), "holds", waiting, "micros", waited, "last_failed_read", acct.standingFailed)...)
+			append(who(key), "holds", waiting, "micros", waited, "last_failed_read", acct.balanceFailed)...)
 	}
 	if len(acct.holds) > maxHolds {
 		m.carry(key, acct)
@@ -362,6 +382,26 @@ func (a *account) reopen(h *hold) {
 	if id, ok := a.folds[*h.group]; ok && a.holds[id] == h {
 		delete(a.folds, *h.group)
 	}
+}
+
+// remember keeps a folded id, unless the account or the process remembers as many as it may;
+// it says whether it did.
+func (a *account) remember(id uuid.UUID, into folded) bool {
+	if len(a.folded) >= maxFolded || foldedInProcess.Load() >= maxFoldedInProcess {
+		return false
+	}
+	a.folded[id] = into
+	foldedInProcess.Add(1)
+	return true
+}
+
+// forget lets go of a folded id, and of what it is held under.
+func (a *account) forget(m *money, id uuid.UUID) {
+	if _, ok := a.folded[id]; ok {
+		delete(a.folded, id)
+		foldedInProcess.Add(-1)
+	}
+	delete(m.holdOf, id)
 }
 
 // drop removes an emptied fold.
@@ -403,55 +443,99 @@ func (m *money) carry(key string, acct *account) {
 		return
 	}
 	slices.SortFunc(own, func(a, b uuid.UUID) int { return acct.holds[a].made.Compare(acct.holds[b].made) })
+	var carried, forgotten, micros int64
+	for _, id := range own[:len(own)-maxHolds/2] {
+		micros += acct.holds[id].micros
+		carried++
+		if !m.fold(acct, id) {
+			forgotten++
+		}
+	}
+	m.enforcer.logger.Warn("an "+noun(key)+" holds more usage than the router keeps apart, so the oldest is folded",
+		append(who(key), "holds", carried, "micros", micros, "kept", maxHolds/2, "forgotten_ids", forgotten,
+			"folded_ids_in_process", foldedInProcess.Load())...)
+}
+
+// fold carries one of the account's own holds in the fold of its state, under m.mu, and says
+// whether its id is remembered there.
+func (m *money) fold(acct *account, id uuid.UUID) bool {
 	if acct.folded == nil {
 		acct.folded = map[uuid.UUID]folded{}
 	}
-	var carried, forgotten, micros int64
-	for _, id := range own[:len(own)-maxHolds/2] {
-		held := acct.holds[id]
-		into, intoID := acct.foldInto(held.state())
-		into.micros += held.micros
-		into.made = later(into.made, held.made)
-		into.ackedAt, into.writtenAt = later(into.ackedAt, held.ackedAt), later(into.writtenAt, held.writtenAt)
-		delete(acct.holds, id)
-		carried++
-		micros += held.micros
-		if len(acct.folded) < maxFolded {
-			acct.folded[id] = folded{into: intoID, micros: held.micros}
-			continue
-		}
-		forgotten++
-		delete(m.holdOf, id)
+	held := acct.holds[id]
+	into, intoID := acct.foldInto(held.state())
+	into.micros += held.micros
+	into.made = later(into.made, held.made)
+	into.ackedAt, into.writtenAt = later(into.ackedAt, held.ackedAt), later(into.writtenAt, held.writtenAt)
+	delete(acct.holds, id)
+	if acct.remember(id, folded{into: intoID, micros: held.micros}) {
+		return true
 	}
-	m.enforcer.logger.Warn("an "+noun(key)+" holds more usage than the router keeps apart, so the oldest is folded",
-		append(who(key), "holds", carried, "micros", micros, "kept", maxHolds/2, "forgotten_ids", forgotten)...)
+	forgottenFolded.Inc()
+	delete(m.holdOf, id)
+	return false
+}
+
+// forgetFolded lets go of every folded id the enforcer remembers, as it stops.
+func (m *money) forgetFolded() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, acct := range m.accounts {
+		foldedInProcess.Add(-int64(len(acct.folded)))
+		acct.folded = nil
+	}
 }
 
 // shipped asks the shard which of the rows held against a balance with no ack it has shipped
 // to the usage service, as another router's sweeper does without this one hearing of it, and
-// notes them acked now. It runs on the budget loop, which is the one that reads Postgres.
+// notes them acked now. It runs on the budget loop, which is the one that reads Postgres, at
+// most shippedPerPass of them, the oldest first, within shippedTimeout.
+//
+// A shard that does not answer is a failed read of the balance for each account asked about:
+// the row it may have shipped is not known to be counted, so the timer of each unacked hold
+// starts again, as it does through an outage of the usage service.
 func (m *money) shipped(ctx context.Context) {
 	db := m.enforcer.config.DB()
 	if m.settings.Usage == nil || db == nil {
 		return
 	}
+	type candidate struct {
+		id   uuid.UUID
+		key  string
+		made time.Time
+	}
 	now := time.Now()
-	var asked []uuid.UUID
+	var asked []candidate
 	m.mu.Lock()
-	for _, acct := range m.accounts {
+	for key, acct := range m.accounts {
 		for id, held := range acct.holds {
 			if held.group == nil && held.balance && held.ackedAt.IsZero() && now.Sub(held.made) > m.settings.Fresh {
-				asked = append(asked, id)
+				asked = append(asked, candidate{id: id, key: key, made: held.made})
 			}
 		}
 	}
 	m.mu.Unlock()
+	slices.SortFunc(asked, func(a, b candidate) int { return a.made.Compare(b.made) })
+	asked = asked[:min(len(asked), shippedPerPass)]
 	for start := 0; start < len(asked); start += shippedChunk {
+		part := asked[start:min(start+shippedChunk, len(asked))]
+		ids := make([]uuid.UUID, len(part))
+		for i, each := range part {
+			ids[i] = each.id
+		}
 		call, cancel := context.WithTimeout(ctx, readTimeout)
-		found, err := db.Shipped(call, asked[start:min(start+shippedChunk, len(asked))])
+		found, err := db.Shipped(call, ids)
 		cancel()
 		if err != nil {
-			m.failedRead("could not ask the shard which held rows it has shipped", err, "rows", len(asked))
+			m.failedRead("could not ask the shard which held rows it has shipped, so their timers start again", err, "rows", len(asked))
+			failed := time.Now()
+			m.mu.Lock()
+			for _, each := range asked[start:] {
+				if acct := m.accounts[each.key]; acct != nil {
+					acct.balanceFailed = failed
+				}
+			}
+			m.mu.Unlock()
 			return
 		}
 		m.settled(acks(found), func(h *hold) *time.Time { return &h.ackedAt }, func(f *fold) *bool { return &f.acked })

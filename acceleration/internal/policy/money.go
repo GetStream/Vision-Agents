@@ -167,12 +167,14 @@ type account struct {
 	// read is when the standing last landed, zero until the first. standingFrom and
 	// measuredFrom are when the last standing that landed, and the last read of every budget
 	// that landed, were asked for: each counts every row its ledger had by then.
-	// standingFailed and measureFailed are when each last could not be read.
-	read           time.Time
-	standingFrom   time.Time
-	measuredFrom   time.Time
-	standingFailed time.Time
-	measureFailed  time.Time
+	// balanceFailed is when what the usage service has of the account last could not be
+	// known: a standing that did not land, or the shard not answering which held rows it
+	// shipped. measureFailed is when a sum of its budgets last did not land.
+	read          time.Time
+	standingFrom  time.Time
+	measuredFrom  time.Time
+	balanceFailed time.Time
+	measureFailed time.Time
 	// wanted is when this process first asked for it, and used when it last did.
 	wanted time.Time
 	used   time.Time
@@ -237,6 +239,7 @@ func (m *money) stop() {
 		}
 		m.cancel()
 		m.loops.Wait()
+		m.forgetFolded()
 		enforcers.Delete(m.enforcer)
 	})
 }
@@ -360,7 +363,7 @@ func (m *money) pass(ctx context.Context) {
 			}
 		}
 		if unread[key] {
-			acct.standingFailed = now
+			acct.balanceFailed = now
 		} else {
 			acct.standingFrom = readFrom
 		}
@@ -378,9 +381,12 @@ func (m *money) pass(ctx context.Context) {
 // another router's spend is counted, which is as soon as before admission moved off the
 // request path, and a slow Postgres delays budgets alone, never a balance.
 func (m *money) measurePass(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, passTimeout)
+	shipping, cancel := context.WithTimeout(ctx, shippedTimeout)
+	m.shipped(shipping)
+	cancel()
+	// The sums have a pass's time of their own, however long the shard took.
+	ctx, cancel = context.WithTimeout(ctx, passTimeout)
 	defer cancel()
-	m.shipped(ctx)
 	_, budgets := m.inUse(time.Now())
 	if len(budgets) == 0 {
 		return
