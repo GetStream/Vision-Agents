@@ -11,8 +11,9 @@
 #   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server, as
 #         google_calendar.yaml quotes it.
 id: bigquery
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools
+# that only read.
+revision: 2
 name: BigQuery
 category: Analytics
 # [setup]: «running queries, getting metadata, and listing resources».
@@ -76,3 +77,16 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://docs.cloud.google.com/bigquery/docs/reference/mcp (opened 2026-10-22, «Last
+    # updated 2026-10-15»): listing and reading datasets, tables and jobs, and
+    # execute_sql_readonly, «restricted to only SELECT statements». execute_sql «can execute
+    # any query», and cancel_job stops a job, so both are left out, as is a tool added later.
+    read_only_tools:
+      - list_dataset_ids
+      - get_dataset_info
+      - list_table_ids
+      - get_table_info
+      - execute_sql_readonly
+      - get_query_results
+      - get_job

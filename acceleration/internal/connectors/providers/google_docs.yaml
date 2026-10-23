@@ -14,8 +14,9 @@
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
 id: google_docs
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
-# false, which revision 1 was stored without (refresh.rotating became a pointer).
-revision: 2
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
+# tools that only read.
+revision: 3
 # [plugin]
 name: Google Docs
 category: Documents
@@ -74,3 +75,10 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/docs/api/reference/mcp (opened 2026-10-22,
+    # «Last updated 2026-10-01»): read_doc «retrieves a JSON representation of the Google
+    # Doc». update_doc writes («documents.batchUpdate»), so it is left out, as is a tool added
+    # later.
+    read_only_tools:
+      - read_doc
