@@ -110,6 +110,10 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	opened := false
 	if !running || !found.Spec().PersistConversation {
 		if found, err = s.threadSession(turn, origin, thread, event); err != nil {
+			if errors.Is(err, errNoConfigBindsLine) {
+				s.logger.Warn("could not open the conversation of a thread channel: no agent config binds its line", "channel", thread.ChannelID, "error", err)
+				return
+			}
 			s.logger.Error("could not open the conversation of a thread channel", "channel", thread.ChannelID, "error", err)
 			return
 		}
@@ -172,7 +176,7 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 		return nil, err
 	}
 	if len(configs) == 0 {
-		return nil, errors.New("no agent config of the thread's customer binds its line")
+		return nil, errNoConfigBindsLine
 	}
 	if !s.mayWrite(ctx, origin, thread.CustomerID) {
 		return nil, errors.New("the customer no longer writes in the app the hook came from")
@@ -183,6 +187,10 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 	}
 	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
 }
+
+// errNoConfigBindsLine is a thread whose line no agent config of its customer binds: the
+// customer's to fix, as the bridge's own drop of such a message is.
+var errNoConfigBindsLine = errors.New("no agent config of the thread's customer binds its line")
 
 // threadSpec is the persistent text session held on a thread channel, as the Router's own.
 func threadSpec(config store.AgentConfig, thread store.ChannelThread) session.Spec {

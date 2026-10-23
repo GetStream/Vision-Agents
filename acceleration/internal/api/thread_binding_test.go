@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -88,6 +89,13 @@ func (s *TelnyxChannelSuite) TestAThreadWhoseLineNoConfigBindsAnyMoreIsNotAnswer
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	s.Never(func() bool { return s.repliesIn(channel) > 0 }, dropped, 20*time.Millisecond)
+	s.Eventually(func() bool { return strings.Contains(s.logged.String(), "no agent config binds its line") },
+		time.Second, 10*time.Millisecond)
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, "no agent config binds its line") {
+			s.Contains(line, "level=WARN", "a line nobody binds is the customer's to fix, not a failure")
+		}
+	}
 }
 
 // rebind moves the line's binding off the suite's config onto a new one of the same customer,
