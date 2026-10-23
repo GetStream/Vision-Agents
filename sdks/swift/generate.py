@@ -126,7 +126,10 @@ def client(spec: dict) -> dict:
     paths: dict[str, dict] = {}
     for path, operations in spec["paths"].items():
         for method, operation in operations.items():
-            if isinstance(operation, dict) and operation.get("operationId") in OPERATIONS:
+            if (
+                isinstance(operation, dict)
+                and operation.get("operationId") in OPERATIONS
+            ):
                 operation["responses"] = {
                     status: response
                     for status, response in operation["responses"].items()
@@ -160,7 +163,8 @@ def readable(node: object, schemas: dict) -> object:
         return node
     union = schemas.get(node.get("$ref", "").removeprefix("#/components/schemas/"), {})
     if {"type": "string"} in union.get("oneOf", []):
-        node = {key: value for key, value in node.items() if key != "$ref"} | {"type": "string"}
+        node = {key: value for key, value in node.items() if key != "$ref"}
+        node["type"] = "string"
     node = {key: readable(value, schemas) for key, value in node.items()}
     if node.get("type") == "integer":
         node.pop("enum", None)
@@ -171,10 +175,14 @@ def renamed(spec: dict) -> dict:
     """``spec`` with the models in ``RENAMED`` under their new names."""
     text = json.dumps(spec)
     for old, new in RENAMED.items():
-        text = text.replace(f'"#/components/schemas/{old}"', f'"#/components/schemas/{new}"')
+        text = text.replace(
+            f'"#/components/schemas/{old}"', f'"#/components/schemas/{new}"'
+        )
     spec = json.loads(text)
     schemas = spec["components"]["schemas"]
-    spec["components"]["schemas"] = {RENAMED.get(name, name): schema for name, schema in schemas.items()}
+    spec["components"]["schemas"] = {
+        RENAMED.get(name, name): schema for name, schema in schemas.items()
+    }
     return spec
 
 
@@ -203,7 +211,9 @@ def main(argv: list[str]) -> int:
     (work / "out").mkdir(parents=True)
 
     trimmed = work / "openapi.json"
-    trimmed.write_text(json.dumps(renamed(client(readable(spec, spec["components"]["schemas"])))))
+    trimmed.write_text(
+        json.dumps(renamed(client(readable(spec, spec["components"]["schemas"]))))
+    )
 
     command = ["go", "run", ".", "generate-client", "--language", "swift"]
     for option in OPTIONS:
@@ -218,8 +228,14 @@ def main(argv: list[str]) -> int:
     # This SDK calls DefaultAPI.
     shutil.rmtree(GENERATED, ignore_errors=True)
     (GENERATED / "Models").mkdir(parents=True)
-    shutil.move(str(work / "out" / "APIs" / "DefaultAPI.swift"), str(GENERATED / "DefaultAPI.swift"))
-    shutil.move(str(work / "out" / "StringCodingKey.swift"), str(GENERATED / "StringCodingKey.swift"))
+    shutil.move(
+        str(work / "out" / "APIs" / "DefaultAPI.swift"),
+        str(GENERATED / "DefaultAPI.swift"),
+    )
+    shutil.move(
+        str(work / "out" / "StringCodingKey.swift"),
+        str(GENERATED / "StringCodingKey.swift"),
+    )
     for generated in sorted((work / "out" / "models").glob("*.swift")):
         shutil.move(str(generated), str(GENERATED / "Models" / generated.name))
     shutil.rmtree(work, ignore_errors=True)
