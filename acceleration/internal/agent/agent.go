@@ -1982,6 +1982,9 @@ func (a *Agent) respondTurn(
 	}
 	a.keepTurnLocked(participant, text)
 	history := a.replayLocked()
+	// This turn is answered, however it was asked, so what is speculated on next is a turn
+	// of its own.
+	a.speculating = ""
 
 	a.speakingTurn = turnID
 	a.generating = true
