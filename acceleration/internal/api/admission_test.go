@@ -229,6 +229,36 @@ func (s *AdmissionSuite) TestAUsersSpentLimitIsTooManyRequestsWithRetryAfter() {
 	s.NotEqual(http.StatusTooManyRequests, status, "another user of the app spent nothing")
 }
 
+func (s *AdmissionSuite) TestAUserSpentForTheDayAndTheMonthRetriesAfterTheMonth() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
+		limit := store.Limit{
+			Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.organization(), AppID: s.customerID(),
+			Interval: interval, LimitMicros: 1, UpdatedBy: "test",
+		}
+		s.Require().NoError(s.store.CreateLimit(s.T().Context(), &limit, store.LimitAudit{CustomerID: s.customerID(), Source: store.AuditSourceAPI}))
+	}
+	spender := s.utils.uuid()
+	s.usage.Spend(s.T(), s.organization(), 1_000, func(event *usage.Event) { event.AppID, event.UserID = s.customerID(), spender })
+	asUser := s.signedIn(jwt.MapClaims{"user_id": spender}, auth.AuthTypeJWT, user, spender)
+
+	var response *http.Response
+	s.Require().Eventually(func() bool {
+		response = asUser.raw(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		if response.StatusCode != http.StatusTooManyRequests {
+			_ = response.Body.Close()
+			return false
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "refused once the user's spend is read")
+	defer response.Body.Close() //nolint:errcheck // a read-only body
+
+	retry, err := strconv.Atoi(response.Header.Get("Retry-After"))
+	s.Require().NoError(err)
+	_, monthEnd := usage.Window(usage.Monthly, time.Now())
+	s.InDelta(time.Until(monthEnd).Seconds(), retry, 5, "tomorrow the month's limit still refuses, so the month's end")
+}
+
 func (s *AdmissionSuite) TestTheSpendHardLimitIsAPaymentRequired() {
 	s.usage.Credit(s.T(), s.organization(), 100_000_000)
 	daily := int64(1_000_000)
