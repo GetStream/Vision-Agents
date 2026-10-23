@@ -325,6 +325,11 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, sende
 			found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
 			return true
 		}
+		// A connector call the router holds for the person's approval is sent only once they
+		// allow it, and only they or their backend may answer it.
+		if found.AnswerConnectorApproval(command.ToolCallID, command.CommandID, *command.Allowed, command.Summary, owner) {
+			return true
+		}
 		// A connector call waiting for the person to sign in is declined the same way.
 		if !*command.Allowed && found.DeclineLogin(command.ToolCallID) {
 			return true

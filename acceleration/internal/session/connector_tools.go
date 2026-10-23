@@ -34,6 +34,9 @@ type Connectors struct {
 	// Resolver hands a sandbox binding's credential to the sandbox's broker. Nil gives no
 	// sandbox binding a credential.
 	Resolver core.Resolver
+	// ApprovalWait is how long a call held for its person's approval waits for them. Zero is
+	// approvalWait, ten minutes; a test sets less.
+	ApprovalWait time.Duration
 }
 
 // defaultConnectorTimeout bounds one connector tool call whose binding sets no timeout_ms.
@@ -142,7 +145,8 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		return nil, nil, nil, stack.Wrap(errors.New("session: connector bindings come from a stored agent config, and this session names none"))
 	}
 	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations,
-		limiter: m.options.Connectors.Limiter, slots: &m.slots, logger: m.logger}
+		limiter: m.options.Connectors.Limiter, slots: &m.slots, logger: m.logger,
+		approvals: approvals{wait: m.options.Connectors.ApprovalWait}}
 	// Opened on the context a call runs on (dispatcher.correlated): a refresh while the tools
 	// are listed is audited as one during a call is, with no request or session id for an
 	// incognito session. The MCP client keeps the values of the context it connected on for

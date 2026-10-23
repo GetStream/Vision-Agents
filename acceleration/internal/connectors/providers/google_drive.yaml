@@ -13,8 +13,9 @@
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
 id: google_drive
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
-# false, which revision 1 was stored without (refresh.rotating became a pointer).
-revision: 2
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
+# tools that only read.
+revision: 3
 # [plugin]
 name: Google Drive
 category: Documents
@@ -72,3 +73,15 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/drive/api/reference/mcp (opened 2026-10-22,
+    # «Last updated 2026-07-16»): each tool's page under tools_list/ marks it «Read Only
+    # Hint». copy_file and create_file write a file, so they are left out, as is a tool added
+    # later.
+    read_only_tools:
+      - download_file_content
+      - get_file_metadata
+      - get_file_permissions
+      - list_recent_files
+      - read_file_content
+      - search_files

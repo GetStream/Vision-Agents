@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -523,6 +524,47 @@ func TestSayingSomethingSendsItDownTheSocket(t *testing.T) {
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("the router never got %s", kind)
+		}
+	}
+}
+
+// An answer to a held call names the step and the command, and a declined one says why.
+func TestAnApprovalAnswerIsSentDownTheSocket(t *testing.T) {
+	sent := make(chan map[string]any, 4)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		for {
+			var frame map[string]any
+			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
+				return
+			}
+			sent <- frame
+		}
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if err := pipeline.AnswerApproval("call-1", "request-1", true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.AnswerApproval("call-2", "request-1", false, "Not now"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []map[string]any{
+		{"type": "tool_approval", "tool_call_id": "call-1", "request_id": "request-1", "allowed": true},
+		{"type": "tool_approval", "tool_call_id": "call-2", "request_id": "request-1", "allowed": false, "summary": "Not now"},
+	}
+	for _, frame := range want {
+		select {
+		case got := <-sent:
+			if !reflect.DeepEqual(got, frame) {
+				t.Fatalf("the router was sent %v, want %v", got, frame)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the router never got %v", frame)
 		}
 	}
 }
