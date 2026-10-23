@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -273,4 +274,31 @@ func (s *SocketSessionSuite) TestStartingVoiceOnALiveSocketSessionChangesNothing
 	s.Equal(http.StatusOK, status)
 	s.Equal(Live, started.State)
 	s.Equal(answered["session"].(map[string]any)["call_id"], started.CallId)
+}
+
+// Voice started while it is being stopped is refused as voice started after it was stopped,
+// whichever of the two reaches the socket's call first: the call is never joined again.
+func (s *SocketSessionSuite) TestVoiceStartedWhileItIsStoppedIsRefusedOrUnchanged() {
+	for range 20 {
+		_, answered := s.startsAs(s.client, s.utils.uuid())
+		id := answered["session"].(map[string]any)["id"].(string)
+		var wg sync.WaitGroup
+		var status int
+		var failure string
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			status, failure = s.client.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/voice", nil)
+		}()
+		go func() {
+			defer wg.Done()
+			s.client.do(http.MethodDelete, "/v1/agents/sessions/"+id+"/voice", nil, nil)
+		}()
+		wg.Wait()
+
+		if status != http.StatusOK {
+			s.Require().Equal(http.StatusBadRequest, status, failure)
+			s.Require().Equal(errSocketVoiceEnded.Message, failure)
+		}
+	}
 }

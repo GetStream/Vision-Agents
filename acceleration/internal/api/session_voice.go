@@ -107,6 +107,9 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 		if errors.Is(err, session.ErrNoAgentCallType) {
 			return nil, errNoAgentCallType
 		}
+		if errors.Is(err, socketedge.ErrLeft) {
+			return nil, errSocketVoiceEnded
+		}
 		return nil, invalidRequest(err.Error())
 	}
 	return &sessionVoiceResponse{Body: sessionOf(found)}, nil
