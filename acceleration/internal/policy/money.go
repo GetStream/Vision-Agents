@@ -62,13 +62,20 @@ const (
 	standingsChunk = 100
 	// readTimeout bounds one standings call, and one budget's sum.
 	readTimeout = 5 * time.Second
-	// passTimeout bounds one pass of the money loop.
+	// passTimeout bounds one pass of either loop.
 	passTimeout = time.Minute
+	// budgetReads is how many budgets are summed at once. Each is a sum over the request rows
+	// of every shard since its window began, so a few at a time keep a slow Postgres from
+	// being asked for all of them together.
+	budgetReads = 4
+	// maxHolds is the most holds one account keeps apart. Past it, the oldest are carried as
+	// one per app, which counts the same money and lets go of it no sooner.
+	maxHolds = 10_000
 	// logEvery spaces a failed read's error, and each organization's refusals in the log.
 	logEvery = time.Minute
 )
 
-// The refusals the log tells apart.
+// The refusals the log and the would-refuse counter tell apart.
 const (
 	reasonSuspended  = "suspended"
 	reasonUnreadable = "balance_unreadable"
@@ -86,6 +93,11 @@ var (
 		Name:      "admission_refresh_errors_total",
 		Help:      "Background reads of a customer's policies, or of its organization's money, that failed and left the last ones answering",
 	})
+	wouldRefuse = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "admission_would_refuse_total",
+		Help:      "Admissions that ROUTER_LIMITS_MODE=shadow admitted and enforce would have refused, by why",
+	}, []string{"reason"})
 	_ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "router",
 		Name:      "admission_oldest_read_seconds",
@@ -102,47 +114,64 @@ func oldestRead() float64 {
 	return oldest.Seconds()
 }
 
-// money is what an Enforcer knows of each organization's money, and the loop that reads it.
+// money is what an Enforcer knows of each organization's money, and the two loops that read it:
+// standings from the usage service every Fresh, and budgets from Postgres every BudgetEvery,
+// so how fresh a balance is never waits on Postgres.
 type money struct {
 	enforcer *Enforcer
 	settings Settings
 
 	mu       sync.Mutex
 	accounts map[string]*account
-	// holdOf is the organization each hold is kept under, by usage id, so an ack naming another
+	// holdOf is the account each hold is kept under, by usage id, so an ack naming another
 	// organization still finds it.
 	holdOf map[uuid.UUID]string
 	// failModes is what each tier string's row said at the last standing that named it, for an
 	// organization not read yet.
 	failModes map[string]usage.FailMode
 
-	kick    chan struct{}
-	cancel  context.CancelFunc
-	done    chan struct{}
-	stopped sync.Once
+	kick, kickBudgets chan struct{}
+	cancel            context.CancelFunc
+	loops             sync.WaitGroup
+	stopped           sync.Once
 
 	errorLogged once
 	refusals    throttle
+	// waiting spaces the warning about holds that wait on a read, per account.
+	waiting throttle
 }
 
 // account is what an organization may do with money, read from the usage service (or from
-// Postgres with no usage service), only ever in the background.
+// Postgres with no usage service), only ever in the background. An app in no organization has
+// one of its own (appAccount), for its budgets alone.
 type account struct {
 	// standing is the tier's settings with the spend hard limit, status, balance and spend this
 	// day and month.
 	standing usage.Standing
 	// measured is every budget in its apps' decisions, with what was spent.
 	measured []measured
-	// read is when the standing last landed, zero until the first; readFrom is when the last
-	// read of everything the account counts was asked for, so it counts every row the ledger had
-	// by then.
-	read     time.Time
-	readFrom time.Time
+	// budgeted is whether the decisions in use hold a budget of the account.
+	budgeted bool
+	// read is when the standing last landed, zero until the first. standingFrom and
+	// measuredFrom are when the last standing that landed, and the last read of every budget
+	// that landed, were asked for: each counts every row its ledger had by then.
+	read         time.Time
+	standingFrom time.Time
+	measuredFrom time.Time
 	// wanted is when this process first asked for it, and used when it last did.
 	wanted time.Time
 	used   time.Time
 	// holds is what this process recorded that the ledger may not count yet, by usage id.
 	holds map[uuid.UUID]*hold
+}
+
+// readFrom is when the last read of everything the account counts was asked for: its standing,
+// and its budgets when it has any.
+func (a *account) readFrom() time.Time {
+	if a.budgeted && a.measuredFrom.Before(a.standingFrom) {
+		return a.measuredFrom
+	}
+	return a.standingFrom
 }
 
 // measured is a budget and what was spent against it at the last read.
@@ -152,6 +181,18 @@ type measured struct {
 	resets time.Time
 }
 
+// budgetKey is which budget a measurement is of: the same scope over the same interval is the
+// same spend, whatever the limit, so a limit changed is held to what was last measured at once.
+type budgetKey struct {
+	scope    store.PolicyScope
+	id       string
+	interval store.BudgetInterval
+}
+
+func keyOf(budget scoped) budgetKey {
+	return budgetKey{scope: budget.scope, id: budget.id, interval: budget.budget.Interval}
+}
+
 // scope is whose spend a hold counts against.
 type scope struct {
 	kind store.PolicyScope
@@ -159,40 +200,44 @@ type scope struct {
 }
 
 // hold is money one unit of work has spent, kept off the balance until the ledger counts it.
-// Keyed by the row's usage id, so recording or acking it twice changes nothing. Section B makes
-// holds before the work starts and shares them between routers on this shape.
+// Keyed by the row's usage id, so recording or acking it twice changes nothing. A hold made
+// before the work starts, or one another router shares, would take the same shape.
 type hold struct {
 	// scopes are the organization and the app.
-	scopes  []scope
-	micros  int64
+	scopes []scope
+	micros int64
+	// expires is PendingTTL after the hold was made. A hold no ack reaches, such as a row
+	// another router's sweeper shipped, is let go once a read asked for after it has landed:
+	// that read counts the row if anything does. Until one lands, it is kept.
 	expires time.Time
 	// ackedAt is when the ledger was known to have the row, zero until then.
 	ackedAt time.Time
 }
 
-// start begins the loop, unless money is not enforced at all.
+// start begins the loops, unless money is not enforced at all.
 func (m *money) start(e *Enforcer) {
 	m.enforcer, m.settings = e, e.settings
 	m.accounts, m.holdOf, m.failModes = map[string]*account{}, map[uuid.UUID]string{}, map[string]usage.FailMode{}
 	if m.settings.Mode == config.LimitsOff {
 		return
 	}
-	m.kick = make(chan struct{}, 1)
-	m.done = make(chan struct{})
+	m.kick, m.kickBudgets = make(chan struct{}, 1), make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	enforcers.Store(e, struct{}{})
-	go m.loop(ctx)
+	m.loops.Add(2)
+	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
+	go m.every(ctx, m.settings.BudgetEvery, m.kickBudgets, m.measurePass)
 }
 
-// stop ends the loop and waits for its pass to finish.
+// stop ends the loops and waits for their passes to finish.
 func (m *money) stop() {
 	m.stopped.Do(func() {
 		if m.cancel == nil {
 			return
 		}
 		m.cancel()
-		<-m.done
+		m.loops.Wait()
 		enforcers.Delete(m.enforcer)
 	})
 }
@@ -200,7 +245,7 @@ func (m *money) stop() {
 // off says money is not enforced: nothing is read or held.
 func (m *money) off() bool { return m.settings.Mode == config.LimitsOff }
 
-// want notes an organization in use, and asks the loop to read it at once when it has never
+// want notes an organization in use, and asks both loops to read it at once when it has never
 // been asked for.
 func (m *money) want(organizationID string) {
 	if organizationID == "" || m.off() {
@@ -221,39 +266,37 @@ func (m *money) want(organizationID string) {
 }
 
 func (m *money) wake() {
-	select {
-	case m.kick <- struct{}{}:
-	default:
+	for _, kick := range []chan struct{}{m.kick, m.kickBudgets} {
+		select {
+		case kick <- struct{}{}:
+		default:
+		}
 	}
 }
 
-func (m *money) loop(ctx context.Context) {
-	defer close(m.done)
-	ticker := time.NewTicker(m.settings.Fresh)
+// every runs pass every interval, and at once when kicked, until ctx ends.
+func (m *money) every(ctx context.Context, interval time.Duration, kick <-chan struct{}, pass func(context.Context)) {
+	defer m.loops.Done()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-		case <-m.kick:
+		case <-kick:
 		}
-		m.pass(ctx)
+		pass(ctx)
 	}
 }
 
-// pass reads the money of every organization in use: the standings of all of them from the
-// usage service in calls of standingsChunk, and every budget their apps' decisions hold from
-// Postgres. Then it drops what is no longer in use, the holds a read asked for after their ack
-// counts, and the holds past their expiry.
-func (m *money) pass(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, passTimeout)
-	defer cancel()
-	e := m.enforcer
-	now := time.Now()
+// inUse is every account in use, and the budgets the decisions in use hold of each. It drops the
+// decisions and the accounts unused for Idle, an account only once it holds nothing, and makes
+// an account for an organization a decision names that has none.
+func (m *money) inUse(now time.Time) ([]string, map[string][]scoped) {
 	budgets := map[string][]scoped{}
-	organizations := map[string]bool{}
-	for app, decided := range e.inUse(now) {
+	keys := map[string]bool{}
+	for app, decided := range m.enforcer.inUse(now) {
 		key := decided.organization
 		if key == "" {
 			if len(decided.budgets) == 0 {
@@ -261,7 +304,7 @@ func (m *money) pass(ctx context.Context) {
 			}
 			key = appAccount(app)
 		}
-		organizations[key] = true
+		keys[key] = true
 		for _, budget := range decided.budgets {
 			if !slices.Contains(budgets[key], budget) {
 				budgets[key] = append(budgets[key], budget)
@@ -269,91 +312,200 @@ func (m *money) pass(ctx context.Context) {
 		}
 	}
 	m.mu.Lock()
-	for organization, acct := range m.accounts {
-		if organizations[organization] {
+	defer m.mu.Unlock()
+	for key, acct := range m.accounts {
+		if keys[key] {
 			if acct.used.Before(now) {
 				acct.used = now
 			}
 			continue
 		}
 		if now.Sub(acct.used) > m.settings.Idle && len(acct.holds) == 0 {
-			delete(m.accounts, organization)
+			delete(m.accounts, key)
 			continue
 		}
-		organizations[organization] = true
+		keys[key] = true
 	}
-	for organization := range organizations {
-		if m.accounts[organization] == nil {
-			m.accounts[organization] = &account{wanted: now, used: now}
+	for key := range keys {
+		if m.accounts[key] == nil {
+			m.accounts[key] = &account{wanted: now, used: now}
 		}
 	}
-	m.mu.Unlock()
-	if len(organizations) == 0 {
+	return slices.Sorted(mapsKeys(keys)), budgets
+}
+
+// pass reads the standing of every organization in use from the usage service, in calls of
+// standingsChunk, then lets go of the holds the reads now count.
+func (m *money) pass(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, passTimeout)
+	defer cancel()
+	keys, budgets := m.inUse(time.Now())
+	if len(keys) == 0 {
 		return
 	}
-
 	readFrom := time.Now()
-	standings, landed, unread := m.standings(ctx, slices.Sorted(mapsKeys(organizations)))
-	spent, unmeasured := m.measure(ctx, budgets)
+	standings, landed, unread := m.standings(ctx, keys)
 
+	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	expired := map[string]int64{}
-	for organization := range organizations {
-		acct := m.accounts[organization]
+	for _, key := range keys {
+		acct := m.accounts[key]
 		if acct == nil {
 			continue
 		}
-		if standing, ok := standings[organization]; ok {
-			acct.standing, acct.read = standing, landed[organization]
+		if standing, ok := standings[key]; ok {
+			acct.standing, acct.read = standing, landed[key]
 			if standing.OrganizationTier != "" && standing.Tier.FailMode != "" {
 				m.failModes[standing.OrganizationTier] = standing.Tier.FailMode
 			}
 		}
-		acct.measured = remeasured(acct.measured, budgets[organization], spent)
-		if !unread[organization] && !unmeasured[organization] {
-			acct.readFrom = readFrom
+		if !unread[key] {
+			acct.standingFrom = readFrom
 		}
-		for id, held := range acct.holds {
-			switch {
-			case !held.ackedAt.IsZero() && held.ackedAt.Before(acct.readFrom):
-			case !now.Before(held.expires):
-				if held.ackedAt.IsZero() {
-					expired[organization] += held.micros
-				}
-			default:
-				continue
-			}
-			delete(acct.holds, id)
-			delete(m.holdOf, id)
-		}
-	}
-	for organization, micros := range expired {
-		e.logger.Warn("usage held against an organization expired before the ledger counted it",
-			"organization", organization, "micros", micros, "pending_ttl", m.settings.PendingTTL)
+		acct.budgeted = len(budgets[key]) > 0
+		m.release(key, acct, now)
 	}
 }
 
-// standings reads the organizations' standings, each with the tier its last request carried,
-// and says when each landed and which could not be read. With no usage service every one is
-// active and unlimited, with no credit to check.
-func (m *money) standings(ctx context.Context, organizations []string) (map[string]usage.Standing, map[string]time.Time, map[string]bool) {
-	standings := make(map[string]usage.Standing, len(organizations))
-	landed := make(map[string]time.Time, len(organizations))
-	unread := map[string]bool{}
-	asked := make([]string, 0, len(organizations))
+// measurePass sums every budget the decisions in use hold, a few at a time, then lets go of the
+// holds the reads now count.
+//
+// It runs every BudgetEvery rather than every Fresh. A sum reads the request rows of every
+// shard since the window began, up to a month of them, while what this router spends is held
+// against the budget from the moment it is recorded; so the cadence only decides how soon
+// another router's spend is counted, which is as soon as before admission moved off the
+// request path, and a slow Postgres delays budgets alone, never a balance.
+func (m *money) measurePass(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, passTimeout)
+	defer cancel()
+	_, budgets := m.inUse(time.Now())
+	if len(budgets) == 0 {
+		return
+	}
+	readFrom := time.Now()
+	spent, unmeasured := m.measure(ctx, budgets)
+
 	now := time.Now()
-	for _, organization := range organizations {
-		if m.settings.Usage != nil && billed(organization) {
-			asked = append(asked, organization)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, list := range budgets {
+		acct := m.accounts[key]
+		if acct == nil {
 			continue
 		}
-		standings[organization] = usage.Standing{OrganizationID: organization, Status: usage.AccountActive}
-		landed[organization] = now
+		acct.measured = remeasured(acct.measured, list, spent)
+		acct.budgeted = true
+		if !unmeasured[key] {
+			acct.measuredFrom = readFrom
+		}
+		m.release(key, acct, now)
 	}
-	organizations = asked
-	for start := 0; start < len(organizations); start += standingsChunk {
-		part := organizations[start:min(start+standingsChunk, len(organizations))]
+}
+
+// release lets go of the account's holds a landed read counts, under m.mu: one acked before the
+// last read of everything the account counts was asked for, and one no ack reached that was
+// made PendingTTL before it. A hold waits however long no read lands, since what it holds
+// is spend the balance read last does not know of. Past maxHolds the oldest are carried as
+// one per app.
+func (m *money) release(key string, acct *account, now time.Time) {
+	readFrom := acct.readFrom()
+	var expired, waiting, waited int64
+	for id, held := range acct.holds {
+		switch {
+		case !held.ackedAt.IsZero() && held.ackedAt.Before(readFrom):
+		case !readFrom.Before(held.expires):
+			if held.ackedAt.IsZero() {
+				expired += held.micros
+			}
+		default:
+			if !now.Before(held.expires) {
+				waiting++
+				waited += held.micros
+			}
+			continue
+		}
+		delete(acct.holds, id)
+		delete(m.holdOf, id)
+	}
+	logger := m.enforcer.logger
+	if expired > 0 {
+		logger.Warn("usage held against an organization expired before the ledger counted it",
+			append(who(key), "micros", expired, "pending_ttl", m.settings.PendingTTL)...)
+	}
+	if waiting > 0 && m.waiting.due(key, logEvery) {
+		logger.Warn("usage held against an organization is past its pending_ttl with no read of its money since, so it is kept",
+			append(who(key), "holds", waiting, "micros", waited, "last_read", readFrom)...)
+	}
+	if len(acct.holds) > maxHolds {
+		m.carry(key, acct)
+	}
+}
+
+// carry folds the account's oldest holds into one per app, until it keeps half of maxHolds
+// apart, under m.mu. A carried hold has no ack and expires with the last of those it carries,
+// so it counts the same money and lets go of it no sooner than they would have.
+func (m *money) carry(key string, acct *account) {
+	ids := make([]uuid.UUID, 0, len(acct.holds))
+	for id := range acct.holds {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b uuid.UUID) int { return acct.holds[a].expires.Compare(acct.holds[b].expires) })
+	var folded, micros int64
+	for _, id := range ids[:len(ids)-maxHolds/2] {
+		held := acct.holds[id]
+		app := held.app()
+		carried := uuid.NewSHA1(uuid.NameSpaceOID, []byte("carried\x00"+key+"\x00"+app))
+		if id == carried {
+			continue
+		}
+		into := acct.holds[carried]
+		if into == nil {
+			into = &hold{scopes: held.scopes}
+			acct.holds[carried] = into
+		}
+		into.micros += held.micros
+		if into.expires.Before(held.expires) {
+			into.expires = held.expires
+		}
+		folded++
+		micros += held.micros
+		delete(acct.holds, id)
+		delete(m.holdOf, id)
+	}
+	m.enforcer.logger.Warn("an organization holds more usage than the router keeps apart, so the oldest is carried as one per app",
+		append(who(key), "holds", folded, "micros", micros, "kept", maxHolds/2)...)
+}
+
+// app is the app whose work the hold is.
+func (h *hold) app() string {
+	for _, whose := range h.scopes {
+		if whose.kind == store.ScopeApp {
+			return whose.id
+		}
+	}
+	return ""
+}
+
+// standings reads the organizations' standings, each with the tier its last request carried,
+// and says when each landed and which could not be read. With no usage service, and for an
+// app's own account, every one is active and unlimited, with no credit to check.
+func (m *money) standings(ctx context.Context, keys []string) (map[string]usage.Standing, map[string]time.Time, map[string]bool) {
+	standings := make(map[string]usage.Standing, len(keys))
+	landed := make(map[string]time.Time, len(keys))
+	unread := map[string]bool{}
+	asked := make([]string, 0, len(keys))
+	now := time.Now()
+	for _, key := range keys {
+		if m.settings.Usage != nil && billed(key) {
+			asked = append(asked, key)
+			continue
+		}
+		standings[key] = usage.Standing{OrganizationID: key, Status: usage.AccountActive}
+		landed[key] = now
+	}
+	for start := 0; start < len(asked); start += standingsChunk {
+		part := asked[start:min(start+standingsChunk, len(asked))]
 		query := usage.StandingQuery{Organizations: make([]usage.StandingOrganization, len(part))}
 		for i, organization := range part {
 			query.Organizations[i] = usage.StandingOrganization{OrganizationID: organization, OrganizationTier: m.enforcer.tier(ctx, organization)}
@@ -382,43 +534,61 @@ func (m *money) standings(ctx context.Context, organizations []string) (map[stri
 	return standings, landed, unread
 }
 
-// measure sums what every budget's scope spent in its current interval, and says which
-// organizations had a budget it could not read.
-func (m *money) measure(ctx context.Context, budgets map[string][]scoped) (map[scoped]measured, map[string]bool) {
-	spent := map[scoped]measured{}
-	unmeasured := map[string]bool{}
-	for organization, list := range budgets {
+// measure sums what every budget's scope spent in its current interval, budgetReads at a time,
+// and says which accounts had a budget it could not read.
+func (m *money) measure(ctx context.Context, budgets map[string][]scoped) (map[budgetKey]measured, map[string]bool) {
+	owners := map[budgetKey][]string{}
+	asked := map[budgetKey]scoped{}
+	for key, list := range budgets {
 		for _, budget := range list {
-			if _, done := spent[budget]; done {
-				continue
-			}
+			owners[keyOf(budget)] = append(owners[keyOf(budget)], key)
+			asked[keyOf(budget)] = budget
+		}
+	}
+	var mu sync.Mutex
+	spent := make(map[budgetKey]measured, len(asked))
+	unmeasured := map[string]bool{}
+	slots := make(chan struct{}, budgetReads)
+	var reading sync.WaitGroup
+	for which, budget := range asked {
+		slots <- struct{}{}
+		reading.Go(func() {
+			defer func() { <-slots }()
 			call, cancel := context.WithTimeout(ctx, readTimeout)
 			total, resets, err := m.enforcer.BudgetSpent(call, budget.scope, budget.id, budget.budget)
 			cancel()
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
-				unmeasured[organization] = true
+				for _, key := range owners[which] {
+					unmeasured[key] = true
+				}
 				m.failedRead("could not read what a budget has spent, answering with what was last read", err,
 					"scope", budget.scope, "id", budget.id)
-				continue
+				return
 			}
-			spent[budget] = measured{scoped: budget, spent: total, resets: resets}
-		}
+			spent[which] = measured{scoped: budget, spent: total, resets: resets}
+		})
 	}
+	reading.Wait()
 	return spent, unmeasured
 }
 
 // remeasured is the budgets the decisions hold now, each with what was just read for it, or
-// what was read for it before when it could not be.
-func remeasured(previous []measured, budgets []scoped, spent map[scoped]measured) []measured {
+// what was read for the same scope and interval before when it could not be.
+func remeasured(previous []measured, budgets []scoped, spent map[budgetKey]measured) []measured {
 	out := make([]measured, 0, len(budgets))
 	for _, budget := range budgets {
-		if read, ok := spent[budget]; ok {
-			out = append(out, read)
-			continue
+		read, ok := spent[keyOf(budget)]
+		if !ok {
+			index := slices.IndexFunc(previous, func(m measured) bool { return keyOf(m.scoped) == keyOf(budget) })
+			if index < 0 {
+				continue
+			}
+			read = previous[index]
 		}
-		if index := slices.IndexFunc(previous, func(m measured) bool { return m.scoped == budget }); index >= 0 {
-			out = append(out, previous[index])
-		}
+		read.scoped = budget
+		out = append(out, read)
 	}
 	return out
 }
@@ -499,29 +669,32 @@ func (e *Enforcer) Acked(acked []routing.Acked) {
 	if e == nil || e.money.off() {
 		return
 	}
-	e.money.settled(acked)
+	e.money.settled(acked, true)
 }
 
-// Written notes the rows the shard has, which is the ledger the money is read from when there is
-// no usage service; with one it changes nothing, since the usage service is. It is
-// WriterOptions.Written.
+// Written notes the rows the shard has. That is the ledger an organization's money is read from
+// when there is no usage service, and always the ledger of an app's own account, which the
+// usage service never bills; an organization's holds with a usage service wait for its ack. It
+// is WriterOptions.Written.
 func (e *Enforcer) Written(written []routing.Acked) {
-	if e == nil || e.money.off() || e.settings.Usage != nil {
+	if e == nil || e.money.off() {
 		return
 	}
-	e.money.settled(written)
+	e.money.settled(written, e.settings.Usage == nil)
 }
 
-func (m *money) settled(rows []routing.Acked) {
+// settled notes that the ledger has the rows, for the holds of an app's own account, and of an
+// organization's too when billedToo.
+func (m *money) settled(rows []routing.Acked, billedToo bool) {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, row := range rows {
-		organization, ok := m.holdOf[row.UsageID]
-		if !ok {
+		key, ok := m.holdOf[row.UsageID]
+		if !ok || (!billedToo && billed(key)) {
 			continue
 		}
-		acct := m.accounts[organization]
+		acct := m.accounts[key]
 		if acct == nil {
 			continue
 		}
@@ -533,7 +706,8 @@ func (m *money) settled(rows []routing.Acked) {
 
 // spendable is what the organization's money says of the app's work: a refusal of everything
 // for a suspended organization, and otherwise why it may spend no money, if it may not. In
-// shadow, both are logged as would refuse and neither is returned; off, neither is worked out.
+// shadow, both are counted and logged as would refuse and neither is returned; off, neither is
+// worked out.
 //
 // The order is suspension, then the balance, then the spend hard limit, then the budgets.
 // Nothing a customer writes lifts the spend hard limit.
@@ -568,18 +742,34 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 	}
 	acct.used = now
 	refusal, spend, reason := m.refusal(acct, billed(organization), appID, decided, now)
-	why := acct.standing.StatusReason
+	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.pending(scope{}), acct.read
 	m.mu.Unlock()
 
-	if reason == reasonSuspended && why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
-		e.logger.Info("refused a suspended organization", "organization", organization, "app", appID, "reason", why)
-	}
-	if m.settings.Mode != config.LimitsShadow || reason == "" {
+	shadow := m.settings.Mode == config.LimitsShadow
+	if reason == "" {
 		return refusal, spend
 	}
+	named := who(organization)
+	if billed(organization) {
+		named = append(named, "app", appID)
+	}
+	if !shadow {
+		if reason == reasonSuspended && why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
+			e.logger.Info("refused a suspended organization", append(named, "status_reason", why)...)
+		}
+		return refusal, spend
+	}
+	wouldRefuse.WithLabelValues(reason).Inc()
 	if m.refusals.due(organization+"\x00"+reason, logEvery) {
-		e.logger.Info("would refuse", "organization", organization, "app", appID, "reason", reason,
-			"refusal", errors.Join(refusal, spend))
+		args := append(named, "reason", reason, "refusal", errors.Join(refusal, spend),
+			"balance_micros", balance, "held_micros", held)
+		if !read.IsZero() {
+			args = append(args, "read_age", now.Sub(read).Round(time.Millisecond))
+		}
+		if reason == reasonSuspended {
+			args = append(args, "status_reason", why)
+		}
+		e.logger.Info("would refuse", args...)
 	}
 	return nil, nil
 }
@@ -604,7 +794,7 @@ func (m *money) refusal(acct *account, isBilled bool, appID string, decided deci
 	if billing && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
 		return nil, errUnreadable, reasonUnreadable
 	}
-	pending := acct.pending(now, scope{})
+	pending := acct.pending(scope{})
 	if billing && standing.BalanceMicros-pending <= 0 {
 		return nil, errNoBalance, reasonNoCredit
 	}
@@ -615,29 +805,24 @@ func (m *money) refusal(acct *account, isBilled bool, appID string, decided deci
 		}
 	}
 	for _, budget := range decided.budgets {
-		index := slices.IndexFunc(acct.measured, func(m measured) bool {
-			return m.scope == budget.scope && m.id == budget.id && m.budget.Interval == budget.budget.Interval
-		})
+		index := slices.IndexFunc(acct.measured, func(m measured) bool { return keyOf(m.scoped) == keyOf(budget) })
 		if index < 0 {
 			continue
 		}
 		read := acct.measured[index]
 		read.budget = budget.budget
-		if err := over(read, acct.pending(now, scope{kind: budget.scope, id: budget.id}), clock); err != nil {
+		if err := over(read, acct.pending(scope{kind: budget.scope, id: budget.id}), clock); err != nil {
 			return nil, err, reasonBudget
 		}
 	}
 	return nil, nil, ""
 }
 
-// pending is the sum of the account's live holds that count against whose, or all of them for
-// the zero scope.
-func (a *account) pending(now time.Time, whose scope) int64 {
+// pending is the sum of the account's holds that count against whose, or all of them for the
+// zero scope. A hold counts until a read lets go of it, however old it is.
+func (a *account) pending(whose scope) int64 {
 	var sum int64
 	for _, held := range a.holds {
-		if !now.Before(held.expires) {
-			continue
-		}
 		if whose != (scope{}) && !slices.Contains(held.scopes, whose) {
 			continue
 		}
@@ -705,13 +890,23 @@ func dollars(micros int64) string {
 	return fmt.Sprintf("%s$%s.%02d", sign, grouped.String(), cents%100)
 }
 
+// appAccountPrefix starts the key of an app's own account. No organization id holds a NUL.
+const appAccountPrefix = "\x00app\x00"
+
 // appAccount is the key of the account an app in no known organization keeps its own budgets
-// on. It bills nobody, so the usage service is never asked about it; no organization id holds
-// a NUL.
-func appAccount(appID string) string { return "\x00app\x00" + appID }
+// on. It bills nobody, so the usage service is never asked about it.
+func appAccount(appID string) string { return appAccountPrefix + appID }
 
 // billed reports whether an account is an organization's, which the usage service bills.
-func billed(key string) bool { return !strings.HasPrefix(key, "\x00") }
+func billed(key string) bool { return !strings.HasPrefix(key, appAccountPrefix) }
+
+// who names an account in a log line: the organization, or the app whose own account it is.
+func who(key string) []any {
+	if app, own := strings.CutPrefix(key, appAccountPrefix); own {
+		return []any{"app", app}
+	}
+	return []any{"organization", key}
+}
 
 // knownTier is the tier this process last knew the organization by, without reading anything.
 func (e *Enforcer) knownTier(organizationID string) string {

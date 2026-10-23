@@ -79,7 +79,10 @@ func (s *PolicySuite) SetupSuite() {
 
 // quick is how fast a test's enforcer reads money: a pass every 50 ms, an account trusted for
 // 200 ms, and whatever goes unused or unacked dropped well inside a test.
-var quick = Settings{Fresh: 50 * time.Millisecond, MaxStale: 200 * time.Millisecond, Idle: 100 * time.Millisecond, PendingTTL: 300 * time.Millisecond}
+var quick = Settings{
+	Fresh: 50 * time.Millisecond, BudgetEvery: 50 * time.Millisecond, MaxStale: 200 * time.Millisecond,
+	Idle: 100 * time.Millisecond, PendingTTL: 300 * time.Millisecond,
+}
 
 // newEnforcer is an Enforcer over configs at quick's pace with the settings changed, closed
 // when the test ends.

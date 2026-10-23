@@ -12,12 +12,14 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -143,7 +145,7 @@ func pending(enforcer *Enforcer, organization string) int64 {
 	if acct == nil {
 		return 0
 	}
-	return acct.pending(time.Now(), scope{})
+	return acct.pending(scope{})
 }
 
 // available is the organization's balance as an admission counts it: the standing's, less what
@@ -155,7 +157,7 @@ func available(enforcer *Enforcer, organization string) int64 {
 	if acct == nil {
 		return 0
 	}
-	return acct.standing.BalanceMicros - acct.pending(time.Now(), scope{})
+	return acct.standing.BalanceMicros - acct.pending(scope{})
 }
 
 // owner is who the app's work is recorded under.
@@ -212,17 +214,25 @@ func (s *PolicySuite) TestASuspendedOrganizationIsRefusedOutright() {
 }
 
 func (s *PolicySuite) TestAnAppBudgetIsMeasuredInTheBackground() {
+	// A store of the test's own, so the hook is on before anything reads through it.
+	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = db.Close() })
 	reads := &requestReads{}
-	s.store.DB().AddQueryHook(reads)
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}})
+	db.DB().AddQueryHook(reads)
+	configs, err := appconfig.New(appconfig.Options{Store: db})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil)
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
 	s.spend(s.app, 1_500_000)
 
-	spend := s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
+	spend := s.spendRefused(enforcer, s.app, ErrBudgetSpent)
 	s.ErrorContains(spend, "app's daily budget of $1.00")
-	s.enforcer.Close()
+	enforcer.Close()
 	before := reads.reads.Load()
 	for range 100 {
-		s.ErrorIs(s.admit(s.enforcer, s.app).Spend, ErrBudgetSpent)
+		s.ErrorIs(s.admit(enforcer, s.app).Spend, ErrBudgetSpent)
 	}
 
 	s.Equal(before, reads.reads.Load(), "no request row is summed on the request path")
@@ -534,6 +544,157 @@ func (s *PolicySuite) TestAnUnackedHoldExpires() {
 		return strings.Contains(enforcer.logs.String(), "expired before the ledger counted it") &&
 			strings.Contains(enforcer.logs.String(), "micros=1250000")
 	}, 5*time.Second, 10*time.Millisecond, "and how much is logged")
+}
+
+func (s *PolicySuite) TestAHoldOutlivesAnOutageOfTheUsageService() {
+	for _, acked := range []bool{false, true} {
+		s.Run(fmt.Sprintf("acked %t", acked), func() {
+			s.SetupTest()
+			enforcer := s.billed()
+			s.usage().Credit(s.T(), s.org, 1_000_000)
+			enforcer.Join(s.app, s.org, openTier)
+			s.read(enforcer.Enforcer, s.org)
+			usageID := uuid.Must(uuid.NewV7())
+			enforcer.Spent(s.owner(), usageID, 1_000_000)
+			s.Require().ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrNoCredits)
+			enforcer.front.down.Store(true)
+			if acked {
+				enforcer.Acked([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 1_000_000}})
+			}
+
+			app := s.app
+			s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend == nil }, 4*quick.PendingTTL, 10*time.Millisecond,
+				"an open tier answers on its last balance, less what was spent since, however long the outage")
+			s.EqualValues(1_000_000, pending(enforcer.Enforcer, s.org))
+			s.Contains(enforcer.logs.String(), "with no read of its money since, so it is kept")
+
+			enforcer.front.down.Store(false)
+			s.eventually(func() bool { return pending(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+				"let go once a read lands, which counts the row if the ledger has it")
+		})
+	}
+}
+
+func (s *PolicySuite) TestAnAccountKeepsAtMostSoManyHoldsApart() {
+	enforcer := s.billed()
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	enforcer.front.down.Store(true)
+	for range maxHolds + 10 {
+		enforcer.Spent(s.owner(), uuid.Must(uuid.NewV7()), 3)
+	}
+
+	s.eventually(func() bool {
+		enforcer.money.mu.Lock()
+		defer enforcer.money.mu.Unlock()
+		return len(enforcer.money.accounts[s.org].holds) <= maxHolds/2+1
+	}, 5*time.Second, 10*time.Millisecond, "the oldest are carried as one")
+
+	s.EqualValues(3*(maxHolds+10), pending(enforcer.Enforcer, s.org), "carrying them counts the same money")
+	s.Contains(enforcer.logs.String(), "carried as one per app")
+}
+
+func (s *PolicySuite) TestStandingsStayFreshWhenBudgetsCannotBeRead() {
+	enforcer := s.billed()
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
+	enforcer.Join(s.app, s.org, closedTier)
+	s.read(enforcer.Enforcer, s.org)
+	locked, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer locked.Rollback() //nolint:errcheck // nothing was written
+	_, err = locked.ExecContext(s.ctx, "LOCK TABLE requests IN ACCESS EXCLUSIVE MODE")
+	s.Require().NoError(err)
+
+	app, organization := s.app, s.org
+	s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, 3*quick.MaxStale, 10*time.Millisecond,
+		"a closed tier is not refused for a balance that is read on time while the budgets wait on Postgres")
+	s.read(enforcer.Enforcer, organization)
+}
+
+func (s *PolicySuite) TestAChangedBudgetIsHeldToTheLastMeasureAtOnce() {
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.BudgetEvery = time.Hour })
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 2_000_000, Interval: store.BudgetDaily}}))
+	s.spend(s.app, 1_500_000)
+	s.Require().NoError(s.admit(enforcer, s.app).Spend)
+	s.eventually(func() bool {
+		enforcer.money.mu.Lock()
+		defer enforcer.money.mu.Unlock()
+		acct := enforcer.money.accounts[s.org]
+		return acct != nil && len(acct.measured) == 1
+	}, 5*time.Second, 10*time.Millisecond, "measured once, when the organization was first wanted")
+
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
+		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
+
+	s.ErrorIs(s.admit(enforcer, s.app).Spend, ErrBudgetSpent, "the lower limit against what was measured, with no new sum")
+}
+
+func (s *PolicySuite) TestAnAppInNoOrganizationLetsGoOfItsHoldOnceWritten() {
+	enforcer := s.billed()
+	alone := routing.Owner{CustomerID: s.app + "-alone", Attribution: routing.Attribution{APIKey: "key-a"}}
+	usageID := uuid.Must(uuid.NewV7())
+	enforcer.Spent(alone, usageID, 1_000_000)
+	s.Require().EqualValues(1_000_000, pending(enforcer.Enforcer, appAccount(alone.CustomerID)))
+
+	enforcer.Written([]routing.Acked{{UsageID: usageID, CostMicros: 1_000_000}})
+
+	s.eventually(func() bool { return pending(enforcer.Enforcer, appAccount(alone.CustomerID)) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"the usage service never ships a row with no organization, so the shard is its ledger")
+}
+
+func (s *PolicySuite) TestAnOrganizationsHoldWaitsForTheUsageServiceNotTheShard() {
+	enforcer := s.billed()
+	enforcer.Join(s.app, s.org, openTier)
+	usageID := uuid.Must(uuid.NewV7())
+	enforcer.Spent(s.owner(), usageID, 1_000_000)
+
+	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 1_000_000}})
+
+	enforcer.money.mu.Lock()
+	defer enforcer.money.mu.Unlock()
+	s.True(enforcer.money.accounts[s.org].holds[usageID].ackedAt.IsZero(), "the balance is the usage service's")
+}
+
+func (s *PolicySuite) TestShadowCountsEveryRefusalAndSaysWhatItRead() {
+	enforcer := s.billed(func(settings *Settings) { settings.Mode = config.LimitsShadow })
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+	before := testutil.ToFloat64(wouldRefuse.WithLabelValues(reasonNoCredit))
+
+	for range 5 {
+		s.NoError(s.admit(enforcer.Enforcer, s.app).Spend)
+	}
+
+	s.GreaterOrEqual(testutil.ToFloat64(wouldRefuse.WithLabelValues(reasonNoCredit))-before, 5.0, "every one, though the log is throttled")
+	logged := enforcer.logs.String()
+	s.Equal(1, strings.Count(logged, `msg="would refuse"`), "once a minute per organization and reason")
+	for _, field := range []string{"balance_micros=0", "held_micros=0", "read_age=", "organization=" + s.org, "app=" + s.app} {
+		s.Contains(logged, field)
+	}
+}
+
+func (s *PolicySuite) TestShadowNeverSaysASuspendedOrganizationWasRefused() {
+	enforcer := s.billed(func(settings *Settings) { settings.Mode = config.LimitsShadow })
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	s.usage().Suspend(s.T(), s.org, "a test")
+	enforcer.Join(s.app, s.org, openTier)
+	s.read(enforcer.Enforcer, s.org)
+
+	s.NoError(s.admit(enforcer.Enforcer, s.app).Spend)
+
+	s.Contains(enforcer.logs.String(), "reason=suspended")
+	s.Contains(enforcer.logs.String(), `status_reason="a test"`)
+	s.NotContains(enforcer.logs.String(), "refused a suspended")
+}
+
+func (s *PolicySuite) TestAnAppsOwnAccountIsNamedAsTheApp() {
+	s.Equal([]any{"app", "app-1"}, who(appAccount("app-1")))
+	s.Equal([]any{"organization", "org-1"}, who("org-1"))
 }
 
 func (s *PolicySuite) TestAnAckForAnotherReplicasRowIsIgnored() {

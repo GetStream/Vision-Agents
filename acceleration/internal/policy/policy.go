@@ -42,8 +42,8 @@ import (
 
 var tracer = tracing.Tracer("policy")
 
-// joinTimeout bounds recording which organization an app belongs to, and reading an app's
-// policies in the background.
+// joinTimeout bounds recording which organization an app belongs to, and every read of an
+// app's policies: in the background, and the one a request with no decision yet waits on.
 const joinTimeout = 2 * time.Second
 
 // tierTTL is how long an organization's tier is believed without a request naming it before
@@ -60,9 +60,12 @@ type Settings struct {
 	// Usage is the usage service. Nil: money is read from Postgres, with no credit, no tier and
 	// no spend hard limit, as a deployment that bills nobody runs.
 	Usage *usage.Client
-	// Fresh is how often the money loop runs, and how old a decision gets before it is read
+	// Fresh is how often the standings are read, and how old a decision gets before it is read
 	// again in the background; 5 s.
 	Fresh time.Duration
+	// BudgetEvery is how often the budgets are summed from Postgres; 10 s. What this router
+	// spends is held against them at once, so this is how soon another router's is counted.
+	BudgetEvery time.Duration
 	// MaxStale is how long an account answers after its last read before its tier's fail
 	// mode decides; 60 s.
 	MaxStale time.Duration
@@ -78,10 +81,11 @@ type Settings struct {
 
 // Defaults of Settings.
 const (
-	defaultFresh      = 5 * time.Second
-	defaultMaxStale   = time.Minute
-	defaultIdle       = 10 * time.Minute
-	defaultPendingTTL = 10 * time.Minute
+	defaultFresh       = 5 * time.Second
+	defaultBudgetEvery = 10 * time.Second
+	defaultMaxStale    = time.Minute
+	defaultIdle        = 10 * time.Minute
+	defaultPendingTTL  = 10 * time.Minute
 )
 
 func (s Settings) withDefaults() Settings {
@@ -90,6 +94,9 @@ func (s Settings) withDefaults() Settings {
 	}
 	if s.Fresh <= 0 {
 		s.Fresh = defaultFresh
+	}
+	if s.BudgetEvery <= 0 {
+		s.BudgetEvery = defaultBudgetEvery
 	}
 	if s.MaxStale <= 0 {
 		s.MaxStale = defaultMaxStale
@@ -487,7 +494,10 @@ func (e *Enforcer) decide(ctx context.Context, customerID string) decision {
 	forgotten := e.forgotten
 	e.mu.Unlock()
 
-	decided, err := e.configuration(ctx, customerID)
+	// The request waits on this read, so it is bounded on its own as the background ones are.
+	reading, cancel := context.WithTimeout(ctx, joinTimeout)
+	decided, err := e.configuration(reading, customerID)
+	cancel()
 	if err != nil {
 		e.logger.Error("could not read a customer's policies, allowing the request",
 			"customer", customerID, "error", err)
