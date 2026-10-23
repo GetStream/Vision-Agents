@@ -1451,21 +1451,26 @@ counts them) and the MMS beside it (`media_messages`), priced by `direction`, th
 so its rows are priced and not billed (`vendor_account = "app"`). Each leg of a call (the call
 placed, each transfer into it, a call that arrived) is a `call_legs` row. A placed call or a
 transfer rings from when the vendor takes the dial and starts when the person's phone joins the
-Stream call (`call.session_participant_joined`); a call that arrives starts at
-`call.session_started`, one leg per Stream session. A leg ends when its phone leaves
+Stream call (`call.session_participant_joined`), matched to its leg by the phone's number; a
+call that arrives starts at `call.session_started`, one leg per Stream session. Legs are timed by
+when Stream made each event, and a join or leave delivered before its leg is written is kept for
+a day (`call_participants`), so the leg starts from it. A leg ends when its phone leaves
 (`call.session_participant_left`) or the call ends (`call.session_ended`), and is then a
 `call_minutes` row of its `call_seconds`, billed to whoever placed the call, or the app under
 `phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A
 leg still open after four hours is ended, logged at ERROR and given away, since nothing says how
 long it lasted. A leg whose row was lost is written again by the sweep, under the same usage id.
 The call hook has to deliver the participant events: run `go run ./cmd/phone hooks -url <router
-url>` again once. Placing a call is a free `dial` row, for its latency and failures. A number is
+url>` again once. Until then a placed call that ends unanswered with no participant event
+delivered logs `call hook does not deliver participant events; re-run cmd/phone hooks` at ERROR,
+once an hour per app. Placing a call is a free `dial` row, for its latency and failures. A number is
 billed every month it is held, on the day it was bought, at the price its vendor quoted (or the
 number's offer when the purchase names none; with neither, as work with no price); the month it
 was bought in under the buyer's key and each after it by `router usage numbers` under
 `job:number_rental`. A 10DLC brand, a campaign's review and its first three months are billed when
 it is registered, and each month after by `router usage dlc` under `job:dlc_fees`. While the 10DLC
-sandbox holds an app, its texts and minutes are priced and given away (`dlc_sandbox = "true"`).
+sandbox holds an app, its texts and minutes are priced and given away (`dlc_sandbox = "true"`); a
+leg the sweep ended does not count toward its minutes.
 
 **The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
 an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
