@@ -184,8 +184,8 @@ func syncPricesOnce(ctx context.Context, pgStore *store.Store, load store.PriceL
 	return true
 }
 
-// openPriceStore opens the database to read the price list. It does not migrate: these
-// commands run beside a router, often in its pod, and only the router moves the schema.
+// openPriceStore opens the database for the prices and usage commands. It does not migrate:
+// these commands run beside a router, often in its pod, and only the router moves the schema.
 func openPriceStore(settings config.Config) (*store.Store, error) {
 	if settings.Postgres.DSN == "" {
 		return nil, errors.New("this needs a database: set postgres.dsn")

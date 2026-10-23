@@ -142,6 +142,8 @@ const usage = `usage: router [--config path] [command]
   stream-apps           look after the Stream apps customers registered in app mode
   plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
   prices                read and check the price list (router prices for its commands)
+  usage replay          write the usage rows a log says were lost, once each (--from path)
+  usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
 `
 
 func main() {
@@ -227,6 +229,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runPlugins(args, settings, logger)
 	case "prices":
 		return runPrices(args, settings, logger)
+	case "usage":
+		return runUsage(args, settings, os.Stdout)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -558,15 +562,32 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	usageClient, err := newUsageClient(settings, pgStore, logger)
+	if err != nil {
+		return err
+	}
+	shard := cmp.Or(settings.Shard, routing.Unsharded)
+	host, _ := os.Hostname()
+	source := routing.Source(shard, host)
+	// Started before the writer, so it stops after the writer has closed and still sends what
+	// the shutdown lost.
+	stopAlerts := startUsageAlerts(ctx, source, shard, logger)
+	defer stopAlerts()
 	// Every recorder of the process writes through this one writer, so there is one queue to
 	// drain at shutdown. Deferred here, it closes after everything that records and before
 	// the store and Redis.
-	usageWriter := routing.NewWriter(routing.WriterOptions{Store: pgStore, Live: liveClient, Logger: logger})
+	usageWriter := routing.NewWriter(routing.WriterOptions{
+		Store: pgStore, Live: liveClient, Logger: logger, Usage: usageClient, Source: source,
+	})
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
 		defer cancel()
 		usageWriter.Close(ctx)
 	}()
+	if usageClient != nil {
+		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger})
+		defer stopSweeper()
+	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, connectors.Schemes, logger)
 	if err != nil {

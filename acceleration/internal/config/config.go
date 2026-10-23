@@ -110,6 +110,16 @@ type Config struct {
 	CodeSandbox CodeSandbox `koanf:"code_sandbox"`
 	Models      Models      `koanf:"models"`
 	Telnyx      Telnyx      `koanf:"telnyx"`
+	Usage       Usage       `koanf:"usage"`
+}
+
+// Usage is the usage service the router ships the rows it writes to. An empty URL is none:
+// rows are written, and never shipped.
+type Usage struct {
+	// URL is the service's base URL, such as http://usage:8070.
+	URL string `koanf:"url"`
+	// Token is the service's ingest token.
+	Token string `koanf:"token"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -458,6 +468,9 @@ var variables = map[string]string{
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
 	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
+
+	"usage.url":   "ROUTER_USAGE_URL",
+	"usage.token": "ROUTER_USAGE_TOKEN",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -667,7 +680,26 @@ func (c Config) validate() error {
 		return errors.New("config: auth.manage_key (ROUTER_AUTH_MANAGE_KEY) is the same as auth.ops_key " +
 			"(ROUTER_AUTH_OPS_KEY): give the management API a key of its own")
 	}
+	if err := c.validateUsage(); err != nil {
+		return err
+	}
 	return c.validateShard()
+}
+
+// validateUsage refuses a usage service the router could not ship to. A token without a URL is
+// allowed, since unsetting the URL alone is how shipping is stopped; the router warns of it.
+func (c Config) validateUsage() error {
+	if c.Usage.URL == "" {
+		return nil
+	}
+	if parsed, err := url.Parse(c.Usage.URL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return errors.New("config: usage.url (ROUTER_USAGE_URL) is the usage service's base URL, such as http://usage:8070")
+	}
+	if c.Usage.Token == "" {
+		return errors.New("config: usage.url (ROUTER_USAGE_URL) is set, so usage.token (ROUTER_USAGE_TOKEN) must hold " +
+			"the usage service's ingest token")
+	}
+	return nil
 }
 
 // ProxyURL parses raw as the proxy's public URL, http://<IPv4 address>:port, and says whether it
@@ -818,6 +850,9 @@ func (c Config) export() error {
 		"telnyx.api_key":       c.Telnyx.APIKey,
 		"telnyx.connection_id": c.Telnyx.ConnectionID,
 		"telnyx.public_key":    c.Telnyx.PublicKey,
+
+		"usage.url":   c.Usage.URL,
+		"usage.token": c.Usage.Token,
 	}
 	for key, value := range values {
 		if value == "" {

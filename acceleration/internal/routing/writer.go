@@ -5,16 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"maps"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/getsentry/sentry-go"
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 const (
@@ -26,10 +26,8 @@ const (
 	// A failed batch is tried again after retryFirst, doubling up to retryMost.
 	retryFirst = 100 * time.Millisecond
 	retryMost  = 30 * time.Second
-	// A batch that keeps failing is logged at most every errorLogEvery, and failures and losses
-	// reach Sentry at most every reportEvery each.
+	// A batch that keeps failing is logged at most every errorLogEvery.
 	errorLogEvery = 10 * time.Second
-	reportEvery   = time.Minute
 	// unattributedLogEvery spaces the warning naming a row with no key, which before every
 	// owner names one is every row.
 	unattributedLogEvery = time.Minute
@@ -40,12 +38,8 @@ const (
 	takenRetries = 10
 )
 
-// unattributed is the key a row is written under when neither a key nor an origin started it.
-const unattributed = "unattributed"
-
-// defaultTier is the tier a row is written under when its organization's is not known: the
-// only tier name the router knows.
-const defaultTier = "default"
+// Unattributed is the key a row is written under when neither a key nor an origin started it.
+const Unattributed = "unattributed"
 
 // Writer writes the recorders' rows off the request path, in two stages. The first updates the
 // live counters and provider health as rows arrive, so quotas, spend and routing never wait on
@@ -55,11 +49,14 @@ const defaultTier = "default"
 // QueueSize bounds the rows waiting across both stages. A row is lost only when they are full,
 // and it still reaches the live counters; when the process stops before it could be written;
 // or when Postgres refuses it on its own (invalid). Each loss is logged in full and counted.
+//
+// With a usage service, a row is written to be shipped, and the shard's requests table is the
+// outbox: the shipper sends each written batch at once, and the sweeper whatever it could not.
 type Writer struct {
 	store        *store.Store
 	live         *live.Client
 	logger       *slog.Logger
-	hub          *sentry.Hub
+	shipper      *shipper
 	writeTimeout time.Duration
 	queueSize    int64
 
@@ -84,15 +81,11 @@ type Writer struct {
 	inFlight atomic.Int64
 	oldest   atomic.Int64
 
-	// When each throttled log line and report was last made, in Unix nanoseconds.
+	// When each throttled log line was last made, in Unix nanoseconds.
 	errorLogged        atomic.Int64
 	liveErrorLogged    atomic.Int64
-	errorReported      atomic.Int64
-	lossReported       atomic.Int64
 	unattributedLogged atomic.Int64
 	unresolvedLogged   atomic.Int64
-	// lost is what was lost and not reported yet.
-	lost lossTally
 }
 
 // WriterOptions configures a Writer. Store and Live are optional: without either a row is
@@ -101,8 +94,17 @@ type WriterOptions struct {
 	Store  *store.Store
 	Live   *live.Client
 	Logger *slog.Logger
-	// Hub is where failed writes and lost rows are reported. Nil is Sentry's current hub.
-	Hub *sentry.Hub
+	// Usage is the usage service the written rows are shipped to. Nil: rows are written with
+	// to_ship false and never shipped.
+	Usage *usage.Client
+	// Source names this process in the events it ships (see Source).
+	Source string
+	// Shipped is told which rows the usage service has, a row possibly more than once (see
+	// Acked). Optional.
+	Shipped func(acked []Acked)
+	// Settle is how long a written batch may wait for the shipper before it is left to the
+	// sweeper, which sends what started that long ago; defaults to 30 s, the sweeper's.
+	Settle time.Duration
 	// QueueSize defaults to 20,000 rows.
 	QueueSize int
 	// WriteTimeout bounds one batch; defaults to 5 s.
@@ -114,10 +116,6 @@ func NewWriter(options WriterOptions) *Writer {
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
-	}
-	hub := options.Hub
-	if hub == nil {
-		hub = sentry.CurrentHub()
 	}
 	size := options.QueueSize
 	if size <= 0 {
@@ -132,7 +130,6 @@ func NewWriter(options WriterOptions) *Writer {
 		store:        options.Store,
 		live:         options.Live,
 		logger:       logger,
-		hub:          hub,
 		writeTimeout: timeout,
 		queueSize:    int64(size),
 		queue:        make(chan queued, size),
@@ -141,6 +138,15 @@ func NewWriter(options WriterOptions) *Writer {
 		cancel:       cancel,
 		done:         make(chan struct{}),
 	}
+	if options.Usage != nil && options.Store != nil {
+		settle := options.Settle
+		if settle <= 0 {
+			settle = defaultSettle
+		}
+		w.shipper = newShipper(&shipping{
+			store: options.Store, usage: options.Usage, source: options.Source, shipped: options.Shipped, logger: logger,
+		}, settle)
+	}
 	writers.Store(w, struct{}{})
 	go w.count()
 	go w.write()
@@ -148,6 +154,7 @@ func NewWriter(options WriterOptions) *Writer {
 }
 
 // Close stops taking rows and writes what is queued until ctx is done; what is left is lost.
+// What is written and not shipped by then waits in the shard for the sweeper.
 func (w *Writer) Close(ctx context.Context) {
 	w.closeOnce.Do(func() {
 		if deadline, ok := ctx.Deadline(); ok {
@@ -164,11 +171,10 @@ func (w *Writer) Close(ctx context.Context) {
 			<-w.done
 		}
 		w.cancel()
+		if w.shipper != nil {
+			w.shipper.close(ctx)
+		}
 		writers.Delete(w)
-		// What the last minute lost is not left waiting for a report the process may not live
-		// to send.
-		w.lost.stop()
-		w.reportLosses()
 	})
 }
 
@@ -343,9 +349,9 @@ func (w *Writer) attempt() (context.Context, context.CancelFunc) {
 // prepare fills what a row is written with when its recorder left it empty.
 func (w *Writer) prepare(request store.Request) store.Request {
 	// With no usage service, nothing would ever ship the row.
-	request.ToShip = false
+	request.ToShip = w.shipper != nil
 	if request.APIKey == "" {
-		request.APIKey = unattributed
+		request.APIKey = Unattributed
 		usageUnattributed.Inc()
 		if w.throttled(&w.unattributedLogged, unattributedLogEvery) {
 			w.logger.Warn("usage row recorded with no api key or origin",
@@ -354,7 +360,7 @@ func (w *Writer) prepare(request store.Request) store.Request {
 		}
 	}
 	if request.OrganizationTier == "" {
-		request.OrganizationTier = defaultTier
+		request.OrganizationTier = usage.DefaultTier
 	}
 	return request
 }
@@ -465,6 +471,9 @@ func (w *Writer) writeRows(rows []pending) {
 			}
 			usageWritten.Add(float64(len(written)))
 			usageDuplicates.Add(float64(len(rows) - len(written)))
+			if w.shipper != nil {
+				w.shipper.offer(writtenRows(requests, written))
+			}
 			return
 		}
 		if store.Unwritable(err) {
@@ -488,15 +497,6 @@ func (w *Writer) writeRows(rows []pending) {
 		if w.throttled(&w.errorLogged, errorLogEvery) {
 			w.logger.Error("could not write usage rows, trying again", "rows", len(rows), "retry_in", delay, "error", err)
 		}
-		if w.throttled(&w.errorReported, reportEvery) {
-			event := sentry.NewEvent()
-			event.Level = sentry.LevelError
-			event.Message = "could not write usage rows"
-			event.Fingerprint = []string{"usage_write_failed"}
-			event.Tags = map[string]string{"component": "usage_writer"}
-			event.Contexts = map[string]sentry.Context{"usage": {"rows": len(rows), "error": err.Error()}}
-			w.hub.CaptureEvent(event)
-		}
 		select {
 		case <-time.After(delay):
 		case <-w.ctx.Done():
@@ -508,14 +508,28 @@ func (w *Writer) writeRows(rows []pending) {
 	}
 }
 
-// lose logs every row in full, which is what replaying them reads, counts them, and reports
-// the loss: at once if nothing was reported in the last reportEvery, otherwise once it has
-// passed, with everything lost meanwhile.
+// writtenRows is the rows a batch wrote, each usage id once. A row whose id was already in the
+// shard is left out: the row there is the one to ship, and the sweeper sends it if it has to.
+func writtenRows(requests []store.Request, written []uuid.UUID) []store.Request {
+	ids := make(map[uuid.UUID]bool, len(written))
+	for _, id := range written {
+		ids[id] = true
+	}
+	rows := make([]store.Request, 0, len(written))
+	for _, request := range requests {
+		if ids[request.UsageID] {
+			delete(ids, request.UsageID)
+			rows = append(rows, request)
+		}
+	}
+	return rows
+}
+
+// lose logs every row in full, which is what replaying them reads, and counts them, which is
+// what the lost alert reads.
 func (w *Writer) lose(rows []store.Request, reason string, cause error) {
-	var micros int64
 	for _, request := range rows {
 		cost := max(request.CostMicros, 0)
-		micros += cost
 		usageLost.WithLabelValues(reason).Inc()
 		usageLostMicros.Add(float64(cost))
 		row, err := json.Marshal(request)
@@ -529,93 +543,6 @@ func (w *Writer) lose(rows []store.Request, reason string, cause error) {
 		}
 		w.logger.Error("usage row lost", args...)
 	}
-	w.lost.add(reason, len(rows), micros)
-	if w.throttled(&w.lossReported, reportEvery) {
-		w.reportLosses()
-		return
-	}
-	w.lost.later(time.Unix(0, w.lossReported.Load()).Add(reportEvery), w.reportLosses)
-}
-
-// reportLosses sends what was lost since the last report to Sentry, if anything was.
-func (w *Writer) reportLosses() {
-	byReason, micros := w.lost.take()
-	if len(byReason) == 0 {
-		return
-	}
-	w.lossReported.Store(time.Now().UnixNano())
-	rows := 0
-	reasons := make(map[string]any, len(byReason))
-	for reason, count := range byReason {
-		rows += count
-		reasons[reason] = count
-	}
-	event := sentry.NewEvent()
-	event.Level = sentry.LevelError
-	event.Message = "usage rows lost"
-	event.Fingerprint = []string{"usage_alert", "lost"}
-	event.Tags = map[string]string{"usage_alert": "lost"}
-	if len(byReason) == 1 {
-		for reason := range byReason {
-			event.Tags["reason"] = reason
-		}
-	}
-	event.Contexts = map[string]sentry.Context{
-		"usage":          {"rows": rows, "cost_micros": micros},
-		"lost_by_reason": reasons,
-	}
-	w.hub.CaptureEvent(event)
-}
-
-// lossTally is what was lost since it was last reported, and the report waiting to send it.
-type lossTally struct {
-	mu      sync.Mutex
-	rows    map[string]int
-	micros  int64
-	pending *time.Timer
-	stopped bool
-}
-
-func (t *lossTally) add(reason string, rows int, micros int64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.rows == nil {
-		t.rows = map[string]int{}
-	}
-	t.rows[reason] += rows
-	t.micros += micros
-}
-
-// take empties the tally and returns what it held. A report waiting to send it is not needed
-// any more.
-func (t *lossTally) take() (map[string]int, int64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	rows, micros := maps.Clone(t.rows), t.micros
-	clear(t.rows)
-	t.micros = 0
-	if t.pending != nil {
-		t.pending.Stop()
-		t.pending = nil
-	}
-	return rows, micros
-}
-
-// later runs report at at, unless a report is already waiting or the tally is stopped.
-func (t *lossTally) later(at time.Time, report func()) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.pending != nil || t.stopped {
-		return
-	}
-	t.pending = time.AfterFunc(time.Until(at), report)
-}
-
-// stop keeps any report from waiting again; whatever is lost is left to take.
-func (t *lossTally) stop() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.stopped = true
 }
 
 // throttled reports whether every has passed since last, and if so moves last to now.
