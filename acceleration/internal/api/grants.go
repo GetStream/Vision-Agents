@@ -78,8 +78,8 @@ func (*LimitGrant) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.S
 type LimitGrantInput struct {
 	LimitTarget
 	AmountMicros int64      `json:"amount_micros" minimum:"1" maximum:"1000000000000000"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty" doc:"When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today."`
-	Reason       string     `json:"reason" minLength:"1" maxLength:"500"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty" doc:"When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today."`
+	Reason       string     `json:"reason" minLength:"1" maxLength:"500" pattern:"\\S" doc:"Why it is made; more than spaces."`
 }
 
 func (*LimitGrantInput) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -98,7 +98,7 @@ func (*ManageLimitGrantInput) TransformSchema(_ huma.Registry, schema *huma.Sche
 
 // LimitGrantRevocation says why a grant ends.
 type LimitGrantRevocation struct {
-	Reason string `json:"reason" minLength:"1" maxLength:"500"`
+	Reason string `json:"reason" minLength:"1" maxLength:"500" pattern:"\\S" doc:"Why it ends; more than spaces."`
 }
 
 func (*LimitGrantRevocation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -176,8 +176,8 @@ func (s *Server) registerLimitGrants(api huma.API) {
 			"until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. "+
 			"It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard "+
 			"limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the "+
-			"future and at most a year away (400 invalid_expiry); an organization has at most 20 live "+
-			"grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.",
+			"future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live "+
+			"grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.",
 		http.StatusConflict)
 	create.DefaultStatus, create.Responses = http.StatusCreated, created
 	huma.Register(api, create, func(ctx context.Context, request *createGrantRequest) (*createdGrantResponse, error) {
@@ -265,7 +265,7 @@ func (s *Server) createGrant(ctx context.Context, organization string, sent Limi
 	now := time.Now()
 	if sent.ExpiresAt != nil && (!sent.ExpiresAt.After(now) || sent.ExpiresAt.Sub(now) > longestGrant) {
 		return nil, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidExpiry,
-			Message: "expires_at is in the future and at most a year away"}
+			Message: "expires_at is in the future and at most 366 days away"}
 	}
 	limits, err := s.store.LimitsFor(ctx, []string{organization})
 	if err != nil {

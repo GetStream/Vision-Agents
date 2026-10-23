@@ -161,6 +161,21 @@ func (s *LimitsSuite) TestASystemFieldOnAGrantIsAnUnknownField() {
 	s.Equal(codeValidationFailed, failure.Code)
 }
 
+func (s *LimitsSuite) TestAGrantsReasonIsMoreThanSpaces() {
+	s.create(map[string]any{"subject": "organization", "interval": "monthly", "limit_micros": 5})
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/grants",
+		map[string]any{"subject": "organization", "amount_micros": 5, "reason": " \t "})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeValidationFailed, failure.Code)
+
+	made := s.grant(map[string]any{"subject": "organization", "amount_micros": 5, "reason": "x"})
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/grants/"+strconv.FormatInt(made.Id, 10)+"/revoke",
+		map[string]any{"reason": "   "})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeValidationFailed, failure.Code)
+}
+
 func (s *LimitsSuite) TestACustomerGrantDoesNotLiftTheSpendHardLimit() {
 	daily := int64(1_000_000)
 	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: &daily}})

@@ -101,6 +101,35 @@ func TestAGrantOnADefaultsSubjectLiftsOneSubject(t *testing.T) {
 	require.ErrorIs(t, acct.overLimits(subjectsOf(as("u2"), "o1"), grantNow).refusal, ErrUserLimit)
 }
 
+func TestAnEarlierSubjectsRefusalLeavesALaterSubjectsGrantNamed(t *testing.T) {
+	organization := usage.SubjectRef{OrganizationID: "o1", Subject: usage.SubjectOrganization}
+	rows := []store.Limit{
+		financeLimit(usage.Daily, 10),
+		{Subject: usage.SubjectOrganization, Level: store.LevelOrganization, OrganizationID: "o1", Interval: usage.Daily, LimitMicros: 10},
+	}
+	acct := spentAccount(rows, map[usage.SubjectRef]int64{finance: 10, organization: 10}, grantOn(7, finance, 50, nil))
+
+	verdict := acct.overLimits(subjectsOf(financeOwner(), "o1"), grantNow)
+
+	require.Equal(t, organization, verdict.ref, "refused by the organization")
+	require.Equal(t, []int64{7}, verdict.grants, "work let through anyway is drawn from the team's grant")
+}
+
+func TestSpentNamesTheGrantsItsAdmissionChose(t *testing.T) {
+	refs := subjectsOf(financeOwner(), "o1")
+	acct := spentAccount([]store.Limit{financeLimit(usage.Daily, 10)}, map[usage.SubjectRef]int64{finance: 10},
+		grantOn(7, finance, 50, nil))
+	require.Equal(t, []int64{7}, acct.drawnFor(refs, grantNow), "with no admission here, what admission would choose")
+
+	acct.noteDrawn(refs, []int64{7}, grantNow)
+	acct.grants[0].used = 50
+	require.Equal(t, []int64{7}, acct.drawnFor(refs, grantNow), "the grant admitted on, though it is used up since")
+
+	acct.noteDrawn(refs, nil, grantNow)
+	acct.grants[0].used = 0
+	require.Empty(t, acct.drawnFor(refs, grantNow), "admitted on no grant, the row names none")
+}
+
 func TestTheGrantThatExpiresFirstIsDrawnFirst(t *testing.T) {
 	tomorrow, nextWeek := grantNow.Add(24*time.Hour), grantNow.Add(7*24*time.Hour)
 	grants := []grantState{grantOn(1, finance, 5, nil), grantOn(2, finance, 5, &nextWeek), grantOn(3, finance, 5, &tomorrow)}

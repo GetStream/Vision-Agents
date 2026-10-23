@@ -3664,7 +3664,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Grant a subject a one-time amount past its limits
-         * @description Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+         * @description Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
          *
          *     Server-side only: one server-side credential of any app grants for any subject of its organization.
          */
@@ -6555,9 +6555,10 @@ export type components = {
             readonly category?: string;
             /**
              * Format: date-time
-             * @description When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             * @description When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
              */
             readonly expires_at?: string;
+            /** @description Why it is made; more than spaces. */
             readonly reason: string;
             readonly subject: components["schemas"]["LimitSubject"];
             /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */
@@ -6572,6 +6573,7 @@ export type components = {
         };
         /** @description Why a grant ends now. */
         readonly LimitGrantRevocation: {
+            /** @description Why it ends; more than spaces. */
             readonly reason: string;
         };
         /**
@@ -6727,10 +6729,11 @@ export type components = {
             readonly category?: string;
             /**
              * Format: date-time
-             * @description When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+             * @description When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
              */
             readonly expires_at?: string;
             readonly organization_id: string;
+            /** @description Why it is made; more than spaces. */
             readonly reason: string;
             readonly subject: components["schemas"]["LimitSubject"];
             /** @description The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -. */

@@ -1290,6 +1290,23 @@ func (s *StoreSuite) TestMigrateRebuildsAUsageIndexThatDidNotBuild() {
 	s.True(valid, "the invalid index is dropped and built again")
 }
 
+func (s *StoreSuite) TestMigrateRebuildsAGrantsIndexLeftInvalid() {
+	// As a CONCURRENTLY build that failed leaves it.
+	s.onShard("UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass('requests_limit_grants_idx')")
+	var valid bool
+	read := func() {
+		s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('requests_limit_grants_idx')").Scan(&valid))
+	}
+	read()
+	s.Require().False(valid)
+
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	read()
+	s.True(valid, "dropped and built again")
+}
+
 func (s *StoreSuite) TestARouterWaitingToMigrateDoesNotHoldUpTheOneMigrating() {
 	// The router migrating holds the lock on a connection of its own, as Migrate does.
 	holder, err := s.store.DB().DB.Conn(s.ctx)

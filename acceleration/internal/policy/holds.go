@@ -262,7 +262,7 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) [
 	if held == nil {
 		held = &hold{at: at, balance: m.billing(organization), limits: true}
 		if acct.limited && len(acct.grants) > 0 {
-			held.grants = acct.overLimits(refs, at).grants
+			held.grants = acct.drawnFor(refs, at)
 			held.granted = len(held.grants) > 0
 		}
 	}

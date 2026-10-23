@@ -191,6 +191,9 @@ type account struct {
 	grantsFrom   time.Time
 	grantsFailed time.Time
 	grantHeld    map[int64]int64
+	// drawn is the grants the latest admission of each owner chose, by its subjects' keys,
+	// which its rows name; dropped once unused for Idle.
+	drawn map[string]drawn
 	// subjects is every subject the work admitted here counted for, by its counter's key, with
 	// what it spent at the last read of it.
 	subjects map[string]*subjectSpend
@@ -596,6 +599,9 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 	}
 	verdict := acct.overLimits(refs, clock)
 	*grants = verdict.grants
+	if refs != nil {
+		acct.noteDrawn(refs, verdict.grants, now)
+	}
 	if verdict.refusal != nil {
 		reason := reasonLimit
 		if verdict.ref.Subject == usage.SubjectUser {
@@ -644,11 +650,52 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 				verdict.grants = append(verdict.grants, grant.grant.ID)
 				break
 			}
-			verdict.refusal, verdict.ref, verdict.limit = limitRefusal(limit, ref, end), ref, limit
-			return verdict
+			// The first refusal is the answer; the later subjects are still looked at, so work
+			// let through anyway, as shadow lets it, is drawn from their grants.
+			if verdict.refusal == nil {
+				verdict.refusal, verdict.ref, verdict.limit = limitRefusal(limit, ref, end), ref, limit
+			}
+			break
 		}
 	}
 	return verdict
+}
+
+// drawn is the grants an owner's latest admission chose, and when.
+type drawn struct {
+	grants []int64
+	at     time.Time
+}
+
+// noteDrawn keeps, under m.mu, the grants an admission of work counting for refs chose, so the
+// work's row names those (Spent) rather than what the limits say once it is done. Only an
+// account with grants keeps any.
+func (a *account) noteDrawn(refs []usage.SubjectRef, grants []int64, now time.Time) {
+	if len(a.grants) == 0 && len(a.drawn) == 0 {
+		return
+	}
+	if a.drawn == nil {
+		a.drawn = map[string]drawn{}
+	}
+	a.drawn[subjectsKeyOf(refs)] = drawn{grants: grants, at: now}
+}
+
+// drawnFor is the grants the latest admission of work counting for refs chose; with none made
+// here, what admission would choose now.
+func (a *account) drawnFor(refs []usage.SubjectRef, now time.Time) []int64 {
+	if chosen, ok := a.drawn[subjectsKeyOf(refs)]; ok {
+		return slices.Clone(chosen.grants)
+	}
+	return a.overLimits(refs, now).grants
+}
+
+// subjectsKeyOf is the subjects' counter keys joined, as a hold's subjectsKey.
+func subjectsKeyOf(refs []usage.SubjectRef) string {
+	keys := make([]string, len(refs))
+	for i, ref := range refs {
+		keys[i] = ref.Key(usage.CounterPrefix)
+	}
+	return strings.Join(keys, subjectsSeparator)
 }
 
 // see notes, under m.mu, that work counted for the subjects, and asks the limits loop to read

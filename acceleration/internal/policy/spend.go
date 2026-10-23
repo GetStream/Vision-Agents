@@ -307,6 +307,11 @@ func (m *money) plan(keys []string, now time.Time) map[string]*spendRead {
 				delete(acct.subjects, name)
 			}
 		}
+		for name, chosen := range acct.drawn {
+			if now.Sub(chosen.at) > m.settings.Idle {
+				delete(acct.drawn, name)
+			}
+		}
 		if !acct.limited {
 			continue
 		}

@@ -19,7 +19,7 @@ class LimitGrantInput:
 
     Attributes:
         amount_micros (int):
-        reason (str):
+        reason (str): Why it is made; more than spaces.
         subject (LimitSubject): Whose spend a limit counts: the organization, one app, a key, an end user of an app, a
             usage category across the organization or within one app, or a team across the organization or within one app. A
             team is the user's team, as its token names it.
@@ -27,7 +27,7 @@ class LimitGrantInput:
         app_id (str | Unset): The app. Required at app, api_key and user level, and for an app's category or team.
         category (str | Unset): The usage category, for subject category or app_category: 1 to 64 characters of A-Z,
             a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
-        expires_at (datetime.datetime | Unset): When it ends, in the future and at most a year away. Left out, it ends
+        expires_at (datetime.datetime | Unset): When it ends, in the future and at most 366 days away. Left out, it ends
             when used up or revoked. The next midnight UTC makes it more for today.
         team (str | Unset): The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
         user_id (str | Unset): The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _

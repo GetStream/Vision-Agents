@@ -198,6 +198,9 @@ var usageIndexes = []struct{ name, create string }{
 		"INCLUDE (cost_micros) WHERE billable AND user_id <> ''"},
 	{"requests_category_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_category_spend_idx ON requests (customer_id, started_at) " +
 		"INCLUDE (cost_micros, usage_categories) WHERE billable AND usage_categories <> '{}'"},
+	// The rows naming a grant, which a reconcile counts again (20261112121000_requests_limit_grants.sql).
+	{"requests_limit_grants_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_idx ON requests " +
+		"USING gin (limit_grants) WHERE limit_grants <> '{}'"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left

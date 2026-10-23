@@ -14,7 +14,7 @@ class LimitGrantRevocation:
     """Why a grant ends now.
 
     Attributes:
-        reason (str):
+        reason (str): Why it ends; more than spaces.
     """
 
     reason: str

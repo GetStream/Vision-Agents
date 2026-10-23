@@ -101,8 +101,9 @@ def sync_detailed(
     until the grant is used up, expires or is revoked; work that fits under every limit draws nothing.
     It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit
     still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at
-    most a year away (400 invalid_expiry); an organization has at most 20 live grants (409
-    too_many_grants). The router that made it draws on it at once, the others within 5 s.
+    most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409
+    too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others
+    within 5 s.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 
@@ -140,8 +141,9 @@ def sync(
     until the grant is used up, expires or is revoked; work that fits under every limit draws nothing.
     It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit
     still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at
-    most a year away (400 invalid_expiry); an organization has at most 20 live grants (409
-    too_many_grants). The router that made it draws on it at once, the others within 5 s.
+    most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409
+    too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others
+    within 5 s.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 
@@ -174,8 +176,9 @@ async def asyncio_detailed(
     until the grant is used up, expires or is revoked; work that fits under every limit draws nothing.
     It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit
     still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at
-    most a year away (400 invalid_expiry); an organization has at most 20 live grants (409
-    too_many_grants). The router that made it draws on it at once, the others within 5 s.
+    most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409
+    too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others
+    within 5 s.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 
@@ -211,8 +214,9 @@ async def asyncio(
     until the grant is used up, expires or is revoked; work that fits under every limit draws nothing.
     It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit
     still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at
-    most a year away (400 invalid_expiry); an organization has at most 20 live grants (409
-    too_many_grants). The router that made it draws on it at once, the others within 5 s.
+    most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409
+    too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others
+    within 5 s.
 
     Server-side only: one server-side credential of any app grants for any subject of its organization.
 

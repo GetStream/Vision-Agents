@@ -5649,9 +5649,11 @@ type LimitGrantInput struct {
 	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
 	Category *string `json:"category,omitempty"`
 
-	// ExpiresAt When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+	// ExpiresAt When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Reason    string     `json:"reason"`
+
+	// Reason Why it is made; more than spaces.
+	Reason string `json:"reason"`
 
 	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
 	Subject LimitSubject `json:"subject"`
@@ -5672,6 +5674,7 @@ type LimitGrantPage struct {
 
 // LimitGrantRevocation Why a grant ends now.
 type LimitGrantRevocation struct {
+	// Reason Why it ends; more than spaces.
 	Reason string `json:"reason"`
 }
 
@@ -5844,10 +5847,12 @@ type ManageLimitGrantInput struct {
 	// Category The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
 	Category *string `json:"category,omitempty"`
 
-	// ExpiresAt When it ends, in the future and at most a year away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
+	// ExpiresAt When it ends, in the future and at most 366 days away. Left out, it ends when used up or revoked. The next midnight UTC makes it more for today.
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	OrganizationId string     `json:"organization_id"`
-	Reason         string     `json:"reason"`
+
+	// Reason Why it is made; more than spaces.
+	Reason string `json:"reason"`
 
 	// Subject Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
 	Subject LimitSubject `json:"subject"`
@@ -12817,7 +12822,7 @@ type ClientInterface interface {
 
 	// CreateLimitGrantWithBody Grant a subject a one-time amount past its limits
 	//
-	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -12828,7 +12833,7 @@ type ClientInterface interface {
 
 	// CreateLimitGrant Grant a subject a one-time amount past its limits
 	//
-	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -18506,7 +18511,7 @@ func (c *Client) ListLimitGrants(ctx context.Context, params *ListLimitGrantsPar
 
 // CreateLimitGrantWithBody Grant a subject a one-time amount past its limits
 //
-// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -18527,7 +18532,7 @@ func (c *Client) CreateLimitGrantWithBody(ctx context.Context, contentType strin
 
 // CreateLimitGrant Grant a subject a one-time amount past its limits
 //
-// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -32959,7 +32964,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateLimitGrantWithBodyWithResponse Grant a subject a one-time amount past its limits
 	//
-	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -32970,7 +32975,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateLimitGrantWithResponse Grant a subject a one-time amount past its limits
 	//
-	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+	// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 	//
 	// Server-side only: one server-side credential of any app grants for any subject of its organization.
 	//
@@ -56360,7 +56365,7 @@ func (c *ClientWithResponses) ListLimitGrantsWithResponse(ctx context.Context, p
 
 // CreateLimitGrantWithBodyWithResponse Grant a subject a one-time amount past its limits
 //
-// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //
@@ -56377,7 +56382,7 @@ func (c *ClientWithResponses) CreateLimitGrantWithBodyWithResponse(ctx context.C
 
 // CreateLimitGrantWithResponse Grant a subject a one-time amount past its limits
 //
-// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most a year away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants). The router that made it draws on it at once, the others within 5 s.
+// Once one of the subject's own limits is spent, in any interval, its work is admitted on the grant until the grant is used up, expires or is revoked; work that fits under every limit draws nothing. It lifts the subject's own limits only: a parent's limit, credit and the operator's spend hard limit still refuse. The subject must have a limit (404 no_limit); expires_at must be in the future and at most 366 days away (400 invalid_expiry); an organization has at most 20 live grants (409 too_many_grants), a used-up one not counted. The router that made it draws on it at once, the others within 5 s.
 //
 // Server-side only: one server-side credential of any app grants for any subject of its organization.
 //

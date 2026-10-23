@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -323,6 +324,56 @@ func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
 	s.enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
 	s.never(func() bool { return s.admitted().Spend == nil }, 300*time.Millisecond, 10*time.Millisecond,
 		"once the row is written and summed, what it paid for is the grant's")
+}
+
+func (s *PolicySuite) TestAGrantUntilMidnightIsExpiredAfterIt() {
+	var clock atomic.Pointer[time.Time]
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+		settings.Now = func() time.Time {
+			if moved := clock.Load(); moved != nil {
+				return *moved
+			}
+			return time.Now()
+		}
+	})
+	_, midnight := usage.Window(usage.Daily, time.Now())
+	// A longer interval whose window goes on past midnight, so the user is still spent there.
+	longer := usage.Weekly
+	for _, interval := range []usage.Interval{usage.Weekly, usage.Biweekly, usage.Monthly} {
+		if _, end := usage.Window(interval, time.Now()); end.After(midnight) {
+			longer = interval
+			break
+		}
+	}
+	for _, interval := range []usage.Interval{usage.Daily, longer} {
+		s.limit(store.Limit{Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app,
+			Interval: interval, LimitMicros: 1_000_000})
+	}
+	s.spendAs(store.Request{CustomerID: s.app, UserID: "u1", CostMicros: 1_000_000})
+	u1 := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UserID: "u1"}}
+	admit := func() routing.Admission {
+		admitted, err := enforcer.Admit(s.ctx, u1)
+		s.Require().NoError(err)
+		return admitted
+	}
+	s.eventually(func() bool { return errors.Is(admit().Spend, ErrUserLimit) }, 5*time.Second, 10*time.Millisecond, "u1 is spent")
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectUser, AppID: s.app, UserID: "u1",
+		AmountMicros: 1_000_000, ExpiresAt: &midnight, Reason: "a support case", Actor: "test"}
+	s.Require().NoError(s.store.AddGrant(s.ctx, &grant, store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}))
+	s.eventually(func() bool { return len(admit().Grants) > 0 }, 5*time.Second, 10*time.Millisecond, "admitted on the grant today")
+
+	after := midnight.Add(time.Second)
+	clock.Store(&after)
+
+	var spend error
+	s.eventually(func() bool {
+		admitted := admit()
+		spend = admitted.Spend
+		return errors.Is(spend, ErrUserLimit) && len(admitted.Grants) == 0
+	}, 5*time.Second, 10*time.Millisecond, "past midnight the grant is expired and draws nothing")
+	s.ErrorContains(spend, "the "+string(longer)+" limit", "the longer limit is still spent; the day's is not")
 }
 
 // lockGrants holds limit_grants from another session until the test ends, as a long migration
