@@ -111,8 +111,8 @@ const clientAccessibleExtension = "x-client-accessible"
 type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
-	// Pricer is what the providers' rates are read from. Nil reads them from the routers'
-	// configs.
+	// Pricer is what the providers' rates are read from. Nil is routing.Prices of the
+	// routers' configs.
 	Pricer pricing.Pricer
 	Store  *store.Store
 	// Configs reads and writes the tenant's configuration -- keys, policies, agent and

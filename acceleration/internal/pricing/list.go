@@ -58,6 +58,9 @@ func validate(entry Entry) error {
 	if err := validateRates(entry, entry.Rates); err != nil {
 		return err
 	}
+	if entry.MarkupBps != nil && !ValidMarkup(*entry.MarkupBps) {
+		return fmt.Errorf("pricing: %s has a markup of %d basis points, outside 0 to %d", name(entry), *entry.MarkupBps, MaxMarkupBps)
+	}
 	var above int64
 	for _, tier := range entry.Tiers {
 		if tier.AboveInputTokens <= above {
@@ -142,11 +145,25 @@ func (l *List) Quote(item Item, used Quantities) Quote {
 		entry = Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model}
 	}
 	quote := entry.Quote(used)
-	quote.Version = l.version
+	quote.Version = l.versionOf(entry, ok)
 	if quote.Unpriced {
 		l.warn(item)
 	}
 	return quote
+}
+
+// versionOf is what a quote at the entry names as its price: the change that wrote the
+// entry, else the list's own version. Work no entry matched, and a local entry with no rate,
+// were priced by nothing, so they name nothing.
+func (l *List) versionOf(entry Entry, matched bool) string {
+	switch {
+	case !matched, entry.Local && !entry.priced():
+		return ""
+	case entry.Version != "":
+		return entry.Version
+	default:
+		return l.version
+	}
 }
 
 // warn logs an unpriced item unless it was logged within unpricedEvery. Rows are priced
@@ -186,6 +203,10 @@ func (l *List) Entry(item Item) (Entry, bool) {
 	entry.Tiers = slices.Clone(entry.Tiers)
 	for i := range entry.Tiers {
 		entry.Tiers[i].Rates = maps.Clone(entry.Tiers[i].Rates)
+	}
+	if entry.MarkupBps != nil {
+		markup := *entry.MarkupBps
+		entry.MarkupBps = &markup
 	}
 	return entry, true
 }

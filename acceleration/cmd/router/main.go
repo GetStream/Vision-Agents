@@ -93,6 +93,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // release is the version this binary was built from, set with -X main.release
@@ -134,6 +135,7 @@ const usage = `usage: router [--config path] [command]
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
   plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
+  prices                read and check the price list (router prices for its commands)
 `
 
 func main() {
@@ -217,6 +219,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runStreamApps(args, settings, logger)
 	case "plugins":
 		return runPlugins(args, settings, logger)
+	case "prices":
+		return runPrices(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -460,7 +464,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	prices, err := newPrices(capabilities, vendorConfig, logger)
+	priceFiles, err := loadPriceFiles(settings)
+	if err != nil {
+		return err
+	}
+	prices, err := newPrices(capabilities, priceFiles, pricesVersion(settings), logger)
 	if err != nil {
 		return err
 	}
@@ -500,6 +508,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer pgStore.Close()
+		startPriceSync(ctx, pgStore, priceFiles, priceRetry, logger)
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
 	}
@@ -1770,18 +1779,25 @@ func buildVoices(
 	})
 }
 
-// newPrices is the price list every row this process records is priced by: the routing
-// config's rates, and the phone vendors' calls. Billable work it has no price for is logged
-// at start, so it can be priced before a row of it is recorded at nothing.
-func newPrices(capabilities routing.Config, vendorConfig phone.Config, logger *slog.Logger) (*pricing.List, error) {
-	prices, err := pricing.NewList("config", append(routing.PriceEntries(capabilities), phone.PriceEntries(vendorConfig)...), logger)
+// newPrices is the price list every row this process records is priced by: the price files
+// the router loads (the deployment's own over the embedded vendor.json), at the vendors'
+// rates, with the models the routing config runs itself marked local. A price: block in the
+// routing config is no longer read, which is said at start, and so is billable work the
+// list has no price for, so it can be priced before a row of it is recorded at nothing.
+func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
+	if ignored := pricedProviders(capabilities); len(ignored) > 0 {
+		logger.Warn("price: in the routing config is ignored; prices come from prices/vendor.json and "+
+			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
+			"providers", ignored)
+	}
+	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range prices.Unpriced(routing.Items(capabilities)) {
+	for _, item := range list.Unpriced(routing.Items(capabilities)) {
 		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
 	}
-	return prices, nil
+	return list, nil
 }
 
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a

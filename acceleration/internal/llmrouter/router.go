@@ -59,7 +59,7 @@ type Options struct {
 	Quota *quota.Limiter
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate routing.Gate
-	// Pricer prices every row recorded. Nil prices them from Config's own rates.
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
 	Pricer pricing.Pricer
 	// Models resolves the custom/<name> models customers serve themselves. Nil leaves
 	// none.

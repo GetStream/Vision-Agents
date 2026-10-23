@@ -143,6 +143,13 @@ type Entry struct {
 	Local    bool              `json:"local,omitempty"`
 	Rates    map[Meter]Rate    `json:"rates,omitempty"`
 	Tiers    []Tier            `json:"tiers,omitempty"`
+	// MarkupBps is the operator's markup on this entry alone, in basis points (1500 is
+	// 15%), replacing the list's: nil takes the list's, and 0 sells at the vendor's rate.
+	// Rates stay the vendor's; a markup is kept beside them, never folded into them.
+	MarkupBps *int64 `json:"markup_bps,omitempty"`
+	// Version names the change to the price list that wrote the entry. Empty takes the
+	// list's own version.
+	Version string `json:"version,omitempty"`
 }
 
 // Quote is what one unit of work costs, in millionths of a dollar, and the price list

@@ -72,6 +72,9 @@ type Config struct {
 	// ones embedded in the binary.
 	RoutingConfig string `koanf:"routing_config"`
 	PhoneConfig   string `koanf:"phone_config"`
+	// PricesFile is a price file of the deployment's own, laid over the embedded vendor.json
+	// when the router loads the price list into its database. Empty loads vendor.json alone.
+	PricesFile string `koanf:"prices_file"`
 	// VoicesBucketURL is where the recordings behind a customer's own voice are kept.
 	VoicesBucketURL string `koanf:"voices_bucket_url"`
 	// MockProviders builds the mock/* speech, voice and language models the load
@@ -387,6 +390,7 @@ var variables = map[string]string{
 	"trusted_proxies":    "ROUTER_TRUSTED_PROXIES",
 	"routing_config":     "ROUTER_CONFIG",
 	"phone_config":       "ROUTER_PHONE_CONFIG",
+	"prices_file":        "ROUTER_PRICES_FILE",
 	"voices_bucket_url":  "ROUTER_VOICES_BUCKET_URL",
 	"mock_providers":     "ROUTER_MOCK_PROVIDERS",
 	"pprof_addr":         "ROUTER_PPROF_ADDR",
@@ -753,6 +757,7 @@ func (c Config) export() error {
 		"trusted_proxies":               strings.Join(c.TrustedProxies, ","),
 		"routing_config":                c.RoutingConfig,
 		"phone_config":                  c.PhoneConfig,
+		"prices_file":                   c.PricesFile,
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"pprof_addr":                    c.PprofAddr,

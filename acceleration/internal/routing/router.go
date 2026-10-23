@@ -177,7 +177,8 @@ type Options[P Provider] struct {
 	Models ModelResolver
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate Gate
-	// Pricer prices every row the router records. Nil prices them from Config's own rates.
+	// Pricer prices every row the router records. Nil prices them with Prices: Config's own
+	// rates, then the vendor list embedded in the binary.
 	Pricer pricing.Pricer
 	Logger *slog.Logger
 }

@@ -147,6 +147,12 @@ func AuditEntryLimit(asked int) int {
 // RecordAuditEntry stores one change, at now. An entry for a deployment's resource, such as
 // the price list, has no customer; every other one needs its customer.
 func (s *Store) RecordAuditEntry(ctx context.Context, entry *AuditEntry) error {
+	return recordAuditEntry(ctx, s.db, entry)
+}
+
+// recordAuditEntry is RecordAuditEntry on db, which may be the transaction the change was
+// written in, so the change and its record commit together.
+func recordAuditEntry(ctx context.Context, db bun.IDB, entry *AuditEntry) error {
 	if !slices.Contains(auditResourceTypes, entry.ResourceType) {
 		return stack.Wrap(fmt.Errorf("store: %q is not an audited resource", entry.ResourceType))
 	}
@@ -172,7 +178,7 @@ func (s *Store) RecordAuditEntry(ctx context.Context, entry *AuditEntry) error {
 		entry.Source = AuditSourceAPI
 	}
 	entry.CreatedAt = time.Now().UTC().Truncate(time.Microsecond)
-	if _, err := s.db.NewInsert().Model(entry).Exec(ctx); err != nil {
+	if _, err := db.NewInsert().Model(entry).Exec(ctx); err != nil {
 		return stack.Wrap(fmt.Errorf("store: record audit entry: %w", err))
 	}
 	return nil

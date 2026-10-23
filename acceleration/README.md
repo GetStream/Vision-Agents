@@ -83,7 +83,7 @@ go run ./cmd/router --config /etc/router.yaml
 ```
 
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
-`trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
+`trusted_proxies`, `routing_config`, `phone_config`, `prices_file`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kek}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
 `stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
@@ -107,6 +107,7 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for a model, and loads both into its database. Only the first load reads its `markup_bps`, and nothing applies a markup yet. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -474,7 +475,8 @@ the conversation carries on without. Both name the model this deployment wants r
 leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
-Which models those shortcuts reach for LLM, and what each is billed at per million tokens:
+Which models those shortcuts reach for LLM, and what each is billed at per million tokens
+(the vendor rates in `prices/vendor.json`):
 
 | Model                            | Tier         | In     | Cached  | Out     |
 | -------------------------------- | ------------ | ------ | ------- | ------- |
@@ -560,9 +562,9 @@ target. The agent's `llm` field and its optional `subagent` do not select that b
 | `openai/gpt-realtime-2.1`                 | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 | `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 
-These are estimates, and `router.yaml` says why: the vendors price audio in, audio out and
-text at three different rates, `Price` has one token bucket, so the audio rates are applied
-to every token. A reply is one row, settled when the model finishes it; the caller's audio
+The vendors price audio in, audio out and text at different rates, and where a vendor reports
+its tokens by modality (OpenAI Realtime, Gemini Live) each is priced at its own rate in
+`prices/vendor.json`. A reply is one row, settled when the model finishes it; the caller's audio
 since the last reply is the row's `audio_ms`, and the tokens are what the vendor reported.
 `stssuite` is what every one of these models is held to on a real call, the way `sttsuite`
 and `ttssuite` hold a transcriber and a voice. `.claude/skills/router-sts` is the vocabulary.
@@ -1443,6 +1445,38 @@ a batch sent without the ingest token (`batch_unauthorized`, a 401): a misconfig
 producer, or no producer at all. `usage_batches_refused_total{status}` counts both kinds of
 refusal.
 
+## Prices
+
+`prices/vendor.json` holds the vendors' published list prices, one entry per model (and per
+service tier where a vendor charges one), embedded in the binary. It has no markup and no
+negotiated figure. A deployment may lay a price file of its own over it with
+`ROUTER_PRICES_FILE`: for one model and `when`, the first file with an entry wins, and its
+`markup_bps` is the operator's markup.
+
+At start, right after migrating, a router loads them into the shared database's
+`price_changes` and `price_entries`: everything into an empty database, as one `seed` change
+with the file's markup, and otherwise only the models the database has never priced, as one
+`release` change. A model the database has priced keeps its rates, and the markup stays as
+it is, whatever the files say now. Each load is audited (`price_list`, source `cli`). A load
+that fails is retried every 30 seconds while the router serves; a file that does not parse
+stops the router at start. Rows are only ever added: a trigger refuses to change or delete
+an entry, and a change can only be cancelled before it takes effect.
+
+| Command | What it does |
+| --- | --- |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's vendor rates, its markup and what it charges; `--unpriced` lists the routed models no entry prices |
+| `router prices sync --dry-run` | What the next start would load, writing nothing |
+| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database |
+| `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
+| `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
+
+Until the router prices from the database, it prices every row from its price files:
+`ROUTER_PRICES_FILE` over the embedded `vendor.json`, at the rates they give and with no
+markup. A `price:` block in a routing config is ignored, with a warning at start;
+`router prices export --from <your config> --out own-prices.json` moves one into a file for
+`ROUTER_PRICES_FILE`, which keeps those models priced. The `check_prices` skill checks the list
+against what each vendor charges.
+
 ## Transcripts, memory and phone
 
 **Transcripts.** With `STREAM_API_KEY` and `STREAM_API_SECRET` set, `cmd/agent` writes every
@@ -1752,11 +1786,11 @@ go run github.com/bufbuild/buf/cmd/buf@v1.73.0 generate
   phone call anyway: it blocks the reply on the result. The harness has the fast model ask
   a slower one for help in its own words, in the middle of a sentence it goes on to finish;
   `Session.LLM()` still reaches the provider's own `Client()` for anything else.
-- **Costs come from config, not from the provider.** Each model declares what this
-  deployment is billed, and the recorder prices every row once, through one price list
-  (`internal/pricing`) built from those rates at start. A model with no price reports a
-  cost of zero rather than a guess, and is logged as billable work with no price unless it
-  is marked `free` or `local`.
+- **Costs come from the price list, not from the provider.** The recorder prices every row
+  once, through one price list (`internal/pricing`) of the vendors' rates in
+  `prices/vendor.json` (see [Prices](#prices)). A model with no price reports a cost of zero
+  rather than a guess, and is logged as billable work with no price unless it is marked
+  `free` or `local`.
 - **Transcript modes.** `delta` appends, `replacement` supersedes the current in-progress
   text, `final` is settled. Both speech-to-text providers send replacements.
 - **An audio chunk does not say whether it is the last.** A streaming voice only learns

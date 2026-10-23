@@ -153,3 +153,6 @@ xcuserdata/
 
 # Left by the pre-2026-10-02 conversation outbox (CHAT_OUTBOX_DIR default), removed in 367662800
 acceleration/internal/api/.local/
+
+# The price changes the check_prices skill prepares, handed over rather than committed
+.claude/skills/check_prices/out/

@@ -113,8 +113,8 @@ session forwarded since the last reply, which is the unit a transcriber bills by
 one number every vendor lets us count ourselves. Tokens are what the vendor reported: the
 totals in the row's columns, and the split by modality on `sts.Usage`, which the session
 writes into `meters` (each input modality net of its cached part). A split replaces the
-totals in the price, so OpenAI Realtime and Gemini Live are priced by the `rates` their
-yaml entries give each modality, and a vendor that reports no split by its per-token rates
+totals in the price, so OpenAI Realtime and Gemini Live are priced by the rates their
+`prices/vendor.json` entries give each modality, and a vendor that reports no split by its per-token rates
 on the totals. A provider that fills the split must put every billed token in it, since
 whatever it leaves out is not priced: Gemini bills its details, so what they leave out of
 the prompt is only shown, as `attributes.prompt_tokens_not_in_details`, and what they

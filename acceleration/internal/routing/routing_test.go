@@ -440,23 +440,6 @@ func (s *RoutingSuite) TestAShortcutLeftWithOneModelStillRefusesAsNoProvider() {
 	s.EqualError(err, "routing: no provider can express keyterms")
 }
 
-func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
-	config, err := DefaultConfig()
-	s.Require().NoError(err)
-
-	for modality, section := range config {
-		for _, provider := range section.Providers {
-			if provider.Provider == "mock" {
-				// The load benchmark's stand-ins reach no vendor, so nothing is what they
-				// cost and nothing is what they should report.
-				continue
-			}
-			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
-				modality, provider.Name())
-		}
-	}
-}
-
 func (s *RoutingSuite) TestDefaultConfigDeclaresAContextWindowForEveryTextModel() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
