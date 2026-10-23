@@ -111,7 +111,7 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
 | `ROUTER_AUTH_KEK_V<n>_WRAPPED` | Version `n` of the keyring as base64 ciphertext a KMS wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK_V<n>`. The router unwraps it at startup with `ROUTER_AUTH_KMS_KEY` into the same key, so the rows it sealed still open. Setting both forms of one version is refused |
-| `ROUTER_AUTH_KMS_KEY`   | The KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`. Unset, only the plain keys are read. This build has no KMS client yet, so it refuses to start with this set |
+| `ROUTER_AUTH_KMS_KEY`   | The Cloud KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`, as `projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>`. The router calls Cloud KMS once at startup, with Application Default Credentials. Unset, only the plain keys are read. See «The key encryption key in Cloud KMS» |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
@@ -167,6 +167,50 @@ the other commands that read them there.
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
 | `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
+
+### The key encryption key in Cloud KMS
+
+A hosted deployment can keep its key encryption key out of its secrets. Cloud KMS wraps the
+key once. At each start the router unwraps it with one `Decrypt` call and then seals and opens
+rows in memory, as before. The key is the same string, so every row it sealed still opens and
+the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK`.
+
+1. Make a symmetric Cloud KMS key, and give the router's service account
+   `roles/cloudkms.cryptoKeyDecrypter` on that key only. `roles/cloudkms.admin` cannot decrypt
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   gcloud kms keys add-iam-policy-binding KEY --keyring=KEYRING --location=LOCATION \
+     --member=serviceAccount:ROUTER_SERVICE_ACCOUNT --role=roles/cloudkms.cryptoKeyDecrypter
+   ```
+
+2. Wrap the current key as version 1, with the AAD `router-kek-v1` (`router-kek-v<n>` for
+   version `n`). `printf %s` adds no newline: the unwrapped key must be the same bytes as the
+   plain one, or no row opens. `gcloud kms encrypt` reads a `-` input from stdin and writes
+   the ciphertext to stdout for `-`
+   ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
+   opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
+   be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
+   lines, so `tr` joins them. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
+   key, which `roles/cloudkms.admin` lacks too
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
+     --location=LOCATION --plaintext-file=- --ciphertext-file=- \
+     --additional-authenticated-data-file=<(printf %s router-kek-v1) | base64 | tr -d '\n'
+   ```
+
+3. Set `ROUTER_AUTH_KMS_KEY` to the key's resource name and `ROUTER_AUTH_KEK_V1_WRAPPED` to the
+   base64, then remove `ROUTER_AUTH_KEK` and `ROUTER_AUTH_KEK_V1`: a version set both ways is
+   refused. The wrapped value is ciphertext, so it can live in plain chart values.
+4. Restart. A start that cannot unwrap a key stops, and its error names the variable and the
+   KMS error, never the key or the ciphertext.
+
+To roll back, set `ROUTER_AUTH_KEK` to the same key again and unset `ROUTER_AUTH_KMS_KEY` and
+`ROUTER_AUTH_KEK_V1_WRAPPED`. The router then reads the plain key and calls no KMS.
 
 ## Authentication
 
