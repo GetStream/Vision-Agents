@@ -302,6 +302,73 @@ func (s *MeteringSuite) TestALeaveRacingItsJoinEndsTheLeg() {
 	s.Zero(s.rows(ModelCallMinutes)[0].Meters[pricing.CallSeconds], "not the hour until the call ended")
 }
 
+// An event time from before the leg was dialled starts it when it was dialled, and one further
+// back than an event is ever late is taken as now: neither bills hours nobody talked.
+func (s *MeteringSuite) TestAnEventTimeFromLongAgoOrBeforeTheDialIsClamped() {
+	callID := "call-" + uuid.NewString()
+	s.transfer(callID, "+15125550124")
+	dialed := s.clock.now()
+	s.clock.advance(time.Minute)
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, callID, "session-1", "human-1", "+15125550124",
+		dialed.Add(-10*time.Minute)))
+	s.Equal(dialed, s.legsOf(callID)[store.Outbound].StartedAt.UTC(), "no earlier than the dial")
+
+	late := "call-" + uuid.NewString()
+	s.transfer(late, "+15125550125")
+	s.clock.advance(3 * time.Hour)
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, late, "session-1", "human-2", "+15125550125",
+		s.clock.now().Add(-150*time.Minute)))
+	s.Equal(s.clock.now(), s.legsOf(late)[store.Outbound].StartedAt.UTC(), "an event two and a half hours old happened now")
+}
+
+// A join refused once and delivered again after the call ended revives the leg the call's end
+// left unanswered: billed once, from the join to the end.
+func (s *MeteringSuite) TestAJoinDeliveredAgainAfterTheCallEndedRevivesItsLegAndBillsItOnce() {
+	callID := "call-" + uuid.NewString()
+	s.transfer(callID, "+15125550124")
+	joined := s.clock.now().Add(30 * time.Second)
+	s.clock.advance(2 * time.Minute)
+	s.ended(defaultCallType, callID)
+	s.Equal(store.LegUnanswered, s.legsOf(callID)[store.Outbound].EndReason)
+	s.clock.advance(time.Minute)
+
+	for range 2 {
+		s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, callID, "session-1", "human-1", "+15125550124", joined))
+	}
+	s.ended(defaultCallType, callID)
+
+	leg := s.legsOf(callID)[store.Outbound]
+	s.Equal(store.LegEnded, leg.EndReason)
+	s.Equal("human-1", leg.ParticipantSession)
+	s.Equal(pricing.Quantities{pricing.CallSeconds: 90}, s.row(ModelCallMinutes).Meters)
+	time.Sleep(300 * time.Millisecond)
+	s.Len(s.rows(ModelCallMinutes), 1)
+	s.Zero(s.kept(callID), "nothing kept for a leg that will never open")
+}
+
+// Two transfers placed from the same number pair with their phones by the number each rang;
+// the number they were placed from only matches when no leg's remote number does.
+func (s *MeteringSuite) TestTwoLegsPlacedFromOneNumberPairByTheNumberEachRang() {
+	callID := "call-" + uuid.NewString()
+	s.transfer(callID, "+15125550124")
+	s.clock.advance(time.Second)
+	s.transfer(callID, "+15125550125")
+
+	s.joined(defaultCallType, callID, "human-2", "+15125550125")
+	s.joined(defaultCallType, callID, "human-1", s.e164)
+
+	legs := s.openLegs()
+	s.Require().Len(legs, 2)
+	for _, leg := range legs {
+		switch leg.RemoteNumber {
+		case "+15125550125":
+			s.Equal("human-2", leg.ParticipantSession, "the number it rang, though both were placed from one")
+		default:
+			s.Equal("human-1", leg.ParticipantSession)
+		}
+	}
+}
+
 // A phone's kept join is not taken by a leg another phone already has, nor does it move that
 // leg's start.
 func (s *MeteringSuite) TestAKeptJoinDoesNotMoveTheStartOfALegAnotherPhoneHas() {

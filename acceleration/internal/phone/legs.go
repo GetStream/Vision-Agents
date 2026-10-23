@@ -421,12 +421,17 @@ func legOwner(leg store.CallLeg) routing.Owner {
 	}
 }
 
+// eventLateness is the most an event's own time is trusted to be before it was delivered:
+// Stream redelivers within minutes, and a time further back is a misread or a bogus one, which
+// would start a leg hours early and have the sweep bill it for four.
+const eventLateness = time.Hour
+
 // eventAt is when a call event says it happened, which its legs are timed by, since Stream may
-// deliver one late or before one made earlier. An event that says nothing, or names a time
-// still to come on this clock, happened now.
+// deliver one late or before one made earlier. An event that says nothing, names a time still to
+// come on this clock, or one more than eventLateness before now, happened now.
 func (s *Service) eventAt(at time.Time) time.Time {
 	now := s.now()
-	if at.IsZero() || at.After(now) {
+	if at.IsZero() || at.After(now) || now.Sub(at) > eventLateness {
 		return now
 	}
 	return at

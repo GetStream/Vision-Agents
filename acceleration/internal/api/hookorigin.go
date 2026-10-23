@@ -151,8 +151,9 @@ func (h hookStamp) fresh(now time.Time) bool {
 	return at.IsZero() || now.Sub(at) <= hookStaleAfter
 }
 
-// eventTime is when Stream made an event, from its created_at: RFC 3339, or epoch nanoseconds
-// or milliseconds. Zero when it says nothing readable.
+// eventTime is when Stream made an event, from its created_at: RFC 3339, or an epoch number in
+// seconds, milliseconds, microseconds or nanoseconds, told apart by its size (any time from 1973
+// to 5138 reads as one of them). Zero when it says nothing readable.
 func eventTime(createdAt json.RawMessage) time.Time {
 	if len(createdAt) == 0 {
 		return time.Time{}
@@ -166,13 +167,19 @@ func eventTime(createdAt json.RawMessage) time.Time {
 		return at
 	}
 	var number int64
-	if json.Unmarshal(createdAt, &number) == nil && number > 0 {
-		if number < 1e15 {
-			return time.UnixMilli(number)
-		}
+	if json.Unmarshal(createdAt, &number) != nil || number <= 0 {
+		return time.Time{}
+	}
+	switch {
+	case number < 1e11:
+		return time.Unix(number, 0)
+	case number < 1e14:
+		return time.UnixMilli(number)
+	case number < 1e17:
+		return time.UnixMicro(number)
+	default:
 		return time.Unix(0, number)
 	}
-	return time.Time{}
 }
 
 // firstDelivery reports whether a hook is the first delivery of its event, which is the one
