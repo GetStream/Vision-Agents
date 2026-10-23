@@ -58,6 +58,7 @@ type Edge struct {
 	// drained is closed and replaced whenever the queue shrinks, which is what a publisher
 	// waiting for room waits on.
 	drained chan struct{}
+	joined  bool
 	left    bool
 
 	stop     chan struct{}
@@ -82,12 +83,18 @@ func New(options Options) *Edge {
 	}
 }
 
-// Join starts sending the agent's speech. An edge is one call: once left, it is not joined
-// again.
+// Join starts sending the agent's speech. An edge is one call: joining it again changes
+// nothing, and once left, it is not joined again.
 func (e *Edge) Join(context.Context) error {
-	if e.Left() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.left {
 		return ErrLeft
 	}
+	if e.joined {
+		return nil
+	}
+	e.joined = true
 	go e.playout()
 	return nil
 }
@@ -173,10 +180,13 @@ func (e *Edge) Leave() error {
 		return nil
 	}
 	e.left = true
+	joined := e.joined
 	e.mu.Unlock()
 
 	e.stopOnce.Do(func() { close(e.stop) })
-	<-e.done
+	if joined {
+		<-e.done
+	}
 	close(e.inbound)
 	return nil
 }
