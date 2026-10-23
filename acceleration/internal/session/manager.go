@@ -1344,9 +1344,10 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 			return err
 		}
 	}
+	// The memories go before the row, so a store that fails keeps the session to delete again.
 	if m.options.Memory != nil {
 		if err := m.options.Memory.ForgetRun(ctx, owner.CustomerID, id); err != nil {
-			return err
+			return memoryFailed(ctx, err)
 		}
 	}
 	if m.options.Store == nil {
@@ -1361,7 +1362,7 @@ func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return m.options.Memory.Truncate(ctx, customerID, userID)
+	return memoryFailed(ctx, m.options.Memory.Truncate(ctx, customerID, userID))
 }
 
 // ForgetSession deletes what one session learned. Whoever asks has to have checked the
@@ -1370,7 +1371,7 @@ func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID strin
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
 	}
-	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
+	return memoryFailed(ctx, m.options.Memory.ForgetRun(ctx, customerID, sessionID))
 }
 
 // Shutdown ends every session, which is what a router does on its way down rather than
@@ -1702,6 +1703,22 @@ var ErrSessionExists = errors.New("session: a session with that id already exist
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// ErrMemoryFailed is a memory store that failed to do what it was asked, such as a vendor
+// answering 429. Asking again later may succeed.
+var ErrMemoryFailed = errors.New("session: the memory store failed")
+
+// memoryFailed is err from the memory store, marked as the store's failure. Nil is nil.
+// A caller who hung up is not the store failing, so err stays as it is once ctx is done.
+func memoryFailed(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return err
+	}
+	return stack.Wrap(fmt.Errorf("%w: %w", ErrMemoryFailed, err))
+}
 
 // newID is a handle for an agent or a turn. It is random rather than sequential because it
 // is the only thing standing between two customers who both guessed at an id.
