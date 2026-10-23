@@ -85,8 +85,14 @@ var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
 	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true},
 	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
-	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber},
+	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber, window: whatsAppWindow},
 }
+
+// whatsAppWindow is Meta's customer service window: free text may be sent within 24 hours of
+// the person's last message, and only an approved template after it
+// (https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages#customer-service-windows),
+// internal/channels' whatsappWindow.
+const whatsAppWindow = 24 * time.Hour
 
 // episodeSource is one connector's card source and the person its message's author is.
 type episodeSource struct {
@@ -106,6 +112,10 @@ type episodeSource struct {
 	// chats is a thread key that is a chat, not the person a reply reaches: a Linq chat id
 	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
 	chats bool
+	// window is how long after the person's last message the provider takes free text, when
+	// it limits that; zero is no limit. A manifest whose reply has an after_window template
+	// still reaches the person past it (Reachable).
+	window time.Duration
 }
 
 // recipientOf is the opt-out recipient an author id or a thread key is.

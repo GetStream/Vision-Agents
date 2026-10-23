@@ -3,9 +3,11 @@ package channelbridge
 import (
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -103,4 +105,21 @@ func (s *BridgeSuite) TestAWhatsAppAuthorIsTheirNumberInE164() {
 	s.Equal("+16505551234", person.Address)
 	s.Equal("+16505551234", whatsapp.recipientOf("16505551234"))
 	s.Equal("+13125550001", telnyx.recipientOf("+13125550001"))
+}
+
+// WhatsApp takes free text for 24 hours after the person's last message; past that, a reply
+// reaches them only when the manifest has a template to send instead.
+func (s *BridgeSuite) TestAWhatsAppReplyPastTheDayIsPastTheWindowUnlessTheManifestHasATemplate() {
+	free := core.ReplyRule{}
+	templated := core.ReplyRule{Window: core.Duration(24 * time.Hour), AfterWindow: map[string]any{"type": "template"}}
+
+	s.False(pastWindow("whatsapp", free, 23*time.Hour), "within the day")
+	s.True(pastWindow("whatsapp", free, 24*time.Hour), "at the day's end")
+	s.False(pastWindow("whatsapp", templated, 25*time.Hour), "the template is sent instead")
+}
+
+// SMS and Slack take free text whenever the person last wrote.
+func (s *BridgeSuite) TestAnSMSOrSlackReplyIsNeverPastAWindow() {
+	s.False(pastWindow("telnyx", core.ReplyRule{}, 30*24*time.Hour))
+	s.False(pastWindow("slack_bot", core.ReplyRule{}, 30*24*time.Hour))
 }

@@ -85,9 +85,11 @@ func ConnectorEventSecrets(getenv func(string) string) EventSecretLookup {
 // when not nil, is called once, off the request, when that write fails, so the delivery goes
 // on to the destinations of unhandled events then. Replies do not pass here: the conversation
 // on a thread channel hands its finished replies to the bridge itself
-// (conversation.Service.OnFinishedReply).
+// (conversation.Service.OnFinishedReply). Reachable says whether a reply on a thread would go
+// out now, before a turn nobody in the thread asked for, such as a scheduled task's, is run.
 type ChannelBridge interface {
 	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error)
+	Reachable(ctx context.Context, thread store.ChannelThread) error
 }
 
 // droppingBridge is the bridge of a deployment without one: it logs that messages came and
@@ -102,6 +104,10 @@ func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient,
 			"connector", messages[0].ConnectorID, "messages", len(messages))
 	}
 	return false, nil
+}
+
+func (b droppingBridge) Reachable(context.Context, store.ChannelThread) error {
+	return errors.New("this router has no channel bridge to reply on a thread with")
 }
 
 // receiveConnectorEvent is the inbound handler for a built-in connector's provider events,
