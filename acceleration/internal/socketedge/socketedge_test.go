@@ -120,3 +120,14 @@ func (s *SocketEdgeSuite) TestLeavingEndsTheCallBothWays() {
 	s.ErrorIs(s.edge.Hear(make([]byte, 640)), ErrLeft)
 	s.ErrorIs(s.edge.PublishAudio(speech(20*time.Millisecond)), ErrLeft)
 }
+
+// The edge is one call, held once: joining it again after leaving would start a second
+// playout on a call already hung up.
+func (s *SocketEdgeSuite) TestAnEdgeThatHasLeftIsNotJoinedAgain() {
+	s.False(s.edge.Left())
+	s.Require().NoError(s.edge.Leave())
+
+	s.ErrorIs(s.edge.Join(context.Background()), ErrLeft)
+	s.True(s.edge.Left())
+	s.ErrorIs(s.edge.PublishAudio(speech(20*time.Millisecond)), ErrLeft)
+}

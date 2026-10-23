@@ -29,6 +29,10 @@ type socketStart struct {
 // the audio, so the session joins no Stream call.
 var errSocketCall = invalidRequest("a socket session carries its own audio and joins no Stream call, so it takes no call")
 
+// errSocketVoiceEnded refuses voice on a socket session whose voice was stopped: the socket
+// was its call, and stopping voice hung that call up.
+var errSocketVoiceEnded = invalidRequest("voice on a socket session cannot be started again once stopped: open a new socket")
+
 // openSocketSession holds a voice conversation over the socket itself rather than a call.
 //
 // The caller sends a `start` frame naming the session, the way POST /v1/agents/sessions

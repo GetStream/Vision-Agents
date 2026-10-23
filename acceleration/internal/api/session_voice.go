@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/socketedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -79,6 +80,9 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 		return nil, err
 	}
 	defer sent()
+	if edge, ok := found.Spec().Edge.(*socketedge.Edge); ok && edge.Left() {
+		return nil, errSocketVoiceEnded
+	}
 	var call session.Call
 	if named != nil {
 		if found.Spec().Phone != nil {

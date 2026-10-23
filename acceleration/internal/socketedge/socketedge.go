@@ -82,10 +82,21 @@ func New(options Options) *Edge {
 	}
 }
 
-// Join starts sending the agent's speech.
+// Join starts sending the agent's speech. An edge is one call: once left, it is not joined
+// again.
 func (e *Edge) Join(context.Context) error {
+	if e.Left() {
+		return ErrLeft
+	}
 	go e.playout()
 	return nil
+}
+
+// Left reports whether the call has been left.
+func (e *Edge) Left() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.left
 }
 
 func (e *Edge) Audio() <-chan agent.InboundAudio { return e.inbound }
