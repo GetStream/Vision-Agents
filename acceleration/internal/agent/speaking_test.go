@@ -157,7 +157,8 @@ func (s *AgentSuite) TestAnUtteranceFinishedBeforeTheTrackTakesItIsStillHeardBef
 	spoke, _ := firstOf[Spoke](reported)
 	s.Require().GreaterOrEqual(heardAt(reported, spoke.SynthesisID), 0, "the line was never reported heard")
 	s.Less(heardAt(reported, spoke.SynthesisID), spokeAt(reported, spoke.SynthesisID))
-	s.Never(func() bool { return countOf[Speaking](s.reported()) > 1 }, 300*time.Millisecond, 10*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Speaking](events.seen()) > 1 }, 300*time.Millisecond, 10*time.Millisecond,
 		"the track taking it later reported it heard a second time")
 }
 
@@ -186,7 +187,8 @@ func (s *AgentSuite) TestAnUtteranceCutOffBeforeAnyOfItWentOutIsNeverReportedHea
 
 	s.synthesises(said.TurnID)
 
-	s.Never(func() bool { return countOf[Speaking](s.reported()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Speaking](events.seen()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
 		"audio that was dropped was reported heard")
 }
 
