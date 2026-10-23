@@ -41,6 +41,9 @@ func (s *TurnTracingSuite) SetupSuite() {
 	s.owner = routing.Owner{AgentID: "agent-1", CallID: "call-1"}
 }
 
+// TearDownSuite stops this run's recorder from receiving the spans of the runs after it.
+func (s *TurnTracingSuite) TearDownSuite() { turnSpans().UnregisterSpanProcessor(s.recorded) }
+
 func (s *TurnTracingSuite) SetupTest() { s.recorded.Reset() }
 
 // turn is one exchange whose stages each took 100ms, starting from the transcript.
