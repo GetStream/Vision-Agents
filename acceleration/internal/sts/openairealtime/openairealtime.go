@@ -1319,9 +1319,12 @@ func (s *STS) finishTurn(event serverEvent) {
 	}
 	cost = usageOf(reported)
 	s.mu.Lock()
-	// The growth is billed by the reply it settles, so with none in flight it is left for
-	// the next one, which the vendor's next running total includes.
-	if reported != nil && reported.BillableAudioSeconds != nil && s.turn != nil {
+	// A done for a reply already settled, one a newer reply superseded, settles nothing: the
+	// reply open now is not the one it is about.
+	late := s.turn != nil && event.Response != nil && event.Response.ID != "" && event.Response.ID != s.turn.ID
+	// The growth is billed by the reply it settles, so with none in flight, or for a reply
+	// settled already, it is left for the next one, which the vendor's next total includes.
+	if reported != nil && reported.BillableAudioSeconds != nil && s.turn != nil && !late {
 		grown := max(*reported.BillableAudioSeconds-s.billedSeconds, 0)
 		s.billedSeconds = max(*reported.BillableAudioSeconds, s.billedSeconds)
 		cost.BilledAudioMs, cost.AudioBilled = int64(math.Round(grown*1000)), true
@@ -1343,7 +1346,9 @@ func (s *STS) finishTurn(event serverEvent) {
 	}
 
 	interrupted := status == "cancelled" || reason == "turn_detected" || reason == "client_cancelled"
-	s.settleTurn(interrupted, cost)
+	if !late {
+		s.settleTurn(interrupted, cost)
+	}
 
 	s.mu.Lock()
 	owed := s.owed

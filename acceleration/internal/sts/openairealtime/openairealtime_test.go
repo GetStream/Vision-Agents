@@ -424,6 +424,32 @@ func (s *RealtimeSuite) TestXAIBillsTheGrowthOfItsBillableAudio() {
 	s.Equal([]int64{2_000, 5_000, 2_000, 0}, billed)
 }
 
+// TestALateDoneForASupersededReplyLeavesItsGrowthToTheReplyOpen: the second reply is
+// superseded by the third before xAI settles it, and its done arrives while the third is
+// open. It settles nothing, and its growth is billed by the third.
+func (s *RealtimeSuite) TestALateDoneForASupersededReplyLeavesItsGrowthToTheReplyOpen() {
+	provider := s.newProvider(XAI)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(xaiDone("resp_1", 2))
+	s.settled(provider)
+
+	provider.handleMessage(created("resp_2"))
+	provider.handleMessage(created("resp_3"))
+	provider.handleMessage(xaiDone("resp_2", 7))
+	provider.handleMessage(xaiDone("resp_3", 9))
+
+	var settled []string
+	var billed []int64
+	for _, event := range s.drain(provider) {
+		if complete, ok := event.(sts.ResponseComplete); ok {
+			settled = append(settled, complete.ResponseID)
+			billed = append(billed, complete.Usage.BilledAudioMs)
+		}
+	}
+	s.Equal([]string{"resp_2", "resp_3"}, settled, "the superseded reply settles once, when it is superseded")
+	s.Equal([]int64{0, 7_000}, billed, "the late done's growth is billed by the reply open, with its own")
+}
+
 func (s *RealtimeSuite) TestOpenAIKeepsNoCountOfBilledAudio() {
 	provider := s.newProvider(OpenAI)
 

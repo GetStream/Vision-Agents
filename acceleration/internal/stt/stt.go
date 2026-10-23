@@ -80,9 +80,12 @@ type STT interface {
 type Metering int
 
 const (
-	// MeteredByVendor is a transcriber whose vendor says on every settled turn how much audio
-	// it took, which is what the turn is billed. A turn it says nothing for is billed on the
-	// router's count of the audio streamed, marked as an estimate, and raises the alarm.
+	// MeteredByVendor is a transcriber whose vendor reports on every settled turn exactly
+	// what it bills for it, so the turns it reports are the whole bill: audio it took after
+	// its last turn, before a refusal or the end of the session, is billed by no row. A turn
+	// it says nothing for is billed on the router's count of the audio streamed since the
+	// last turn, marked as an estimate, and raises the alarm, since that vendor's adapter is
+	// what needs fixing.
 	MeteredByVendor Metering = iota
 	// MeteredByRouter is a transcriber whose vendor bills every second of audio it is sent and
 	// reports none of it, so the audio the router streams to it is the bill: every

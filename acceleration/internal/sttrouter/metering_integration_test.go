@@ -185,17 +185,17 @@ func (s *MeteringSuite) TestARouterMeasuredTranscriberIsBilledEveryMillisecondIt
 	s.Equal([]int64{1_000, 0, 1_500, 500}, audio,
 		"what was streamed, not the 640 the vendor said; a turn that followed none is the zero it was; "+
 			"what the caller said before hanging up is billed as the session ends")
-	s.Equal([]int64{112, 0, 168, 56}, costs, "Cartesia's published rate of $0.0067275 a minute")
+	s.Equal([]int64{112, 0, 168, 56}, costs, "Cartesia's published rate of $0.00672757 a minute")
 	s.Equal(estimatedBefore, counted("router_usage_estimated_total", "cartesia", "ink-2", nil), "the router's count is the bill, not an estimate")
 	s.Equal(missingBefore, counted("router_usage_missing_total", "cartesia", "ink-2", nil), "a zero the router counted is no missing usage")
 	s.NotContains(s.logs.String(), "level=ERROR")
 	s.Equal(health+3, s.health("cartesia", "ink-2"), "the three turns measure the vendor, and the audio after them does not")
 }
 
-// TestAudioAfterTheLastTurnIsBilledForAVendorThatMeasuresItsTurns: Flux says how long each
-// turn was, and nothing of the half second the caller spoke after the last one before
-// hanging up, which Deepgram bills all the same.
-func (s *MeteringSuite) TestAudioAfterTheLastTurnIsBilledForAVendorThatMeasuresItsTurns() {
+// TestAVendorThatMeasuresItsTurnsIsBilledOnlyThem: a vendor that reports exactly what it
+// bills on each turn is billed those turns, and the half second the caller spoke after the
+// last one before hanging up is no row of its own.
+func (s *MeteringSuite) TestAVendorThatMeasuresItsTurnsIsBilledOnlyThem() {
 	customer := uuid.NewString()
 	recorder := routing.NewRecorder(routing.STT, s.store, s.live, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
 	provider := &quietSTT{emitter: stt.NewEmitter(64)}
@@ -211,10 +211,9 @@ func (s *MeteringSuite) TestAudioAfterTheLastTurnIsBilledForAVendorThatMeasuresI
 	recorder.Close()
 
 	rows := s.billed(customer)
-	s.Require().Len(rows, 2)
+	s.Require().Len(rows, 1, "no row of what was streamed after the last turn")
 	s.EqualValues(960, rows[0].AudioMs, "the turn the vendor measured keeps its figure")
-	s.EqualValues(500, rows[1].AudioMs, "what was streamed after it is billed as the session ends")
-	s.Equal(map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}, rows[1].Attributes)
+	s.Empty(rows[0].Attributes)
 }
 
 // TestAFailoverBillsEachVendorTheAudioItTook: Ink 2 takes 700 ms and refuses the session,

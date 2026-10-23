@@ -392,10 +392,11 @@ func (s *Session) claim(provider stt.STT) int64 {
 	return int64(whole)
 }
 
-// billUnsettled records the audio providers took and no turn has billed: what a vendor heard
-// after its last turn, when it refuses the session or the session ends, which no turn reports
-// and the vendor bills all the same. Nil bills every provider's. The row is the router's own
-// measure and times nothing the provider did.
+// billUnsettled records the audio the providers the router measures took and no turn has
+// billed: what such a vendor heard after its last turn, when it refuses the session or the
+// session ends, which it bills every second of. Nil bills every provider's. A vendor that
+// measures itself reports what it bills on its turns, so what it took after them is not
+// billed. The row is the router's own measure and times nothing the provider did.
 func (s *Session) billUnsettled(only stt.STT) {
 	s.mu.Lock()
 	var providers []stt.STT
@@ -406,6 +407,9 @@ func (s *Session) billUnsettled(only stt.STT) {
 	}
 	s.mu.Unlock()
 	for _, provider := range providers {
+		if stt.MeteringOf(provider) != stt.MeteredByRouter {
+			continue
+		}
 		s.mu.Lock()
 		config := s.streamed[provider].config
 		s.mu.Unlock()

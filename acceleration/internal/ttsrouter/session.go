@@ -30,12 +30,19 @@ type Session struct {
 	// sent is the characters handed to the provider for each utterance not settled yet,
 	// which is what it is billed for, whatever the adapter counted.
 	sent map[string]int64
-	// finished is the utterances already settled. More text for one of them is dropped by
-	// the provider (an interrupted utterance takes no more), so it is not counted.
-	finished map[string]struct{}
+	// finished is the most recent utterances settled, oldest first in finishedOrder. More
+	// text for one of them is dropped by the provider (an interrupted utterance takes no
+	// more), so it is not counted. Only the last finishedKept are kept: text that comes that
+	// late, or an id reused after it fell out, is counted as an utterance of its own.
+	finished      map[string]struct{}
+	finishedOrder []string
 
 	closeOnce sync.Once
 }
+
+// finishedKept is how many settled utterances a session remembers. Late text belongs to the
+// last few, well inside it.
+const finishedKept = 256
 
 // miscounted is the provider and model names whose adapter was seen counting characters other
 // than those sent, each logged once a process.
@@ -241,7 +248,14 @@ func (s *Session) settle(synthesisID string) settled {
 
 	characters, sent := s.sent[synthesisID]
 	delete(s.sent, synthesisID)
-	s.finished[synthesisID] = struct{}{}
+	if _, known := s.finished[synthesisID]; !known {
+		s.finished[synthesisID] = struct{}{}
+		s.finishedOrder = append(s.finishedOrder, synthesisID)
+		if len(s.finishedOrder) > finishedKept {
+			delete(s.finished, s.finishedOrder[0])
+			s.finishedOrder = s.finishedOrder[1:]
+		}
+	}
 	current, ok := s.inFlight[synthesisID]
 	if !ok {
 		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent}
