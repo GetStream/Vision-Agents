@@ -159,11 +159,13 @@ sources:
 # https://cli.github.com/manual/gh_help_environment, opened October 20, 2026). A placeholder is
 # replaced only in a request header ([secrets] says only when the header carries it verbatim,
 # which the Basic case below contradicts under Daytona), so code sends it as
-# «Authorization: Bearer», which every scheme's token takes ([rest] and api_base above). git sends it to github.com as Basic auth's password, Base64-encoded. Both
-# brokers replace it there: the proxy broker (code_sandbox.broker: proxy) by its own rewrite, and
-# Daytona in live staging E2E on 2026-10-22 (session 01a16514-923c-7843-9214-40a94453f194: git ls-remote of a public
-# repo with «Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)» exited 0, the same with a
-# fake placeholder got 502), although [secrets], «Transformed placeholders», says it does not.
+# «Authorization: Bearer», which every scheme's token takes ([rest] and api_base above). git
+# sends it to github.com as Basic auth's password, Base64-encoded. Both brokers replace it
+# there: the proxy broker (code_sandbox.broker: proxy) by its own rewrite, and Daytona in live
+# staging E2E on 2026-10-22 (session 01a16514-923c-7843-9214-40a94453f194: git ls-remote of a
+# public repo with «Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)» exited 0, the same
+# with a fake placeholder got 502), although [secrets], «Transformed placeholders», says it
+# does not.
 sandbox:
   env: GITHUB_TOKEN
   hosts:
