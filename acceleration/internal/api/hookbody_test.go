@@ -7,12 +7,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -111,6 +114,19 @@ func (s *HookBodySuite) TestAnOrdinaryPathStillAsksWhoTheCallerIs() {
 	s.Require().NoError(response.Body.Close())
 
 	s.Positive(s.asked.Load())
+}
+
+func (s *HookBodySuite) TestAnEventsTimeIsReadInEveryUnitStreamWritesIt() {
+	at := time.Date(2026, 10, 23, 12, 0, 30, 123456789, time.UTC)
+
+	s.Equal(at.Truncate(time.Second), eventTime(json.RawMessage(strconv.FormatInt(at.Unix(), 10))).UTC(), "seconds")
+	s.Equal(at.Truncate(time.Millisecond), eventTime(json.RawMessage(strconv.FormatInt(at.UnixMilli(), 10))).UTC(), "milliseconds")
+	s.Equal(at.Truncate(time.Microsecond), eventTime(json.RawMessage(strconv.FormatInt(at.UnixMicro(), 10))).UTC(), "microseconds")
+	s.Equal(at, eventTime(json.RawMessage(strconv.FormatInt(at.UnixNano(), 10))).UTC(), "nanoseconds")
+	s.Equal(at, eventTime(json.RawMessage(`"2026-10-23T12:00:30.123456789Z"`)).UTC())
+	s.Zero(eventTime(json.RawMessage(`"yesterday"`)))
+	s.Zero(eventTime(json.RawMessage(`-5`)))
+	s.Zero(eventTime(nil))
 }
 
 // streamSignature is the HMAC Stream signs a delivery with.

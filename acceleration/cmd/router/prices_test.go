@@ -340,7 +340,7 @@ func (s *PriceFileSuite) TestExportAddsThePhoneVendorsWhenAsked() {
 
 	file, err := prices.Parse("exported", out.Bytes())
 	s.Require().NoError(err)
-	s.Contains(file.Entries, pricing.Entry{Modality: "phone", Provider: phone.SIPTrunkVendor, Model: "call", Free: true})
+	s.Contains(file.Entries, pricing.Entry{Modality: "phone", Provider: phone.SIPTrunkVendor, Model: phone.ModelDial, Free: true})
 }
 
 func (s *PriceFileSuite) TestStripTakesOutEveryPriceBlockAndNothingElse() {

@@ -1,7 +1,6 @@
 package phone
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -35,6 +34,26 @@ func (s *PhoneSuite) TestTheBuiltInVendorListDeclaresEveryVendorProperly() {
 		s.NotEmpty(vendor.Capabilities, vendor.Vendor+" declares no capabilities")
 		s.NotEmpty(vendor.Credentials, vendor.Vendor+" declares no credentials")
 	}
+}
+
+func (s *PhoneSuite) TestAHookPointedBeforeTheParticipantEventsIsMissingThem() {
+	ours := "https://router.example" + CallHookPath
+	hooks := []CallHook{
+		{URL: "https://other.example/hook", EventTypes: []string{"message.new"}, Enabled: true, HookType: "webhook"},
+		{URL: ours + "/42", EventTypes: []string{"call.session_started", "call.session_ended"}, Enabled: true, HookType: "webhook"},
+	}
+
+	missing, found := MissingCallHookEvents(hooks, ours)
+
+	s.True(found)
+	s.Equal([]string{"call.session_participant_joined", "call.session_participant_left"}, missing)
+	missing, found = MissingCallHookEvents([]CallHook{{URL: ours, Enabled: true}}, ours)
+	s.True(found)
+	s.Empty(missing, "a hook asking for nothing is sent everything")
+	_, found = MissingCallHookEvents(hooks[:1], ours)
+	s.False(found)
+	_, found = MissingCallHookEvents([]CallHook{{URL: ours, EventTypes: []string{"call.session_started"}}}, ours)
+	s.False(found, "a disabled hook delivers nothing")
 }
 
 func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
@@ -560,6 +579,8 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
+	// monthly is what a number bought here costs a month.
+	monthly int64
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -570,8 +591,11 @@ func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 	return s.offers, nil
 }
 
-func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
-	return Number{Vendor: s.vendor}, s.err
+func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
+	if s.err != nil {
+		return Number{}, s.err
+	}
+	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
 func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }
@@ -639,19 +663,23 @@ func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
 	s.ErrorIs(unreached, cause)
 }
 
-func (s *PhoneSuite) TestAFailedNumberPurchaseIsNeitherBillableNorUnpriced() {
+// A number's month is priced by the vendor's quote, not by the list: with none, it is billable
+// work with no price. Only a number on the customer's own trunk costs nothing.
+func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 	config := s.config()
-	logs := &bytes.Buffer{}
-	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.NewTextHandler(logs, nil)))
+	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
-	for _, vendor := range append([]Vendor{{Vendor: SIPTrunkVendor}}, config.Vendors...) {
-		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: "number"}, nil)
-		s.Zero(quote.CostMicros, vendor.Vendor)
-		s.False(quote.Billable, vendor.Vendor)
-		s.False(quote.Unpriced, vendor.Vendor)
+	own := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: SIPTrunkVendor, Model: ModelNumber}, nil)
+	s.False(own.Billable)
+	s.False(own.Unpriced)
+	for _, vendor := range config.Vendors {
+		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, nil)
+		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
+		resold := prices.Quoted(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, 1_000_000)
+		s.Equal(int64(1_000_000), resold.CostMicros, vendor.Vendor)
+		s.True(resold.Billable, vendor.Vendor)
 	}
-	s.Empty(logs.String())
 }
 
 func (s *PhoneSuite) config() Config {

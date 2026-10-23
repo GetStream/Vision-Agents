@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -105,6 +106,7 @@ func (s *connectorFixture) managerWith(requestTimeout time.Duration) *Manager {
 	s.T().Cleanup(invocations.Close)
 	return &Manager{logger: logger, invocations: invocations, options: ManagerOptions{
 		Store: s.store, Logger: logger, Connectors: Connectors{Registry: s.registry, Transports: transports},
+		Sandboxes: metered.NewSandboxes(metered.SandboxesOptions{Logger: logger}),
 	}}
 }
 

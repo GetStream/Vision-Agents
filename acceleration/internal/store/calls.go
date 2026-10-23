@@ -287,16 +287,28 @@ type CallUsage struct {
 // at a time. They cost what the session's time cost, and are not requests.
 const RuntimeModality = "runtime"
 
-// requestCount counts a query's rows that are requests, leaving runtime out.
-const requestCount = "COUNT(*) FILTER (WHERE modality <> '" + RuntimeModality + "')"
+// SandboxModality is the modality of the rows that bill the time a session's sandbox held its
+// provider's resources, a slice at a time. Like runtime they are a session's time, not
+// requests.
+const SandboxModality = "sandbox"
+
+// requestCount counts a query's rows that are requests, leaving the sliced time of runtime and
+// sandboxes out.
+const requestCount = "COUNT(*) FILTER (WHERE modality NOT IN ('" + RuntimeModality + "', '" + SandboxModality + "'))"
+
+// ownSlicesOnly keeps out of a call's totals the sliced time of other sessions of its agent:
+// a call's runtime and sandbox are its own session's (session_id = ?).
+const ownSlicesOnly = "(modality NOT IN ('" + RuntimeModality + "', '" + SandboxModality + "') OR session_id = ?)"
 
 // CallUsage totals the work one call paid for. Like the models it used, it is keyed by
 // agent and window rather than by call, because a request row carries the Stream call
-// rather than the session that recorded it. Runtime is the exception: it is the session's
-// (sessionID), so another session of the same agent at the same time is not counted.
+// rather than the session that recorded it. Runtime and sandbox time are the exception: they
+// are the session's (sessionID), so another session of the same agent at the same time is
+// not counted.
 //
 // Failed requests are counted: a model that read the prompt and then fell over is still
-// billed for having read it. The call's runtime is in its cost and not among its requests.
+// billed for having read it. The call's runtime and sandbox time are in its cost and not
+// among its requests.
 func (s *Store) CallUsage(ctx context.Context, customerID, agentID, sessionID string, from time.Time, to *time.Time) (CallUsage, error) {
 	if customerID == "" || agentID == "" {
 		return CallUsage{}, stack.Wrap(errors.New("store: a customer and an agent id are required"))
@@ -312,7 +324,7 @@ func (s *Store) CallUsage(ctx context.Context, customerID, agentID, sessionID st
 			ColumnExpr(requestCount+" AS requests").
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
-			Where("(modality <> ? OR session_id = ?)", RuntimeModality, sessionID).
+			Where(ownSlicesOnly, sessionID).
 			Where("started_at >= ?", from)
 		if to != nil {
 			query = query.Where("started_at <= ?", *to)
@@ -376,7 +388,7 @@ func (s *Store) CallTokens(ctx context.Context, customerID, agentID, sessionID s
 			ColumnExpr("COALESCE(SUM(input_video_tokens), 0) AS input_video_tokens").
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
-			Where("(modality <> ? OR session_id = ?)", RuntimeModality, sessionID).
+			Where(ownSlicesOnly, sessionID).
 			Where("started_at >= ?", from).
 			Group("modality", "provider", "model").
 			OrderExpr("SUM(input_tokens + output_tokens) DESC, provider, model")
