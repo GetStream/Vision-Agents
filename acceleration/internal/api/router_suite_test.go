@@ -876,7 +876,6 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) {
 		return &recordingTTS{emitter: tts.NewEmitter(64), said: s.voice, started: s.spoke}, nil
 	})
-	speaking.Probe()
 	ttsConfig := s.ttsConfig
 	if len(ttsConfig.Providers) == 0 {
 		ttsConfig = routableConfig()

@@ -73,19 +73,25 @@ func (s *RoutingSuite) TestAShortcutStillResolvesToAModelTheDeploymentCannotBuil
 
 func (s *RoutingSuite) TestATargetTheDeploymentCannotBuildIsRefusedNamingWhatIsMissing() {
 	router, _, built := s.newProbingRouter()
+	stats := s.capturingStats(router)
 
 	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/multi"})
 	s.ErrorContains(err, `every candidate for "quick/multi" failed: quick/multi: quick: api key is required (set QUICK_API_KEY)`)
 	s.Equal(1, built.counted["quick/multi"], "only the probe built it: the model was never tried, so nothing counts against it")
+	s.Empty(stats.queue, "no stat marks the model down")
 }
 
 func (s *RoutingSuite) TestAShortcutPassesOverAModelTheDeploymentCannotBuild() {
 	router, _, built := s.newProbingRouter()
+	stats := s.capturingStats(router)
 
 	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "multilingual-quality", Providers: []string{"quick/multi", "lush/multi"}})
 	s.Require().NoError(err)
 	s.Equal("lush/multi", config.Name())
 	s.Equal(1, built.counted["quick/multi"], "only the probe built it")
+	for len(stats.queue) > 0 {
+		s.NotEqual("quick", (<-stats.queue).request.Provider, "no stat marks the passed-over model down")
+	}
 }
 
 func (s *RoutingSuite) TestReadyBuildsAModelOnceAndClosesWhatItBuilt() {
