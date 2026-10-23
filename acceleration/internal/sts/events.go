@@ -206,12 +206,14 @@ type BackendUsage struct {
 func (BackendUsage) isSTSEvent() {}
 
 // TranscriptionUsage is what writing down one caller turn cost, for a vendor that bills its
-// transcriber apart from the conversation (OpenAI Realtime's input transcription). ItemID is
-// the turn's, so a turn reported twice is billed once.
+// transcriber apart from the conversation (OpenAI Realtime's input transcription): its
+// tokens, or AudioMs for a transcriber billed by the second of audio. ItemID is the turn's,
+// so a turn reported twice is billed once.
 type TranscriptionUsage struct {
-	ItemID string
-	Model  string
-	Usage  Usage
+	ItemID  string
+	Model   string
+	Usage   Usage
+	AudioMs int64
 }
 
 func (TranscriptionUsage) isSTSEvent() {}

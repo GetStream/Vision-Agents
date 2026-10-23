@@ -159,7 +159,7 @@ func (s *TTSRouterSuite) sessionOver(provider *stubTTS, config routing.ProviderC
 	prices, err := routing.Prices(routing.Config{routing.TTS: {Providers: []routing.ProviderConfig{config}}}, slog.Default())
 	s.Require().NoError(err)
 	recorder := routing.NewRecorder(routing.TTS, nil, nil, prices, slog.Default())
-	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
+	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, slog.Default())
 
 	s.T().Cleanup(func() {
 		_ = session.Close()

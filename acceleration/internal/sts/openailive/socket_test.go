@@ -486,7 +486,7 @@ func (s *OpenAILiveSocketSuite) TestCloseWaitsForSessionClosed() {
 	s.True(disconnected[0].Clean)
 }
 
-// TestTheSessionsSecondsAndItsBackendAreReported uses what the spike's 30-second session on
+// TestTheSessionsSecondsAndItsBackendAreReported uses what a recorded 30-second session on
 // a gpt-5.6-luna backend was sent: a backend response of 890 tokens in and 31 out, 10 of them
 // thinking, the session's seconds at 13 and 28, and 29 as it closed. The seconds are sent as
 // numbers with a fraction, as the Live API sent "seconds":2.0 when probed on 2026-10-23.

@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -27,6 +28,7 @@ type MeteringSuite struct {
 	suite.Suite
 	ctx    context.Context
 	store  *store.Store
+	live   *live.Client
 	config routing.Config
 	prices *pricing.List
 	logs   *bytes.Buffer
@@ -52,6 +54,21 @@ func (s *MeteringSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.prices, err = routing.Prices(s.config, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 	s.Require().NoError(err)
+
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	s.live, err = live.New(live.Options{Address: address})
+	s.Require().NoError(err)
+	s.T().Cleanup(s.live.Close)
+}
+
+// health is how many requests the model's live health has counted.
+func (s *MeteringSuite) health(provider, model string) int64 {
+	health, err := s.live.Health(s.ctx, string(routing.STT), provider, model)
+	s.Require().NoError(err)
+	return health.Requests
 }
 
 func (s *MeteringSuite) SetupTest() { s.logs = &bytes.Buffer{} }
@@ -136,7 +153,8 @@ func (s *MeteringSuite) billed(customer string) []store.Request {
 // up to it.
 func (s *MeteringSuite) TestARouterMeasuredTranscriberIsBilledEveryMillisecondItWasSent() {
 	customer := uuid.NewString()
-	recorder := routing.NewRecorder(routing.STT, s.store, nil, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	recorder := routing.NewRecorder(routing.STT, s.store, s.live, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	health := s.health("cartesia", "ink-2")
 	provider := &measuredSTT{quietSTT{emitter: stt.NewEmitter(64)}}
 	owner := routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: "key-1"}}
 	session := newSession(provider, s.builtIn("cartesia/ink-2"), owner, recorder, nil, nil)
@@ -171,6 +189,32 @@ func (s *MeteringSuite) TestARouterMeasuredTranscriberIsBilledEveryMillisecondIt
 	s.Equal(estimatedBefore, counted("router_usage_estimated_total", "cartesia", "ink-2", nil), "the router's count is the bill, not an estimate")
 	s.Equal(missingBefore, counted("router_usage_missing_total", "cartesia", "ink-2", nil), "a zero the router counted is no missing usage")
 	s.NotContains(s.logs.String(), "level=ERROR")
+	s.Equal(health+3, s.health("cartesia", "ink-2"), "the three turns measure the vendor, and the audio after them does not")
+}
+
+// TestAudioAfterTheLastTurnIsBilledForAVendorThatMeasuresItsTurns: Flux says how long each
+// turn was, and nothing of the half second the caller spoke after the last one before
+// hanging up, which Deepgram bills all the same.
+func (s *MeteringSuite) TestAudioAfterTheLastTurnIsBilledForAVendorThatMeasuresItsTurns() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.STT, s.store, s.live, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	provider := &quietSTT{emitter: stt.NewEmitter(64)}
+	session := newSession(provider, s.flux(), routing.Owner{CustomerID: customer}, recorder, nil, nil)
+
+	s.Require().NoError(session.ProcessAudio(speech(1_000), stt.Participant{}))
+	provider.emitter.Send(stt.Transcript{Text: "book a table", Mode: stt.ModeFinal, AudioDurationMs: 960})
+	s.settled(session)
+	s.Require().NoError(session.ProcessAudio(speech(500), stt.Participant{}))
+	s.Require().NoError(session.Close())
+	for range session.Events() {
+	}
+	recorder.Close()
+
+	rows := s.billed(customer)
+	s.Require().Len(rows, 2)
+	s.EqualValues(960, rows[0].AudioMs, "the turn the vendor measured keeps its figure")
+	s.EqualValues(500, rows[1].AudioMs, "what was streamed after it is billed as the session ends")
+	s.Equal(map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}, rows[1].Attributes)
 }
 
 // TestAFailoverBillsEachVendorTheAudioItTook: Ink 2 takes 700 ms and refuses the session,

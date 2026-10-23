@@ -40,6 +40,10 @@ type Session struct {
 	// inFlight tracks replies that have not been settled into a stat row yet.
 	inFlight map[string]*reply
 	settled  map[string]struct{}
+	// billed is the backend responses and transcribed turns already recorded, so one reported
+	// twice is a row once: the usage id keeps it out of the table, and this out of the live
+	// spend, which adds every row it is handed.
+	billed map[string]struct{}
 	// heardMs is the caller's audio forwarded since the last reply settled, which is the
 	// audio the next reply is billed against, and typed the typed turns sent since.
 	heardMs float64
@@ -69,29 +73,34 @@ func newSession(
 	provider sts.STS,
 	config routing.ProviderConfig,
 	owner routing.Owner,
-	recorder *routing.Recorder,
+	recorder, backend *routing.Recorder,
 ) *Session {
 	session := &Session{
 		provider: provider,
 		config:   config,
 		owner:    owner,
 		recorder: recorder,
-		backend:  recorder.For(routing.LLM),
+		backend:  backend,
 		id:       uuid.NewString(),
 		events:   make(chan sts.Event, sts.EmitterBuffer),
 		inFlight: map[string]*reply{},
 		settled:  map[string]struct{}{},
+		billed:   map[string]struct{}{},
 	}
 	go session.forward()
 	return session
 }
 
-// ProcessAudio streams the caller's speech to the selected provider.
+// ProcessAudio streams the caller's speech to the selected provider. Only audio the provider
+// took is counted toward the next reply.
 func (s *Session) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
+	if err := s.provider.ProcessAudio(pcm, participant); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.heardMs += pcm.DurationMs()
 	s.mu.Unlock()
-	return s.provider.ProcessAudio(pcm, participant)
+	return nil
 }
 
 // SendText injects a typed turn, which the next row carries as a message: some vendors bill
@@ -160,7 +169,16 @@ func (s *Session) Capabilities() sts.Capabilities { return s.provider.Capabiliti
 // Quote is what that usage of this session's provider costs on its totals, as a reply whose
 // vendor reports no split by modality is priced, so a caller can report a cost without
 // reaching for the router's prices. A row with a split is priced by the split instead.
-func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
+//
+// A vendor that bills the session's seconds rather than its replies (SessionBilled) has its
+// replies recorded free, so a reply quotes nothing: what such a session costs is its seconds,
+// which only the vendor's reports say, as they arrive, and its rows bill.
+func (s *Session) Quote(usage routing.Usage) pricing.Quote {
+	if s.provider.Capabilities().SessionBilled {
+		return pricing.Quote{}
+	}
+	return s.recorder.Quote(s.config, usage)
+}
 
 // Close ends the session. The event channel closes once the provider's events are drained.
 func (s *Session) Close() error {
@@ -198,6 +216,7 @@ func (s *Session) recordTrailing() {
 		OperationID: s.id,
 		Usage:       routing.Usage{AudioMs: int64(heardMs)},
 		Success:     true,
+		Unmeasured:  true,
 	}
 	stat.Use(pricing.Quantities{pricing.Messages: typed})
 	if stat.AudioMs == 0 && typed == 0 || !s.recorder.QuoteStat(s.config, stat).Rated {
@@ -238,10 +257,20 @@ func (s *Session) observe(event sts.Event) bool {
 			return false
 		}
 		audioMs := int64(heardMs)
-		if typed.Usage.AudioBilled {
+		carried := false
+		switch {
+		case typed.Usage.AudioBilled:
 			// The vendor counts the audio it bills, replies heard over a gap in the caller's
 			// stream included, so its count replaces the caller's audio.
 			audioMs = typed.Usage.BilledAudioMs
+		case s.provider.Capabilities().BilledAudio:
+			// A reply cut off before the vendor counted it: the vendor's next count includes
+			// what the caller said meanwhile, and if none comes the session's last row bills
+			// it, so it is carried rather than billed here.
+			audioMs, carried = 0, true
+			s.mu.Lock()
+			s.heardMs += heardMs
+			s.mu.Unlock()
 		}
 		stat := routing.Stat{
 			Owner:       s.owner,
@@ -265,6 +294,10 @@ func (s *Session) observe(event sts.Event) bool {
 			Free: s.provider.Capabilities().SessionBilled,
 		}
 		stat.Use(pricing.Quantities{pricing.Messages: typedTurns})
+		if carried {
+			// Its zero is the router's to give, not a vendor that said nothing.
+			stat.MeasuredByRouter()
+		}
 		s.recorder.Record(s.config, stat)
 
 	case sts.Error:
@@ -321,6 +354,7 @@ func (s *Session) billSeconds(reported int64) {
 		Owner:       s.owner,
 		UsageID:     routing.UsageID("sts_session_seconds", s.id, strconv.FormatInt(billed, 10)),
 		OperationID: s.id,
+		Unmeasured:  true,
 	}, pricing.Quantities{pricing.SessionSeconds: grown})
 }
 
@@ -328,6 +362,9 @@ func (s *Session) billSeconds(reported int64) {
 // LLM row of that model, priced as that model is, and billed once by the session and its
 // response id.
 func (s *Session) billBackend(used sts.BackendUsage) {
+	if !s.first("backend:" + used.ResponseID) {
+		return
+	}
 	attributes := map[string]string{parentSession: s.id}
 	if used.ServiceTier != "" {
 		attributes["service_tier"] = used.ServiceTier
@@ -341,15 +378,23 @@ func (s *Session) billBackend(used sts.BackendUsage) {
 		Owner:      s.owner,
 		UsageID:    routing.UsageID("sts_backend", s.id, used.ResponseID),
 		Attributes: attributes,
+		// The voice relays the backend's responses without timing them.
+		Unmeasured: true,
 	}, llm.Response{ID: used.ResponseID, Usage: used.Usage, UsageReported: true})
 }
 
 // billTranscription records writing down a caller turn as a row of the transcriber, on this
-// modality's price list, billed once by the turn's item id.
+// modality's price list, billed once by the turn's item id: by its tokens, or by the audio it
+// heard for a transcriber billed by the second. A transcriber the price list does not rate
+// for what it reported is still a row, counted unpriced or missing and alarmed, not dropped.
 func (s *Session) billTranscription(used sts.TranscriptionUsage) {
+	if !s.first("transcription:" + used.ItemID) {
+		return
+	}
 	quantities := pricing.Quantities{
 		pricing.InputTokens:  used.Usage.InputTokens,
 		pricing.OutputTokens: used.Usage.OutputTokens,
+		pricing.AudioMs:      used.AudioMs,
 	}
 	for meter, quantity := range modalityMeters(used.Usage) {
 		quantities[meter] = quantity
@@ -360,7 +405,19 @@ func (s *Session) billTranscription(used sts.TranscriptionUsage) {
 		Owner:      s.owner,
 		UsageID:    routing.UsageID("sts_transcription", s.id, used.ItemID),
 		Attributes: map[string]string{parentSession: s.id},
+		Unmeasured: true,
 	}, quantities)
+}
+
+// first reports whether this is the first time the session bills the work key names.
+func (s *Session) first(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, done := s.billed[key]; done {
+		return false
+	}
+	s.billed[key] = struct{}{}
+	return true
 }
 
 // fail marks a reply as failed, reporting whether it was still in flight.

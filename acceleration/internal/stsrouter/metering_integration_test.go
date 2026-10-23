@@ -20,8 +20,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -38,6 +40,7 @@ type MeteringSuite struct {
 	suite.Suite
 	ctx    context.Context
 	store  *store.Store
+	live   *live.Client
 	config routing.Config
 	prices *pricing.List
 }
@@ -62,6 +65,28 @@ func (s *MeteringSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.prices, err = routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
+
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	s.live, err = live.New(live.Options{Address: address})
+	s.Require().NoError(err)
+	s.T().Cleanup(s.live.Close)
+}
+
+// health is how many requests the provider's live health has counted.
+func (s *MeteringSuite) health(modality routing.Modality, provider, model string) int64 {
+	health, err := s.live.Health(s.ctx, string(modality), provider, model)
+	s.Require().NoError(err)
+	return health.Requests
+}
+
+// spent is what the customer has spent on the modality, as the live counters have it.
+func (s *MeteringSuite) spent(modality routing.Modality, customer string) int64 {
+	usage, err := s.live.Usage(s.ctx, string(modality), customer)
+	s.Require().NoError(err)
+	return usage.CostMicros
 }
 
 // builtIn is the built-in config's speech-to-speech provider of that name.
@@ -143,9 +168,9 @@ func (s *MeteringSuite) session(provider sts.STS, name string) (*Session, *routi
 	defer cancel()
 	s.Require().NoError(provider.Start(ctx))
 	customer := uuid.NewString()
-	recorder := routing.NewRecorder(routing.STS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	recorder := routing.NewRecorder(routing.STS, s.store, s.live, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	owner := routing.Owner{CustomerID: customer, Attribution: attributed}
-	return newSession(provider, s.builtIn(name), owner, recorder), recorder, customer
+	return newSession(provider, s.builtIn(name), owner, recorder, recorder.For(routing.LLM)), recorder, customer
 }
 
 // attributed is who every session here is billed to and asked for by, which every row it
@@ -176,7 +201,7 @@ func audible(ms int) string {
 	return base64.StdEncoding.EncodeToString(samples)
 }
 
-// TestGPTLiveBillsSessionSecondsAndTheBackend plays back the spike's 30-second session on a
+// TestGPTLiveBillsSessionSecondsAndTheBackend plays back a recorded 30-second session on a
 // gpt-5.6-luna backend: the seconds at 13 and 28 and 29 as it closed, and two backend
 // responses, the first sent twice.
 func (s *MeteringSuite) TestGPTLiveBillsSessionSecondsAndTheBackend() {
@@ -202,9 +227,11 @@ func (s *MeteringSuite) TestGPTLiveBillsSessionSecondsAndTheBackend() {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	s.Require().NoError(err)
+	voiceHealth, backendHealth := s.health(routing.STS, "openai", "gpt-live-1"), s.health(routing.LLM, "openai", "gpt-5.6-luna")
 	session, recorder, customer := s.session(provider, "openai/gpt-live-1")
 	<-socket.open
 
+	s.Require().NoError(session.ProcessAudio(sts.PcmData{Samples: make([]int16, sts.InputSampleRate), SampleRate: sts.InputSampleRate, Channels: 1}, sts.Participant{}))
 	socket.send(`{"type":"session.output_audio.delta","delta":"` + audible(200) + `"}`)
 	socket.send(`{"type":"session.usage.updated","usage":{"seconds":13.0}}`)
 	socket.send(backend("resp_1", 890, 31, 10))
@@ -250,10 +277,15 @@ func (s *MeteringSuite) TestGPTLiveBillsSessionSecondsAndTheBackend() {
 
 	s.Require().Len(replies, 1, "the reply is still recorded, for its timing")
 	s.False(replies[0].Billable, "the seconds are the bill")
-	s.Zero(replies[0].CostMicros)
+	s.EqualValues(833, replies[0].CostMicros, "priced as a pod that has not taken this code yet bills it")
+
+	s.Equal(voiceHealth+1, s.health(routing.STS, "openai", "gpt-live-1"), "only the reply measures the voice")
+	s.Equal(backendHealth, s.health(routing.LLM, "openai", "gpt-5.6-luna"), "a relayed backend response times nothing")
+	s.EqualValues(10_833+12_500+833, s.spent(routing.STS, customer), "the seconds are spent, and the free reply is not")
+	s.EqualValues(215+207, s.spent(routing.LLM, customer), "the backend is spent though it measures nothing")
 }
 
-// TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns plays back the spike's push-to-talk session
+// TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns plays back a recorded push-to-talk session
 // on grok-voice-3.0: billable_audio_seconds at 2, 7, 9, 11 and 13 over five replies, a typed
 // turn before the first, third and fifth, and a tool's result before the fourth. The caller
 // speaks once more after the last reply and hangs up.
@@ -266,6 +298,7 @@ func (s *MeteringSuite) TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns() {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	s.Require().NoError(err)
+	health := s.health(routing.STS, "xai", "grok-voice-3.0")
 	session, recorder, customer := s.session(provider, "xai/grok-voice-3.0")
 	<-socket.open
 
@@ -314,6 +347,155 @@ func (s *MeteringSuite) TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns() {
 	s.Equal([]int64{6_667, 6_667, 6_667, 2_667, 6_667, 2_000}, costs, "$4.80 an hour and $0.004 a typed turn")
 	s.EqualValues(31_335, total, "where the caller's audio before each reply priced 2,667")
 	s.Equal(map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}, rows[5].Attributes, "no event reported the last row")
+	s.Equal(health+5, s.health(routing.STS, "xai", "grok-voice-3.0"), "the replies measure the voice and the last row does not")
+	s.EqualValues(31_335, s.spent(routing.STS, customer))
+}
+
+// xaiSession is a grok-voice-3.0 session over a socket replaying xAI.
+type xaiSession struct {
+	*Session
+	socket   *vendorSocket
+	recorder *routing.Recorder
+	customer string
+}
+
+func (s *MeteringSuite) xai() xaiSession {
+	socket := s.vendorSocket(`{"type":"session.created","session":{"id":"sess_1"}}`, map[string]string{
+		"session.update": `{"type":"session.updated","session":{"id":"sess_1"}}`,
+	})
+	provider, err := openairealtime.New(openairealtime.Options{
+		Vendor: openairealtime.XAI, APIKey: "k", URL: socket.url(), Model: "grok-voice-3.0", HandshakeTimeout: 5 * time.Second,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.Require().NoError(err)
+	session, recorder, customer := s.session(provider, "xai/grok-voice-3.0")
+	<-socket.open
+	return xaiSession{Session: session, socket: socket, recorder: recorder, customer: customer}
+}
+
+// created opens a reply, and done settles one at xAI's running total of billable seconds.
+func (x xaiSession) created(id string) {
+	x.socket.send(`{"type":"response.created","response":{"id":"` + id + `"}}`)
+}
+
+func (x xaiSession) done(id string, billable int) {
+	x.socket.send(`{"type":"response.done","response":{"id":"` + id + `","status":"completed","usage":{}},` +
+		`"usage":{"input_tokens":7,"output_tokens":119,"output_token_details":{"text_tokens":7,"audio_tokens":112},` +
+		`"billable_audio_seconds":` + strconv.Itoa(billable) + `}}`)
+}
+
+// settled waits for the session to pass on the reply's completion.
+func (s *MeteringSuite) settledReply(session *Session, id string) {
+	for event := range session.Events() {
+		if complete, ok := event.(sts.ResponseComplete); ok && complete.ResponseID == id {
+			return
+		}
+	}
+	s.FailNow("the session closed before " + id + " settled")
+}
+
+// audioOf is the audio each of the customer's rows bills, in the order they were written.
+func (s *MeteringSuite) audioOf(customer string) []int64 {
+	var audio []int64
+	for _, row := range s.rows(customer) {
+		audio = append(audio, row.AudioMs)
+	}
+	return audio
+}
+
+// TestAnXAIReplyCutOffBeforeItWasCountedBillsItsAudioOnce: the second reply is opened and
+// superseded by a third before xAI counts it, and the fourth is open when the caller hangs up.
+// The audio the second covered is in xAI's count at the third, and the caller's audio during
+// the fourth is billed by the session's last row, each once.
+func (s *MeteringSuite) TestAnXAIReplyCutOffBeforeItWasCountedBillsItsAudioOnce() {
+	session := s.xai()
+	second := sts.PcmData{Samples: make([]int16, sts.InputSampleRate), SampleRate: sts.InputSampleRate, Channels: 1}
+
+	session.created("resp_1")
+	session.done("resp_1", 2)
+	s.settledReply(session.Session, "resp_1")
+	s.Require().NoError(session.ProcessAudio(second, sts.Participant{}))
+	session.created("resp_2")
+	session.created("resp_3")
+	session.done("resp_3", 9)
+	s.settledReply(session.Session, "resp_3")
+	session.created("resp_4")
+	s.Require().NoError(session.ProcessAudio(second, sts.Participant{}))
+	s.closed(session.Session, session.recorder)
+
+	s.Equal([]int64{2_000, 0, 7_000, 0, 1_000}, s.audioOf(session.customer),
+		"the cut-off replies bill nothing, xAI's count at the third covers the second, and the last row the hang-up")
+}
+
+// TestAStrayXAIReportLeavesItsGrowthToTheNextReply: a response.done with no reply open
+// settles nothing, so the growth it reports is billed by the next reply that settles.
+func (s *MeteringSuite) TestAStrayXAIReportLeavesItsGrowthToTheNextReply() {
+	session := s.xai()
+
+	session.created("resp_1")
+	session.done("resp_1", 2)
+	s.settledReply(session.Session, "resp_1")
+	session.done("resp_stray", 7)
+	session.created("resp_2")
+	session.done("resp_2", 9)
+	s.settledReply(session.Session, "resp_2")
+	s.closed(session.Session, session.recorder)
+
+	s.Equal([]int64{2_000, 7_000}, s.audioOf(session.customer), "the stray report's growth is billed by the reply after it")
+}
+
+// unpriced is how many rows of that speech-to-speech item were billable and had no price.
+func unpriced(provider, model string) float64 {
+	families, _ := prometheus.DefaultGatherer.Gather()
+	for _, family := range families {
+		if family.GetName() != "router_usage_unpriced_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			found := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				found[label.GetName()] = label.GetValue()
+			}
+			if found["modality"] == "sts" && found["provider"] == provider && found["model"] == model {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+// TestATranscriberBilledByTheSecondIsARowEvenUnpriced: whisper-1 reports the seconds it heard
+// rather than tokens, and the price list has no entry for it. The turn is still a row, of its
+// audio, counted unpriced so somebody prices it, rather than dropped.
+func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsARowEvenUnpriced() {
+	socket := s.vendorSocket(`{"type":"session.created","session":{"id":"sess_1"}}`, map[string]string{
+		"session.update": `{"type":"session.updated","session":{"id":"sess_1"}}`,
+	})
+	provider, err := openairealtime.New(openairealtime.Options{
+		Vendor: openairealtime.OpenAI, APIKey: "k", URL: socket.url(), Model: "gpt-realtime-2.1", InputTranscript: true,
+		TranscriptionModel: "whisper-1", HandshakeTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.Require().NoError(err)
+	before := unpriced("openai", "whisper-1")
+	session, recorder, customer := s.session(provider, "openai/gpt-realtime-2.1")
+	<-socket.open
+
+	socket.send(`{"type":"conversation.item.input_audio_transcription.completed","item_id":"item_1",` +
+		`"transcript":"Hello.","usage":{"type":"duration","seconds":2.4}}`)
+	for event := range session.Events() {
+		if heard, ok := event.(sts.InputTranscript); ok && heard.Text == "Hello." {
+			break
+		}
+	}
+	s.closed(session, recorder)
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 1)
+	s.Equal("whisper-1", rows[0].Model)
+	s.EqualValues(2_400, rows[0].AudioMs)
+	s.True(rows[0].Billable)
+	s.Zero(rows[0].CostMicros)
+	s.Equal(before+1, unpriced("openai", "whisper-1"), "billable work with no price raises the alarm")
 }
 
 // TestRealtimeTranscriptionIsItsOwnRow plays back OpenAI writing down two caller turns, the

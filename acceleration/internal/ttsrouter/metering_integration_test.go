@@ -75,21 +75,20 @@ func (s *MeteringSuite) completed(session *Session) {
 
 func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	s.T().Cleanup(func() { slog.SetDefault(previous) })
 	customer := uuid.NewString()
 	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	provider := newStubTTS()
-	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder)
+	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Grüß dich, "}))
 	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Zoë.", Final: true}))
 	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 17})
 	s.completed(session)
+	// Text for an utterance already settled, as after a barge-in, which the voice drops.
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "and the rest", Final: true}))
 	s.Require().NoError(session.Synthesize(tts.Request{Text: "Bye.", Final: true}))
-	s.Require().Len(provider.said, 3)
-	named := provider.said[2].ID
+	s.Require().Len(provider.said, 4)
+	named := provider.said[3].ID
 	s.NotEmpty(named, "the session names a request that came without an id, not the vendor")
 	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: named})
 	s.completed(session)
@@ -105,4 +104,7 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.EqualValues(4, rows[1].Characters, "an adapter that counted nothing is billed what it was sent")
 	s.Equal(named, rows[1].OperationID)
 	s.Contains(logs.String(), "level=WARN msg=\"the voice counted characters other than those it was sent")
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	s.Empty(session.sent, "text for a settled utterance is not counted, so nothing is left waiting for a completion")
 }

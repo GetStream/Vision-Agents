@@ -20,6 +20,7 @@ type Session struct {
 	config   routing.ProviderConfig
 	owner    routing.Owner
 	recorder *routing.Recorder
+	logger   *slog.Logger
 
 	events chan tts.Event
 
@@ -29,6 +30,9 @@ type Session struct {
 	// sent is the characters handed to the provider for each utterance not settled yet,
 	// which is what it is billed for, whatever the adapter counted.
 	sent map[string]int64
+	// finished is the utterances already settled. More text for one of them is dropped by
+	// the provider (an interrupted utterance takes no more), so it is not counted.
+	finished map[string]struct{}
 
 	closeOnce sync.Once
 }
@@ -52,6 +56,7 @@ func newSession(
 	config routing.ProviderConfig,
 	owner routing.Owner,
 	recorder *routing.Recorder,
+	logger *slog.Logger,
 ) *Session {
 	// A voice that takes each sentence as its own request works on them side by side, and
 	// heard as it arrives their audio is spliced together.
@@ -63,9 +68,11 @@ func newSession(
 		config:   config,
 		owner:    owner,
 		recorder: recorder,
+		logger:   logger,
 		events:   make(chan tts.Event, 64),
 		inFlight: map[string]*utterance{},
 		sent:     map[string]int64{},
+		finished: map[string]struct{}{},
 	}
 	go session.forward()
 	return session
@@ -80,11 +87,16 @@ func (s *Session) Synthesize(request tts.Request) error {
 	}
 	characters := int64(utf8.RuneCountInString(request.Text))
 	s.mu.Lock()
-	s.sent[request.ID] += characters
+	if _, done := s.finished[request.ID]; done {
+		characters = 0
+	} else {
+		// Counted before it is sent, so a completion that comes straight back finds it.
+		s.sent[request.ID] += characters
+	}
 	s.mu.Unlock()
 
 	err := s.provider.Synthesize(request)
-	if err != nil {
+	if err != nil && characters > 0 {
 		// Refused, it was never sent.
 		s.mu.Lock()
 		if s.sent[request.ID] -= characters; s.sent[request.ID] <= 0 {
@@ -229,6 +241,7 @@ func (s *Session) settle(synthesisID string) settled {
 
 	characters, sent := s.sent[synthesisID]
 	delete(s.sent, synthesisID)
+	s.finished[synthesisID] = struct{}{}
 	current, ok := s.inFlight[synthesisID]
 	if !ok {
 		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent}
@@ -247,7 +260,7 @@ func (s *Session) warnMiscounted(counted, sent int64) {
 	if _, logged := miscounted.LoadOrStore(s.config.Name(), true); logged {
 		return
 	}
-	slog.Warn("the voice counted characters other than those it was sent; the row bills what was sent",
+	s.logger.Warn("the voice counted characters other than those it was sent; the row bills what was sent",
 		"provider", s.config.Provider, "model", s.config.Model, "counted", counted, "sent", sent)
 }
 

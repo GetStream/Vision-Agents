@@ -406,7 +406,7 @@ func xaiDone(id string, seconds float64) serverEvent {
 		Usage: &usage{OutputTokens: 10, BillableAudioSeconds: &seconds}}
 }
 
-// TestXAIBillsTheGrowthOfItsBillableAudio uses the totals of the spike's push-to-talk
+// TestXAIBillsTheGrowthOfItsBillableAudio uses the totals of a recorded push-to-talk
 // session, 2, 7 and 9, and a reply too short to move the rounded figure.
 func (s *RealtimeSuite) TestXAIBillsTheGrowthOfItsBillableAudio() {
 	provider := s.newProvider(XAI)
@@ -434,7 +434,7 @@ func (s *RealtimeSuite) TestOpenAIKeepsNoCountOfBilledAudio() {
 }
 
 // transcribed is OpenAI writing down a caller turn: 33 audio tokens in and 16 text out, as
-// the spike's gpt-realtime-2 session reported it.
+// a recorded gpt-realtime-2 session reported it.
 func transcribed(item string) serverEvent {
 	var event serverEvent
 	if err := json.Unmarshal([]byte(`{"type":"conversation.item.input_audio_transcription.completed","item_id":"`+item+
@@ -462,6 +462,39 @@ func (s *RealtimeSuite) TestOpenAIsTranscriptionReportsWhatItCost() {
 		Model:  "gpt-4o-mini-transcribe",
 		Usage:  sts.Usage{InputTokens: 33, OutputTokens: 16, InputAudioTokens: 33, OutputTextTokens: 16},
 	}}, reported)
+}
+
+func (s *RealtimeSuite) TestATranscriberBilledByTheSecondReportsTheSecondsItHeard() {
+	provider, err := New(Options{Vendor: OpenAI, APIKey: "test-key", InputTranscript: true, TranscriptionModel: "whisper-1",
+		Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	var event serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(`{"type":"conversation.item.input_audio_transcription.completed",`+
+		`"item_id":"item_1","transcript":"Hello.","usage":{"type":"duration","seconds":2.4}}`), &event))
+
+	provider.handleMessage(event)
+
+	var reported []sts.TranscriptionUsage
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.TranscriptionUsage); ok {
+			reported = append(reported, typed)
+		}
+	}
+	s.Equal([]sts.TranscriptionUsage{{ItemID: "item_1", Model: "whisper-1", AudioMs: 2_400}}, reported)
+}
+
+func (s *RealtimeSuite) TestATranscriptionWithNoTranscriberConfiguredIsStillNamed() {
+	provider := s.newProvider(OpenAI)
+
+	provider.handleMessage(transcribed("item_1"))
+
+	var models []string
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.TranscriptionUsage); ok {
+			models = append(models, typed.Model)
+		}
+	}
+	s.Equal([]string{"gpt-4o-mini-transcribe"}, models)
 }
 
 func (s *RealtimeSuite) TestATranscriberTheConversationIncludesReportsNothing() {

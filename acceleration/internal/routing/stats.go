@@ -93,6 +93,11 @@ type Stat struct {
 	// caller, such as an account it refuses. It makes the provider unavailable for one
 	// health window, however much it served before.
 	Fatal bool
+	// Unmeasured marks a row that bills work without timing a request of its provider's: a
+	// voice session's seconds, the model it handed its reasoning to, what was streamed after
+	// the last turn. It is billed and counted in the customer's spend, and kept out of the
+	// provider's health, whose requests and latencies it would otherwise flatter.
+	Unmeasured bool
 }
 
 // Use adds what the work used to the stat: the meters with a column of their own into Usage,
@@ -267,7 +272,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
-	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal})
+	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured})
 }
 
 // lose prices the stat as Record would and loses its row at once, logged in full and counted
@@ -413,6 +418,12 @@ func liveUsage(request store.Request) live.Usage {
 	if request.LatencyMs != nil {
 		latencyMs = *request.LatencyMs
 	}
+	// What the customer has spent is what they are billed: a row priced and not billed,
+	// such as a reply whose session bills its seconds instead, adds no cost.
+	costMicros := request.CostMicros
+	if !request.Billable {
+		costMicros = 0
+	}
 	return live.Usage{
 		Modality:          request.Modality,
 		CustomerID:        request.CustomerID,
@@ -424,7 +435,7 @@ func liveUsage(request store.Request) live.Usage {
 		InputTokens:       request.InputTokens,
 		CachedInputTokens: request.CachedInputTokens,
 		OutputTokens:      request.OutputTokens,
-		CostMicros:        request.CostMicros,
+		CostMicros:        costMicros,
 		Success:           request.Success,
 		Cancelled:         !measuresProvider(request),
 	}

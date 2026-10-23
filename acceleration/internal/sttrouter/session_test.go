@@ -175,7 +175,9 @@ func (s *SessionSuite) TestARefusedSessionIsCarriedOnByTheNextModel() {
 	for _, row := range rows {
 		recorded = append(recorded, row.Provider+" "+row.ErrorCode)
 	}
-	s.ElementsMatch([]string{s.refusing + " ", s.refusing + " provider_fatal", s.working + " "}, recorded)
+	// The second row of the refusing model is the audio it took after its last turn, until
+	// it refused: no turn reports it, and the vendor heard it.
+	s.ElementsMatch([]string{s.refusing + " ", s.refusing + " ", s.refusing + " provider_fatal", s.working + " "}, recorded)
 }
 
 func (s *SessionSuite) TestARefusalNoOtherModelCanTakeOverEndsTheSession() {

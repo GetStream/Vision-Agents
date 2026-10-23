@@ -346,6 +346,10 @@ func (s *STT) Provider() string { return ProviderName }
 // Model implements stt.STT.
 func (s *STT) Model() string { return s.options.Model }
 
+// Metering is the router's count of the audio it streams: Inworld bills by the hour of audio,
+// and a turn says nothing of how long it was.
+func (s *STT) Metering() stt.Metering { return stt.MeteredByRouter }
+
 // Client exposes the underlying WebSocket so callers can use the session directly.
 func (s *STT) Client() *websocket.Conn { return s.conn }
 

@@ -35,6 +35,9 @@ type Meter struct {
 	// OperationID names what the row is part of, such as the voice session whose seconds it
 	// bills. Empty names nothing.
 	OperationID string
+	// Unmeasured keeps the row out of its provider's health, for work settled after the fact
+	// that times nothing the provider did (Stat.Unmeasured).
+	Unmeasured bool
 }
 
 // Call makes one request to a vendor and records it however it ends: one row for a result, an
@@ -77,7 +80,8 @@ func Settle(meter Meter, work pricing.Metered) error {
 
 // stat is the row of work the meter records, before it has used anything.
 func (m Meter) stat(started time.Time) Stat {
-	stat := Stat{Owner: m.Owner, UsageID: m.UsageID, StartedAt: started.UTC(), Free: m.Free, OperationID: m.OperationID}
+	stat := Stat{Owner: m.Owner, UsageID: m.UsageID, StartedAt: started.UTC(), Free: m.Free, OperationID: m.OperationID,
+		Unmeasured: m.Unmeasured}
 	for name, value := range m.Attributes {
 		stat.Attribute(name, value)
 	}

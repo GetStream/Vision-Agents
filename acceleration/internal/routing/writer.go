@@ -186,11 +186,12 @@ func (w *Writer) Close(ctx context.Context) {
 // never does it), and what only provider health reads. keep is false for a row the stages
 // have no room for, which is counted live and then lost.
 type queued struct {
-	request store.Request
-	gate    Gate
-	fatal   bool
-	at      time.Time
-	keep    bool
+	request    store.Request
+	gate       Gate
+	fatal      bool
+	unmeasured bool
+	at         time.Time
+	keep       bool
 }
 
 // records reports whether a row has anywhere to go.
@@ -290,6 +291,8 @@ func (w *Writer) countLive(batch []queued) {
 	for i, row := range batch {
 		usages[i] = liveUsage(row.request)
 		usages[i].Fatal = row.fatal
+		// Spent like a cancelled request, and like one no measure of its provider.
+		usages[i].Cancelled = usages[i].Cancelled || row.unmeasured
 	}
 	ctx, cancel := context.WithTimeout(w.ctx, w.writeTimeout)
 	defer cancel()

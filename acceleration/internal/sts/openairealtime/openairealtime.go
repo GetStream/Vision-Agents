@@ -366,6 +366,8 @@ type usage struct {
 	OutputTokens       int64         `json:"output_tokens"`
 	InputTokenDetails  *tokenDetails `json:"input_token_details"`
 	OutputTokenDetails *tokenDetails `json:"output_token_details"`
+	// Seconds is the audio a transcriber billed by the second heard, on a "duration" usage.
+	Seconds float64 `json:"seconds"`
 	// BillableAudioSeconds is xAI's running total of the audio it bills the session for,
 	// rounded to the second: the audio sent and received, or the wall clock on a line that
 	// streams all the time. Nil where the vendor keeps none.
@@ -537,6 +539,7 @@ func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
 			InstructionsMidSession: true,
 			ToolsMidSession:        true,
 			Usage:                  true,
+			BilledAudio:            true,
 		}
 	case DialectQwen:
 		// Qwen's realtime models take neither a typed turn nor a tool, and a session is
@@ -1202,10 +1205,21 @@ func (s *STS) heardTranscript(text string) {
 }
 
 // transcribed reports what writing down a caller turn cost, where OpenAI bills its transcriber
-// on top of the conversation, by the tokens it read and wrote.
+// on top of the conversation: by the tokens it read and wrote, or by the seconds it heard for
+// a transcriber billed that way, such as whisper-1.
 func (s *STS) transcribed(event serverEvent) {
 	used := event.Usage
-	if s.dialect != DialectOpenAI || used == nil || used.Type == "duration" || event.ItemID == "" {
+	if s.dialect != DialectOpenAI || used == nil || event.ItemID == "" {
+		return
+	}
+	model := openaiTranscriber
+	if configured := s.transcription(); configured != nil && configured.Model != "" {
+		model = configured.Model
+	}
+	if used.Type == "duration" {
+		if used.Seconds > 0 {
+			s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, AudioMs: int64(math.Round(used.Seconds * 1000))})
+		}
 		return
 	}
 	cost := sts.Usage{InputTokens: used.InputTokens, OutputTokens: used.OutputTokens, OutputTextTokens: used.OutputTokens}
@@ -1217,7 +1231,7 @@ func (s *STS) transcribed(event serverEvent) {
 	if cost.InputTokens == 0 && cost.OutputTokens == 0 {
 		return
 	}
-	s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: s.transcription().Model, Usage: cost})
+	s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, Usage: cost})
 }
 
 // settleHeard settles a restatement nothing followed. The reply beginning to speak is the
@@ -1304,13 +1318,15 @@ func (s *STS) finishTurn(event serverEvent) {
 		}
 	}
 	cost = usageOf(reported)
-	if reported != nil && reported.BillableAudioSeconds != nil {
-		s.mu.Lock()
+	s.mu.Lock()
+	// The growth is billed by the reply it settles, so with none in flight it is left for
+	// the next one, which the vendor's next running total includes.
+	if reported != nil && reported.BillableAudioSeconds != nil && s.turn != nil {
 		grown := max(*reported.BillableAudioSeconds-s.billedSeconds, 0)
 		s.billedSeconds = max(*reported.BillableAudioSeconds, s.billedSeconds)
-		s.mu.Unlock()
 		cost.BilledAudioMs, cost.AudioBilled = int64(math.Round(grown*1000)), true
 	}
+	s.mu.Unlock()
 
 	if status == "failed" {
 		err := error(failure)
