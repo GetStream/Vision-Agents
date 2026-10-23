@@ -102,10 +102,16 @@ func scheduleTools() []harness.Tool {
 // the config has not enabled it, there is no store to hold tasks, the session
 // is incognito, or the caller is not a verified end user or a backend acting
 // for one — guests and anonymous callers have ids too and must not get the
-// tools. A caller that declared a tool with one of these names keeps theirs.
+// tools — nor the person of a thread on a line of one person (Spec.ThreadPerson).
+// A caller that declared a tool with one of these names keeps theirs.
 func (m *Manager) schedulingRunner(spec Spec, sessionID string, offered []harness.Tool) (*scheduleRunner, []harness.Tool) {
+	user, kind, thread := spec.Caller.UserID, spec.CallerKind, ""
+	if !verifiedCaller(spec) {
+		// The Router answers the thread's person, as a backend acts for its user.
+		user, kind, thread = spec.ThreadPerson, auth.KindServer, spec.ThreadChannel
+	}
 	if !spec.Scheduling.Enabled || m.options.Store == nil || spec.Incognito ||
-		spec.ConfigID == "" || !verifiedCaller(spec) {
+		spec.ConfigID == "" || user == "" {
 		return nil, nil
 	}
 	taken := map[string]bool{}
@@ -116,7 +122,7 @@ func (m *Manager) schedulingRunner(spec Spec, sessionID string, offered []harnes
 	kick := m.kickScheduler
 	m.mu.Unlock()
 	runner := &scheduleRunner{
-		db: m.options.Store, spec: spec, sessionID: sessionID,
+		db: m.options.Store, spec: spec, sessionID: sessionID, user: user, kind: kind, thread: thread,
 		now: time.Now, logger: m.logger, owned: map[string]bool{}, kick: kick,
 	}
 	var added []harness.Tool
@@ -147,6 +153,11 @@ type scheduleRunner struct {
 	// kick wakes the scheduled-task worker after a task is made or changed;
 	// nil where no worker runs.
 	kick func()
+	// user and kind are who the tasks belong to: the caller, or a thread's
+	// person, whose thread channel is thread.
+	user   string
+	kind   auth.Kind
+	thread string
 }
 
 func (r *scheduleRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
@@ -205,11 +216,12 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 	task := store.ScheduledTask{
 		CustomerID:      r.spec.CustomerID,
 		ConfigID:        r.spec.ConfigID,
-		UserID:          r.spec.Caller.UserID,
-		CallerKind:      string(r.spec.CallerKind),
+		UserID:          r.user,
+		CallerKind:      string(r.kind),
 		OriginSessionID: r.sessionID,
 		SessionID:       r.sessionID,
 		ConversationID:  r.spec.ConversationID,
+		ChannelThread:   r.thread,
 		Title:           strings.TrimSpace(args.Title),
 		Instructions:    args.Instructions,
 		StartLocal:      parsed.StartLocal,
@@ -235,11 +247,11 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 	// A zone the user named for this task is theirs from now on.
 	if args.Timezone != "" {
 		kind := store.UserKindAuthenticated
-		if r.spec.CallerKind == auth.KindGuest {
+		if r.kind == auth.KindGuest {
 			kind = store.UserKindGuest
 		}
-		if err := r.db.SetUserTimezone(ctx, r.spec.CustomerID, r.spec.Caller.UserID, kind, parsed.Timezone); err != nil {
-			r.logger.Error("could not store the user's timezone", "user", r.spec.Caller.UserID, "error", err)
+		if err := r.db.SetUserTimezone(ctx, r.spec.CustomerID, r.user, kind, parsed.Timezone); err != nil {
+			r.logger.Error("could not store the user's timezone", "user", r.user, "error", err)
 		}
 	}
 	return result(r.taskResult(&task, parsed, now)), nil
@@ -291,8 +303,8 @@ var listedStates = []string{store.ScheduledTaskActive, store.ScheduledTaskPaused
 func (r *scheduleRunner) listed(ctx context.Context) ([]store.ScheduledTask, bool, error) {
 	limit := max(scheduling.MaxActivePerUser, r.maxActive())
 	filter := store.ScheduledTaskFilter{
-		Scope: store.ScheduledTaskScope{UserID: r.spec.Caller.UserID,
-			Kinds: []string{string(r.spec.CallerKind), string(auth.KindServer)}},
+		Scope: store.ScheduledTaskScope{UserID: r.user,
+			Kinds: []string{string(r.kind), string(auth.KindServer)}},
 		ConfigID: r.spec.ConfigID,
 	}
 	var tasks []store.ScheduledTask
@@ -473,7 +485,7 @@ func (r *scheduleRunner) ownTask(ctx context.Context, id string) (store.Schedule
 	if err != nil {
 		return task, nil, err
 	}
-	if task.UserID != r.spec.Caller.UserID || task.ConfigID != r.spec.ConfigID {
+	if task.UserID != r.user || task.ConfigID != r.spec.ConfigID {
 		return task, refusal(scheduledTaskNotFound, "there is no task with that id among this user's tasks on this agent; list_scheduled_tasks shows them"), nil
 	}
 	return task, nil, nil
@@ -570,7 +582,7 @@ func (r *scheduleRunner) room(ctx context.Context, task *store.ScheduledTask) ([
 	if _, err := r.db.AgentConfig(ctx, r.spec.CustomerID, task.ConfigID); errors.Is(err, store.ErrNoAgentConfig) {
 		return refusal(unknownConfig, "this agent has been deleted, so the task cannot run again"), nil
 	}
-	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.spec.Caller.UserID, task.ConfigID)
+	count, err := r.db.ActiveScheduledTaskCount(ctx, r.spec.CustomerID, r.user, task.ConfigID)
 	if err != nil {
 		return nil, err
 	}
@@ -583,7 +595,7 @@ func (r *scheduleRunner) room(ctx context.Context, task *store.ScheduledTask) ([
 // zone picks the zone for a new task: what was named for it, the session's,
 // the user's stored one, then the config's default.
 func (r *scheduleRunner) zone(ctx context.Context, argument string) (string, error) {
-	stored, err := r.db.UserTimezone(ctx, r.spec.CustomerID, r.spec.Caller.UserID)
+	stored, err := r.db.UserTimezone(ctx, r.spec.CustomerID, r.user)
 	if err != nil {
 		return "", err
 	}

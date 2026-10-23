@@ -224,8 +224,12 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   staging (v0.6.103, 2026-10-21) a request got 200 at 16 s and 502 at 36 s after the router
   withdrew the secret, so the lag is between 16 and 36 s. Wave 14's proxy broker resolves per
   request and stops substituting at once.
-- Known limit: a router crash, or a Close that fails or times out, leaves the secret (a live
-  token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it.
+- Known limit: a router crash, or a Close that Daytona refuses, leaves the secret (a live
+  token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it. A
+  Close that times out behind a running run deletes the secret (or the proxy's record) at
+  once; the sandbox stays.
+- A provider's error text never reaches a log or an error: both brokers log the error's class
+  (`sandbox.ErrorClass`), and a required grant fails with `sandbox.ErrNoCredential` or the class.
 - `ROUTER_CODE_SANDBOX_BROKER=proxy` uses the router's egress proxy (`internal/sandbox/egress`)
   instead of Daytona Secrets. It needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` (the proxy
   as a sandbox reaches it, `http://<public IPv4 address>:port`: no path, query, user, or private,

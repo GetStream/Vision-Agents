@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"net"
 	"net/url"
 	"strconv"
 
@@ -55,6 +56,23 @@ type Tokens func(ctx context.Context, grant Grant) (Token, error)
 // ErrNoCredential is a connection that gives no credential until it is reconnected: it is
 // disconnected, waiting for a reconnect, deleted, or its scheme sends no bearer token.
 var ErrNoCredential = errors.New("sandbox: the connection gives no credential until it is reconnected")
+
+// ErrorClass is the kind of err, for a log or an error that must not hold its text: a
+// provider's refresh error may quote its answer.
+func ErrorClass(err error) string {
+	var netErr net.Error
+	switch {
+	case errors.Is(err, ErrNoCredential):
+		return "no_credential"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.As(err, &netErr):
+		return "network"
+	}
+	return "other"
+}
 
 // Mount is what a sandbox is created with so that its code reaches its grants.
 type Mount struct {
