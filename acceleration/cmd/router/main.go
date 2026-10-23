@@ -1877,6 +1877,7 @@ func buildSessions(
 	}
 	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
 	options.SandboxLimits = policies
+	options.ResumeHistories = policies
 	return session.NewManager(options)
 }
 
