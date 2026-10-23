@@ -45,13 +45,24 @@ func TestACancelledRequestStillAddsWhatItSpentToTheLiveCounters(t *testing.T) {
 	}
 }
 
-func TestWorkPricedAndNotBilledAddsNoCostToTheLiveSpend(t *testing.T) {
-	free := store.Request{Modality: "sts", CustomerID: "acme", Provider: "openai", Model: "gpt-live-1",
+func TestWorkGivenAwayAddsNoCostToTheLiveSpend(t *testing.T) {
+	reply := store.Request{Modality: "sts", CustomerID: "acme", Provider: "openai", Model: "gpt-live-1",
 		AudioMs: 2_000, CostMicros: 1_667, Success: true}
 
-	usage := liveUsage(free)
+	usage := queued{request: reply, free: true}.live()
 
-	if usage.CostMicros != 0 || usage.AudioMs != 2_000 {
+	if usage.CostMicros != 0 || usage.AudioMs != 2_000 || usage.Cancelled {
 		t.Fatalf("a reply its session bills by the second was spent as though billed: %+v", usage)
+	}
+}
+
+func TestWorkThatMeasuresNoProviderIsSpentAndKeptOutOfHealth(t *testing.T) {
+	seconds := store.Request{Modality: "sts", CustomerID: "acme", Provider: "openai", Model: "gpt-live-1",
+		CostMicros: 10_833, Success: true, Billable: true}
+
+	usage := queued{request: seconds, unmeasured: true}.live()
+
+	if !usage.Cancelled || usage.CostMicros != 10_833 {
+		t.Fatalf("a session's seconds were measured as a request of its provider, or not spent: %+v", usage)
 	}
 }

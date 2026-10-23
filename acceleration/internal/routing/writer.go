@@ -190,8 +190,22 @@ type queued struct {
 	gate       Gate
 	fatal      bool
 	unmeasured bool
+	free       bool
 	at         time.Time
 	keep       bool
+}
+
+// live is what the row adds to the live counters. A row that measures nothing its provider did
+// is spent as a cancelled request is, and kept out of health like one. A row of work given
+// away is priced on the row and adds nothing to what the customer has spent.
+func (row queued) live() live.Usage {
+	usage := liveUsage(row.request)
+	usage.Fatal = row.fatal
+	usage.Cancelled = usage.Cancelled || row.unmeasured
+	if row.free {
+		usage.CostMicros = 0
+	}
+	return usage
 }
 
 // records reports whether a row has anywhere to go.
@@ -289,10 +303,7 @@ func (w *Writer) countLive(batch []queued) {
 	}
 	usages := make([]live.Usage, len(batch))
 	for i, row := range batch {
-		usages[i] = liveUsage(row.request)
-		usages[i].Fatal = row.fatal
-		// Spent like a cancelled request, and like one no measure of its provider.
-		usages[i].Cancelled = usages[i].Cancelled || row.unmeasured
+		usages[i] = row.live()
 	}
 	ctx, cancel := context.WithTimeout(w.ctx, w.writeTimeout)
 	defer cancel()

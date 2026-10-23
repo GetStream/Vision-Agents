@@ -272,7 +272,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
-	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured})
+	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured, free: entry.Free})
 }
 
 // lose prices the stat as Record would and loses its row at once, logged in full and counted
@@ -418,12 +418,6 @@ func liveUsage(request store.Request) live.Usage {
 	if request.LatencyMs != nil {
 		latencyMs = *request.LatencyMs
 	}
-	// What the customer has spent is what they are billed: a row priced and not billed,
-	// such as a reply whose session bills its seconds instead, adds no cost.
-	costMicros := request.CostMicros
-	if !request.Billable {
-		costMicros = 0
-	}
 	return live.Usage{
 		Modality:          request.Modality,
 		CustomerID:        request.CustomerID,
@@ -435,7 +429,7 @@ func liveUsage(request store.Request) live.Usage {
 		InputTokens:       request.InputTokens,
 		CachedInputTokens: request.CachedInputTokens,
 		OutputTokens:      request.OutputTokens,
-		CostMicros:        costMicros,
+		CostMicros:        request.CostMicros,
 		Success:           request.Success,
 		Cancelled:         !measuresProvider(request),
 	}
