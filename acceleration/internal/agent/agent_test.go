@@ -1936,6 +1936,39 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 	s.Equal(3, event.After)
 }
 
+func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
+	// τ³ telecom: get_customer_by_phone returned C1001, a compaction summarised the result
+	// away, and refuel_data with C1001 was refused as an ID no tool had given.
+	tools := []string{"get_customer_by_phone", "get_details_by_id", "refuel_data"}
+	looked := []llm.Message{
+		{Role: llm.User, Content: "It's five five five dash one two three dash two zero zero two."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_customer_by_phone"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"customer_id": "C1001", "full_name": "John Smith"}`},
+		{Role: llm.Assistant, Content: "I found your account, John."},
+	}
+	recent := []llm.Message{
+		{Role: llm.User, Content: "Can you add two gigabytes to my line?"},
+	}
+	emitter := NewEmitter(eventBuffer)
+	defer emitter.Close()
+	agent := &Agent{
+		emitter: emitter,
+		history: append(append([]llm.Message(nil), looked...), recent...),
+	}
+	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "John Smith asked for more data."})
+	refuel := llm.ToolCall{Name: "refuel_data", Arguments: `{"customer_id":"C1001","line_id":"L1002","gb_amount":2}`}
+
+	_, _, _, unfound := unfoundID(agent.History(), refuel, tools)
+	s.True(unfound, "the model's history no longer holds the result")
+	_, _, _, unfound = unfoundID(agent.record(), refuel, tools)
+	s.False(unfound, "the call's record still does")
+
+	summary := agent.History()[0]
+	agent.applyCompaction(harness.Compacted{Prefix: agent.History()[:2], Summary: "Still John Smith."})
+	s.Equal(append(append(append(append([]llm.Message(nil), looked...), summary), recent...), agent.History()...), agent.record(),
+		"what each compaction took is kept once, in the order it happened, ahead of the history")
+}
+
 func (s *AgentSuite) TestLateCompactionCannotReplaceAChangedPrefix() {
 	emitter := NewEmitter(eventBuffer)
 	defer emitter.Close()
