@@ -87,13 +87,19 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 		if len(grant.Hosts) == 0 {
 			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: connector %q has no host for the sandbox to send its credential to", grant.Binding), s.release(ctx))
 		}
+		// A provider's refresh error may quote its answer, so only its class is logged, and a
+		// required grant's error carries none of it.
 		token, err := s.options.Tokens(ctx, grant)
 		if err != nil {
 			if grant.Required {
-				return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: required connector %q gives the sandbox no credential: %w", grant.Binding, err), s.release(ctx))
+				reason := sandbox.ErrNoCredential
+				if !errors.Is(err, sandbox.ErrNoCredential) {
+					reason = fmt.Errorf("the credential cannot be had just now (%s)", sandbox.ErrorClass(err))
+				}
+				return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: required connector %q gives the sandbox no credential: %w", grant.Binding, reason), s.release(ctx))
 			}
 			s.options.Logger.Warn("the sandbox is created without a connector's credential", "connector", grant.Binding,
-				"connection", grant.Connection.ConnectionID, "error", err)
+				"connection", grant.Connection.ConnectionID, "class", sandbox.ErrorClass(err))
 			continue
 		}
 		name, err := s.name(grant)
@@ -119,7 +125,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 		if err != nil && !errors.Is(err, sandbox.ErrNoCredential) {
 			kept = append(kept, held)
 			s.options.Logger.Warn("a connector's credential could not be refreshed for the sandbox; it keeps the one it has",
-				"connector", held.grant.Binding, "secret", held.name, "error", err)
+				"connector", held.grant.Binding, "secret", held.name, "class", sandbox.ErrorClass(err))
 			continue
 		}
 		if err != nil {
@@ -129,7 +135,7 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 				return fmt.Errorf("daytona: withdraw secret %s: %w", held.name, err)
 			}
 			s.options.Logger.Warn("a connector's credential is withdrawn from the sandbox", "connector", held.grant.Binding,
-				"secret", held.name, "error", err)
+				"secret", held.name, "class", sandbox.ErrorClass(err))
 			continue
 		}
 		kept = append(kept, held)

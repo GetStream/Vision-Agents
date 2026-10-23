@@ -382,20 +382,10 @@ func failed(logger *slog.Logger, err error) {
 
 // errorClass is the kind of err, for a log that must not hold its text.
 func errorClass(err error) string {
-	var netErr net.Error
-	switch {
-	case errors.Is(err, errNoHeader):
+	if errors.Is(err, errNoHeader) {
 		return "header_timeout"
-	case errors.Is(err, sandbox.ErrNoCredential):
-		return "no_credential"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline"
-	case errors.As(err, &netErr):
-		return "network"
 	}
-	return "other"
+	return sandbox.ErrorClass(err)
 }
 
 // fixedLine is a log.Logger's writer that logs message, never what it was given.

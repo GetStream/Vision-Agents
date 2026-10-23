@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -70,6 +71,8 @@ type platform struct {
 	createStatus int
 	// test is the test the platform serves, when tests share it.
 	test string
+	// stall, while open, holds every code-run, and arrived hears of each one held.
+	stall, arrived chan struct{}
 }
 
 // heldSecret is a secret as Daytona keeps it.
@@ -86,6 +89,15 @@ func newPlatform() *platform {
 }
 
 func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
+		p.mu.Lock()
+		stall, arrived := p.stall, p.arrived
+		p.mu.Unlock()
+		if stall != nil {
+			arrived <- struct{}{}
+			<-stall
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.auth = r.Header.Get("Authorization")
@@ -247,6 +259,28 @@ func (p *platform) sandboxes() []string {
 	return append([]string(nil), p.created...)
 }
 
+// outlasting starts code in box that the platform holds until release, or the test's end, and
+// returns once it is held, with the run's error to come.
+func (p *platform) outlasting(t *testing.T, box *Sandbox) (ran <-chan error, release func()) {
+	stall, arrived, done := make(chan struct{}), make(chan struct{}, 1), make(chan error, 1)
+	var once sync.Once
+	release = func() { once.Do(func() { close(stall) }) }
+	t.Cleanup(release)
+	p.mu.Lock()
+	p.stall, p.arrived = stall, arrived
+	p.mu.Unlock()
+	go func() {
+		_, err := box.Run(context.Background(), "print(1)", nil)
+		done <- err
+	}()
+	select {
+	case <-arrived:
+	case err := <-done:
+		t.Fatalf("the run ended before its code ran: %v", err)
+	}
+	return done, release
+}
+
 func (p *platform) released() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -385,6 +419,19 @@ func (s *DaytonaSuite) TestConcurrentRunsCreateOnlyOneSandbox() {
 	s.Len(s.platform.executed(), 8)
 	s.NoError(s.box.Close())
 }
+
+// TestACloseARunOutlastsReturnsAtItsTimeout is the control: the error is the one of base
+// c573d2ba6 (probe: this test there).
+func (s *DaytonaSuite) TestACloseARunOutlastsReturnsAtItsTimeout() {
+	box := s.configured(Options{Timeout: time.Second})
+	ran, release := s.platform.outlasting(s.T(), box)
+
+	s.ErrorIs(box.Close(), context.DeadlineExceeded)
+
+	release()
+	s.NoError(<-ran)
+}
+
 func (s *DaytonaSuite) TestFailedDeletionRetainsIdentity() {
 	_, err := s.box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
