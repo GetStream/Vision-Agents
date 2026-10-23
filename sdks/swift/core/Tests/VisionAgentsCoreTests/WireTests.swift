@@ -1,6 +1,4 @@
 import Foundation
-import HTTPTypes
-import OpenAPIRuntime
 import Testing
 
 @testable import VisionAgentsCore
@@ -15,7 +13,7 @@ import Testing
         #expect(event.type == "overheard")
         #expect(event.kind == nil)
         #expect(event["who"].stringValue == "nobody")
-        #expect(event["confidence"].doubleValue == 0.5)
+        #expect(event["confidence"].numberValue == 0.5)
     }
 
     @Test func anEventWithoutATypeIsRefused() {
@@ -31,7 +29,7 @@ import Testing
         #expect(event.text == "")
         #expect(event.turnID == "")
         #expect(event.participant == nil)
-        #expect(event["nothing"].intValue == nil)
+        #expect(event["nothing"] == .nil)
     }
 
     @Test func aToolCallArrivesWithItsArgumentsDecoded() throws {
@@ -65,7 +63,7 @@ import Testing
         let second = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
 
         let ids = try [first, second].map {
-            try #require(JSONDecoder().decode(JSONValue.self, from: $0).objectValue["request_id"]).stringValue
+            try #require(JSONDecoder().decode([String: RawJSON].self, from: $0)["request_id"]?.stringValue)
         }
         #expect(ids.allSatisfy { $0.wholeMatch(of: /[A-Za-z0-9_-]{1,128}/) != nil })
         #expect(ids[0] != ids[1])
@@ -75,18 +73,16 @@ import Testing
         let body = try JSONEncoder().encode(
             Responses.body("What is this?", images: [ImageSource(url: "data:image/png;base64,iVBORw0KGgo=")]))
 
-        #expect(try JSONDecoder().decode(JSONValue.self, from: body).objectValue["request_id"] != nil)
+        #expect(try JSONDecoder().decode([String: RawJSON].self, from: body)["request_id"] != nil)
     }
 
     @Test func oneAnswerCanBeCappedAndToldHowLongToThinkAndNeitherIsSentUnasked() throws {
         let tuned = try JSONDecoder().decode(
-            JSONValue.self,
+            [String: RawJSON].self,
             from: JSONEncoder().encode(
-                Responses.body("Think hard", images: [], maxOutputTokens: 512, reasoningEffort: "high"))
-        ).objectValue
+                Responses.body("Think hard", images: [], maxOutputTokens: 512, reasoningEffort: "high")))
         let plain = try JSONDecoder().decode(
-            JSONValue.self, from: JSONEncoder().encode(Responses.body("Plain", images: []))
-        ).objectValue
+            [String: RawJSON].self, from: JSONEncoder().encode(Responses.body("Plain", images: [])))
 
         #expect(tuned["max_output_tokens"] == .number(512))
         #expect(tuned["reasoning_effort"] == .string("high"))
@@ -183,13 +179,12 @@ import Testing
     }
 
     @Test func aToolSchemaSaysWhichArgumentsAreRequired() throws {
-        let schema = JSONValue.strings(
+        let schema = RawJSON.strings(
             ["order_id": "the order number"], required: ["order_id"])
 
-        #expect(schema.objectValue["type"]?.stringValue == "object")
-        #expect(schema.objectValue["required"]?.arrayValue.map(\.stringValue) == ["order_id"])
-        let properties = schema.objectValue["properties"]?.objectValue ?? [:]
-        #expect(properties["order_id"]?.objectValue["description"]?.stringValue == "the order number")
+        #expect(schema["type"]?.stringValue == "object")
+        #expect(schema["required"]?.stringArrayValue == ["order_id"])
+        #expect(schema["properties"]?["order_id"]?["description"]?.stringValue == "the order number")
     }
 }
 
@@ -242,12 +237,12 @@ import Testing
         backend.setUser(User(id: "jlahey")) { "t\(await minted.next())" }
         let router = ExpiringRouter()
 
-        let output = try await backend.client(transport: router).querySessions(body: .json(.init()))
+        let page = try await backend.client(transport: router).querySessions(sessionQueryPayload: .init())
 
-        #expect(throws: Never.self) { try output.ok.body.json }
+        #expect(page.items.isEmpty)
         let sent = await router.requests
-        #expect(sent.map { $0.headerFields[.authorization] } == ["Bearer t1", "Bearer t2"])
-        #expect(sent.allSatisfy { $0.path?.contains("api_key=key") == true })
+        #expect(sent.map { $0.headers["Authorization"] } == ["Bearer t1", "Bearer t2"])
+        #expect(sent.allSatisfy { $0.queryParams.contains(URLQueryItem(name: "api_key", value: "key")) })
     }
 
     @Test func aSocketURLSwitchesSchemeAndCarriesTheCustomer() {
@@ -342,25 +337,19 @@ private actor Minted {
 }
 
 /// A router that refuses the first token it sees, and answers with no sessions after that.
-private actor ExpiringRouter: ClientTransport {
-    private(set) var requests: [HTTPRequest] = []
+private actor ExpiringRouter: DefaultAPITransport {
+    private(set) var requests: [Request] = []
 
-    func send(
-        _ request: HTTPRequest,
-        body: HTTPBody?,
-        baseURL: URL,
-        operationID: String
-    ) async throws -> (HTTPResponse, HTTPBody?) {
+    func execute(request: Request) async throws -> (Data, URLResponse) {
         requests.append(request)
-        var headers = HTTPFields()
-        headers[.contentType] = "application/json"
-        if requests.count == 1 {
-            return (
-                HTTPResponse(status: .unauthorized, headerFields: headers),
-                HTTPBody(
-                    #"{"error":{"message":"token expired","type":"authentication","code":"unauthenticated","doc_url":"https://getstream.io/agents/docs/api/errors/#unauthenticated"}}"#
-                ))
-        }
-        return (HTTPResponse(status: .ok, headerFields: headers), HTTPBody(#"{"items":[],"has_more":false}"#))
+        let refused = requests.count == 1
+        let body =
+            refused
+            ? #"{"error":{"message":"token expired","type":"authentication","code":"unauthenticated","doc_url":"https://getstream.io/agents/docs/api/errors/#unauthenticated"}}"#
+            : #"{"items":[],"has_more":false}"#
+        let response = HTTPURLResponse(
+            url: request.url, statusCode: refused ? 401 : 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"])!
+        return (Data(body.utf8), response)
     }
 }

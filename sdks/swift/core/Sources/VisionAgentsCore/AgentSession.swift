@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import StreamCore
 
 /// A live conversation, in a shape SwiftUI can bind to.
 ///
@@ -127,7 +128,7 @@ public final class AgentSession {
     /// replaces the labels whole.
     @discardableResult
     public func update(
-        title: String? = nil, description: String? = nil, custom: [String: JSONValue]? = nil
+        title: String? = nil, description: String? = nil, custom: [String: RawJSON]? = nil
     ) async throws -> Session {
         session = try await VisionAgents(backend: backend).sessions.update(
             session.id, title: title, description: description, custom: custom)
@@ -201,7 +202,7 @@ public final class AgentSession {
         if let call = event.toolCall {
             answer(call)
         } else if event.kind == .toolCancel {
-            approvals.removeAll { $0.id == event["id"].stringValue }
+            approvals.removeAll { $0.id == event.string("id") }
         }
     }
 
@@ -227,8 +228,8 @@ public final class AgentSession {
     /// agent can ask the person to show it again.
     private func show(_ frames: CameraFrames, for call: AgentEvent.ToolCall) {
         let arguments = call.argumentValues
-        let at = Date(timeIntervalSince1970: (arguments["at_ms"]?.doubleValue ?? Date().timeIntervalSince1970 * 1000) / 1000)
-        let limit = Int(arguments["limit"]?.doubleValue ?? 1)
+        let at = Date(timeIntervalSince1970: (arguments["at_ms"]?.numberValue ?? Date().timeIntervalSince1970 * 1000) / 1000)
+        let limit = Int(arguments["limit"]?.numberValue ?? 1)
         let answer: Command
         do {
             let selected = try frames.select(at: at, limit: limit)

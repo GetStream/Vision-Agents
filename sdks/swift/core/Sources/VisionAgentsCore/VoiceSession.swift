@@ -204,11 +204,9 @@ public final class VoiceSession {
 /// A client for the agents' user. The token provider is what the SDK calls when the token
 /// expires, an hour in, so asking the agents again is what keeps a long call from dropping.
 private func build(_ backend: Backend, _ credentials: StreamCredentials) -> StreamVideo {
-    let user = credentials.user
-    return StreamVideo(
+    StreamVideo(
         apiKey: credentials.apiKey,
-        user: .init(
-            id: user.id, name: user.name.isEmpty ? nil : user.name, imageURL: URL(string: user.image)),
+        user: credentials.user,
         token: UserToken(rawValue: credentials.token),
         tokenProvider: { result in
             Task {

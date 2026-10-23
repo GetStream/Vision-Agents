@@ -16,10 +16,10 @@ let package = Package(
     // the user `setUser` named. The views are Stream Chat's AI components (StreamChatAI, in
     // the same stream-chat-swift package), which an app adds itself. 5.13 is the first
     // stream-chat-swift with them, so an app adding them resolves the version this does.
+    // StreamCore is what both of them stand on: the generated client runs on its runtime, as
+    // theirs does, and `User` and `RawJSON` are its own.
     dependencies: [
-        .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.12.1"),
-        .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.3.1"),
-        .package(url: "https://github.com/apple/swift-http-types", from: "1.4.0"),
+        .package(url: "https://github.com/GetStream/stream-core-swift.git", from: "0.13.0"),
         .package(url: "https://github.com/GetStream/stream-chat-swift", from: "5.13.0"),
         .package(url: "https://github.com/GetStream/stream-video-swift", from: "1.54.0"),
     ],
@@ -27,9 +27,7 @@ let package = Package(
         .target(
             name: "VisionAgentsCore",
             dependencies: [
-                .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
-                .product(name: "OpenAPIURLSession", package: "swift-openapi-urlsession"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "StreamCore", package: "stream-core-swift"),
                 .product(name: "StreamChat", package: "stream-chat-swift"),
                 .product(name: "StreamVideo", package: "stream-video-swift"),
             ]

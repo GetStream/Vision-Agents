@@ -3,8 +3,9 @@
 One iOS package for talking to an agent from a phone, `core/`, whose module is
 `VisionAgentsCore`: the generated client, the session socket and the conversation state, the
 Stream Chat channel a text conversation is kept in, and `VoiceSession`, which joins the agent's
-call over Stream Video. It depends on the OpenAPI runtime, `stream-chat-swift` 5.13+
-(`StreamChat`) and `stream-video-swift` (`StreamVideo`).
+call over Stream Video. It depends on `stream-chat-swift` 5.13+ (`StreamChat`),
+`stream-video-swift` (`StreamVideo`) and the `StreamCore` both of them stand on. `User` and
+`RawJSON` are StreamCore's, and `import VisionAgentsCore` brings them in.
 
 It has no views. The views are Stream Chat's AI components, the `StreamChatAI` library of the
 same `stream-chat-swift` package, which render what the router writes into a conversation's
@@ -284,22 +285,10 @@ uv run sdks/swift/generate.py --check   # does the filter still agree with the s
 uv run sdks/swift/generate.py           # regenerate
 ```
 
-Regenerating needs Apple's generator on disk at `.codegen/swift/swift-openapi-generator`:
-
-```bash
-mkdir -p /tmp/oapigen && cd /tmp/oapigen
-cat > Package.swift <<'EOF'
-// swift-tools-version:6.0
-import PackageDescription
-let package = Package(
-    name: "oapigen",
-    dependencies: [.package(url: "https://github.com/apple/swift-openapi-generator", exact: "1.13.1")]
-)
-EOF
-swift build -c release --product swift-openapi-generator
-mkdir -p <repo>/.codegen/swift
-cp .build/release/swift-openapi-generator <repo>/.codegen/swift/
-```
+The generator is the one Stream Chat and Stream Video generate their clients with, in
+`tools/openapi` of the `chat` repository, so regenerating needs that repository checked out
+beside this one (`../chat`) and Go. Its `DefaultAPI` and models run on StreamCore's
+`DefaultAPITransport` and `DefaultAPIClientMiddleware`, which `Backend.swift` implements.
 
 The generated code is `internal`, and every type crossing the public API is hand-written in
 `Models.swift`. That is what lets the spec churn without breaking anybody: a field added to
