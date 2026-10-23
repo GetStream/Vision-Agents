@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -149,10 +150,9 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
 	owner := OwnerFrom(r.Context())
-	gone := make(chan struct{})
+	gone := make(chan error, 1)
 	go func() {
-		defer close(gone)
-		s.readCommands(connection, found, owner, CallerFrom(r.Context()))
+		gone <- s.readCommands(connection, found, owner, CallerFrom(r.Context()))
 	}()
 	s.writeEvents(connection, events, watching(r), gone)
 }
@@ -200,14 +200,21 @@ func (w wanted) takesFrame(kind string) bool {
 }
 
 // writeEvents pushes the conversation to the caller until the session ends or the socket
-// breaks.
-func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}) {
+// breaks. gone carries why the reader stopped, which is answered here because this is the
+// goroutine that writes.
+func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan error) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
 	for {
 		select {
-		case <-gone:
+		case stopped := <-gone:
+			switch {
+			case stopped == nil:
+				closeSocket(connection, websocket.CloseNormalClosure, "the session ended")
+			case errors.Is(stopped, errUnreadableFrame):
+				refuseUnreadable(connection)
+			}
 			return
 		case event, open := <-events:
 			if !open {
@@ -270,26 +277,51 @@ type watcherCommand struct {
 //
 // A frame it cannot read is reported and skipped rather than closing the socket: dropping
 // the connection over one bad message would take the tool calls in flight with it.
-func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner, sender routing.Caller) {
+//
+// It returns nil once a command closed the session, errUnreadableFrame for a frame that is not
+// a command, and the read's own error when the connection ended.
+func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner, sender routing.Caller) error {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
-		var command watcherCommand
-		if err := connection.ReadJSON(&command); err != nil {
+		_, payload, err := connection.ReadMessage()
+		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("session socket read failed", "error", err)
 			}
-			return
+			return stack.Wrap(err)
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
+		var command watcherCommand
+		if json.Unmarshal(payload, &command) != nil {
+			return errUnreadableFrame
+		}
 
 		if !s.applyCommand(found, owner, sender, command) {
-			return
+			return nil
 		}
 	}
+}
+
+// errUnreadableFrame ends a socket on a frame that is not JSON of the shape it reads.
+var errUnreadableFrame = invalidRequest("a frame on this socket is not JSON it can read")
+
+// refuseUnreadable tells the caller its frame could not be read, then closes with 1008,
+// policy violation, since the frame is the caller's to fix (RFC 6455 section 7.4.1,
+// https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1). Only a socket's writer may call it,
+// once its reader has stopped: it writes a frame and then reads.
+func refuseUnreadable(connection *websocket.Conn) {
+	connection.SetWriteDeadline(time.Now().Add(writeWait))
+	if connection.WriteJSON(frame{
+		"type": "error", "error": errUnreadableFrame.Message,
+		"code": errUnreadableFrame.Code, "error_type": errUnreadableFrame.Type,
+	}) != nil {
+		return
+	}
+	closeSocket(connection, websocket.ClosePolicyViolation, errUnreadableFrame.Message)
 }
 
 // applyCommand carries out one of the watcher's commands, reporting whether the socket
