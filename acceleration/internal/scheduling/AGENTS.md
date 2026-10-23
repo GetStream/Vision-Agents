@@ -149,8 +149,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestAnIncognitoSessionIsNotOfferedTheTools`,
   `TestScheduledTasksSuite/TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools`.
 - **A thread on a line of one person schedules for the person who wrote (AI-1842).** An SMS
-  (`telnyx`), WhatsApp or Linq thread session (`api.threadSession`, `personalThreads`) is
-  offered the tools; the task's `user_id` is the Stream user the bridge writes the person as
+  (`telnyx`) or WhatsApp thread session (`api.threadSession`, `personalThreads`) is offered
+  the tools when its person writes, and not when someone else in the thread does; the task's `user_id` is the Stream user the bridge writes the person as
   (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
   `channel_thread` its thread channel. A Slack thread is shared and is offered none. Delivery
   back to the thread is AI-1843: until then such a task's run fails `delivery_failed`
@@ -158,8 +158,10 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
   `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
   `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,
-  `TestLinqChannelSuite/TestTwoSendersInOneChatHoldTasksOfTheirOwn`,
+  `TestTelnyxChannelSuite/TestSomeoneElseWritingInAPersonsThreadIsNotOfferedTheTools`,
+  `TestTelnyxChannelSuite/TestAZoneNamedInOneRoundIsTheNextRoundsTasks`,
   `TestWhatsAppChannelSuite/TestAWhatsAppThreadSchedulesForThePersonWhoWrote`,
+  `TestLinqChannelSuite/TestALinqChatIsNotOfferedTheTools`,
   `TestSlackChannelSuite/TestASlackThreadIsNotOfferedTheTools`.
 - **A caller's own tool with a scheduling name keeps the name.**
   `TestScheduledTasksSuite/TestACallersOwnScheduleTaskKeepsTheName`.

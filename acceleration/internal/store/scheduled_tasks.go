@@ -81,7 +81,7 @@ type ScheduledTask struct {
 	Title           string `bun:"title,notnull"`
 	Instructions    string `bun:"instructions,notnull"`
 	// ChannelThread is the thread channel of the external thread the task was
-	// made in (channel_threads.channel_id): an SMS, WhatsApp or Linq thread.
+	// made in (channel_threads.channel_id): an SMS or WhatsApp thread.
 	// Empty for a task made anywhere else.
 	ChannelThread string `bun:"channel_thread,notnull"`
 	// StartLocal is the first occurrence as the user's clock reads it, held in
