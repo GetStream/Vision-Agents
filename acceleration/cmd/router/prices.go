@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -21,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -49,8 +53,14 @@ const pricesUsage = `usage: router prices <command>
   reload --development [--dry-run]
                              development only: empty the price list and seed it again from
                              ROUTER_PRICES_FILE and vendor.json, as a fresh database's first
-                             start does. Refused unless ROUTER_ENV is a development one and
-                             the database is on this machine or compose's postgres
+                             start does. Refused unless the database the driver connects to
+                             is on this machine (localhost, a loopback address or a unix
+                             socket) or is compose's postgres, and refused under a ROUTER_ENV
+                             such as staging. A deployment usually leaves ROUTER_ENV unset,
+                             so its remote database host is what refuses it there. A
+                             port-forward or proxy on localhost to another database passes
+                             the host check: --development is all that stops that. Both runs
+                             print the database and address they are pointed at first
 
 Only reload writes a price, and only on a development database: a router loads its price files
 when it starts, and adds only the items its database has never priced. After that a price
@@ -380,14 +390,16 @@ var developmentEnvironments = []string{"", config.Local, "development", config.T
 // runs against: this machine, and compose.yaml's Postgres as the router's container reaches it.
 var developmentHosts = []string{"localhost", "postgres"}
 
-// developmentDatabase refuses, saying why, unless --development was passed, ROUTER_ENV is a
-// development one and the database is on this machine or compose's.
+// developmentDatabase refuses, saying why, unless --development was passed, ROUTER_ENV is not
+// one a deployment names, and both the host postgres.dsn names and the address the driver
+// would connect to are on this machine or compose's. ROUTER_ENV unset is local, which is what
+// most deployments run with too, so it is the hosts that refuse them.
 func developmentDatabase(development bool, settings config.Config) error {
 	if !development {
 		return errors.New("router prices reload empties the price list and is for a development database only: pass --development to say this is one")
 	}
 	if environment := strings.TrimSpace(os.Getenv(config.EnvVar)); !slices.Contains(developmentEnvironments, environment) {
-		return fmt.Errorf("router prices reload is for development only, and %s is %q: it runs with %s unset, %s or %s",
+		return fmt.Errorf("router prices reload is for development only, and %s is %q: it runs with %s unset, %s, development or %s",
 			config.EnvVar, environment, config.EnvVar, config.Local, config.Testing)
 	}
 	if settings.Postgres.DSN == "" {
@@ -398,15 +410,67 @@ func developmentDatabase(development bool, settings config.Config) error {
 	if err != nil {
 		return errors.New("router prices reload: postgres.dsn is not a URL, so it cannot tell where the database is")
 	}
-	host := dsn.Hostname()
+	if host := dsn.Hostname(); !developmentHost(host) {
+		return fmt.Errorf("router prices reload is for a development database only, and postgres.dsn names the host %q: "+
+			"it runs against localhost, a loopback address or compose's postgres service", host)
+	}
+	network, address, err := databaseTarget(settings.Postgres.DSN)
+	if err != nil {
+		return err
+	}
+	if network == "unix" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || !developmentHost(host) {
+		return fmt.Errorf("router prices reload is for a development database only, and postgres.dsn connects to %q: "+
+			"it runs against localhost, a loopback address, a unix socket or compose's postgres service", address)
+	}
+	return nil
+}
+
+// developmentHost is whether a host is this machine or compose's Postgres.
+func developmentHost(host string) bool {
 	if address, err := netip.ParseAddr(host); err == nil && address.IsLoopback() {
-		return nil
+		return true
 	}
-	if slices.Contains(developmentHosts, strings.ToLower(host)) {
-		return nil
+	return slices.Contains(developmentHosts, strings.ToLower(host))
+}
+
+// databaseTarget is where the driver connects for a DSN: unix and a socket's path, or tcp and
+// host:port. That is not always the URL's host: a host query parameter replaces it.
+func databaseTarget(dsn string) (network, address string, err error) {
+	if _, err := url.Parse(dsn); err != nil {
+		return "", "", errors.New("router prices reload: postgres.dsn is not a URL, so it cannot tell where the database is")
 	}
-	return fmt.Errorf("router prices reload is for a development database only, and postgres.dsn names the host %q: "+
-		"it runs against localhost, a loopback address or compose's postgres service", host)
+	// The driver panics on a DSN it cannot read, with a message that may hold the DSN.
+	defer func() {
+		if recover() != nil {
+			network, address, err = "", "", errors.New("router prices reload: the driver cannot read postgres.dsn, so it cannot tell where the database is")
+		}
+	}()
+	conf := pgdriver.NewConnector(pgdriver.WithDSN(dsn)).Config()
+	return conf.Network, conf.Addr, nil
+}
+
+// describeTarget names the database a reload is pointed at and where, as the driver reaches it
+// and as the server answers, so a port-forward to another machine shows. No password.
+func describeTarget(ctx context.Context, pgStore *store.Store, settings config.Config) (string, error) {
+	network, address, err := databaseTarget(settings.Postgres.DSN)
+	if err != nil {
+		return "", err
+	}
+	var database string
+	var server sql.NullString
+	if err := pgStore.DB().QueryRowContext(ctx,
+		"SELECT current_database(), host(inet_server_addr()) || ':' || inet_server_port()").Scan(&database, &server); err != nil {
+		return "", err
+	}
+	answers := "over a unix socket"
+	if server.Valid {
+		answers = "as " + server.String
+	}
+	return fmt.Sprintf("database %q at %s (%s), which answers %s\n", database, address, network, answers), nil
 }
 
 func runPricesReload(ctx context.Context, args []string, settings config.Config, out io.Writer) error {
@@ -428,6 +492,13 @@ func runPricesReload(ctx context.Context, args []string, settings config.Config,
 		return err
 	}
 	defer pgStore.Close()
+	target, err := describeTarget(ctx, pgStore, settings)
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, target); err != nil {
+		return err
+	}
 	reload, err := pgStore.ReloadPrices(ctx, load, *dryRun)
 	if err != nil {
 		return err

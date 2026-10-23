@@ -302,29 +302,32 @@ func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (
 		if _, err := tx.ExecContext(ctx, "TRUNCATE price_entries, price_changes"); err != nil {
 			return err
 		}
-		if reload.Seed, reload.Loaded, err = syncPrices(ctx, tx, load); err != nil {
-			return err
+		// The removal is recorded before the seed, under a name of its own, so the log reads
+		// in the order the reload did them.
+		if len(reload.Changes) > 0 {
+			names := make([]string, 0, len(reload.Changes))
+			for _, change := range reload.Changes {
+				names = append(names, change.Name)
+			}
+			err := recordAuditEntry(ctx, tx, &AuditEntry{
+				ResourceType: AuditResourcePriceList,
+				ResourceID:   reload.At.UTC().Format("20060102150405") + "_reload",
+				ResourceName: "Every change, removed by a development reload",
+				Action:       AuditDeleted,
+				Source:       AuditSourceCLI,
+				ActorID:      "router " + load.Release,
+				ActorName:    "router prices reload",
+				Changes: []AuditChange{
+					{Field: "changes", Before: names},
+					{Field: "entries", Before: reload.Entries},
+				},
+			})
+			if err != nil {
+				return err
+			}
 		}
-		if len(reload.Changes) == 0 {
-			return nil
-		}
-		names := make([]string, 0, len(reload.Changes))
-		for _, change := range reload.Changes {
-			names = append(names, change.Name)
-		}
-		return recordAuditEntry(ctx, tx, &AuditEntry{
-			ResourceType: AuditResourcePriceList,
-			ResourceID:   reload.Seed.Name,
-			ResourceName: "Every earlier change, removed by a development reload",
-			Action:       AuditDeleted,
-			Source:       AuditSourceCLI,
-			ActorID:      reload.Seed.CreatedBy,
-			ActorName:    "router prices reload",
-			Changes: []AuditChange{
-				{Field: "changes", Before: names},
-				{Field: "entries", Before: reload.Entries},
-			},
-		})
+		reload.Seed, reload.Loaded, err = syncPrices(ctx, tx, load)
+		return err
 	})
 	if err != nil {
 		return PriceReload{}, stack.Wrap(fmt.Errorf("store: reload prices: %w", busyOr(err)))

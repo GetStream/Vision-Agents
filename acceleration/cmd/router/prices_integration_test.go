@@ -344,27 +344,25 @@ func (s *PriceSyncSuite) TestReloadPutsTheFilesPricesBack() {
 
 	var audits []store.AuditEntry
 	s.Require().NoError(pgStore.DB().NewSelect().Model(&audits).Where("resource_type = ?", store.AuditResourcePriceList).
-		Order("created_at DESC").Scan(s.ctx))
+		Order("created_at", "id").Scan(s.ctx))
 	s.Require().Len(audits, 6, "the first seed, three changes, the reload's removal and its seed")
-	var seedAudit, removal store.AuditEntry
-	for _, audit := range audits[:2] {
-		switch audit.Action {
-		case store.AuditCreated:
-			seedAudit = audit
-		case store.AuditDeleted:
-			removal = audit
-		}
-	}
+	removal, seedAudit := audits[4], audits[5]
+	s.Equal(store.AuditDeleted, removal.Action, "the removal is recorded first")
+	s.Regexp(`^\d{14}_reload$`, removal.ResourceID)
+	s.NotEqual(seed.Name, removal.ResourceID)
+	s.Len(removal.Changes[0].Before, 4)
+	s.Equal(store.AuditCreated, seedAudit.Action)
 	s.Equal(seed.Name, seedAudit.ResourceID)
 	s.Equal(store.AuditSourceCLI, seedAudit.Source)
-	s.Equal(seed.Name, removal.ResourceID)
-	s.Len(removal.Changes[0].Before, 4)
 
 	var priceVersion string
 	s.Require().NoError(pgStore.ShardDB().QueryRowContext(s.ctx, "SELECT price_version FROM requests").Scan(&priceVersion))
 	s.Equal(fixed.Name, priceVersion, "a row keeps what priced it")
 
 	text := out.String()
+	s.Regexp(`^database "\w+_pricesync_\w*test" at \S+:\d+ \(tcp\), which answers as [0-9a-f.:]+:\d+\n`, text,
+		"where it is pointed comes first")
+	s.NotContains(text, "postgres:postgres")
 	s.Contains(text, "removed 4 price changes (1 not yet in force, 0 cancelled)")
 	s.Contains(text, "the markup in force was 1500 basis points")
 	s.Contains(text, "seeded the price list from "+s.settings.PricesFile+", vendor.json: change "+seed.Name)
@@ -385,6 +383,7 @@ func (s *PriceSyncSuite) TestReloadDryRunWritesNothing() {
 
 	s.Len(s.changes(pgStore), 2)
 	s.InDelta(42.0, s.rateOf(pgStore, vendor), 1e-12)
+	s.Regexp(`^database "\w+_pricesync_\w*test" at \S+:\d+ \(tcp\)`, out.String())
 	s.Contains(out.String(), "would remove 2 price changes")
 	s.Contains(out.String(), "would seed the price list from vendor.json")
 	s.Contains(out.String(), "1 items priced differently by the files:\n  "+prices.Name(vendor)+"\n")

@@ -1,11 +1,15 @@
 package prices
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -128,15 +132,33 @@ func (s *PricesSuite) TestTheEmbeddedListNamesItsRelease() {
 // database's list (router prices reload, whose command refuses any other database). Test code
 // resets its own databases and is not read.
 func (s *PricesSuite) TestNoPriceTableIsTruncated() {
-	truncates := regexp.MustCompile(`(?i)\bTRUNCATE\s+(TABLE\s+)?(ONLY\s+)?([\w."]+\s*,\s*)*"?price_(entries|changes)\b`)
 	for _, statement := range []string{"TRUNCATE price_entries", "truncate table only price_changes",
-		"TRUNCATE requests, stats_hourly, price_entries CASCADE"} {
-		s.True(truncates.MatchString(statement), statement)
+		"TRUNCATE requests, stats_hourly, price_entries CASCADE", "TRUNCATE public.price_entries",
+		`TRUNCATE "public"."price_changes"`, `TRUNCATE "price_entries"`, "TRUNCATE audit_log, public.price_changes",
+		"TRUNCATE /* x */ price_entries", "TRUNCATE/* x */price_entries", "TRUNCATE -- x\n  price_changes",
+		"TRUNCATE TABLE ONLY public . price_entries *", "TRUNCATE requests *, price_changes"} {
+		s.True(truncatesPriceTable.MatchString(statement), statement)
 	}
-	s.False(truncates.MatchString("at := now.Truncate(time.Hour) // price_entries"), "Go's Truncate is not SQL")
+	for _, text := range []string{"at := now.Truncate(time.Hour) // price_entries", "TRUNCATE requests",
+		"TRUNCATE price_entries_archive", "-- price_entries are never truncated"} {
+		s.False(truncatesPriceTable.MatchString(text), text)
+	}
+	placed := []byte(`package store
+func (s *Store) ReloadPrices() { _ = func() string { return "TRUNCATE price_entries, price_changes" } }
+const wipe = "TRUNCATE price_changes"
+func other(db *bun.DB) { db.NewTruncateTable() }
+`)
+	allowed, refused := priceTableTruncates("store/prices.go", placed, "store")
+	s.Equal(1, allowed, "the statement inside ReloadPrices")
+	s.Len(refused, 2, "a constant beside ReloadPrices, and bun's truncate")
+	allowed, refused = priceTableTruncates("elsewhere/prices.go", placed, "store")
+	s.Zero(allowed)
+	s.Len(refused, 3, "ReloadPrices outside internal/store is no exception")
+
 	root, err := filepath.Abs("..")
 	s.Require().NoError(err)
-	reload := filepath.Join(root, "internal", "store", "prices.go")
+	storeDir := filepath.Join(root, "internal", "store")
+	inReload := 0
 
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -155,16 +177,73 @@ func (s *PricesSuite) TestNoPriceTableIsTruncated() {
 		if err != nil {
 			return err
 		}
-		found := truncates.FindAllIndex(text, -1)
-		if path != reload {
-			s.Emptyf(found, "%s truncates a price table", path)
-			return nil
-		}
-		s.Require().Lenf(found, 1, "%s truncates a price table outside ReloadPrices", path)
-		before := string(text[:found[0][0]])
-		s.Truef(strings.HasPrefix(before[strings.LastIndex(before, "\nfunc ")+1:], "func (s *Store) ReloadPrices("),
-			"%s truncates a price table outside ReloadPrices", path)
+		allowed, refused := priceTableTruncates(path, text, storeDir)
+		inReload += allowed
+		s.Emptyf(refused, "%s truncates a price table outside store.ReloadPrices", path)
 		return nil
 	})
 	s.Require().NoError(err)
+	s.Equal(1, inReload, "store.ReloadPrices truncates the price tables in one statement")
+}
+
+// truncatesPriceTable is a TRUNCATE of either price table: in any case, with TABLE and ONLY or
+// without, in a list, under a schema, quoted or not, and with comments between the words.
+var truncatesPriceTable = func() *regexp.Regexp {
+	gap := `(?:\s|/\*.*?\*/|--[^\n]*(?:\n|$))`
+	name := `(?:"[^"]+"|\w+)`
+	schema := `(?:` + name + gap + `*\.` + gap + `*)?`
+	listed := schema + name + gap + `*\*?` + gap + `*,` + gap + `*`
+	return regexp.MustCompile(`(?is)\bTRUNCATE` + gap + `+(?:TABLE` + gap + `+)?(?:ONLY` + gap + `+)?(?:` + listed + `)*` +
+		schema + `"?price_(?:entries|changes)\b`)
+}()
+
+// priceTableTruncates reads a .go or .sql file for truncates of a price table: how many sit in
+// store.ReloadPrices, which may hold them when its file is in storeDir, and what every other
+// one says. In Go only string literals are SQL, and any bun NewTruncateTable is refused, since
+// which table it truncates is not in the source. A Go file that does not parse is read as SQL.
+func priceTableTruncates(path string, text []byte, storeDir string) (allowed int, refused []string) {
+	file, err := parser.ParseFile(token.NewFileSet(), path, text, parser.SkipObjectResolution)
+	if !strings.HasSuffix(path, ".go") || err != nil {
+		for _, found := range truncatesPriceTable.FindAll(text, -1) {
+			refused = append(refused, string(found))
+		}
+		return 0, refused
+	}
+	for _, decl := range file.Decls {
+		exempt := filepath.Dir(path) == storeDir && isReloadPrices(decl)
+		ast.Inspect(decl, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.BasicLit:
+				value, err := strconv.Unquote(node.Value)
+				if node.Kind != token.STRING || err != nil || !truncatesPriceTable.MatchString(value) {
+					return true
+				}
+				if exempt {
+					allowed++
+				} else {
+					refused = append(refused, value)
+				}
+			case *ast.SelectorExpr:
+				if node.Sel.Name == "NewTruncateTable" {
+					refused = append(refused, "NewTruncateTable")
+				}
+			}
+			return true
+		})
+	}
+	return allowed, refused
+}
+
+// isReloadPrices is whether a declaration is func (s *Store) ReloadPrices.
+func isReloadPrices(decl ast.Decl) bool {
+	fn, ok := decl.(*ast.FuncDecl)
+	if !ok || fn.Name.Name != "ReloadPrices" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return false
+	}
+	star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	receiver, ok := star.X.(*ast.Ident)
+	return ok && receiver.Name == "Store"
 }

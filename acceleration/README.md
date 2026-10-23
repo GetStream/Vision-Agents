@@ -1482,19 +1482,31 @@ A start never changes a rate the database already has, so on a laptop an edit to
 `router prices reload --development` puts the files' list back: in one transaction, under the
 lock a load takes, it empties `price_changes` and `price_entries` (every change goes, those
 scheduled, cancelled or setting a markup included), then writes the `seed` a fresh database
-gets from `ROUTER_PRICES_FILE` over `vendor.json`, with that file's markup. It prints what it
-removed, what it seeded, and the items whose price moved; `--dry-run` prints the same and
-writes nothing. The audit log keeps its rows and gains two: the removal (`deleted`) and the
-seed. Rows already recorded keep the `price_version` that priced them, which then names no
-change. Running routers read the new list within 30 seconds, so none needs a restart.
+gets from `ROUTER_PRICES_FILE` over `vendor.json`, with that file's markup. It first prints
+the database it is pointed at, the address it connects to and the address the server answers
+as (never the password), then what it removed, what it seeded, and the items whose price
+moved; `--dry-run` prints the same and writes nothing. The audit log keeps its rows and gains
+two: the removal (`deleted`, named `<time>_reload`), then the seed. Rows already recorded keep
+the `price_version` that priced them, which then names no change. Running routers read the
+new list within 30 seconds, so none needs a restart.
 
-It refuses to run unless all three hold: `--development` is passed, `ROUTER_ENV` is unset,
-`local`, `development` or `testing`, and `postgres.dsn` names `localhost`, a loopback address
-or `postgres` (compose's service, as the router's container reaches it):
+It refuses to run unless `--development` is passed and the database is on this machine or is
+compose's: both the host `postgres.dsn` names and the address the driver connects to (a
+`host` query parameter included) must be `localhost`, a loopback address, a unix socket or
+`postgres` (compose's service, as the router's container reaches it). It also refuses under a
+`ROUTER_ENV` other than unset, `local`, `development` or `testing`, but that is not what
+protects a deployment: most leave `ROUTER_ENV` unset, which reads as `local`. Their remote
+database host is what refuses it. A port-forward or proxy listening on localhost for a remote
+database passes the host check, and only `--development` stands in its way, so read the
+database and address the command prints first, and start with `--dry-run`.
+
+`vendor.json` is built into the binary, so after editing it rebuild what runs the command: `go
+run` does that itself, and the compose router needs `docker compose up -d --build router`
+first, which also restarts it on the new image.
 
 ```bash
 cd acceleration && go run ./cmd/router prices reload --development --dry-run
-docker compose exec router router prices reload --development
+docker compose up -d --build router && docker compose exec router router prices reload --development
 ```
 
 Until the router prices from the database, it prices every row from its price files:
