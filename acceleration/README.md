@@ -487,7 +487,8 @@ customer may do, so an agent's speech never waits on a database:
   loop of their own, so a slow Postgres never makes a balance stale: the organization's limits
   and resets every 5 s, and what each subject with a limit spent from the usage service's
   counters every second (`ROUTER_USAGE_REDIS_URL`, the Redis the service mirrors its windows
-  to), or from the service itself every 5 s when that is not set, or when a counter is missing.
+  to), or from the service itself every 5 s when that is not set, when a counter is missing,
+  and for 5 s after that Redis fails a read.
   With no usage service there is no credit or spend hard limit, and each limited subject's
   spend is summed from the request rows every 10 s, four at a time.
 - What this router recorded since is held by usage id from the moment the row is recorded,
@@ -499,8 +500,10 @@ customer may do, so an agent's speech never waits on a database:
   with no usage service once a sum asked for after the shard wrote the row lands. Counted
   twice for a moment, never not at all. A row a ledger is never known to have is let go 10
   minutes after the later of when it was held and when that ledger last failed to read, and
-  logged; while no read lands, every hold is kept. A limit counts only what was held in its
-  current UTC window; the balance counts everything held.
+  logged; while no read lands, every hold is kept. While the usage service acks none of an
+  organization's rows, its limits' holds are kept too, and their 10 minutes start once acks
+  come back. A limit counts only what was held in its current UTC window; the balance counts
+  everything held.
 
 In that order: a suspended organization is refused everything, 403 `account_suspended`. A
 balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
@@ -512,7 +515,12 @@ organization and then in the app, the key, the user), 402 `spend_limit_reached`,
 still served past every one of them but a suspension. An organization is admitted until its
 first read lands. Once it has gone a minute without one, its tier's `fail_mode` decides: a
 closed tier refuses work that costs money until the balance can be read, an open one is
-admitted on the last read. The metrics are `router_admission_refresh_errors_total`,
+admitted on the last read. The customer's limits are read before the first admission that
+needs them: an organization's the first time this router sees it, and what a subject with a
+limit spent the first time it sees the subject, waiting at most 250 ms. A read that does not
+land by then, or limits and spend last read over a minute ago, are the tier's `fail_mode` to
+answer as well (an organization with no tier, or no usage service, follows the default tier,
+which fails closed). The metrics are `router_admission_refresh_errors_total`,
 `router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
 by reason.
 
