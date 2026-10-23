@@ -68,6 +68,44 @@ func (s *StoreSuite) TestSpendKeepsTheBiggestGroupsAndSumsTheRestIntoOther() {
 		"the two biggest keep a group, the rest are other, and the unlabelled spend is its own")
 }
 
+func (s *StoreSuite) TestRuntimeIsSpendAndNotRequests() {
+	support := map[string]string{"product": "support"}
+	s.spent("acme", "llm", s.base.Add(time.Minute), 1000, support)
+	s.spent("acme", RuntimeModality, s.base.Add(2*time.Minute), 600, support)
+	s.spent("acme", RuntimeModality, s.base.Add(3*time.Minute), 600, nil)
+
+	buckets, err := s.store.CustomerSpend(
+		s.ctx, "acme", "modality", Daily, s.base, s.base.Add(24*time.Hour), 6, nil, UsageFilter{})
+	s.Require().NoError(err)
+	byModality := map[string]SpendBucket{}
+	for _, bucket := range buckets {
+		byModality[bucket.Value] = bucket
+	}
+	s.EqualValues(1200, byModality[RuntimeModality].CostMicrosTotal, "a session's time is spend")
+	s.Zero(byModality[RuntimeModality].RequestCount, "and asks no provider anything")
+	s.EqualValues(1, byModality["llm"].RequestCount)
+
+	keys, err := s.store.CustomerTagKeys(s.ctx, "acme", s.base, s.base.Add(24*time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(keys, 1)
+	s.EqualValues(1600, keys[0].CostMicrosTotal)
+	s.EqualValues(1, keys[0].RequestCount)
+	s.InDelta(1.0, keys[0].Coverage, 0.001, "the one request carries the label; runtime is not a request")
+}
+
+func (s *StoreSuite) TestTagKeysOfRuntimeAloneAreSpendWithNoRequests() {
+	s.spent("acme", RuntimeModality, s.base.Add(time.Minute), 600, map[string]string{"product": "support"})
+
+	keys, err := s.store.CustomerTagKeys(s.ctx, "acme", s.base, s.base.Add(24*time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(keys, 1)
+	s.EqualValues(600, keys[0].CostMicrosTotal)
+	s.Zero(keys[0].RequestCount)
+	s.Zero(keys[0].Coverage)
+	s.Require().Len(keys[0].TopValues, 1)
+	s.InDelta(1.0, keys[0].TopValues[0].Share, 0.001)
+}
+
 func (s *StoreSuite) TestSpendCanBeNarrowedToOneLabel() {
 	s.spent("acme", "llm", s.base.Add(time.Minute), 1000,
 		map[string]string{"product": "support", "environment": "production"})

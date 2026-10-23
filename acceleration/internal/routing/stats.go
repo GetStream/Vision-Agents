@@ -167,6 +167,16 @@ const (
 	MeasuredByRouter    = "router"
 )
 
+// Work started to cut latency and possibly thrown away is billed like any other, and tagged so
+// it can be found: AttributeSpeculation is the id every speculative reply to one turn of the
+// caller's shares, AttributeHedge the id of a request asked of two providers at once, and
+// AttributeKept "true" on the attempt whose response was used and "false" on one thrown away.
+const (
+	AttributeSpeculation = "speculation"
+	AttributeHedge       = "hedge"
+	AttributeKept        = "kept"
+)
+
 // MeasuredByRouter marks the stat's quantities as the router's own measure, which is the bill
 // rather than an estimate of it: a zero is the count, not a vendor that said nothing.
 func (s *Stat) MeasuredByRouter() { s.Attribute(AttributeMeasuredBy, MeasuredByRouter) }

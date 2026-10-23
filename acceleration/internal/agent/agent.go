@@ -280,8 +280,10 @@ type Agent struct {
 	skillFiles   map[string]map[string]string
 	writtenFiles map[string]map[string]string
 	// speculations are replies started before the flow controller ruled on their words,
-	// held until it does, by candidate.
+	// held until it does, by candidate. speculating is the id their rows share, kept from the
+	// first speculative reply to a turn of the caller's until the turn is answered.
 	speculations map[string]*speculation
+	speculating  string
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -861,17 +863,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true}, "", nil, asked, sender, scheduled, "")
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1687,10 +1689,11 @@ func (a *Agent) perform(action Action) {
 			decidedAt: time.Now(), said: newestWords(strings.TrimSpace(missed+" "+action.Candidate.Said()), missedWords)}
 		a.mu.Unlock()
 		note := joinNotes(action.Clarify, missedNote(missed))
-		if a.adoptSpeculation(action.Candidate, note) {
+		adopted, speculated := a.adoptSpeculation(action.Candidate, note)
+		if adopted {
 			return
 		}
-		if err := a.respondCandidate(action.Candidate, note); err != nil {
+		if err := a.respondCandidate(action.Candidate, note, speculated); err != nil {
 			a.fail(err, "llm")
 		}
 
@@ -1843,18 +1846,19 @@ func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
 func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false)
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{}, false, "")
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
-func (a *Agent) respondCandidate(ready candidate, note string) error {
+// speculated is respondTurn's.
+func (a *Agent) respondCandidate(ready candidate, note, speculated string) error {
 	return a.respondTurn(ready.ID, ready.Participant, ready.Said(), heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note, nil, options.LLM{}, routing.Caller{}, false)
+	}, note, nil, options.LLM{}, routing.Caller{}, false, speculated)
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned. A
@@ -1930,6 +1934,9 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	}, "")
 }
 
+// respondTurn answers a turn of the caller's. speculated is the id of the speculative replies
+// to the turn that were thrown away, which this answer is kept in place of, and empty when
+// there were none.
 func (a *Agent) respondTurn(
 	turnID string,
 	participant stt.Participant,
@@ -1940,6 +1947,7 @@ func (a *Agent) respondTurn(
 	asked options.LLM,
 	sender routing.Caller,
 	scheduled bool,
+	speculated string,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
@@ -1948,6 +1956,9 @@ func (a *Agent) respondTurn(
 	}
 	a.keepTurnLocked(participant, text)
 	history := a.replayLocked()
+	// This turn is answered, however it was asked, so what is speculated on next is a turn
+	// of its own.
+	a.speculating = ""
 
 	a.speakingTurn = turnID
 	a.generating = true
@@ -1977,7 +1988,7 @@ func (a *Agent) respondTurn(
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
-	return a.generate(harness.Turn{
+	turn := harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
@@ -1985,7 +1996,12 @@ func (a *Agent) respondTurn(
 		Images:       images,
 		Asked:        asked,
 		NoTools:      noTools,
-	}, text)
+	}
+	if speculated != "" {
+		kept := map[string]string{routing.AttributeSpeculation: speculated, routing.AttributeKept: "true"}
+		turn.Attributes = func() map[string]string { return kept }
+	}
+	return a.generate(turn, text)
 }
 
 // typedCaller is the participant RespondTo answers as. Typed words are the caller's own,
@@ -3649,6 +3665,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 			// An answer took the reply started for these words; any other ruling leaves it
 			// unwanted.
 			a.dropSpeculation(typed.CandidateID)
+			if typed.Disposition == harness.Ignore {
+				a.stopSpeculating()
+			}
 
 		case harness.Compacted:
 			a.applyCompaction(typed)

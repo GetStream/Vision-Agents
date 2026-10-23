@@ -172,7 +172,7 @@ type Manager struct {
 	// records keeps sessions, turns and what each turn did, which is what an old
 	// conversation is read back from. Nil without a store, and never handed an incognito
 	// session.
-	records *sessionRecorder
+	records sessionRecords
 	// invocations logs each connector tool call. Nil without a store or with connectors off,
 	// where no session opens a connector.
 	invocations *invocationRecorder
@@ -187,6 +187,11 @@ type Manager struct {
 	hosts ToolHosts
 	// slots caps each connection's connector calls in flight, across every session here.
 	slots callSlots
+	// runtime records how long each session is open. Nil without a store or a writer, where
+	// nothing is recorded, though every session is still timed.
+	runtime *routing.Recorder
+	// sliceEvery is how long a slice of a session's runtime runs. Zero is routing.SliceEvery.
+	sliceEvery time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -235,6 +240,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
 	}
+	var records *sessionRecorder
 	if options.Store != nil {
 		if options.Configs == nil {
 			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
@@ -245,15 +251,76 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
-		manager.records = newSessionRecorder(options.Store, options.Logger)
+		records = newSessionRecorder(options.Store, options.Logger)
+		manager.records = records
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 		if options.Connectors.Transports != nil {
 			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
 		}
 	}
-	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
+	manager.titles = newTitler(options.LLM, records, options.Logger)
 	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
+	switch {
+	case options.Writer != nil:
+		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)
+	case options.Store != nil || options.Live != nil:
+		manager.runtime = routing.NewRecorder(routing.Runtime, options.Store, options.Live, options.Pricer, options.Logger)
+	}
 	return manager, nil
+}
+
+// runtimeProvider is who runtime rows are billed under: the deployment itself, which no
+// vendor prices.
+const runtimeProvider = "stream"
+
+// startRuntime starts timing a session about to open, billed as what holds it: text or voice.
+func (m *Manager) startRuntime(spec Spec) *routing.Slices {
+	mode := store.ModalityVoice
+	if spec.Text {
+		mode = store.ModalityText
+	}
+	return routing.StartSlices(routing.SliceOptions{
+		Recorder: m.runtime,
+		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode},
+		Owner: routing.Owner{
+			CustomerID:  spec.CustomerID,
+			Attribution: spec.Attribution,
+			Caller:      spec.Caller,
+			AgentID:     spec.AgentID,
+			CallID:      spec.CallID,
+			Tags:        spec.Tags,
+		},
+		Kind:  string(routing.Runtime),
+		ID:    spec.ID,
+		Every: m.sliceEvery,
+	})
+}
+
+// newSession is the session spec opens, timed from now by runtime, which every session is
+// given so that none is open unbilled.
+func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills harness.Skills, opening time.Time, runtime *routing.Slices) *Session {
+	created := &Session{
+		logs:      m.logs,
+		persisted: conv,
+		id:        spec.ID,
+		spec:      spec,
+		// Postgres keeps microseconds. The live session sorts by the same instant as its
+		// row, or a cursor taken from one would hand the other back on the next page.
+		created:       opening.Truncate(time.Microsecond),
+		logger:        m.logger,
+		watchers:      map[uint64]*watcher{},
+		detachedGrace: m.options.DetachedGrace,
+		state:         Live,
+		modality:      store.ModalityVoice,
+		runtime:       runtime,
+		runtimeMode:   store.ModalityVoice,
+		skills:        skills,
+	}
+	if spec.Text {
+		created.modality = store.ModalityText
+		created.runtimeMode = store.ModalityText
+	}
+	return created
 }
 
 // Create joins a call and returns the session running it.
@@ -488,23 +555,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if !spec.Reopened.IsZero() {
 		opening = spec.Reopened.UTC()
 	}
-	created := &Session{
-		logs:      m.logs,
-		persisted: conv,
-		id:        spec.ID,
-		spec:      spec,
-		// Postgres keeps microseconds. The live session sorts by the same instant as its
-		// row, or a cursor taken from one would hand the other back on the next page.
-		created:       opening.Truncate(time.Microsecond),
-		logger:        m.logger,
-		watchers:      map[uint64]*watcher{},
-		detachedGrace: m.options.DetachedGrace,
-		state:         Live,
-		modality:      store.ModalityVoice,
-		skills:        skills,
-	}
-	if spec.Text {
-		created.modality = store.ModalityText
+	// A session that fails to open is not billed for the time it spent trying.
+	runtime := m.startRuntime(spec)
+	defer func() {
+		if !opened {
+			runtime.Cancel()
+		}
+	}()
+	created := m.newSession(spec, conv, skills, opening, runtime)
+	fail := func() {
+		runtime.Cancel()
+		created.Close()
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
@@ -757,6 +818,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	// An incognito session is never handed the recorder, so nothing downstream has to
+	// remember to check the flag: there is simply nowhere for it to write. It is handed over
+	// before the fan-out that reads it starts, and holds what the session says until its row
+	// is written, once it has joined.
+	var records *pending
+	if m.records != nil && !spec.Incognito {
+		records = &pending{next: m.records}
+		created.records = records
+	}
+
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
@@ -766,13 +837,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
 	// returned would hang up on the caller immediately.
 	if err := built.Join(context.WithoutCancel(ctx)); err != nil {
-		created.Close()
+		fail()
 		return nil, stack.Wrap(err)
 	}
 
 	if spec.Greeting != "" {
 		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
-			created.Close()
+			fail()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
 	}
@@ -792,26 +863,23 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 		m.calls.Started(row(created))
 	}
-
-	// An incognito session is never handed the recorder, so nothing downstream has to
-	// remember to check the flag: there is simply nowhere for it to write.
-	if m.records != nil && !spec.Incognito {
-		created.records = m.records
+	if records != nil {
+		kept, offered := sessionRow(created), toolRows(created)
+		records.open(func() { m.records.Opened(kept, offered) })
 		created.closers = append(created.closers, func() {
 			m.records.Closed(created.id, time.Now().UTC())
 		})
-		m.records.Opened(sessionRow(created), toolRows(created))
 	}
 
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		created.Close()
+		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
-		created.Close()
+		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
@@ -1391,6 +1459,11 @@ func (m *Manager) Shutdown() error {
 	m.sessions = map[string]*Session{}
 	m.mu.Unlock()
 
+	// Each close may wait for the agent to finish speaking, so every session stops being
+	// billed before the first of them is closed.
+	for _, found := range running {
+		found.runtime.Stop()
+	}
 	var failures []error
 	for _, found := range running {
 		if err := found.Close(); err != nil {
@@ -1404,6 +1477,10 @@ func (m *Manager) Shutdown() error {
 	// worth holding a shutdown open for a model to finish writing.
 	m.titles.Close()
 	m.cards.Close()
+	// A writer the manager shares is left open; its own is drained of the last slices.
+	if m.runtime != nil {
+		m.runtime.Close()
+	}
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()

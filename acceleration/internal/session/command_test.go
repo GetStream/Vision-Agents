@@ -141,9 +141,9 @@ func (s *SessionSuite) stored(running *Session) []persistent.Message {
 
 func (s *SessionSuite) TestACommandNamesTheResponseItIsRecordedAs() {
 	s.persists()
-	running := s.commands()
 	held := &heldRecorder{}
-	running.records = held
+	s.manager.records = held
+	running := s.commands()
 
 	_, responseID, err := running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
 	s.Require().NoError(err)

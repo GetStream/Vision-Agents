@@ -48,8 +48,10 @@ func (s *Session) hedges(params llm.ResponseParams) bool {
 // alone, so a hedge that errors costs the original nothing. When both are out, the original's
 // outcome stands: what a request that was never hedged would have had.
 func (s *Session) hedged(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	asked := &hedging{id: params.ID}
+	first, second := &hedgeAttempt{hedging: asked}, &hedgeAttempt{hedging: asked}
 	original := race(ctx, func(ctx context.Context) (*llm.Stream, func(), error) {
-		stream, err := s.create(ctx, params)
+		stream, err := s.attempt(ctx, params, first)
 		return stream, nil, err
 	})
 	late := time.NewTimer(s.lateAfter(params))
@@ -66,39 +68,91 @@ func (s *Session) hedged(ctx context.Context, params llm.ResponseParams) (*llm.S
 		case <-tick:
 			tick = nil
 			hedge = race(ctx, func(ctx context.Context) (*llm.Stream, func(), error) {
-				return s.askAnother(ctx, params)
+				return s.askAnother(ctx, params, second)
 			})
 			hedgeDone = hedge.done
 		case <-originalDone:
 			originalDone = nil
 			// Either it won, or it is out and there is no hedge still to wait for.
 			if original.content || hedgeDone == nil {
+				asked.keep(first)
 				hedge.abandon()
 				return original.outcome()
 			}
 		case <-hedgeDone:
 			hedgeDone = nil
 			if hedge.content {
+				asked.keep(second)
 				original.abandon()
 				return hedge.outcome()
 			}
 			// It is out, so it is read out to its end while the original goes on alone.
 			hedge.abandon()
 			if originalDone == nil {
+				asked.keep(first)
 				return original.outcome()
 			}
 		}
 	}
 }
 
+// hedging is one request that may be asked twice. Once it has been, each attempt's row names
+// the request, and says whether its response is the one the caller was given.
+type hedging struct {
+	id string
+
+	mu sync.Mutex
+	// asked is set once the request was asked a second time: until then its one attempt is a
+	// request like any other. kept is the attempt whose outcome the caller was given.
+	asked bool
+	kept  *hedgeAttempt
+}
+
+// hedgeAttempt is one of a hedged request's attempts.
+type hedgeAttempt struct {
+	hedging *hedging
+}
+
+// again says the request is being asked a second time.
+func (h *hedging) again() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.asked = true
+}
+
+// keep says which attempt the caller is given. A loser is read out after, and an attempt
+// that failed before either is chosen has already been recorded, so neither is kept.
+func (h *hedging) keep(chosen *hedgeAttempt) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.kept = chosen
+}
+
+// outcome is the request the attempt belongs to and whether the caller was given its
+// response, once the request was asked twice: hedged is false for a request that never was,
+// a nil attempt included.
+func (a *hedgeAttempt) outcome() (id string, kept, hedged bool) {
+	if a == nil {
+		return "", false, false
+	}
+	a.hedging.mu.Lock()
+	defer a.hedging.mu.Unlock()
+	if !a.hedging.asked {
+		return "", false, false
+	}
+	return a.hedging.id, a.hedging.kept == a, true
+}
+
 // askAnother opens the response on another candidate of the same target, which is a child of
 // this session for as long as its stream runs.
-func (s *Session) askAnother(ctx context.Context, params llm.ResponseParams) (*llm.Stream, func(), error) {
+func (s *Session) askAnother(ctx context.Context, params llm.ResponseParams, hedge *hedgeAttempt) (*llm.Stream, func(), error) {
 	child, err := s.hedge(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	stream, err := child.create(ctx, params)
+	// Only now is the request asked twice: with no other candidate it never was.
+	hedge.hedging.again()
+	stream, err := child.attempt(ctx, params, hedge)
 	if err != nil {
 		s.releaseChild(child)
 		return nil, nil, err
