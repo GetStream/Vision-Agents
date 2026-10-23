@@ -13,10 +13,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// AI-1842: a thread on a line of one person (SMS on Telnyx, WhatsApp, iMessage on Linq), on a
+// AI-1842: a thread on a line of one person (SMS on Telnyx, WhatsApp), on a
 // config with scheduling on, is offered the scheduling tools. A task made there belongs to the
-// person who wrote, the Stream user the bridge writes them as, and keeps its thread channel. A
-// Slack thread is shared, so it is offered none.
+// person the thread belongs to, the Stream user the bridge writes them as, and keeps its thread
+// channel. A Slack thread is shared and a Linq chat may be a group, so they are offered none.
 
 // stretchInTwoHours is a schedule_task call the scheduling model makes.
 const stretchInTwoHours = `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H"}`
@@ -284,29 +284,22 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadSchedulesForThePersonWhoWrote(
 	s.took(1)
 }
 
-// Two senders in one Linq chat hold tasks of their own: the second lists none of the first's.
-func (s *LinqChannelSuite) TestTwoSendersInOneChatHoldTasksOfTheirOwn() {
+// A Linq chat may be a group, and the thread does not say, so it is offered no scheduling tools.
+func (s *LinqChannelSuite) TestALinqChatIsNotOfferedTheTools() {
 	s.schedulingOn(&s.config)
 	chat := s.utils.uuid()
-	s.planTool("schedule_task", stretchInTwoHours)
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+13125550001", "remind me to stretch in two hours"), time.Now()))
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.answeredAfter(channel, 0)
-	task := s.customersTasks(1)[0]
-	s.Equal(s.chat.Stored(channel)[0]["user_id"], task.UserID)
-	s.Equal(channel, task.ChannelThread)
-	before := len(s.chat.Stored(channel))
+	// The reply is sent before the test ends, so it reaches no later test's Linq.
+	s.took(1)
 
-	s.planTool("list_scheduled_tasks", `{}`)
-	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+13125550002", "what have I got coming up"), time.Now()))
-	stored := s.written(channel, before+1)
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
-
-	s.toldTheModel(`"tasks":[]`)
-	// Both replies are sent before the test ends, so they reach no later test's Linq.
-	s.took(2)
+	offered := s.everyToolOffered()
+	for _, name := range schedulingTools {
+		s.False(slices.Contains(offered, name), name)
+	}
 }
 
 // A Slack thread is shared by the channel's people, so it is offered no scheduling tools.

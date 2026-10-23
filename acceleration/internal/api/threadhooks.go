@@ -188,9 +188,9 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 
 // personalThreads are the connectors whose thread is one person's, so its session schedules
 // tasks for the person who wrote (session.Spec.ThreadPerson): an SMS or WhatsApp thread is
-// the person's number (channelbridge.replyTo), and a Linq chat's tasks are each sender's own.
+// the person's number (channelbridge.replyTo), and a Linq chat may be a group, which the thread does not say, so Linq schedules nothing.
 // A Slack thread is shared by everyone in the channel, so it schedules nothing.
-var personalThreads = map[string]bool{"telnyx": true, "whatsapp": true, "linq": true}
+var personalThreads = map[string]bool{"telnyx": true, "whatsapp": true}
 
 // heldOnThread is whether a session's conversation is held on a thread channel: a live one
 // says so (Spec.Thread), and an ended one's channel has a channel_threads row.
