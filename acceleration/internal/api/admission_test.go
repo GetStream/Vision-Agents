@@ -349,14 +349,16 @@ func (s *AdmissionSuite) TestACallArrivingOverStreamForAnOrganizationThatMayNotP
 				s.Failf("an agent answered", "%s reached a worker", call.CallID)
 			case <-time.After(200 * time.Millisecond):
 			}
-			s.Contains(s.logged.String(), "may not pay for it unanswered")
+			s.Contains(s.logged.String(), "may not pay for it; ending it")
+			s.Eventually(func() bool { return strings.Contains(s.logged.String(), "could not end a refused arriving call") },
+				5*time.Second, 20*time.Millisecond, "ended at Stream, which the suite's phone service has no credentials for")
 			s.Contains(s.logged.String(), "code="+refused)
 		})
 	}
 }
 
 func (s *AdmissionSuite) TestACampaignCannotStartWhenItsOrganizationMayNotPay() {
-	created := s.campaign()
+	created := s.campaign(1)
 	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
 
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil)
@@ -368,62 +370,84 @@ func (s *AdmissionSuite) TestACampaignCannotStartWhenItsOrganizationMayNotPay() 
 	s.Equal(ContactStatePending, s.campaignContacts(created.Id)[0].State, "nobody was rung")
 }
 
-func (s *AdmissionSuite) TestACampaignRefusedForMoneyMidwayPausesAndKeepsItsContacts() {
-	for _, refused := range []string{codeInsufficientCredits, codeAccountSuspended} {
-		s.Run(refused, func() {
-			s.SetupTest()
-			s.usage.Credit(s.T(), s.organization(), 10_000_000)
-			s.Require().Eventually(func() bool {
-				return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
-			}, 10*time.Second, 50*time.Millisecond, "the credit is read")
-			created := s.campaign()
-			// Locking the contact's row holds the runner off it, as SKIP LOCKED claims, so the
-			// campaign starts with credit and its call comes once the credit is gone.
-			ctx := context.Background()
-			locked, err := s.store.DB().BeginTx(ctx, nil)
-			s.Require().NoError(err)
-			defer locked.Rollback() //nolint:errcheck // nothing was written
-			_, err = locked.ExecContext(ctx, "SELECT id FROM campaign_contacts WHERE campaign_id = ? FOR UPDATE", created.Id)
-			s.Require().NoError(err)
-			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
-
-			if refused == codeAccountSuspended {
-				s.usage.Suspend(s.T(), s.organization(), "fraud review")
-			} else {
-				s.usage.Credit(s.T(), s.organization(), -10_000_000)
-			}
-			s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
-			s.Require().NoError(locked.Rollback())
-
-			var campaign Campaign
-			s.Require().Eventually(func() bool {
-				s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id, nil, &campaign))
-				return campaign.State == CampaignStatePaused
-			}, 10*time.Second, 50*time.Millisecond, "paused at the refused call")
-			s.Equal(refused, value(campaign.PausedReason))
-			s.NotEqual(ContactStateFailed, s.campaignContacts(created.Id)[0].State,
-				"kept, as for a suspension: starting the campaign again releases it to be rung")
-
-			if refused == codeAccountSuspended {
-				s.usage.Restore(s.T(), s.organization())
-			} else {
-				s.usage.Credit(s.T(), s.organization(), 10_000_000)
-			}
-			s.Require().Eventually(func() bool {
-				return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
-			}, 10*time.Second, 50*time.Millisecond, "paid again")
-			var started Campaign
-			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, &started))
-			s.Nil(started.PausedReason, "starting it again clears why it paused")
-		})
+func (s *AdmissionSuite) TestACampaignRefusedMidwayPausesAndKeepsItsContacts() {
+	for _, concurrency := range []int{1, 2} {
+		for _, refused := range []string{codeInsufficientCredits, codeAccountSuspended, codeTelephonySuspended} {
+			s.Run(fmt.Sprintf("%s at concurrency %d", refused, concurrency), func() {
+				s.pausedMidway(refused, concurrency)
+			})
+		}
 	}
 }
 
-// campaign is a campaign over a stored config with one person to ring.
-func (s *AdmissionSuite) campaign() Campaign {
+// pausedMidway starts a campaign of concurrency whose one contact is held off until the
+// organization is refused, and checks the refused call pauses it for good, with the contact
+// given back to be rung.
+func (s *AdmissionSuite) pausedMidway(refused string, concurrency int) {
+	s.SetupTest()
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+	created := s.campaign(concurrency)
+	// Locking the contact's row holds the runner off it, as SKIP LOCKED claims, so the
+	// campaign starts with credit and its call comes once it is refused.
+	ctx := context.Background()
+	locked, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer locked.Rollback() //nolint:errcheck // nothing was written
+	_, err = locked.ExecContext(ctx, "SELECT id FROM campaign_contacts WHERE campaign_id = ? FOR UPDATE", created.Id)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+
+	switch refused {
+	case codeAccountSuspended:
+		s.usage.Suspend(s.T(), s.organization(), "fraud review")
+		s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+	case codeInsufficientCredits:
+		s.usage.Credit(s.T(), s.organization(), -10_000_000)
+		s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+	default:
+		s.Require().NoError(s.store.SuspendTelephony(ctx, &store.TelephonySuspension{
+			CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+		}))
+	}
+	s.Require().NoError(locked.Rollback())
+
+	read := func() (string, string) {
+		var campaign Campaign
+		s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id, nil, &campaign)
+		return string(campaign.State), value(campaign.PausedReason)
+	}
+	s.Require().Eventually(func() bool { state, _ := read(); return state == string(CampaignStatePaused) },
+		10*time.Second, 50*time.Millisecond, "paused at the refused call")
+	s.Never(func() bool { state, reason := read(); return state != string(CampaignStatePaused) || reason != refused },
+		500*time.Millisecond, 20*time.Millisecond, "and it stays paused, with why, whatever its other slots were doing")
+	s.Equal(ContactStatePending, s.campaignContacts(created.Id)[0].State,
+		"the contact nobody rang is given back, to be rung when the campaign is started again")
+
+	switch refused {
+	case codeAccountSuspended:
+		s.usage.Restore(s.T(), s.organization())
+	case codeInsufficientCredits:
+		s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	default:
+		s.Require().NoError(s.store.LiftTelephonySuspension(ctx, s.customerID()))
+	}
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
+	}, 10*time.Second, 50*time.Millisecond, "paid again")
+	var started Campaign
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, &started))
+	s.Nil(started.PausedReason, "starting it again clears why it paused")
+}
+
+// campaign is a campaign of concurrency over a stored config with one person to ring.
+func (s *AdmissionSuite) campaign(concurrency int) Campaign {
 	var created Campaign
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns", map[string]any{
 		"name": "campaign-" + s.utils.uuid(), "config_id": s.data.createAgentConfig().Id, "from_number": s.utils.number(),
+		"concurrency": concurrency,
 	}, &created))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts",
 		map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}}}, nil))

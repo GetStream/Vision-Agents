@@ -133,6 +133,17 @@ func (s *Service) Admit(ctx context.Context, customerID string) error {
 	return s.gate.Admit(ctx, customerID)
 }
 
+// EndCall ends a Stream call one of the customer's numbers brought somebody into, in the app
+// the number's lines are in. Stream's SIP bridge has answered the caller by the time the call's
+// session starts, so a call nobody may take is ended rather than left ringing.
+func (s *Service) EndCall(ctx context.Context, customer string, app int64, callType, callID string) error {
+	stream, err := s.streamForApp(ctx, customer, app)
+	if err != nil {
+		return err
+	}
+	return stream.EndCall(ctx, callType, callID)
+}
+
 // streamFor is the app new lines for a customer are made in, and its pin.
 func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int64, error) {
 	if s.apps != nil {

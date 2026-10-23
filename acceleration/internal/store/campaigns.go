@@ -247,6 +247,25 @@ func (s *Store) ReleaseContacts(ctx context.Context, campaignID string) error {
 	return nil
 }
 
+// UnclaimContact gives back a contact claimed and never rung, as pending and with the attempt
+// the claim counted taken off, so the campaign rings them when it is started again.
+func (s *Store) UnclaimContact(ctx context.Context, contactID string) error {
+	if contactID == "" {
+		return stack.Wrap(errors.New("store: a contact id is required"))
+	}
+
+	_, err := s.db.NewUpdate().Model((*Contact)(nil)).
+		Set("state = ?", Pending).
+		Set("attempts = greatest(attempts - 1, 0)").
+		Where("id = ?", contactID).
+		Where("state = ?", Calling).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: unclaim contact: %w", err))
+	}
+	return nil
+}
+
 // nullable keeps an empty string out of a column that means "nothing happened" by being
 // null rather than blank.
 func nullable(text string) any {
