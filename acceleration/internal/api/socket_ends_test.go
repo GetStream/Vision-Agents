@@ -63,7 +63,7 @@ func (s *SocketHangUpSuite) SetupTest() {
 // greetingVoice is the voice the socket's session speaks in, started by the time the socket
 // answers with its session.
 func (s *SocketHangUpSuite) greetingVoice() *tts.Emitter {
-	return s.voice.emitter
+	return s.speaking().emitter
 }
 
 func (s *SocketHangUpSuite) TestACallerHangingUpMidGreetingIsNoFailure() {

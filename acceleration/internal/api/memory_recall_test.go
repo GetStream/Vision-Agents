@@ -24,6 +24,9 @@ const recallEvery = 3 * time.Second
 // MemorySuite runs the router against mem0 rather than a stand-in: whose memories a session
 // reads is decided by the filters mem0 applies, so a stand-in would only prove itself. The
 // model is the echo stub, so what a session recalled is what it answers with.
+//
+// It writes real memories, so it runs only when asked: RUN_MEM0_SUITE=1 as well as
+// MEM0_API_KEY. A key in the repo's .env alone is not asking.
 type MemorySuite struct {
 	RouterSuite
 
@@ -37,6 +40,9 @@ func TestMemorySuite(t *testing.T) {
 }
 
 func (s *MemorySuite) SetupSuite() {
+	if os.Getenv("RUN_MEM0_SUITE") != "1" {
+		s.T().Skip("RUN_MEM0_SUITE=1 runs this suite against the real mem0")
+	}
 	if os.Getenv("MEM0_API_KEY") == "" {
 		s.T().Skip("MEM0_API_KEY must be set")
 	}

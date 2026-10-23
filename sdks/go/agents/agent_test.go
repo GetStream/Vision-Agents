@@ -1013,6 +1013,35 @@ func TestSyncSendsSandboxOnEachBindingThatSetsIt(t *testing.T) {
 	}
 }
 
+func TestSyncSendsRequireApprovalOnEachBindingThatSetsIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    require_approval: [create_*, merge_pull_request]\n"+
+		"  - linear\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 2 {
+		t.Fatalf("connectors went as %+v", sent)
+	}
+	github, linear := (*sent)[0], (*sent)[1]
+	if github.RequireApproval == nil || strings.Join(*github.RequireApproval, ",") != "create_*,merge_pull_request" {
+		t.Errorf("github went as %+v", github)
+	}
+	if linear.RequireApproval != nil {
+		t.Errorf("linear went with require_approval %v", *linear.RequireApproval)
+	}
+	if strings.Count(string(router.syncRaw[0]), `"require_approval"`) != 1 {
+		t.Errorf("body = %s", router.syncRaw[0])
+	}
+}
+
 // sandboxlessYAML is a connector entry with no sandbox key. Its sync body was probed on
 // e5d6d8057, before agent.yaml read sandbox on a connector.
 const sandboxlessYAML = "name: concierge\nconnectors:\n  - name: github\n    required: true\n"
