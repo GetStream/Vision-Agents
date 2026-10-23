@@ -183,7 +183,8 @@ const didNotWork = "That did not work: "
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
-// failed may be tried again, since what failed may not fail twice.
+// failed may be tried again, since what failed may not fail twice, and so may one whose result
+// says nothing was done (undoneResult).
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
 // heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
@@ -195,7 +196,7 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			strings.Contains(history[i].Content, notRun) {
+			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
@@ -207,6 +208,23 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 		}
 	}
 	return "", false
+}
+
+// undoneStatuses are the statuses of a result saying nothing was done, as the router answers a
+// connector call it held back (internal/session: connector_login.go, step_up.go,
+// connector_approval.go) until the person signs in, grants a scope or approves it. Once they
+// have, the same call must run: the step-up's own result tells the model to call it again.
+var undoneStatuses = []string{
+	"authorization_required", "scope_required", "credential_rejected",
+	"declined", "expired", "failed", "stopped", "unavailable",
+}
+
+// undoneResult reports whether a tool result's status says nothing was done (undoneStatuses).
+func undoneResult(content string) bool {
+	var body struct {
+		Status string `json:"status"`
+	}
+	return json.Unmarshal([]byte(content), &body) == nil && slices.Contains(undoneStatuses, body.Status)
 }
 
 // refusedBefore returns the answer of an identical call the tool already refused on this

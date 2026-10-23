@@ -4876,6 +4876,26 @@ func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke()
 	s.False(repeated, "a call that failed may be tried again")
 }
 
+func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
+	echo := llm.ToolCall{ID: "1", Name: "crm__echo", Arguments: `{"text":"a joke"}`}
+	answered := func(result string) bool {
+		history := []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{echo}},
+			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
+			{Role: llm.User, Content: "I pressed it, try again."},
+		}
+		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments})
+		return repeated
+	}
+
+	// What internal/session answers a connector call it did not send with.
+	for _, status := range []string{"authorization_required", "scope_required", "credential_rejected",
+		"declined", "expired", "failed", "stopped", "unavailable"} {
+		s.False(answered(`{"status":"`+status+`","message":"Tell them to press it."}`), status)
+	}
+	s.True(answered(`{"status":"sent","message":"Nash heard the joke."}`), "a status that says it was done answers the call")
+}
+
 func (s *AgentSuite) TestANameSpelledOutIsCalledWithTheNameAlone() {
 	s.JSONEq(`{"name": "Patel", "party_size": 4}`, unspelled(`{"name": "Patel P A T E L", "party_size": 4}`))
 	s.JSONEq(`{"name": "Ana Lopez"}`, unspelled(`{"name": "Ana Lopez L-O-P-E-Z"}`))
