@@ -23,6 +23,11 @@ type settings struct {
 	// RedisURL is where window totals are mirrored, the routers' Redis; empty mirrors
 	// nothing, and routers read through /v1/windows alone.
 	RedisURL string `koanf:"redis_url"`
+	// ManageKey is what the management API takes in X-Manage-Key; empty turns it off.
+	ManageKey string `koanf:"manage_key"`
+	// TiersFile is the tier file whose tiers the service adds at start when it lacks them;
+	// empty adds only the built-in default tier.
+	TiersFile string `koanf:"tiers_file"`
 }
 
 // variables maps each environment variable to the setting it carries. Nothing else in the
@@ -33,10 +38,30 @@ var variables = map[string]string{
 	"USAGE_POSTGRES_DSN": "postgres_dsn",
 	"USAGE_INGEST_TOKEN": "ingest_token",
 	"USAGE_REDIS_URL":    "redis_url",
+	"USAGE_MANAGE_KEY":   "manage_key",
+	"USAGE_TIERS_FILE":   "tiers_file",
 }
 
-// load reads the settings from environ.
+// load reads the settings the service serves with from environ.
 func load(environ func() []string) (settings, error) {
+	loaded, err := read(environ)
+	if err != nil {
+		return settings{}, err
+	}
+	if loaded.PostgresDSN == "" {
+		return settings{}, errors.New("usage: USAGE_POSTGRES_DSN is required: the service's own database")
+	}
+	if loaded.IngestToken == "" {
+		return settings{}, errors.New("usage: USAGE_INGEST_TOKEN is required: the bearer token producers and routers call with")
+	}
+	if loaded.ManageKey == loaded.IngestToken {
+		return settings{}, errors.New("usage: USAGE_MANAGE_KEY cannot be USAGE_INGEST_TOKEN, which every producer holds")
+	}
+	return loaded, nil
+}
+
+// read reads whatever settings environ has, requiring none.
+func read(environ func() []string) (settings, error) {
 	k := koanf.New(".")
 	provider := env.Provider(".", env.Opt{
 		Prefix: "USAGE_",
@@ -51,12 +76,6 @@ func load(environ func() []string) (settings, error) {
 	loaded := settings{Addr: defaultAddr}
 	if err := k.Unmarshal("", &loaded); err != nil {
 		return settings{}, err
-	}
-	if loaded.PostgresDSN == "" {
-		return settings{}, errors.New("usage: USAGE_POSTGRES_DSN is required: the service's own database")
-	}
-	if loaded.IngestToken == "" {
-		return settings{}, errors.New("usage: USAGE_INGEST_TOKEN is required: the bearer token producers and routers call with")
 	}
 	return loaded, nil
 }

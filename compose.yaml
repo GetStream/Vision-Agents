@@ -66,6 +66,11 @@ services:
       USAGE_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/usage?sslmode=disable
       USAGE_REDIS_URL: redis://redis:6379
       USAGE_INGEST_TOKEN: ${USAGE_INGEST_TOKEN:-local-usage-token}
+      USAGE_MANAGE_KEY: ${USAGE_MANAGE_KEY:-local-usage-manage-key}
+      # Made-up tiers for the local stack; the start adds the ones the database lacks.
+      USAGE_TIERS_FILE: /etc/usage/tiers.json
+    volumes:
+      - ./acceleration/tiers/dev.json:/etc/usage/tiers.json:ro
     ports:
       - "8070:8070"
     healthcheck:

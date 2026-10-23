@@ -47,8 +47,7 @@ func (s *LedgerSuite) TearDownSuite() {
 
 func (s *LedgerSuite) SetupTest() {
 	s.setNow(time.Now().UTC())
-	_, err := s.ledger.DB().ExecContext(s.ctx, "TRUNCATE usage_events, usage_windows")
-	s.Require().NoError(err)
+	usagetest.Empty(s.T(), s.ledger)
 }
 
 func (s *LedgerSuite) clock() time.Time {
@@ -358,5 +357,5 @@ func (s *LedgerSuite) TestMigratingAgainChangesNothing() {
 	s.Require().NoError(s.ledger.Migrate(s.ctx))
 	var version int64
 	s.Require().NoError(s.ledger.DB().QueryRowContext(s.ctx, "SELECT max(version_id) FROM goose_db_version").Scan(&version))
-	s.Equal(int64(1), version)
+	s.Equal(int64(2), version)
 }

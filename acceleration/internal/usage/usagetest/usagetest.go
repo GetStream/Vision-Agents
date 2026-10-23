@@ -40,6 +40,18 @@ var RedisDB = func() int {
 // Postgres to run against.
 func Database(t testing.TB, name string) string {
 	t.Helper()
+	own := EmptyDatabase(t, name)
+	opened, err := ledger.Open(ledger.Options{DSN: own})
+	require.NoError(t, err)
+	defer opened.Close() //nolint:errcheck // closing a pool the test is done with
+	require.NoError(t, opened.Migrate(context.Background()))
+	return own
+}
+
+// EmptyDatabase is a database of the caller's own, named after name, with no table at all:
+// one the service has never migrated. It skips the test when there is no Postgres.
+func EmptyDatabase(t testing.TB, name string) string {
+	t.Helper()
 	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("ROUTER_POSTGRES_DSN not set")
@@ -54,8 +66,15 @@ func Database(t testing.TB, name string) string {
 	require.True(t, strings.HasSuffix(database, "_test"), "refusing to drop the schema of %s, which is not a test database", database)
 	_, err = opened.DB().ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public")
 	require.NoError(t, err)
-	require.NoError(t, opened.Migrate(ctx))
 	return own
+}
+
+// Empty truncates every table of the service's database, for a suite's next test.
+func Empty(t testing.TB, opened *ledger.Ledger) {
+	t.Helper()
+	_, err := opened.DB().ExecContext(context.Background(),
+		"TRUNCATE usage_events, usage_windows, tiers, credit_entries, accounts, manage_audit")
+	require.NoError(t, err)
 }
 
 // RedisURL is the suites' Redis database. It skips the test when there is no Redis.
@@ -135,9 +154,11 @@ func Event(organization string, change ...func(*usage.Event)) usage.Event {
 
 // Service is the real usage service, serving on URL.
 type Service struct {
-	URL    string
-	Token  string
-	Ledger *ledger.Ledger
+	URL   string
+	Token string
+	// ManageKey opens the management API; empty when it was started without one.
+	ManageKey string
+	Ledger    *ledger.Ledger
 	// Mirror is nil unless the service was started with one.
 	Mirror *ledger.Mirror
 	// Client calls the service.
@@ -150,6 +171,8 @@ type Options struct {
 	DSN string
 	// RedisURL turns the mirror on.
 	RedisURL string
+	// ManageKey turns the management API on.
+	ManageKey string
 	// Mirror's retries, for a test that waits on one; zero takes the defaults.
 	RetryEvery time.Duration
 	Logger     *slog.Logger
@@ -162,7 +185,7 @@ func Start(t testing.TB, options Options) *Service {
 	if options.DSN == "" {
 		options.DSN = Database(t, "usage_service")
 	}
-	service := &Service{Token: "ingest-" + uuid.NewString()}
+	service := &Service{Token: "ingest-" + uuid.NewString(), ManageKey: options.ManageKey}
 	if options.RedisURL != "" {
 		mirror, err := ledger.NewMirror(ledger.MirrorOptions{URL: options.RedisURL, Logger: options.Logger, RetryEvery: options.RetryEvery})
 		require.NoError(t, err)
@@ -184,7 +207,7 @@ func Start(t testing.TB, options Options) *Service {
 	service.Ledger = opened
 	t.Cleanup(func() { _ = opened.Close() })
 
-	api, err := server.New(server.Options{Ledger: opened, IngestToken: service.Token, Logger: options.Logger, Now: options.Now})
+	api, err := server.New(server.Options{Ledger: opened, IngestToken: service.Token, ManageKey: options.ManageKey, Logger: options.Logger, Now: options.Now})
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(api.Handler())
 	t.Cleanup(httpServer.Close)
