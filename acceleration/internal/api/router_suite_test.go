@@ -77,6 +77,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -89,11 +90,25 @@ const suiteConnections = 5
 // settleFor is how long a test waits for something crossing a socket or a queue to arrive.
 const settleFor = 5 * time.Second
 
-// migrated runs the migrations once for every suite in the run: they set goose's globals
-// and attach triggers, neither of which two suites may do at once.
-var migrated struct {
-	sync.Once
-	err error
+// migrated runs the migrations once per database for every suite in the run: they set
+// goose's globals and attach triggers, neither of which two suites may do at once.
+var migrated = struct {
+	sync.Mutex
+	databases map[string]bool
+}{databases: map[string]bool{}}
+
+// migrate applies the migrations to the suite's database, unless a suite before it did.
+func migrate(ctx context.Context, db *store.Store, dsn string) error {
+	migrated.Lock()
+	defer migrated.Unlock()
+	if migrated.databases[dsn] {
+		return nil
+	}
+	if err := db.Migrate(ctx); err != nil {
+		return err
+	}
+	migrated.databases[dsn] = true
+	return nil
 }
 
 // redisDB hands each suite a Redis database of its own, so the queues one suite works
@@ -107,6 +122,23 @@ var redisDB atomic.Int32
 func runSuite(t *testing.T, s suite.TestingSuite) {
 	t.Parallel()
 	suite.Run(t, s)
+}
+
+// BeforeTest, in a suite with a database of its own, requires that no scheduled task is left
+// and empties the table once the test is done, whoever's tasks they are, so none a test leaves
+// due is claimed by the next test's worker. It runs after SetupTest, which may start tasks of its own.
+func (s *RouterSuite) BeforeTest(_, _ string) {
+	if s.database == "" || s.store == nil {
+		return
+	}
+	t := s.T()
+	count, err := s.store.DB().NewSelect().Model((*store.ScheduledTask)(nil)).Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, count, "a task is left from an earlier test or run")
+	t.Cleanup(func() {
+		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
+		require.NoError(t, err)
+	})
 }
 
 // suiteKEK seals the secrets of the keys the suite makes. It is the same for every suite,
@@ -157,7 +189,12 @@ type RouterSuite struct {
 	// deploymentKnown has the suite's Stream say which app is the deployment's own, as a
 	// deployment-mode router that was given its app id does.
 	deploymentKnown bool
-	server          *httptest.Server
+	// database gives the suite a database of its own, named after it, in place of the one
+	// the suites share, for a suite whose tests act on rows other tests made: a
+	// scheduled-task worker claims every task due in its database, whoever made it. A
+	// suite sets it before SetupSuite runs.
+	database string
+	server   *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
@@ -396,16 +433,24 @@ func (s *RouterSuite) SetupSuite() {
 	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
 	// place and the calls, sessions and requests in another.
 	options := store.Options{DSN: testDatabase(s.T(), dsn)}
+	if s.database != "" {
+		options.DSN = testenv.Database(options.DSN, s.database)
+	}
 	if shardDSN := os.Getenv("ROUTER_POSTGRES_SHARD_DSN"); shardDSN != "" {
 		options.ShardDSN = testDatabase(s.T(), shardDSN)
 	}
 	pgStore, err := store.OpenShards(options)
 	s.Require().NoError(err)
 	pgStore.DB().SetMaxOpenConns(suiteConnections)
-	migrated.Do(func() { migrated.err = pgStore.Migrate(ctx) })
-	s.Require().NoError(migrated.err)
+	s.Require().NoError(migrate(ctx, pgStore, options.DSN))
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
+	if s.database != "" {
+		// Only a suite's own database is emptied, never the shared one. A run killed by
+		// -timeout skips its cleanups, and the database outlives it.
+		_, err := pgStore.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(ctx)
+		s.Require().NoError(err)
+	}
 
 	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	s.Require().NoError(err)

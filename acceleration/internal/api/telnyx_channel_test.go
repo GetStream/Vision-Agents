@@ -69,6 +69,13 @@ func TestTelnyxChannelSuite(t *testing.T) {
 	runSuite(t, new(TelnyxChannelSuite))
 }
 
+// SetupSuite gives the suite a database of its own: its tests start a scheduled-task worker,
+// which claims every task due in its database, whoever made it.
+func (s *TelnyxChannelSuite) SetupSuite() {
+	s.database = "telnyx_channel"
+	s.telnyxLine.SetupSuite()
+}
+
 // SetupSuite registers ed25519 and the real bearer scheme, whose Wrap puts the API key on a
 // reply, and the real channel bridge.
 func (s *telnyxLine) SetupSuite() {

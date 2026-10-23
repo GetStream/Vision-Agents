@@ -306,6 +306,9 @@ func (s *ScheduledTasksSuite) SetupSuite() {
 	s.sink = &channelSink{sent: map[string][]string{}}
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.sink.serve))
 	s.T().Cleanup(s.channelAPI.Close)
+	// A worker claims every task due in its database, so the suite's workers and those of
+	// the other suites and packages running beside it must not share one.
+	s.database = "scheduled_tasks"
 	s.RouterSuite.SetupSuite()
 	s.runReads = &runReads{}
 	if s.store != nil {
@@ -432,7 +435,7 @@ func (s *ScheduledTasksSuite) taskReloaded(task store.ScheduledTask) store.Sched
 // delivered waits for the task's latest run to be delivered, and returns it.
 func (s *ScheduledTasksSuite) delivered(task store.ScheduledTask) store.ScheduledTaskRun {
 	var latest store.ScheduledTaskRun
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		runs := s.runsOf(task)
 		if len(runs) == 0 {
 			return false
@@ -2234,7 +2237,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
 	run := s.delivered(s.tasksOf(user)[0])
 	s.Equal("whatsapp", run.DeliveredTo)
 	s.Equal(created.Id, run.TaskID)
-	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0], "the words the agent answered with are the words carried out")
 	s.True(s.model().heard("<scheduled_task"), "the follow-up ran in the conversation")
@@ -2277,7 +2280,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedBySMSArrivesThere() {
 
 	run := s.delivered(s.tasksOf(user)[0])
 	s.Equal("sms", run.DeliveredTo)
-	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
+	s.Require().Eventually(func() bool { return len(s.sink.to(writer)) > 0 },
 		10*time.Second, 50*time.Millisecond, "nothing was texted to %s", writer)
 	s.Equal("Done.", s.sink.to(writer)[0])
 }
@@ -2336,7 +2339,7 @@ func (s *ScheduledTasksSuite) TestAPhoneOnlyTaskFailsWhenNoCallCanBePlaced() {
 	s.makeDue(task)
 
 	var runs []store.ScheduledTaskRun
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		runs = s.runsOf(task)
 		return len(runs) > 0 && runs[0].State == store.ScheduledTaskRunFailed
 	}, 30*time.Second, 250*time.Millisecond, "the occurrence never finished failing")
@@ -2732,7 +2735,7 @@ func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNow
 		stored := s.taskReloaded(task)
 		return stored.LeaseUntil != nil && stored.LeaseUntil.After(time.Now().Add(time.Hour))
 	}
-	s.Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
+	s.Require().Eventually(held, 15*time.Second, 250*time.Millisecond, "the task was never held")
 	first := s.runsOf(task)[0]
 
 	var updated ScheduledTask
@@ -2742,7 +2745,7 @@ func (s *ScheduledTasksSuite) TestAQuietOneShotEditedWhileHeldIsHeldAgainAsItNow
 
 	// The held occurrence is settled, and the one-shot comes due again as it
 	// now reads: quiet hours still hold, so it is held again, not delivered.
-	s.Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
+	s.Require().Eventually(func() bool { return len(s.runsOf(task)) == 2 && held() },
 		15*time.Second, 250*time.Millisecond, "the edited one-shot was never taken up again")
 	runs := s.runsOf(task)
 	s.Equal(first.ID, runs[1].ID)
