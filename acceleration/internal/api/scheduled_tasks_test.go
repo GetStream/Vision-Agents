@@ -116,9 +116,10 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 	m.mu.Unlock()
 
 	// A turn somebody started runs what the test queued; the turn a tool's
-	// answer starts is simply agreed with.
+	// answer starts is simply agreed with, and so is a call offering no tools,
+	// such as the summary of a thread's episode.
 	var calls []llm.ToolCall
-	if len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User {
+	if len(params.Tools) > 0 && len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User {
 		calls = m.script.next()
 	}
 	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: m.Provider(), Model: m.Model()})

@@ -52,7 +52,13 @@ type Spec struct {
 	// Thread holds ConversationID on a thread channel (internal/channelbridge), which only
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
-	Thread           bool
+	Thread bool
+	// ThreadPerson is the person a thread on a line of one person answers (SMS, WhatsApp,
+	// iMessage by Linq): the Stream user the channel bridge writes their messages as. The
+	// scheduling tools are offered for them, and ThreadChannel is the thread channel their
+	// tasks keep. Only the Router sets them (api.threadSession); a Slack thread has neither.
+	ThreadPerson     string
+	ThreadChannel    string
 	ContextTruncated bool
 	// CallID is the call the agent is on while voice is started: agent:<ID>, which joining
 	// creates, unless the caller named a call of its own. Empty while the conversation is

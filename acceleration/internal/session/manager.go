@@ -538,7 +538,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// agent reads dates, and the prompt's clock line tells the day, in the
 		// zone its tasks will run in.
 		if spec.Timezone == "" {
-			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, spec.Caller.UserID); err == nil && zone != "" {
+			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, scheduling.user); err == nil && zone != "" {
 				spec.Timezone, created.spec.Timezone = zone, zone
 				scheduling.spec.Timezone = zone
 			}

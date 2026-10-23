@@ -160,7 +160,8 @@ func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) e
 
 // threadSession opens the persistent conversation held on a thread channel, with the agent
 // config the channel names, as the Router's own session: no end user owns a thread several
-// people write in.
+// people write in. On an SMS, WhatsApp or Linq thread the tasks it schedules are the
+// writer's (personalThreads).
 func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread store.ChannelThread, event messageEvent) (*session.Session, error) {
 	customerID, configID, found := s.ownerOf(ctx, origin, event)
 	if !found || customerID != thread.CustomerID {
@@ -179,8 +180,17 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 	spec.PersistConversation = true
 	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
 	spec.Thread = true
+	if personalThreads[thread.ConnectorID] {
+		spec.ThreadPerson, spec.ThreadChannel = event.Message.User.ID, thread.ChannelID
+	}
 	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
 }
+
+// personalThreads are the connectors whose thread is one person's, so its session schedules
+// tasks for the person who wrote (session.Spec.ThreadPerson): an SMS or WhatsApp thread is
+// the person's number (channelbridge.replyTo), and a Linq chat's tasks are each sender's own.
+// A Slack thread is shared by everyone in the channel, so it schedules nothing.
+var personalThreads = map[string]bool{"telnyx": true, "whatsapp": true, "linq": true}
 
 // heldOnThread is whether a session's conversation is held on a thread channel: a live one
 // says so (Spec.Thread), and an ended one's channel has a channel_threads row.
