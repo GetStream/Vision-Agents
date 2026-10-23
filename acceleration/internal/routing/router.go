@@ -364,7 +364,7 @@ func (r *Router[P]) Recorder() *Recorder { return r.recorder }
 
 // Builds reports whether a provider has a factory registered here. It does not build
 // anything, so a provider whose factory would fail (a missing key) still reports true. A
-// candidate with no factory is one Select passes over.
+// candidate with no factory is one Select passes over, as is one Ready refuses.
 func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provider) }
 
 // Logger returns the router's logger.
@@ -526,6 +526,13 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		}
 		if !r.registry.Has(candidate.Config.Provider) {
 			failures = append(failures, fmt.Errorf("%s: no factory registered", candidate.Config.Name()))
+			continue
+		}
+		// A model this deployment has no config for fails the same way for every caller, so
+		// it is passed over the way a missing factory is, with no stat to mark it down: its
+		// health is every customer's, and it was never tried.
+		if err := r.registry.Ready(candidate.Config.Provider, candidate.Config.Model); err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 			continue
 		}
 
@@ -876,8 +883,12 @@ func (r *Router[P]) voice(ctx context.Context, request Request, provider string)
 }
 
 // health reads live health, treating a Redis failure as "no information" so a broken
-// stats path cannot take routing down with it.
+// stats path cannot take routing down with it. A model this deployment cannot build, for a
+// key or an endpoint it was never given, is unavailable whatever its history says.
 func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.Health {
+	if r.registry.Ready(provider.Provider, provider.Model) != nil {
+		return live.Health{Provider: provider.Provider, Model: provider.Model}
+	}
 	if r.live == nil {
 		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
 	}

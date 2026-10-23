@@ -187,16 +187,24 @@ type RouterSuite struct {
 	serverClient          *testClient
 
 	// The stubs standing in for providers, for a test to read back what the router asked
-	// them for. model answers questions, vision is the one that can see, voice keeps what
-	// it was told to say, knowledge keeps the passages written to it. holding answers once a
-	// test lets it, for a summary that has to still be in the writing.
+	// them for. model answers questions, vision is the one that can see, knowledge keeps the
+	// passages written to it. holding answers once a test lets it, for a summary that has to
+	// still be in the writing.
 	model     *scriptedLLM
 	vision    *scriptedLLM
 	holding   *scriptedLLM
-	voice     *recordingTTS
-	ears      *quietSTT
 	knowledge *knowledgeBase
 	memories  *keptMemories
+	// voice keeps what every stub voice was told to say. Each socket is given a stub voice
+	// and transcriber of its own, so one a test left open cannot read what the next test
+	// sends; newestVoice and newestEars are the last the router started, read through
+	// speaking and ears.
+	voice       *saidLog
+	speechMu    sync.Mutex
+	newestVoice *recordingTTS
+	newestEars  *quietSTT
+	// unconfiguredBuilds counts what the "unconfigured" transcriber was asked to build.
+	unconfiguredBuilds atomic.Int64
 	// noted are the "noted" models opened so far, one per session, newest last, for a test
 	// whose sessions each need a model of their own to read back.
 	notedMu sync.Mutex
@@ -378,6 +386,7 @@ func (s *RouterSuite) SetupSuite() {
 	if dsn == "" || redisAddr == "" {
 		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
 	}
+	s.forgetPhoneVendors()
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
@@ -694,13 +703,42 @@ func (s *RouterSuite) mcpTransport() *http.Client {
 	}}
 }
 
+// speaking is the stub voice the router started last, the one a test's newest socket speaks
+// in.
+func (s *RouterSuite) speaking() *recordingTTS {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	return s.newestVoice
+}
+
+// ears is the stub transcriber the router started last, the one a test's newest socket
+// hears through.
+func (s *RouterSuite) ears() *quietSTT {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	return s.newestEars
+}
+
+func (s *RouterSuite) spoke(voice *recordingTTS) {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	s.newestVoice = voice
+}
+
+func (s *RouterSuite) heard(ears *quietSTT) {
+	s.speechMu.Lock()
+	defer s.speechMu.Unlock()
+	s.newestEars = ears
+}
+
 // routers builds every modality against stubs that answer in process. What a real vendor
 // makes of real audio is that provider package's own suite; what is under test here is the
 // HTTP surface in front of it.
 func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger *slog.Logger) *Streams {
-	s.ears = &quietSTT{emitter: stt.NewEmitter(64)}
 	hearing := sttrouter.NewRegistry()
-	hearing.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
+	hearing.Register("stub", func(routing.Spec) (stt.STT, error) {
+		return &quietSTT{emitter: stt.NewEmitter(64), started: s.heard}, nil
+	})
 	hearing.Register("refusing", func(routing.Spec) (stt.STT, error) {
 		return &refusingSTT{emitter: stt.NewEmitter(64)}, nil
 	})
@@ -710,6 +748,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	hearing.Register("batch", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
 	// A live model whose vendor is down: its socket fails to open the way batchOnlySTT's does.
 	hearing.Register("down", func(routing.Spec) (stt.STT, error) { return batchOnlySTT{}, nil })
+	hearing.Register("unconfigured", func(routing.Spec) (stt.STT, error) {
+		s.unconfiguredBuilds.Add(1)
+		return nil, errUnconfigured
+	})
 	// Reached by name only: no shortcut asks for Latin.
 	heard := routableConfig()
 	// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
@@ -719,7 +761,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	}, routing.ProviderConfig{Provider: "refusing", Model: handingOverModel, Languages: []string{"la"}, Realtime: true},
 		routing.ProviderConfig{Provider: "echoing", Model: "echoing-model", Languages: []string{"la"}, Realtime: true},
 		routing.ProviderConfig{Provider: "batch", Model: batchModel, Languages: []string{"la"}},
-		routing.ProviderConfig{Provider: "down", Model: downModel, Languages: []string{"la"}, Realtime: true})
+		routing.ProviderConfig{Provider: "down", Model: downModel, Languages: []string{"la"}, Realtime: true},
+		routing.ProviderConfig{Provider: "unconfigured", Model: unconfiguredModel, Languages: []string{"la"}, Realtime: true})
+	// As the deployment's own registries do: what cannot be built is listed unavailable.
+	hearing.Probe()
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
@@ -823,10 +868,15 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
 
-	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
+	s.voice = &saidLog{}
 	speaking := ttsrouter.NewRegistry()
-	speaking.Register("stub", func(spec routing.Spec) (tts.TTS, error) { return s.voice.opened(spec.Voice), nil })
-	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaking.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		return &recordingTTS{emitter: tts.NewEmitter(64), said: s.voice, voice: spec.Voice, started: s.spoke}, nil
+	})
+	speaking.Register("plain", func(routing.Spec) (tts.TTS, error) {
+		return &recordingTTS{emitter: tts.NewEmitter(64), said: s.voice, started: s.spoke}, nil
+	})
+	speaking.Probe()
 	ttsConfig := s.ttsConfig
 	if len(ttsConfig.Providers) == 0 {
 		ttsConfig = routableConfig()
@@ -946,6 +996,19 @@ func (s *RouterSuite) authenticator() auth.Authenticator {
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
+}
+
+// forgetPhoneVendors unsets every credential a phone vendor is opened with, so no suite
+// searches or buys at a real vendor whatever keys testenv loaded from the repo's .env. The
+// suites share one process, and a parallel suite cannot use t.Setenv, so they go for all.
+func (s *RouterSuite) forgetPhoneVendors() {
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	for _, vendor := range config.Vendors {
+		for _, name := range vendor.Credentials {
+			s.Require().NoError(os.Unsetenv(name))
+		}
+	}
 }
 
 // telephony serves the phone paths against the real vendor registry with no credentials

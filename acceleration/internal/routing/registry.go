@@ -96,11 +96,14 @@ type Factory[P Provider] func(spec Spec) (P, error)
 type Registry[P Provider] struct {
 	mu        sync.RWMutex
 	factories map[string]Factory[P]
+	// probes is set by Probe. ready is what each probe of a "provider/model" answered.
+	probes bool
+	ready  map[string]error
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry[P Provider]() *Registry[P] {
-	return &Registry[P]{factories: make(map[string]Factory[P])}
+	return &Registry[P]{factories: make(map[string]Factory[P]), ready: make(map[string]error)}
 }
 
 // Register adds or replaces the factory for a provider.
@@ -108,6 +111,47 @@ func (r *Registry[P]) Register(provider string, factory Factory[P]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[provider] = factory
+}
+
+// Probe makes Ready build what it is asked about. A registry of real vendors probes: their
+// factories read the deployment's config and do nothing else. A registry of stubs that count
+// their builds, block in them or hand out one shared provider does not.
+func (r *Registry[P]) Probe() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.probes = true
+}
+
+// Ready says why this deployment cannot build a provider's model, and nil when it can. A
+// vendor whose key or endpoint the deployment lacks fails in its factory, before anything
+// is dialled, so building the model and closing it unstarted is the whole check.
+//
+// Each model is built once and the answer kept: config is read from the environment, which
+// does not change while the process runs, and a factory may take a turn on a shared key
+// ring (deepgram.New calls Next), which a build per request would skew. A registry that
+// does not Probe, and a provider with no factory, answer nil.
+func (r *Registry[P]) Ready(provider, model string) error {
+	name := provider + "/" + model
+	r.mu.RLock()
+	_, ok := r.factories[provider]
+	probes := r.probes
+	err, probed := r.ready[name]
+	r.mu.RUnlock()
+	if !ok || !probes {
+		return nil
+	}
+	if probed {
+		return err
+	}
+
+	built, err := r.Build(provider, Spec{Model: model})
+	if err == nil {
+		built.Close()
+	}
+	r.mu.Lock()
+	r.ready[name] = err
+	r.mu.Unlock()
+	return err
 }
 
 // Build constructs a provider.

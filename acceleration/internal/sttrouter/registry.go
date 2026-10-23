@@ -28,6 +28,9 @@ func NewRegistry() *Registry { return routing.NewRegistry[stt.STT]() }
 // supports.
 func DefaultRegistry() *Registry {
 	registry := NewRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
 
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		settings := deepgramSettings{}
