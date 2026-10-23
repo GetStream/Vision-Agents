@@ -80,6 +80,7 @@ func sandboxRouter(settings config.Config) string {
 func newSandboxes(settings config.Config, writer *routing.Writer, prices pricing.Pricer, logger *slog.Logger) *metered.Sandboxes {
 	return metered.NewSandboxes(metered.SandboxesOptions{
 		Recorder:    routing.NewRecorderOn(routing.Sandbox, writer, prices, logger),
+		Deployment:  settings.CodeSandbox.Deployment,
 		Environment: sandboxEnvironment(),
 		Router:      sandboxRouter(settings),
 		Lifecycle:   sandbox.Lifecycle{IdleStop: settings.CodeSandbox.IdleStop, StoppedDelete: settings.CodeSandbox.StoppedDelete},
@@ -95,6 +96,12 @@ func runUsageSandboxes(ctx context.Context, args []string, settings config.Confi
 	dayText := flags.String("day", "", "the day to reconcile, YYYY-MM-DD; empty is the day before yesterday")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	deployment := settings.CodeSandbox.Deployment
+	if deployment == "" {
+		return errors.New("usage sandboxes: set code_sandbox.deployment (ROUTER_CODE_SANDBOX_DEPLOYMENT) to the deployment's " +
+			"own name, as its routers label their sandboxes with it: without it the job cannot tell this deployment's " +
+			"sandboxes from another's in the same Daytona organization")
 	}
 	now := time.Now()
 	day, err := sandboxDayOf(*dayText, now)
@@ -119,8 +126,9 @@ func runUsageSandboxes(ctx context.Context, args []string, settings config.Confi
 	defer stop()
 
 	job := &sandboxJob{
-		fleet: fleet, store: pgStore, sandboxes: metered.NewSandboxes(metered.SandboxesOptions{Recorder: recording, Logger: logger}),
-		environment: sandboxEnvironment(), router: sandboxRouter(settings), logger: logger, out: out, now: now,
+		fleet: fleet, store: pgStore,
+		sandboxes:  metered.NewSandboxes(metered.SandboxesOptions{Recorder: recording, Deployment: deployment, Logger: logger}),
+		deployment: deployment, router: sandboxRouter(settings), logger: logger, out: out, now: now,
 	}
 	var failed []error
 	if *reconcile {
@@ -148,16 +156,22 @@ type sandboxJob struct {
 	fleet     *daytona.Fleet
 	store     *store.Store
 	sandboxes *metered.Sandboxes
-	// environment and router are the labels this shard's sandboxes carry.
-	environment, router string
-	logger              *slog.Logger
-	out                 io.Writer
-	now                 time.Time
+	// deployment and router are the labels this shard's sandboxes carry; deployment is never
+	// empty, and is on each of their rows too.
+	deployment, router string
+	logger             *slog.Logger
+	out                io.Writer
+	now                time.Time
+}
+
+// labels are the labels every one of this shard's sandboxes carries.
+func (j *sandboxJob) labels() map[string]string {
+	return map[string]string{metered.LabelDeployment: j.deployment, metered.LabelRouter: j.router}
 }
 
 // ours reports whether labels are this shard's.
 func (j *sandboxJob) ours(labels map[string]string) bool {
-	return labels[metered.LabelEnv] == j.environment && labels[metered.LabelRouter] == j.router
+	return labels[metered.LabelDeployment] == j.deployment && labels[metered.LabelRouter] == j.router
 }
 
 // sweep deletes each of this shard's sandboxes whose session has ended, or has no session,
@@ -165,7 +179,7 @@ func (j *sandboxJob) ours(labels map[string]string) bool {
 // its labels: by the router metering it, whose delete failed, or by the reconciliation from
 // Daytona's records when no router was. A sandbox that could not be deleted fails the run.
 func (j *sandboxJob) sweep(ctx context.Context) error {
-	listed, err := j.fleet.Labelled(ctx, map[string]string{metered.LabelEnv: j.environment, metered.LabelRouter: j.router})
+	listed, err := j.fleet.Labelled(ctx, j.labels())
 	if err != nil {
 		j.logger.Error("could not list this shard's sandboxes, so none is swept", "error", err)
 		return fmt.Errorf("usage sandboxes: %w", err)
@@ -181,7 +195,7 @@ func (j *sandboxJob) sweep(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("usage sandboxes: %w", err)
 	}
-	recorded, err := j.store.SandboxUsage(ctx, ids, j.now.Add(-sandboxRecordsLag), j.now.Add(time.Minute))
+	recorded, err := j.store.SandboxUsage(ctx, j.deployment, ids, j.now.Add(-sandboxRecordsLag), j.now.Add(time.Minute))
 	if err != nil {
 		return fmt.Errorf("usage sandboxes: %w", err)
 	}
@@ -189,6 +203,9 @@ func (j *sandboxJob) sweep(ctx context.Context) error {
 	var deleted, kept, young int
 	var failed []string
 	for _, box := range listed {
+		if !j.ours(box.Labels) {
+			continue
+		}
 		age := j.now.Sub(box.CreatedAt)
 		session := box.Labels[metered.LabelSession]
 		switch {
@@ -246,9 +263,10 @@ func apart(billed, recorded tally) bool {
 // the day's difference. Owned by the sandbox's labels' organization and app, under the
 // reconciliation's origin, and priced as the rest of the sandbox's life. Too far apart is a
 // mismatch, logged at ERROR with both figures, counted, and alerted on once for the day as
-// sandbox_mismatch. A sandbox with no deployment label was made by hand and is left out; one
-// Daytona no longer knows, which this shard recorded nothing of, cannot be told apart from
-// another deployment's. Records that cannot be read fail the run, so a rerun fills the day in;
+// sandbox_mismatch. Only this deployment's rows and labels count: a sandbox labelled by no
+// router was made by hand, one labelled by another deployment or a router without
+// code_sandbox.deployment is another's, and both are left out; one Daytona no longer knows,
+// which this shard recorded nothing of, cannot be told apart from another deployment's. Records that cannot be read fail the run, so a rerun fills the day in;
 // a rerun records nothing twice.
 func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 	from, to := day, day.Add(24*time.Hour)
@@ -264,7 +282,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 	for _, used := range billed {
 		ids = append(ids, used.SandboxID)
 	}
-	recorded, err := j.store.SandboxUsage(ctx, ids, from, to)
+	recorded, err := j.store.SandboxUsage(ctx, j.deployment, ids, from, to)
 	if err != nil {
 		return fmt.Errorf("usage sandboxes: %w", err)
 	}
@@ -277,7 +295,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 			continue
 		}
 		ours := recorded[used.SandboxID]
-		owner, known, err := j.owner(ctx, used.SandboxID, ours)
+		owner, class, known, err := j.owner(ctx, used.SandboxID, ours)
 		switch {
 		case err != nil:
 			j.logger.Error("could not read a sandbox Daytona billed, so it is not reconciled", "sandbox", used.SandboxID, "error", err)
@@ -307,7 +325,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 		} else {
 			matched++
 		}
-		gaps, err := j.gaps(ctx, used.SandboxID, owner, daytonas, have, ours.Rows == 0, from, to)
+		gaps, err := j.gaps(ctx, used.SandboxID, owner, class, daytonas, have, ours.Rows == 0, from, to)
 		if err != nil {
 			j.logger.Error("could not record what a sandbox was billed short", "sandbox", used.SandboxID, "day", dayText, "error", err)
 			unread = append(unread, used.SandboxID)
@@ -341,37 +359,41 @@ const (
 	ownerUnknown
 )
 
-// owner is whose a sandbox Daytona billed was: the organization, app and session on its rows,
-// when this shard recorded some, or on its labels.
-func (j *sandboxJob) owner(ctx context.Context, id string, recorded store.SandboxUsed) (routing.Owner, int, error) {
+// owner is whose a sandbox Daytona billed was, and what class of sandbox: the organization,
+// app and session on its rows, when this shard recorded some under this deployment, or on its
+// labels. A sandbox labelled by no router is made by hand; one without this deployment and
+// shard on its labels, such as one made by a router with no code_sandbox.deployment, is
+// another's.
+func (j *sandboxJob) owner(ctx context.Context, id string, recorded store.SandboxUsed) (routing.Owner, string, int, error) {
 	owned := func(app, organization, session string) routing.Owner {
 		return routing.Owner{CustomerID: app, Attribution: routing.Attribution{
 			OrganizationID: organization, APIKey: sandboxOrigin, SessionID: session,
 		}}
 	}
 	if recorded.Rows > 0 {
-		return owned(recorded.CustomerID, recorded.OrganizationID, recorded.SessionID), ownerOurs, nil
+		return owned(recorded.CustomerID, recorded.OrganizationID, recorded.SessionID), recorded.Class, ownerOurs, nil
 	}
 	box, found, err := j.fleet.Sandbox(ctx, id)
 	switch {
 	case err != nil:
-		return routing.Owner{}, ownerUnknown, err
+		return routing.Owner{}, "", ownerUnknown, err
 	case !found:
-		return routing.Owner{}, ownerUnknown, nil
-	case box.Labels[metered.LabelEnv] == "":
-		return routing.Owner{}, ownerHandMade, nil
+		return routing.Owner{}, "", ownerUnknown, nil
+	case box.Labels[metered.LabelEnv] == "" && box.Labels[metered.LabelDeployment] == "":
+		return routing.Owner{}, "", ownerHandMade, nil
 	case !j.ours(box.Labels) || box.Labels[metered.LabelApp] == "":
-		return routing.Owner{}, ownerTheirs, nil
+		return routing.Owner{}, "", ownerTheirs, nil
 	}
 	labels := box.Labels
-	return owned(labels[metered.LabelApp], labels[metered.LabelOrganization], labels[metered.LabelSession]), ownerOurs, nil
+	return owned(labels[metered.LabelApp], labels[metered.LabelOrganization], labels[metered.LabelSession]), box.Class,
+		ownerOurs, nil
 }
 
 // gaps records what a sandbox was billed short of Daytona's records over the day, and says how
 // many rows that took: nothing billed at all is recorded a Daytona period at a time; billed
 // short, the day's difference on each meter in one row.
-func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, daytonas, have tally, unmetered bool,
-	from, to time.Time) (int, error) {
+func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, class string, daytonas, have tally,
+	unmetered bool, from, to time.Time) (int, error) {
 	closed := j.closedAt(ctx, owner.SessionID)
 	if !unmetered {
 		short := tally{cpu: max(daytonas.cpu-have.cpu, 0), memory: max(daytonas.memory-have.memory, 0), disk: max(daytonas.disk-have.disk, 0)}
@@ -379,7 +401,7 @@ func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, d
 			return 0, nil
 		}
 		return 1, j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: from.Format(time.DateOnly), At: from,
-			Model: model(short), Used: short.used(), Orphan: closed != nil && closed.Before(from)})
+			Model: model(short), Used: short.used(), Class: class, Orphan: closed != nil && closed.Before(from)})
 	}
 	periods, err := j.fleet.Periods(ctx, id, from, to)
 	if err != nil {
@@ -401,8 +423,10 @@ func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, d
 		if used.zero() {
 			continue
 		}
-		err := j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: period.StartAt, At: start,
-			Model: model(used), Used: used.used(), Orphan: closed != nil && !start.Before(*closed)})
+		// Keyed by where the period starts within the day, so a period across midnight is a gap
+		// on each day it covers.
+		err := j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: start.UTC().Format(time.RFC3339Nano),
+			At: start, Model: model(used), Used: used.used(), Class: class, Orphan: closed != nil && !start.Before(*closed)})
 		if err != nil {
 			return recorded, err
 		}

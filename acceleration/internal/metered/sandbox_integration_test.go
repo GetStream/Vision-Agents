@@ -19,8 +19,8 @@ import (
 // hour long so only a switch or the end writes one.
 func (s *MeteredSuite) sandboxes(lifecycle sandbox.Lifecycle) (*Sandboxes, *daytonatest.Server) {
 	server := daytonatest.Start(s.T())
-	return NewSandboxes(SandboxesOptions{Recorder: s.recorder, Environment: "test", Router: "shard-a", Lifecycle: lifecycle,
-		APIKey: "key-1", APIURL: server.APIURL(), Every: time.Hour, Logger: slog.New(slog.DiscardHandler)}), server
+	return NewSandboxes(SandboxesOptions{Recorder: s.recorder, Deployment: "deploy-a", Environment: "test", Router: "shard-a",
+		Lifecycle: lifecycle, APIKey: "key-1", APIURL: server.APIURL(), Every: time.Hour, Logger: slog.New(slog.DiscardHandler)}), server
 }
 
 // sandboxOwner is the test's owner in a session of its own.
@@ -67,13 +67,13 @@ func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 	s.Equal(owner.OrganizationID, row.OrganizationID)
 	s.Equal(map[string]string{AttributeSandboxID: "sandbox-1", AttributeSandboxClass: "container", AttributeSandboxCPU: "2",
 		AttributeSandboxMemoryGB: "4", AttributeSandboxDiskGB: "10", routing.AttributeMeasuredBy: routing.MeasuredByRouter,
-		routing.AttributeSlice: "0"}, row.Attributes)
+		routing.AttributeSlice: "0", AttributeDeployment: "deploy-a"}, row.Attributes)
 	perSecond := (2*0.0504 + 4*0.0162 + 10*0.000108) / 3600 * 1e6
 	s.InDelta(perSecond*float64(seconds), float64(row.CostMicros), 1, "at Daytona's rates")
 	s.True(row.Billable)
 	s.Equal([]string{"sandbox-1"}, server.Deleted())
 	held, _ := server.Sandbox("sandbox-1")
-	s.Equal(map[string]string{LabelEnv: "test", LabelRouter: "shard-a", LabelOrganization: owner.OrganizationID,
+	s.Equal(map[string]string{LabelDeployment: "deploy-a", LabelEnv: "test", LabelRouter: "shard-a", LabelOrganization: owner.OrganizationID,
 		LabelApp: owner.CustomerID, LabelSession: owner.SessionID, "code-toolbox-language": "python"}, held.Labels)
 }
 
@@ -145,9 +145,10 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	id := "sandbox-" + uuid.NewString()
 	at := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	running := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T10:00:00Z", At: at, Model: SandboxRunning,
-		Used: pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600}}
+		Used: pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
+		Class: "container"}
 	stopped := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T11:00:00Z", At: at.Add(time.Hour),
-		Model: SandboxStopped, Used: pricing.Quantities{pricing.DiskGBSeconds: 3 * 3600}, Orphan: true}
+		Model: SandboxStopped, Used: pricing.Quantities{pricing.DiskGBSeconds: 3 * 3600}, Class: "container", Orphan: true}
 
 	s.Require().NoError(sandboxes.Reconcile(running))
 	s.Require().NoError(sandboxes.Reconcile(stopped))
@@ -159,7 +160,8 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	s.Equal(at, rows[0].StartedAt.UTC(), "dated to the period it bills")
 	s.EqualValues(66_924, rows[0].CostMicros, "an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
 	s.EqualValues(324, rows[1].CostMicros, "an hour of its 3 GiB disk")
-	s.Equal(map[string]string{AttributeSandboxID: id, AttributeSource: daytonaProvider}, rows[0].Attributes)
+	s.Equal(map[string]string{AttributeSandboxID: id, AttributeSource: daytonaProvider, AttributeSandboxClass: "container",
+		AttributeDeployment: "deploy-a"}, rows[0].Attributes, "the deployment's, so only its own job reads it")
 	s.Equal("true", rows[1].Attributes[AttributeOrphan])
 	s.Equal(routing.JobOrigin("sandbox_reconcile"), rows[0].APIKey)
 	s.True(rows[0].Billable)

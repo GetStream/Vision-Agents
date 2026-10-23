@@ -21,11 +21,14 @@ type SandboxUsed struct {
 	CustomerID      string `bun:"customer_id"`
 	OrganizationID  string `bun:"organization_id"`
 	SessionID       string `bun:"session_id"`
+	// Class is the sort of sandbox the rows say it was.
+	Class string `bun:"class"`
 }
 
 // SandboxUsage is what this shard recorded of each of ids' time started from from until to, by
-// the sandbox_id attribute its rows carry. A sandbox it recorded nothing of is not in the map.
-func (s *Store) SandboxUsage(ctx context.Context, ids []string, from, to time.Time) (map[string]SandboxUsed, error) {
+// the sandbox_id attribute its rows carry, counting only rows whose deployment attribute is
+// deployment. A sandbox it recorded nothing of is not in the map.
+func (s *Store) SandboxUsage(ctx context.Context, deployment string, ids []string, from, to time.Time) (map[string]SandboxUsed, error) {
 	used := map[string]SandboxUsed{}
 	if len(ids) == 0 {
 		return used, nil
@@ -41,8 +44,10 @@ func (s *Store) SandboxUsage(ctx context.Context, ids []string, from, to time.Ti
 		ColumnExpr("MAX(customer_id) AS customer_id").
 		ColumnExpr("MAX(organization_id) AS organization_id").
 		ColumnExpr("MAX(session_id) AS session_id").
+		ColumnExpr("COALESCE(MAX(attributes->>'class'), '') AS class").
 		Where("modality = ?", SandboxModality).
 		Where("success").
+		Where("attributes->>'deployment' = ?", deployment).
 		Where("attributes->>'sandbox_id' IN (?)", bun.In(ids)).
 		Where("started_at >= ?", from).
 		Where("started_at < ?", to).

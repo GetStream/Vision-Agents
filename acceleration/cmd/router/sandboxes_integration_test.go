@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,30 +23,59 @@ import (
 // sandboxDay is the day the reconciliation tests check.
 var sandboxDay = time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
 
+// ourDeployment is the deployment the job runs for, and theirDeployment another sharing its
+// Daytona organization, its environment and its shard's name.
+const (
+	ourDeployment   = "deploy-a"
+	theirDeployment = "deploy-b"
+)
+
 // ourLabels are the labels of a sandbox of this deployment's shard, made for app's session.
 func ourLabels(app, session string) map[string]string {
-	return map[string]string{metered.LabelEnv: "test", metered.LabelRouter: routing.Unsharded,
-		metered.LabelOrganization: "org-" + app, metered.LabelApp: app, metered.LabelSession: session}
+	return labelsOf(ourDeployment, app, session)
 }
 
-// sandboxJob is the job against server, writing through a writer of its own as the CronJob's
-// run does; stop drains it.
+// labelsOf are the labels of a sandbox of deployment's unsharded shard, made for app's session.
+// An empty deployment is a router without code_sandbox.deployment, which labels none.
+func labelsOf(deployment, app, session string) map[string]string {
+	labels := map[string]string{metered.LabelEnv: "test", metered.LabelRouter: routing.Unsharded,
+		metered.LabelOrganization: "org-" + app, metered.LabelApp: app, metered.LabelSession: session}
+	if deployment != "" {
+		labels[metered.LabelDeployment] = deployment
+	}
+	return labels
+}
+
+// sandboxJob is the job of ourDeployment against server, writing through a writer of its own as
+// the CronJob's run does; stop drains it.
 func (s *UsageCommandsSuite) sandboxJob(server *daytonatest.Server, logger *slog.Logger, now time.Time) (*sandboxJob, *bytes.Buffer, func()) {
+	return s.sandboxJobOf(ourDeployment, server, logger, now)
+}
+
+// sandboxJobOf is sandboxJob for deployment.
+func (s *UsageCommandsSuite) sandboxJobOf(deployment string, server *daytonatest.Server, logger *slog.Logger,
+	now time.Time) (*sandboxJob, *bytes.Buffer, func()) {
 	fleet, err := daytona.NewFleet(daytona.FleetOptions{APIKey: "key-1", APIURL: server.APIURL()})
 	s.Require().NoError(err)
 	recorder, stop, err := jobRecorder(s.ctx, s.settings, s.store, routing.Sandbox, logger)
 	s.Require().NoError(err)
 	var out bytes.Buffer
-	job := &sandboxJob{fleet: fleet, store: s.store, sandboxes: metered.NewSandboxes(metered.SandboxesOptions{Recorder: recorder, Logger: logger}),
-		environment: "test", router: routing.Unsharded, logger: logger, out: &out, now: now}
+	job := &sandboxJob{fleet: fleet, store: s.store,
+		sandboxes:  metered.NewSandboxes(metered.SandboxesOptions{Recorder: recorder, Deployment: deployment, Logger: logger}),
+		deployment: deployment, router: routing.Unsharded, logger: logger, out: &out, now: now}
 	return job, &out, func() {
 		stop()
 		_ = fleet.Close(s.ctx)
 	}
 }
 
-// metered writes a slice of a sandbox's time as a router metering it does.
+// metered writes a slice of a sandbox's time as a router of ourDeployment metering it does.
 func (s *UsageCommandsSuite) metered(id, app, session string, at time.Time, used pricing.Quantities) {
+	s.meteredBy(ourDeployment, id, app, session, at, used)
+}
+
+// meteredBy is metered by a router of deployment; empty is one without code_sandbox.deployment.
+func (s *UsageCommandsSuite) meteredBy(deployment, id, app, session string, at time.Time, used pricing.Quantities) {
 	recorder := routing.NewRecorder(routing.Sandbox, s.store, nil, nil, slog.New(slog.DiscardHandler))
 	stat := routing.Stat{Owner: routing.Owner{CustomerID: app, Attribution: routing.Attribution{APIKey: "key-" + app,
 		OrganizationID: "org-" + app, SessionID: session}}, UsageID: uuid.New(), StartedAt: at, OperationID: id,
@@ -53,6 +83,10 @@ func (s *UsageCommandsSuite) metered(id, app, session string, at time.Time, used
 	stat.Use(used)
 	stat.MeasuredByRouter()
 	stat.Attribute(metered.AttributeSandboxID, id)
+	stat.Attribute(metered.AttributeSandboxClass, "container")
+	if deployment != "" {
+		stat.Attribute(metered.AttributeDeployment, deployment)
+	}
 	recorder.Record(routing.ProviderConfig{Provider: "daytona", Model: metered.SandboxRunning}, stat)
 	recorder.Close()
 }
@@ -225,4 +259,86 @@ func (s *UsageCommandsSuite) TestAnOrphanIsDeleted() {
 	s.Equal("sandboxes: 4 orphans deleted, 2 kept for open sessions, 1 too new to judge, 0 could not be deleted\n", out.String())
 	s.Contains(logs.String(), `level=WARN msg="deleted a sandbox its session no longer needs" sandbox=box-failed session=session-failed age=20m0s reason=delete_failed`)
 	s.Contains(logs.String(), `sandbox=box-silent session=session-silent age=20m0s reason=unmetered`)
+}
+
+func (s *UsageCommandsSuite) TestTwoDeploymentsLeaveEachOthersSandboxesAlone() {
+	server := daytonatest.Start(s.T())
+	now := time.Now().UTC()
+	old := now.Add(-20 * time.Minute)
+	for _, deployment := range []string{ourDeployment, theirDeployment, ""} {
+		id, session := "box-"+cmp.Or(deployment, "unlabelled"), "session-"+cmp.Or(deployment, "unlabelled")
+		s.session(session, "app-1", now.Add(-15*time.Minute))
+		server.Holds(daytonatest.Box{ID: id, Labels: labelsOf(deployment, "app-1", session), CreatedAt: old})
+		s.meteredBy(deployment, id, "app-1", session, sandboxDay.Add(9*time.Hour),
+			pricing.Quantities{pricing.VCPUSeconds: 590, pricing.MemoryGBSeconds: 590, pricing.DiskGBSeconds: 1770})
+	}
+	server.Bills([]byte(`[
+  {"sandboxId": "box-deploy-a", "totalCPUSeconds": 600, "totalRAMGBSeconds": 600, "totalDiskGBSeconds": 1800},
+  {"sandboxId": "box-deploy-b", "totalCPUSeconds": 600, "totalRAMGBSeconds": 600, "totalDiskGBSeconds": 1800},
+  {"sandboxId": "box-unlabelled", "totalCPUSeconds": 600, "totalRAMGBSeconds": 600, "totalDiskGBSeconds": 1800}
+]`))
+
+	ours, out, stop := s.sandboxJob(server, slog.New(slog.DiscardHandler), now)
+	s.Require().NoError(ours.reconcile(s.ctx, sandboxDay))
+	s.Require().NoError(ours.sweep(s.ctx))
+	stop()
+
+	s.Equal([]string{"box-deploy-a"}, server.Deleted(), "the other deployment's and the unlabelled router's are left alone")
+	s.Equal("2026-10-21: 1 sandboxes matched Daytona's records, 0 did not, 1 gaps recorded from them, 0 made by hand, "+
+		"2 another deployment's, 0 no longer known, 0 could not be read\n"+
+		"sandboxes: 1 orphans deleted, 0 kept for open sessions, 0 too new to judge, 0 could not be deleted\n", out.String(),
+		"another deployment's rows are not read as this one's, though they share a database")
+	gaps := s.reconciled()
+	s.Require().Len(gaps["box-deploy-a"], 1)
+	s.Equal(ourDeployment, gaps["box-deploy-a"][0].Attributes[metered.AttributeDeployment])
+	s.Empty(gaps["box-deploy-b"])
+	s.Empty(gaps["box-unlabelled"])
+
+	theirs, _, stopTheirs := s.sandboxJobOf(theirDeployment, server, slog.New(slog.DiscardHandler), now)
+	s.Require().NoError(theirs.reconcile(s.ctx, sandboxDay))
+	s.Require().NoError(theirs.sweep(s.ctx))
+	stopTheirs()
+
+	s.Equal([]string{"box-deploy-a", "box-deploy-b"}, server.Deleted(), "each deployment's job deletes its own")
+	gaps = s.reconciled()
+	s.Len(gaps["box-deploy-a"], 1, "nothing of ours billed again by theirs")
+	s.Require().Len(gaps["box-deploy-b"], 1)
+	s.Equal(theirDeployment, gaps["box-deploy-b"][0].Attributes[metered.AttributeDeployment])
+	s.Empty(gaps["box-unlabelled"], "a router without the setting is never touched")
+	_, held := server.Sandbox("box-unlabelled")
+	s.True(held)
+}
+
+func (s *UsageCommandsSuite) TestTheSandboxJobRefusesToRunWithoutADeployment() {
+	s.settings.CodeSandbox.Deployment = ""
+	for _, args := range [][]string{nil, {"--reconcile"}} {
+		var out bytes.Buffer
+		err := runUsageSandboxes(s.ctx, args, s.settings, &out)
+		s.ErrorContains(err, "set code_sandbox.deployment (ROUTER_CODE_SANDBOX_DEPLOYMENT)", args)
+		s.Empty(out.String())
+	}
+}
+
+func (s *UsageCommandsSuite) TestAPeriodAcrossMidnightIsBilledOnEachDay() {
+	server := daytonatest.Start(s.T())
+	server.Holds(daytonatest.Box{ID: "sandbox-m", State: daytonatest.Destroyed, Labels: ourLabels("app-m", "session-m")})
+	server.Holds(daytonatest.Box{ID: "sandbox-live", Labels: ourLabels("app-m", "session-later")})
+	server.Bills([]byte(`[{"sandboxId": "sandbox-m", "totalCPUSeconds": 1800, "totalRAMGBSeconds": 1800, "totalDiskGBSeconds": 5400}]`))
+	server.Periods("sandbox-m", []byte(`[{"startAt": "2026-10-20T23:30:00Z", "endAt": "2026-10-21T00:30:00Z", "cpu": 1, "ramGB": 1, "diskGB": 3}]`))
+
+	for _, day := range []time.Time{sandboxDay.Add(-24 * time.Hour), sandboxDay, sandboxDay} {
+		job, _, stop := s.sandboxJob(server, slog.New(slog.DiscardHandler), time.Now())
+		s.Require().NoError(job.reconcile(s.ctx, day))
+		stop()
+	}
+
+	rows := s.reconciled()["sandbox-m"]
+	s.Require().Len(rows, 2, "half an hour on each day, and a rerun records neither again")
+	midnight := sandboxDay
+	s.Equal([]time.Time{midnight.Add(-30 * time.Minute), midnight}, []time.Time{rows[0].StartedAt.UTC(), rows[1].StartedAt.UTC()})
+	for _, row := range rows {
+		s.Equal(pricing.Quantities{pricing.VCPUSeconds: 1800, pricing.MemoryGBSeconds: 1800, pricing.DiskGBSeconds: 5400}, row.Meters)
+		s.Equal(routing.UsageID(metered.SandboxReconciledKind, "sandbox-m", row.StartedAt.UTC().Format(time.RFC3339)), row.UsageID)
+		s.Positive(row.CostMicros, "priced as the container it was")
+	}
 }

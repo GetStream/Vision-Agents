@@ -261,6 +261,25 @@ func (s *ConfigSuite) TestASandboxStopsAfter15IdleMinutesAndIsDeletedAnHourLater
 	s.ErrorContains(err, "code_sandbox.idle_stop (ROUTER_CODE_SANDBOX_IDLE_STOP)")
 }
 
+// TestASandboxNamesItsDeploymentOnlyWhenAskedTo: empty by default, set by its variable, and a
+// value Daytona could not take as a label refused.
+func (s *ConfigSuite) TestASandboxNamesItsDeploymentOnlyWhenAskedTo() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.CodeSandbox.Deployment)
+
+	s.T().Setenv("ROUTER_CODE_SANDBOX_DEPLOYMENT", "eu-west.blue")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal("eu-west.blue", config.CodeSandbox.Deployment)
+
+	for _, refused := range []string{"Blue", "-blue", "blue deployment"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_DEPLOYMENT", refused)
+		_, _, err = Load("")
+		s.ErrorContains(err, "code_sandbox.deployment (ROUTER_CODE_SANDBOX_DEPLOYMENT)", refused)
+	}
+}
+
 // TestTheProxyBrokerNeedsTheProxysURLAndCA: a sandbox must reach the proxy and trust it, its
 // own credential is the URL's user, and the router serves the proxy, with the CA's key.
 func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {

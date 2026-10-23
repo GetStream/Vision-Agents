@@ -45,12 +45,18 @@ const (
 	// AttributeSource is daytona on a row recorded from Daytona's own figures rather than
 	// the router's clock.
 	AttributeSource = "source"
+	// AttributeDeployment is the deployment whose sandbox it was, as its LabelDeployment says.
+	// The sandbox job reads only its own deployment's rows.
+	AttributeDeployment = "deployment"
 )
 
 // The labels every sandbox is made with: which deployment and shard made it, so the hourly
 // sweep finds its own, and whose it is, so the daily reconciliation can bill what Daytona
 // billed. Their values are ids.
 const (
+	// LabelDeployment is the code_sandbox.deployment setting of the routers that made it. The
+	// sandbox job lists, deletes and bills only sandboxes carrying its own.
+	LabelDeployment   = "stream.deployment"
 	LabelEnv          = "stream.env"
 	LabelRouter       = "stream.router"
 	LabelOrganization = "stream.organization"
@@ -66,9 +72,10 @@ const SandboxSecretsBroker = daytona.BrokerName
 type SandboxesOptions struct {
 	// Recorder is where sandbox rows go, as the sandbox modality. Nil records nothing.
 	Recorder *routing.Recorder
-	// Environment and Router are on every sandbox's labels: the deployment that made it and
-	// which of its shards.
-	Environment, Router string
+	// Deployment, Environment and Router are on every sandbox's labels: the deployment that
+	// made it, the environment it reports as, and which of its shards. Deployment is also on
+	// every row, and an empty one is left off both.
+	Deployment, Environment, Router string
 	// Lifecycle is when Daytona stops an idle sandbox and deletes a stopped one; the meter
 	// keeps the same clock.
 	Lifecycle sandbox.Lifecycle
@@ -112,7 +119,7 @@ func (s *Sandboxes) Open(owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox
 	return daytona.New(daytona.Options{
 		APIKey: s.options.APIKey, APIURL: s.options.APIURL, Config: spec.Config, Grants: spec.Grants, Broker: spec.Broker,
 		Labels: s.Labels(owner), Lifecycle: s.options.Lifecycle, Logger: s.options.Logger,
-		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every},
+		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment},
 	})
 }
 
@@ -120,7 +127,8 @@ func (s *Sandboxes) Open(owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox
 func (s *Sandboxes) Labels(owner routing.Owner) map[string]string {
 	labels := map[string]string{}
 	for name, value := range map[string]string{
-		LabelEnv: s.options.Environment, LabelRouter: s.options.Router, LabelOrganization: owner.OrganizationID,
+		LabelDeployment: s.options.Deployment, LabelEnv: s.options.Environment, LabelRouter: s.options.Router,
+		LabelOrganization: owner.OrganizationID,
 		LabelApp: owner.CustomerID, LabelSession: owner.SessionID,
 	} {
 		if value != "" {
@@ -156,9 +164,10 @@ func times(seconds int64, size float64) int64 {
 // it, switched between running and stopped as Daytona's timers move it, and stopped once it
 // is gone.
 type sandboxMeter struct {
-	recorder *routing.Recorder
-	owner    routing.Owner
-	every    time.Duration
+	recorder   *routing.Recorder
+	owner      routing.Owner
+	every      time.Duration
+	deployment string
 
 	mu     sync.Mutex
 	slices *routing.Slices
@@ -179,6 +188,9 @@ func (m *sandboxMeter) Created(reserved daytona.Reserved) {
 	}
 	if m.orphan {
 		attributes[AttributeOrphan] = "true"
+	}
+	if m.deployment != "" {
+		attributes[AttributeDeployment] = m.deployment
 	}
 	m.slices = routing.StartSlices(routing.SliceOptions{
 		Recorder: m.recorder,
@@ -232,16 +244,26 @@ type SandboxGap struct {
 	At    time.Time
 	Model string
 	Used  pricing.Quantities
+	// Class is the sort of sandbox it was, which its price depends on. Empty is unknown, and
+	// leaves the gap unpriced.
+	Class string
 	// Orphan is time after the sandbox's session closed.
 	Orphan bool
 }
 
-// Reconcile records a gap from Daytona's figures, as Daytona billed it, owned as the gap says.
-// Its usage id is the sandbox and the gap's key, so recording it again bills it once.
+// Reconcile records a gap from Daytona's figures, as Daytona billed it, owned as the gap says
+// and marked as the options' deployment's. Its usage id is the sandbox and the gap's key, so
+// recording it again bills it once.
 func (s *Sandboxes) Reconcile(gap SandboxGap) error {
 	attributes := map[string]string{AttributeSandboxID: gap.SandboxID, AttributeSource: daytona.Provider}
 	if gap.Orphan {
 		attributes[AttributeOrphan] = "true"
+	}
+	if gap.Class != "" {
+		attributes[AttributeSandboxClass] = gap.Class
+	}
+	if s.options.Deployment != "" {
+		attributes[AttributeDeployment] = s.options.Deployment
 	}
 	return routing.Settle(routing.Meter{
 		Recorder:    s.options.Recorder,
