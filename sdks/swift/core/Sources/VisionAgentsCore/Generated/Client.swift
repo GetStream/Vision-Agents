@@ -331,6 +331,8 @@ internal struct Client: APIProtocol {
     ///
     /// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
     ///
+    /// If the memory store fails, the answer is a 503 memory_unavailable and the session is kept, stopped: deleting it again later deletes the rest.
+    ///
     /// To end a call and keep the conversation, stop the session instead.
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.

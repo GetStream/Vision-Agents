@@ -71,3 +71,31 @@ func (s *SessionDeleteSuite) TestTheAppsBackendMayDeleteAUsersSession() {
 
 	s.assertDoesNotReach(s.client, opened.Id)
 }
+
+// SessionDeleteWithoutMemorySuite is a deployment with no memory provider, whose deletes
+// have no memory store to wait on.
+type SessionDeleteWithoutMemorySuite struct {
+	RouterSuite
+}
+
+func TestSessionDeleteWithoutMemorySuite(t *testing.T) {
+	runSuite(t, new(SessionDeleteWithoutMemorySuite))
+}
+
+func (s *SessionDeleteWithoutMemorySuite) SetupSuite() {
+	s.memoryOff = true
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *SessionDeleteWithoutMemorySuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *SessionDeleteWithoutMemorySuite) TestASessionIsDeletedWithNoMemoryStore() {
+	s.Require().Equal(http.StatusBadRequest, s.serverClient.do(
+		http.MethodDelete, "/v1/agents/users/"+s.utils.uuid()+"/memories", nil, nil), "the deployment has no memory")
+	opened := s.client.createSession(textSession(nil))
+
+	s.Equal(http.StatusNoContent, s.client.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, nil, nil))
+	s.assertDoesNotReach(s.client, opened.Id)
+}

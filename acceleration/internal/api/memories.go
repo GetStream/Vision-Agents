@@ -11,7 +11,15 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-var errNoMemory = notConfigured("memory is not available: no memory provider configured")
+var (
+	errNoMemory = notConfigured("memory is not available: no memory provider configured")
+	// errMemoryUnavailable names no vendor: which store a deployment uses, and what it said,
+	// are for the log.
+	errMemoryUnavailable = APIError{Type: ErrorTypeUnavailable, Code: codeMemoryUnavailable,
+		Message: "What was remembered could not be removed right now. Try again later."}
+	errSessionKept = APIError{Type: ErrorTypeUnavailable, Code: codeMemoryUnavailable,
+		Message: "The session was not deleted: what it remembered could not be removed right now. Try again later."}
+)
 
 type truncateMemoriesRequest struct {
 	UserID string `path:"user_id" minLength:"1" doc:"The memory user id sessions were opened with, memory.user_id on a session."`
@@ -34,7 +42,8 @@ func (s *Server) registerMemories(api huma.API) {
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"204": {Description: "The memories are deleted"}},
-		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusServiceUnavailable},
 	}, s.truncateMemories)
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteSessionMemories",
@@ -50,7 +59,7 @@ func (s *Server) registerMemories(api huma.API) {
 			"end user's device.",
 		Responses: map[string]*huma.Response{"204": {Description: "The memories are deleted"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
-			http.StatusNotFound},
+			http.StatusNotFound, http.StatusServiceUnavailable},
 	}, s.deleteSessionMemories)
 }
 
@@ -64,7 +73,7 @@ func (s *Server) truncateMemories(ctx context.Context, request *truncateMemories
 		return nil, errNoMemory
 	}
 	if err := s.sessions.TruncateMemories(ctx, customerID, request.UserID); err != nil {
-		return nil, memoryFailure(err)
+		return nil, memoryFailure(ctx, err, errMemoryUnavailable)
 	}
 	return nil, nil
 }
@@ -79,15 +88,23 @@ func (s *Server) deleteSessionMemories(ctx context.Context, request *deleteSessi
 		return nil, failure
 	}
 	if err := s.sessions.ForgetSession(ctx, customerID, request.ID); err != nil {
-		return nil, memoryFailure(err)
+		return nil, memoryFailure(ctx, err, errMemoryUnavailable)
 	}
 	return nil, nil
 }
 
-// memoryFailure is a 400 for a deployment with no memory, and the error itself otherwise.
-func memoryFailure(err error) error {
-	if errors.Is(err, session.ErrNoMemory) {
+// memoryFailure is a 400 for a deployment with no memory, unavailable for a memory store
+// that failed, and the error itself otherwise.
+//
+// The store's failure is answered without its words and left for the request log, which
+// logs only the error an operation's answer was made from, not one it returned.
+func memoryFailure(ctx context.Context, err error, unavailable APIError) error {
+	switch {
+	case errors.Is(err, session.ErrNoMemory):
 		return errNoMemory
+	case errors.Is(err, session.ErrMemoryFailed):
+		recordFailure(ctx, err, stack.Trace(err))
+		return unavailable
 	}
 	return stack.Wrap(err)
 }
