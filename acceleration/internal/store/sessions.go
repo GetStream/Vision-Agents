@@ -94,6 +94,10 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("state = EXCLUDED.state").
 		Set("closed_at = NULL").
 		Set("updated_at = EXCLUDED.updated_at").
+		// A session reopened from its row is opened without the memory it had, and what it
+		// remembered before is still in the store, so once true it stays true. Not known
+		// stays not known: NULL OR false is NULL.
+		Set("remembers = ?TableAlias.remembers OR EXCLUDED.remembers").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save session: %w", err)

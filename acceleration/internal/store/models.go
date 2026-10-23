@@ -1625,6 +1625,9 @@ type AgentSession struct {
 	// ReturnURL is where the consents the session asks for in the chat go back to. Empty,
 	// stored as NULL, is the dashboard. Never shown in the session's own answer.
 	ReturnURL string `bun:"return_url,nullzero"`
+	// Remembers is whether the session was opened with a memory user id, so it could have
+	// taught the memory store anything. Nil, as on a row made before it was kept, is not known.
+	Remembers *bool  `bun:"remembers"`
 	State     string `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`

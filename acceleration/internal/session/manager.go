@@ -1355,7 +1355,7 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 		}
 	}
 	// The memories go before the row, so a store that fails keeps the session to delete again.
-	if m.options.Memory != nil {
+	if m.options.Memory != nil && m.mayRemember(ctx, owner.CustomerID, id) {
 		if err := m.options.Memory.ForgetRun(ctx, owner.CustomerID, id); err != nil {
 			return memoryFailed(ctx, err)
 		}
@@ -1364,6 +1364,22 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 		return nil
 	}
 	return m.options.Store.DeleteSession(ctx, owner.CustomerID, id)
+}
+
+// mayRemember is whether a session could have taught the memory store anything. Only a row
+// saying it was opened without a memory user id says no: asking the store to forget is a
+// retrieval its quota counts, and a session with nothing there need not depend on the store
+// answering. A row from before rows said, no row (an incognito session keeps none), or a row
+// that could not be read are forgotten as before, since skipping would leave memories behind.
+func (m *Manager) mayRemember(ctx context.Context, customerID, id string) bool {
+	if m.options.Store == nil {
+		return true
+	}
+	row, err := m.options.Store.StoredSession(ctx, customerID, id)
+	if err != nil {
+		return true
+	}
+	return row.Remembers == nil || *row.Remembers
 }
 
 // TruncateMemories deletes everything remembered about one of the customer's users, from
