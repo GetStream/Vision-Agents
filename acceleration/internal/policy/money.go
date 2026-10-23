@@ -323,6 +323,11 @@ func (m *money) inUse(now time.Time) ([]string, map[string][]scoped) {
 			continue
 		}
 		if now.Sub(acct.used) > m.settings.Idle && len(acct.holds) == 0 {
+			// Its folds are gone, so the ids still remembered for them are given back to the
+			// process's count.
+			for id := range acct.folded {
+				acct.forget(m, id)
+			}
 			delete(m.accounts, key)
 			continue
 		}

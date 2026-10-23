@@ -67,6 +67,29 @@ func TestARowAckedIntoAnAckedFoldWaitsForAReadAfterItsOwnAck(t *testing.T) {
 	require.Zero(t, acct.held, "both go with a standing asked for after both acks")
 }
 
+func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {
+	e, acct := holding(t)
+	e.money.settings.Idle = time.Millisecond
+	before := foldedInProcess.Load()
+	first, second := spend(e, 1), spend(e, 1)
+	require.True(t, e.money.fold(acct, first))
+	require.True(t, e.money.fold(acct, second))
+	require.Equal(t, before+2, foldedInProcess.Load())
+	// The folds go while their ids are still remembered, as a fold emptied by an ack does.
+	for id, held := range acct.holds {
+		acct.count(heldOrg, held, -1)
+		delete(acct.holds, id)
+	}
+	acct.used = time.Now().Add(-time.Hour)
+
+	e.money.inUse(time.Now())
+
+	require.NotContains(t, e.money.accounts, heldOrg, "evicted, holding nothing")
+	require.Equal(t, before, foldedInProcess.Load(), "its folded ids no longer count against the process")
+	require.NotContains(t, e.money.holdOf, first)
+	require.NotContains(t, e.money.holdOf, second)
+}
+
 func TestPastWhatTheProcessRemembersAFoldedIDIsHeldUntilItsFoldsTimer(t *testing.T) {
 	e, acct := holding(t)
 	before := foldedInProcess.Load()
