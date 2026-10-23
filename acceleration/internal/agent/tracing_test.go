@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -22,14 +23,26 @@ type TurnTracingSuite struct {
 	owner    routing.Owner
 }
 
-// SetupSuite installs the recorder once. The global provider takes a delegate exactly
-// once per process, so a provider per test would leave every test after the first
-// recording into the first one's recorder.
+// turnSpans is the provider the package's tracer records into, installed once per process.
+// tracer is taken at package initialisation, and the global provider hands a tracer taken
+// that early to the first provider installed and to no later one (delegateTraceOnce in
+// otel's internal/global/state.go). A provider per suite run would leave every run after
+// the first, as with -count=2, recording into the first one's recorder.
+var turnSpans = sync.OnceValue(func() *sdktrace.TracerProvider {
+	provider := sdktrace.NewTracerProvider()
+	otel.SetTracerProvider(provider)
+	return provider
+})
+
+// SetupSuite gives this run a recorder of its own on the one provider.
 func (s *TurnTracingSuite) SetupSuite() {
 	s.recorded = tracetest.NewSpanRecorder()
-	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(s.recorded)))
+	turnSpans().RegisterSpanProcessor(s.recorded)
 	s.owner = routing.Owner{AgentID: "agent-1", CallID: "call-1"}
 }
+
+// TearDownSuite stops this run's recorder from receiving the spans of the runs after it.
+func (s *TurnTracingSuite) TearDownSuite() { turnSpans().UnregisterSpanProcessor(s.recorded) }
 
 func (s *TurnTracingSuite) SetupTest() { s.recorded.Reset() }
 
