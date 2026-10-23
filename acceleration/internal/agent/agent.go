@@ -3113,7 +3113,7 @@ func calledInCall(history []llm.Message, tool string) bool {
 		}
 	}
 	return slices.ContainsFunc(history, func(message llm.Message) bool {
-		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content)
+		return message.Role == llm.ToolResult && names[message.ToolCallID] == tool && !failedResult(message.Content) && !undoneResult(message.Content)
 	})
 }
 
@@ -3405,7 +3405,7 @@ func changedSinceCaller(history []llm.Message, counts func(tool string) bool) bo
 		switch history[i].Role {
 		case llm.ToolResult:
 			name := names[history[i].ToolCallID]
-			if !failedResult(history[i].Content) && !readsOnly(name) && counts(name) {
+			if !failedResult(history[i].Content) && !undoneResult(history[i].Content) && !readsOnly(name) && counts(name) {
 				return true
 			}
 		case llm.User:
@@ -3434,7 +3434,7 @@ func toolRanSinceCaller(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		switch history[i].Role {
 		case llm.ToolResult:
-			if !failedResult(history[i].Content) {
+			if !failedResult(history[i].Content) && !undoneResult(history[i].Content) {
 				return true
 			}
 		case llm.User:

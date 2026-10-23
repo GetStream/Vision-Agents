@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -57,6 +58,8 @@ func (s *SessionConnectorsSuite) SetupSuite() {
 	// see nobody answer (connector_approvals_test.go). Every other test answers within it.
 	s.approvalWait = 5 * time.Second
 	s.RouterSuite.SetupSuite()
+	// Seeded as a router start does, for the nessy binding the approval tests set beside crm.
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 	s.token = issuedToken(&s.RouterSuite, s.provider)
 }
 
