@@ -143,6 +143,9 @@ func (c *Cartesia) Delete(ctx context.Context, externalID string) error {
 	return nil
 }
 
+// SpeechModel is the model Speak says a line with.
+func (c *Cartesia) SpeechModel() string { return cartesia.DefaultModel }
+
 // Speak says a line in the voice with the model a call would use.
 func (c *Cartesia) Speak(ctx context.Context, externalID, text string) (Speech, error) {
 	url := strings.TrimSuffix(c.options.BaseURL, "/") + "/tts/bytes"

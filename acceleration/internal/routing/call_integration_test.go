@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -157,6 +158,53 @@ func (s *CallSuite) TestAFailureLeavesTheUsageIDToTheRetryThatSucceeds() {
 		}
 	}
 	s.Equal(1, billed)
+}
+
+// named is work that names what it did, as a clone names the voice a provider made.
+type named struct {
+	used
+	id uuid.UUID
+}
+
+func (n named) UsageID() uuid.UUID { return n.id }
+
+func (s *CallSuite) TestWorkThatNamesItselfIsBilledOncePerName() {
+	meter := s.meter(priced)
+	first, second := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	for _, id := range []uuid.UUID{first, first, second} {
+		_, err := Call(s.ctx, meter, func(context.Context) (named, error) {
+			return named{used: used{pricing.InputTokens: 1_000}, id: id}, nil
+		})
+		s.Require().NoError(err)
+	}
+
+	rows := s.rows(meter)
+	s.Require().Len(rows, 2, "the same work reported twice is one row, and other work another")
+	s.ElementsMatch([]uuid.UUID{first, second}, []uuid.UUID{rows[0].UsageID, rows[1].UsageID})
+}
+
+func (s *CallSuite) TestAMeterDatesTheRowToWhatItBills() {
+	meter := s.meter(priced)
+	meter.BilledAt = time.Date(2026, 10, 23, 13, 0, 0, 0, time.UTC)
+
+	_, err := Call(s.ctx, meter, func(context.Context) (used, error) { return used{pricing.InputTokens: 1_000}, nil })
+	s.Require().NoError(err)
+
+	s.Equal(meter.BilledAt, s.only(meter).StartedAt.UTC())
+}
+
+func (s *CallSuite) TestWorkTheMeterOmitsWritesNoRowAndAFailureStillDoes() {
+	meter := s.meter(priced)
+	meter.Omit = func(used pricing.Quantities) bool { return used[pricing.InputTokens] == 0 }
+
+	_, err := Call(s.ctx, meter, func(context.Context) (used, error) { return used{pricing.Requests: 1}, nil })
+	s.Require().NoError(err)
+	_, err = Call(s.ctx, meter, func(context.Context) (used, error) { return nil, errors.New("vendor down") })
+	s.Require().Error(err)
+
+	row := s.only(meter)
+	s.False(row.Success, "only the failure is a row")
 }
 
 // providerCosted is work whose provider's formula says what it cost the operator.

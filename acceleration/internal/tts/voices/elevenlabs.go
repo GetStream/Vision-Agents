@@ -113,6 +113,9 @@ func (e *ElevenLabs) clone(ctx context.Context, request Request) (string, error)
 	return created.VoiceID, nil
 }
 
+// SpeechModel is the model Speak says a line with.
+func (e *ElevenLabs) SpeechModel() string { return elevenlabs.DefaultModel }
+
 // Speak says a line in the voice with the model a call would use.
 func (e *ElevenLabs) Speak(ctx context.Context, externalID, text string) (Speech, error) {
 	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/text-to-speech/" + externalID +

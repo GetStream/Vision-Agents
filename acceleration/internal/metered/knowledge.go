@@ -2,9 +2,11 @@ package metered
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -57,18 +59,21 @@ func (k *Knowledge) Namespaces(ctx context.Context, prefix string) ([]string, er
 	return k.backend.Namespaces(ctx, prefix)
 }
 
-// Storage records an hour of a knowledge base's size for owner, sampled now. Its usage id is
-// the namespace and the hour, so sampling the same hour again bills it once.
-func (k *Knowledge) Storage(ctx context.Context, owner routing.Owner, namespace string, hour time.Time) error {
+// Storage records the hour that starts at hour of a knowledge base's size for owner, at its
+// size now: the provider keeps no past sizes. The row is dated to the hour it bills, and its
+// usage id is the namespace and the hour, so sampling the same hour again bills it once. A
+// knowledge base that holds nothing writes no row. It answers what the sample found.
+func (k *Knowledge) Storage(ctx context.Context, owner routing.Owner, namespace string, hour time.Time) (knowledge.Billed, error) {
+	hour = hour.UTC().Truncate(time.Hour)
 	meter := k.meter(owner, KnowledgeStorage)
-	meter.UsageID = routing.UsageID(KnowledgeStorageKind, namespace, hour.UTC().Truncate(time.Hour).Format(time.RFC3339))
-	// The sample is the router's own count of the hour, so a namespace that is empty is a
-	// measured zero rather than a vendor that reported nothing.
+	meter.UsageID = routing.UsageID(KnowledgeStorageKind, namespace, hour.Format(time.RFC3339))
+	meter.BilledAt = hour
+	// The sample is the router's own measure of the hour, not something a vendor reported.
 	meter.Attributes = map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}
-	_, err := routing.Call(ctx, meter, func(ctx context.Context) (knowledge.Billed, error) {
+	meter.Omit = func(used pricing.Quantities) bool { return used[pricing.ByteHours] == 0 }
+	return routing.Call(ctx, meter, func(ctx context.Context) (knowledge.Billed, error) {
 		return k.backend.Stored(ctx, namespace)
 	})
-	return err
 }
 
 func (k *Knowledge) meter(owner routing.Owner, model string) routing.Meter {
@@ -112,26 +117,33 @@ func (o OwnedKnowledge) Fetch(ctx context.Context, namespace string, ids []strin
 	return found.Documents, err
 }
 
-// Upsert writes passages. Writing none asks the provider nothing.
+// Upsert writes passages, a row per request of knowledge.WriteBatch, so when one fails the
+// requests before it, which the provider billed, are billed too. Writing none asks the
+// provider nothing.
 func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
-	if len(documents) == 0 {
-		return nil
+	for batch := range slices.Chunk(documents, knowledge.WriteBatch) {
+		_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
+			return o.knowledge.backend.Upsert(ctx, namespace, batch)
+		})
+		if err != nil {
+			return err
+		}
 	}
-	_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
-		return o.knowledge.backend.Upsert(ctx, namespace, documents)
-	})
-	return err
+	return nil
 }
 
-// Delete removes passages by id. Removing none asks the provider nothing.
+// Delete removes passages by id, a row per request as Upsert writes them. Removing none asks
+// the provider nothing.
 func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []string) error {
-	if len(ids) == 0 {
-		return nil
+	for batch := range slices.Chunk(ids, knowledge.WriteBatch) {
+		_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
+			return o.knowledge.backend.Delete(ctx, namespace, batch)
+		})
+		if err != nil {
+			return err
+		}
 	}
-	_, err := routing.Call(ctx, o.knowledge.meter(o.owner, KnowledgeWrite), func(ctx context.Context) (knowledge.Billed, error) {
-		return o.knowledge.backend.Delete(ctx, namespace, ids)
-	})
-	return err
+	return nil
 }
 
 // Provider is the backend's name.

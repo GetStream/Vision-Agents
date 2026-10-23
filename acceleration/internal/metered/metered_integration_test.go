@@ -157,17 +157,60 @@ func (s *MeteredSuite) TestAnHourOfStorageIsBilledOnceHoweverOftenItIsSampled() 
 	server.Holds(namespace, 2_000_000_000)
 	hour := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
 
-	s.Require().NoError(base.Storage(s.ctx, s.owner, namespace, hour.Add(17*time.Minute)))
-	s.Require().NoError(base.Storage(s.ctx, s.owner, namespace, hour.Add(48*time.Minute)))
-	s.Require().NoError(base.Storage(s.ctx, s.owner, namespace, hour.Add(time.Hour)))
+	for _, at := range []time.Time{hour.Add(17 * time.Minute), hour.Add(48 * time.Minute), hour.Add(time.Hour)} {
+		stored, err := base.Storage(s.ctx, s.owner, namespace, at)
+		s.Require().NoError(err)
+		s.EqualValues(2_000_000_000, stored.ByteHours)
+	}
 
 	rows := s.rows()
 	s.Require().Len(rows, 2, "two samples of one hour are one row, and the next hour is another")
 	s.Equal(routing.UsageID(KnowledgeStorageKind, namespace, "2026-10-23T14:00:00Z"), rows[0].UsageID)
+	s.Equal(hour, rows[0].StartedAt.UTC(), "dated to the hour it bills")
+	s.Equal(hour.Add(time.Hour), rows[1].StartedAt.UTC())
 	s.Equal(KnowledgeStorage, rows[0].Model)
 	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 2_000_000_000}, rows[0].Quantities())
 	s.EqualValues(904, rows[0].CostMicros, "2 GB for an hour at $0.33 a GB-month of 730 hours")
 	s.Equal(routing.MeasuredByRouter, rows[0].Attributes[routing.AttributeMeasuredBy])
+}
+
+func (s *MeteredSuite) TestAnEmptyKnowledgeBaseWritesNoStorageRow() {
+	base, server := s.fixture()
+	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
+	server.Holds(namespace, 0)
+
+	stored, err := base.Storage(s.ctx, s.owner, namespace, time.Now())
+
+	s.Require().NoError(err)
+	s.Zero(stored.ByteHours)
+	s.Empty(s.rows(), "an hour of nothing is not a row")
+}
+
+func (s *MeteredSuite) TestAWriteThatFailsPartwayBillsTheRequestsThatSucceeded() {
+	base, server := s.fixture()
+	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
+	passages := make([]knowledge.Document, knowledge.WriteBatch+1)
+	for i := range passages {
+		passages[i] = knowledge.Document{ID: fmt.Sprintf("handbook.md#%d", i), Text: "A passage.", Source: "handbook.md"}
+	}
+	server.RefuseWritesAfter(1)
+
+	err := base.For(s.owner).Upsert(s.ctx, namespace, passages)
+
+	s.Require().Error(err, "the caller hears the write failed")
+	rows := s.rows()
+	s.Require().Len(rows, 2, "a row per request")
+	s.True(rows[0].Success)
+	var written int64
+	for _, passage := range passages[:knowledge.WriteBatch] {
+		written += int64(len(passage.ID) + len(passage.Text) + len(passage.Source))
+	}
+	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: written}, rows[0].Quantities(),
+		"the first request, which turbopuffer billed")
+	s.True(rows[0].Billable)
+	s.Positive(rows[0].CostMicros)
+	s.False(rows[1].Success, "the request that failed")
+	s.Zero(rows[1].CostMicros)
 }
 
 // mem0Platform answers mem0's endpoints with the bodies its API reference documents, and

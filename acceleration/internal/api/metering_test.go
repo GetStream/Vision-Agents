@@ -93,6 +93,27 @@ func (s *KnowledgeSuite) TestAFetchIsRecordedAsALookup() {
 	s.Positive(used[pricing.BytesReturned])
 }
 
+func (s *VoicesSuite) TestHearingAVoiceIsBilledAndALongLineIsRefused() {
+	created := s.createVoice(map[string]any{"name": "founder"})
+	s.record(created.Id, map[string]any{
+		"audio":    base64.StdEncoding.EncodeToString([]byte("pretend this is speech")),
+		"filename": "clip.wav",
+	})
+	s.prepare(created.Id)
+	since := time.Now().UTC()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/voices/"+created.Id+"/preview",
+		map[string]any{"provider": "elevenlabs", "text": strings.Repeat("a", voices.MaxLine+1)})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "at most 500 characters")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/preview",
+		map[string]any{"provider": "elevenlabs", "text": "Hello there."}, nil))
+
+	rows := s.meteredRows(routing.TTS, since, 1)
+	s.Equal("eleven_flash_v2_5", rows[0].Model, "the line is billed as the model it is spoken with")
+	s.EqualValues(len("Hello there."), rows[0].Characters)
+}
+
 func (s *VoicesSuite) TestCloningAVoiceIsBilledOnce() {
 	since := time.Now().UTC()
 	created := s.createVoice(map[string]any{"name": "founder"})
@@ -108,7 +129,8 @@ func (s *VoicesSuite) TestCloningAVoiceIsBilledOnce() {
 	s.Equal("elevenlabs", rows[0].Provider)
 	s.Equal(voices.VoiceClone, rows[0].Model)
 	s.Equal(pricing.Quantities{pricing.Clones: 1}, rows[0].Quantities())
-	s.Equal(routing.UsageID(voices.VoiceClone, "elevenlabs", s.customerID(), created.Id), rows[0].UsageID)
+	s.Equal(routing.UsageID(voices.VoiceClone, "elevenlabs", s.customerID(), created.Id, "el-cloned"), rows[0].UsageID,
+		"named by the clone the provider made, which it handed back both times")
 	s.Never(func() bool {
 		count, err := s.store.ShardDB().NewSelect().Model((*store.Request)(nil)).
 			Where("customer_id = ? AND modality = 'tts'", s.customerID()).Count(context.Background())

@@ -143,7 +143,7 @@ const usage = `usage: router [--config path] [command]
   prices                read and check the price list (router prices for its commands)
   usage replay          write the usage rows a log says were lost, once each (--from path)
   usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
-  usage storage         record this hour of every knowledge base's size, once each (hourly)
+  usage storage         record the last hour of every knowledge base's size, once each (hourly, one job per turbopuffer key)
 `
 
 func main() {

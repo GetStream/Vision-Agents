@@ -38,12 +38,18 @@ const usageCommands = `usage: router usage <command>
                              it refused instead, once the producer is fixed. A row it never had
                              nor refused is never queued: one written before the router shipped,
                              or carried in by a data move. Writes the database
-  storage [--hour time]      record an hour (this one, or the RFC 3339 hour given) of every
-                             knowledge base's size, as one storage row per knowledge base owned
-                             by its app under job:knowledge_storage; run hourly. A rerun within
-                             the hour writes nothing twice. One it cannot read is logged, alerted
-                             on (storage_missed) and fails the run, so a retry fills it in. Needs
-                             TURBOPUFFER_API_KEY. Writes the database
+  storage [--hour time]      record an hour of every knowledge base's size: the last hour to have
+                             ended, or the RFC 3339 hour given. One storage row per knowledge base
+                             of an app this deployment knows, dated to the hour and owned by the
+                             app under job:knowledge_storage; an empty one writes none. The size
+                             is the one the base holds now, whatever the hour: turbopuffer keeps
+                             no past sizes. A rerun for an hour writes nothing twice. One it cannot
+                             read is logged, alerted on as storage_missed naming the hour, and
+                             fails the run, so a retry within the next hour, or --hour, fills it
+                             in. Run it hourly, once per turbopuffer key and region: it reads every
+                             namespace the key holds, whichever shard or router wrote it, so one
+                             run per shard would read each base once per shard (writing it once).
+                             Needs TURBOPUFFER_API_KEY. Writes the database
 `
 
 const (

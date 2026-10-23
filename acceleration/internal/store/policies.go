@@ -242,6 +242,28 @@ func (s *Store) OrganizationOf(ctx context.Context, appID string) (string, error
 	return membership.OrganizationID, nil
 }
 
+// KnownApps is which of ids this deployment knows: an app registered here, or one a request
+// named with its organization. An id it has never seen is another deployment's.
+func (s *Store) KnownApps(ctx context.Context, ids []string) (map[string]bool, error) {
+	known := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return known, nil
+	}
+	var registered, seen []string
+	if err := s.db.NewSelect().Model((*App)(nil)).Column("id").Where("id IN (?)", bun.In(ids)).
+		Scan(ctx, &registered); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: known apps: %w", err))
+	}
+	if err := s.db.NewSelect().Model((*AppOrganization)(nil)).Column("app_id").Where("app_id IN (?)", bun.In(ids)).
+		Scan(ctx, &seen); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: known apps: %w", err))
+	}
+	for _, id := range append(registered, seen...) {
+		known[id] = true
+	}
+	return known, nil
+}
+
 // SpendSince returns what one customer has spent since a moment, across every modality.
 func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Time) (int64, error) {
 	spent, err := spendOf(ctx, s, []string{customerID}, since)

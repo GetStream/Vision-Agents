@@ -1155,7 +1155,17 @@ runtime lookup is unchanged.
 `knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
 question about prices or opening hours is answered out of the handbook rather than guessed
 at. Each search is a `requests` row with modality `knowledge`, like everything else that
-costs money.
+costs money: a `lookup` of the bytes turbopuffer billed it as searching (at least 1.28 GB) and
+returning, and each write or delete request a `write` of the bytes written.
+
+Storage is sampled hourly by `router usage storage`: one `storage` row per knowledge base and
+hour, of its size as `byte_hours`, owned by its app under `job:knowledge_storage`. By default
+it records the last hour to have ended, so a retry within the next hour bills the same one;
+`--hour` records another, at the size the base holds now, since turbopuffer keeps no past
+sizes. Run exactly one such job per turbopuffer key and region, not one per shard or router:
+it reads every namespace the key holds, and skips those of apps this deployment has never
+seen, which belong to another deployment sharing the key. A base it cannot read fails the run
+and alerts as `storage_missed`, naming the hour to run again.
 
 **Search is what is true today.** Neither the model nor the handbook can answer what the
 traffic is doing, whether a place is open or what a score is: one was trained months ago and

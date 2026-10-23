@@ -54,6 +54,11 @@ type Document struct {
 	Score float64
 }
 
+// WriteBatch is the most passages, or ids to delete, one write request carries, so a large
+// body of documentation is several requests rather than one that is refused for its size.
+// Each request is billed on its own, so each is a row of its own.
+const WriteBatch = 256
+
 // ErrNoNamespace is a knowledge base the provider does not have, such as one deleted since it
 // was listed.
 var ErrNoNamespace = errors.New("knowledge: no such namespace")

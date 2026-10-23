@@ -31,6 +31,9 @@ type Server struct {
 	sizes map[string]int64
 	// unreadable namespaces answer their metadata with a 500.
 	unreadable map[string]bool
+	// writesLeft is how many more writes are taken before every write answers a 500; below
+	// zero takes them all.
+	writesLeft int
 }
 
 type row struct {
@@ -49,6 +52,7 @@ func Start(t testing.TB) *Server {
 		namespaces: map[string]map[string]row{},
 		sizes:      map[string]int64{},
 		unreadable: map[string]bool{},
+		writesLeft: -1,
 	}
 	server.Server = httptest.NewServer(http.HandlerFunc(server.serve))
 	t.Cleanup(server.Close)
@@ -71,6 +75,14 @@ func (s *Server) Unreadable(namespace string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.unreadable[namespace] = true
+}
+
+// RefuseWritesAfter takes n more writes and answers every one after them with a 500, as a
+// write that fails partway through a large ingest does.
+func (s *Server) RefuseWritesAfter(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writesLeft = n
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +226,13 @@ func matches(stored row, rankBy, filters []any) bool {
 // write upserts and deletes, billed the logical bytes of what was upserted and the ids of
 // what was deleted.
 func (s *Server) write(w http.ResponseWriter, r *http.Request, namespace string) {
+	if s.writesLeft == 0 {
+		http.Error(w, `{"status":"error","error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if s.writesLeft > 0 {
+		s.writesLeft--
+	}
 	var asked struct {
 		UpsertRows []row    `json:"upsert_rows"`
 		Deletes    []string `json:"deletes"`

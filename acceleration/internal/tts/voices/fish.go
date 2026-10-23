@@ -148,6 +148,9 @@ func (f *Fish) Delete(ctx context.Context, externalID string) error {
 	return nil
 }
 
+// SpeechModel is the model Speak says a line with.
+func (f *Fish) SpeechModel() string { return fish.DefaultModel }
+
 // Speak says a line in the voice with the model a call would use.
 func (f *Fish) Speak(ctx context.Context, externalID, text string) (Speech, error) {
 	url := strings.TrimSuffix(f.options.BaseURL, "/") + "/v1/tts"

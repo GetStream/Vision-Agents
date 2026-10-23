@@ -36,10 +36,17 @@ type Request struct {
 	Samples     []Sample
 }
 
-// Speech is a short piece of audio spoken in a prepared voice.
+// Speech is a short piece of audio spoken in a prepared voice, and the characters it was
+// billed for saying.
 type Speech struct {
 	Audio       []byte
 	ContentType string
+	Characters  int64
+}
+
+// Used is what saying the line is priced by.
+func (s Speech) Used() pricing.Quantities {
+	return pricing.Quantities{pricing.Characters: s.Characters}
 }
 
 // Prepared is a voice a provider made: the id its sessions ask for, and the clones it billed.
@@ -65,11 +72,12 @@ func cloned(externalID string, err error) (Prepared, error) {
 // binding, and the clone it made. Delete takes the voice back off the provider, so deleting
 // ours does not leave the customer paying for voices nobody can reach. Speak says a line in
 // the prepared voice, so a customer can hear what the provider made of it before a caller
-// does.
+// does; SpeechModel is the model it speaks with, which the line is priced as.
 type Cloner interface {
 	Prepare(ctx context.Context, request Request) (Prepared, error)
 	Delete(ctx context.Context, externalID string) error
 	Speak(ctx context.Context, externalID, text string) (Speech, error)
+	SpeechModel() string
 }
 
 // Registry holds one cloner per provider name.

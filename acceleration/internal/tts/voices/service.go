@@ -9,6 +9,9 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
@@ -24,6 +27,13 @@ const EnvBucketURL = "ROUTER_VOICES_BUCKET_URL"
 // VoiceClone is the model a clone is recorded as, under its provider, and the kind its usage
 // id names.
 const VoiceClone = "voice_clone"
+
+// MaxLine is the most characters a voice is asked to say to be heard, which is enough for a
+// line or two: the line is sent to the provider and billed.
+const MaxLine = 500
+
+// ErrLineTooLong is a line to hear a voice say that is over MaxLine characters.
+var ErrLineTooLong = errors.New("voices: the line is too long to hear a voice say")
 
 // Service is the control plane for a customer's own voices: it holds the rows, the
 // recordings behind them and the ids each provider gave them back. It is the only caller of
@@ -200,10 +210,17 @@ func (s *Service) Providers() []string {
 	return providers
 }
 
-// Speak says a line in the voice through one provider it is ready with.
+// Speak says a line in the voice through one provider it is ready with. The line is a tts row
+// of the customer's, under the key that asked, billed the characters it sent at the rate of
+// the model the provider speaks it with. A line over MaxLine characters is refused before the
+// provider is asked.
 func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text string) (Speech, error) {
 	if strings.TrimSpace(text) == "" {
 		return Speech{}, stack.Wrap(errors.New("voices: there is nothing to say"))
+	}
+	characters := utf8.RuneCountInString(text)
+	if characters > MaxLine {
+		return Speech{}, stack.Wrap(fmt.Errorf("%w: at most %d characters, this one has %d", ErrLineTooLong, MaxLine, characters))
 	}
 	cloner, err := s.cloners.Cloner(provider)
 	if err != nil {
@@ -213,8 +230,25 @@ func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text
 	if err != nil {
 		return Speech{}, err
 	}
-	return cloner.Speak(ctx, externalID, text)
+	return routing.Call(ctx, routing.Meter{
+		Recorder: s.recorder,
+		Config:   routing.ProviderConfig{Provider: provider, Model: cloner.SpeechModel()},
+		Owner:    routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)},
+	}, func(ctx context.Context) (Speech, error) {
+		speech, err := cloner.Speak(ctx, externalID, text)
+		speech.Characters = int64(characters)
+		return speech, err
+	})
 }
+
+// clone is a voice a provider made, named by the clone it made, so the same clone reported
+// again bills nothing and a new one upstream is billed.
+type clone struct {
+	Prepared
+	id uuid.UUID
+}
+
+func (c clone) UsageID() uuid.UUID { return c.id }
 
 // Samples returns a voice's recordings, oldest first.
 func (s *Service) Samples(ctx context.Context, voiceID string) ([]store.VoiceSample, error) {
@@ -253,16 +287,15 @@ func (s *Service) prepareOne(
 	}
 
 	binding := store.VoiceBinding{VoiceID: voice.ID, Provider: provider, ExternalID: previous}
-	prepared, err := routing.Call(ctx, routing.Meter{
+	made, err := routing.Call(ctx, routing.Meter{
 		Recorder: s.recorder,
 		Config:   routing.ProviderConfig{Provider: provider, Model: VoiceClone},
 		Owner:    routing.Owner{CustomerID: voice.CustomerID, Attribution: routing.AttributionFrom(ctx)},
-		// Preparing the same voice for the same provider again bills nothing.
-		UsageID: routing.UsageID(VoiceClone, provider, voice.CustomerID, voice.ID),
-	}, func(ctx context.Context) (Prepared, error) {
-		return cloner.Prepare(ctx, request)
+	}, func(ctx context.Context) (clone, error) {
+		prepared, err := cloner.Prepare(ctx, request)
+		return clone{Prepared: prepared, id: routing.UsageID(VoiceClone, provider, voice.CustomerID, voice.ID, prepared.ExternalID)}, err
 	})
-	externalID := prepared.ExternalID
+	externalID := made.ExternalID
 	if err != nil {
 		binding.State = store.VoiceFailed
 		binding.Error = err.Error()

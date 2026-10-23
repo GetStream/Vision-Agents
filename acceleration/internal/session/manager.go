@@ -119,10 +119,11 @@ type ManagerOptions struct {
 	// which case every read is a query, which is what a deployment without Redis does.
 	Configs *appconfig.Store
 	Live    *live.Client
-	// Pricer prices what a session's own recorders record. Nil prices nothing.
+	// Pricer and Writer are the process's price list and usage writer, for what a session
+	// records of its own rather than through a router or internal/metered, such as the time
+	// it runs; memory and knowledge record through the recorders they are built with. Nothing
+	// reads them yet. Nil prices nothing, and gives each such recorder a writer of its own.
 	Pricer pricing.Pricer
-	// Writer is the process's usage writer, which a session's own recorders share. Nil
-	// gives each of them one of their own.
 	Writer *routing.Writer
 	// Directory is where this node says which sessions it is running, so the deployment's
 	// other nodes can forward what only this one can answer. Nil keeps a session
