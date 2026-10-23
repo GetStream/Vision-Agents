@@ -10,14 +10,15 @@ struct PostureTests {
     static let repo = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().appendingPathComponent("../../../../..").standardized
     static let generated = repo.appendingPathComponent(
-        "sdks/swift/core/Sources/VisionAgentsCore/Generated/Types+Operations.swift")
+        "sdks/swift/core/Sources/VisionAgentsCore/Generated/DefaultAPI.swift")
     static let spec = repo.appendingPathComponent("acceleration/api/openapi.yaml")
 
     /// The generated client is committed, so a stale or hand-edited one would ship a method
     /// for an operation the router refuses a device, or one it no longer marks for devices.
     @Test func theGeneratedClientReachesOnlyWhatADeviceMay() throws {
         let generated = try String(contentsOf: Self.generated, encoding: .utf8)
-        let operations = generated.matches(of: /static let id: Swift.String = "(\w+)"/).map {
+        let endpoints = try #require(generated.firstRange(of: "protocol DefaultAPIEndpoints"))
+        let operations = generated[endpoints.upperBound...].matches(of: /func (\w+)\(/).map {
             String($0.output.1)
         }
         let accessible = try Self.clientAccessible()

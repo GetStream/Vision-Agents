@@ -48,8 +48,7 @@ private func connect(_ backend: Backend, _ credentials: StreamCredentials) async
     let unused = OSAllocatedUnfairLock<String?>(initialState: credentials.token)
     let user = credentials.user
     try await client.connectUser(
-        userInfo: UserInfo(
-            id: user.id, name: user.name.isEmpty ? nil : user.name, imageURL: URL(string: user.image)),
+        userInfo: UserInfo(id: user.id, name: user.originalName, imageURL: user.imageURL),
         tokenProvider: { done in
             if let token = unused.withLock({ held in defer { held = nil }; return held }) {
                 done(Result { try Token(rawValue: token) })

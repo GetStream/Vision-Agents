@@ -1,4 +1,5 @@
 import Foundation
+import StreamCore
 
 /// A running or finished conversation.
 public struct Session: Sendable, Hashable, Identifiable {
@@ -21,7 +22,7 @@ public struct Session: Sendable, Hashable, Identifiable {
     public let title: String
     public let description: String
     /// The caller's own labels.
-    public let custom: [String: JSONValue]
+    public let custom: [String: RawJSON]
     public let instructions: String
     public let llm: String
     public let createdAt: Date
@@ -39,7 +40,7 @@ public struct Session: Sendable, Hashable, Identifiable {
         case unknown
     }
 
-    init(_ schema: Components.Schemas.Session) {
+    init(_ schema: SessionPayload) {
         id = schema.id
         callID = schema.callId
         callType = schema.callType
@@ -51,9 +52,7 @@ public struct Session: Sendable, Hashable, Identifiable {
         projectID = schema.projectId ?? ""
         title = schema.title ?? ""
         description = schema.description ?? ""
-        custom =
-            schema.custom.flatMap { try? JSONEncoder().encode($0) }
-            .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+        custom = schema.custom ?? [:]
         instructions = schema.instructions ?? ""
         llm = schema.llm ?? ""
         createdAt = schema.createdAt
@@ -66,12 +65,12 @@ public struct Guest: Sendable, Hashable {
     /// A Stream user token with role guest, which chat and video connect with as well.
     public let token: String
     public let name: String
-    public let custom: [String: JSONValue]
+    public let custom: [String: RawJSON]
     /// When the token stops working, or nil when the router did not say.
     public let expiresAt: Date?
 
     public init(
-        id: String, token: String, name: String = "", custom: [String: JSONValue] = [:],
+        id: String, token: String, name: String = "", custom: [String: RawJSON] = [:],
         expiresAt: Date? = nil
     ) {
         self.id = id
@@ -81,13 +80,11 @@ public struct Guest: Sendable, Hashable {
         self.expiresAt = expiresAt
     }
 
-    init(_ schema: Components.Schemas.GuestUser) {
+    init(_ schema: GuestUser) {
         id = schema.id
         token = schema.token
         name = schema.name ?? ""
-        custom =
-            schema.custom.flatMap { try? JSONEncoder().encode($0) }
-            .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+        custom = schema.custom ?? [:]
         expiresAt = schema.expiresAt
     }
 }
@@ -150,7 +147,7 @@ public struct Response: Sendable, Hashable, Identifiable {
         case unknown
     }
 
-    init(_ schema: Components.Schemas.AgentResponse) {
+    init(_ schema: AgentResponse) {
         id = schema.id
         sessionID = schema.sessionId
         said = schema.said ?? ""
@@ -182,7 +179,7 @@ public struct ResponseItem: Sendable, Hashable {
         case unknown
     }
 
-    init(_ schema: Components.Schemas.AgentResponseItem) {
+    init(_ schema: AgentResponseItem) {
         responseID = schema.responseId
         ordinal = schema.ordinal
         kind = Kind(rawValue: schema.kind.rawValue) ?? .unknown
@@ -208,8 +205,8 @@ public struct ImageSource: Sendable, Hashable {
         self.detail = detail
     }
 
-    var schema: Components.Schemas.ImageSource {
-        .init(detail: detail.flatMap { .init(rawValue: $0.rawValue) }, url: url)
+    var schema: ImageSourcePayload {
+        .init(detail: detail.map { .init(rawValue: $0.rawValue) }, url: url)
     }
 }
 
@@ -251,7 +248,7 @@ public struct Greeting: Sendable, Hashable {
         self.mode = mode
     }
 
-    var schema: Components.Schemas.Greeting {
-        .init(mode: mode.flatMap { .init(rawValue: $0.rawValue) }, text: text)
+    var schema: GreetingPayload {
+        .init(mode: mode.map { .init(rawValue: $0.rawValue) }, text: text)
     }
 }
