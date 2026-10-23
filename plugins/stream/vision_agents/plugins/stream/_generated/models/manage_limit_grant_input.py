@@ -31,8 +31,8 @@ class ManageLimitGrantInput:
         expires_at (datetime.datetime | Unset): When it ends, in the future and at most 366 days away. Left out, it ends
             when used up or revoked. The next midnight UTC makes it more for today.
         team (str | Unset): The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
-        user_id (str | Unset): The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _
-            and -.
+        user_id (str | Unset): The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to
+            255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
     """
 
     amount_micros: int
