@@ -292,12 +292,23 @@ func GrantUsesOf(requests []Request, written []uuid.UUID) []GrantUse {
 	return uses
 }
 
-// grantUsesChunk is how many uses one statement counts.
-const grantUsesChunk = 1_000
+const (
+	// grantUsesChunk is how many uses one statement counts.
+	grantUsesChunk = 1_000
+	// GrantUsesKept is how long which rows counted toward a grant is kept once it expired or
+	// was revoked; after that it counts nothing more, so what it paid for stays as it was.
+	GrantUsesKept = 30 * 24 * time.Hour
+	// grantUsesPruned is how many of them one statement of PruneGrantUses forgets.
+	grantUsesPruned = 5_000
+)
+
+// grantEndedBefore is the SQL condition a grant g expired or was revoked before ? seconds ago.
+const grantEndedBefore = "least(g.revoked_at, g.expires_at) < now() - make_interval(secs => ?)"
 
 // AddGrantUses counts the rows toward their grants in the shared database: each (grant, usage
 // id) once, however often it is sent, added to the grant's used_micros. A grant that is not
-// there counts nothing. It says how many it had not counted before.
+// there, or ended more than GrantUsesKept ago, counts nothing. It says how many it had not
+// counted before.
 func (s *Store) AddGrantUses(ctx context.Context, uses []GrantUse) (int, error) {
 	added := 0
 	for start := 0; start < len(uses); start += grantUsesChunk {
@@ -337,6 +348,7 @@ WITH sent AS (
 ), counted AS (
     INSERT INTO limit_grant_uses (grant_id, usage_id, micros)
     SELECT s.grant_id, s.usage_id, s.micros FROM sent s JOIN limit_grants g ON g.id = s.grant_id
+    WHERE NOT coalesce(`+grantEndedBefore+`, false)
     ON CONFLICT DO NOTHING
     RETURNING grant_id, micros
 ), raised AS (
@@ -345,8 +357,29 @@ WITH sent AS (
     WHERE g.id = c.grant_id
     RETURNING 1
 )
-SELECT count(*) FROM counted`, pgdialect.Array(grants), pgdialect.Array(usageIDs), pgdialect.Array(micros)).Scan(ctx, &added)
+SELECT count(*) FROM counted`, pgdialect.Array(grants), pgdialect.Array(usageIDs), pgdialect.Array(micros), GrantUsesKept.Seconds()).Scan(ctx, &added)
 	return added, err
+}
+
+// PruneGrantUses forgets which rows counted toward the grants that expired or were revoked
+// more than GrantUsesKept ago, grantUsesPruned at a time until none is left; each grant keeps
+// what it paid for. It says how many it forgot.
+func (s *Store) PruneGrantUses(ctx context.Context) (int64, error) {
+	var pruned int64
+	for {
+		result, err := s.db.ExecContext(ctx, `
+DELETE FROM limit_grant_uses WHERE (grant_id, usage_id) IN (
+    SELECT u.grant_id, u.usage_id FROM limit_grants g JOIN limit_grant_uses u ON u.grant_id = g.id
+    WHERE `+grantEndedBefore+` LIMIT ?)`, GrantUsesKept.Seconds(), grantUsesPruned)
+		if err != nil {
+			return pruned, stack.Wrap(fmt.Errorf("store: prune grant uses: %w", err))
+		}
+		n, err := result.RowsAffected()
+		pruned += n
+		if err != nil || n < grantUsesPruned {
+			return pruned, err
+		}
+	}
 }
 
 // GrantUsesCounted is, of the rows named by usage id, how many grants each counts toward.

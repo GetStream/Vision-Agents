@@ -182,6 +182,38 @@ func (s *StoreSuite) TestAUsedUpGrantIsNotLiveAndLeavesRoomForAnother() {
 	s.Equal([]int64{used.ID}, idsOf(listed))
 }
 
+func (s *StoreSuite) TestTheUsesOfAGrantEndedLongAgoArePruned() {
+	ended := func(column string, ago time.Duration) LimitGrant {
+		grant := s.grant(LimitGrant{AmountMicros: 10_000})
+		s.grantRow(s.store, []int64{grant.ID}, 300, true)
+		_, err := s.store.DB().ExecContext(s.ctx, "UPDATE limit_grants SET created_at = now() - make_interval(secs => ?), "+
+			column+" = now() - make_interval(secs => ?) WHERE id = ?", (ago + time.Hour).Seconds(), ago.Seconds(), grant.ID)
+		s.Require().NoError(err)
+		return grant
+	}
+	expired, revoked := ended("expires_at", GrantUsesKept+time.Hour), ended("revoked_at", GrantUsesKept+time.Hour)
+	recent := ended("revoked_at", GrantUsesKept-time.Hour)
+	live := s.grant(LimitGrant{AmountMicros: 10_000})
+	s.grantRow(s.store, []int64{live.ID}, 300, true)
+	uses := func(id int64) (n int) {
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM limit_grant_uses WHERE grant_id = ?", id).Scan(&n))
+		return n
+	}
+
+	pruned, err := s.store.PruneGrantUses(s.ctx)
+	s.Require().NoError(err)
+	s.EqualValues(2, pruned)
+	s.Zero(uses(expired.ID))
+	s.Zero(uses(revoked.ID))
+	s.Equal(1, uses(recent.ID), "a grant ended inside GrantUsesKept keeps them")
+	s.Equal(1, uses(live.ID))
+	s.EqualValues(300, s.used(expired.ID), "what it paid for stays")
+	counted, err := s.store.AddGrantUses(s.ctx, []GrantUse{{GrantID: revoked.ID, UsageID: uuid.Must(uuid.NewV7()), Micros: 5}})
+	s.Require().NoError(err)
+	s.Zero(counted, "nor does it count anything more")
+	s.EqualValues(300, s.used(revoked.ID))
+}
+
 func (s *ShardedStoreSuite) TestRowsInEveryShardCountTowardTheirGrant() {
 	grant := s.grant(LimitGrant{AmountMicros: 10_000})
 	for _, store := range []*Store{s.store, s.other} {
