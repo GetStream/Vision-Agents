@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -20,6 +21,8 @@ type Service struct {
 	store     *store.Store
 	registrar Registrar
 	hookURL   string
+	recorder  *routing.Recorder
+	clock     func() time.Time
 	logger    *slog.Logger
 }
 
@@ -30,7 +33,12 @@ type Options struct {
 	Registrar Registrar
 	// PublicURL is where the registrar's reports reach this router.
 	PublicURL string
-	Logger    *slog.Logger
+	// Recorder files the registrar's fees as rows: a brand, a campaign's review and each
+	// month of a campaign. Nil records none.
+	Recorder *routing.Recorder
+	// Now is the clock a campaign's months are counted by. Nil is the wall clock.
+	Now    func() time.Time
+	Logger *slog.Logger
 }
 
 // NewService returns a Service.
@@ -45,7 +53,8 @@ func NewService(options Options) (*Service, error) {
 	if options.PublicURL != "" {
 		hookURL = options.PublicURL + HookPath
 	}
-	return &Service{store: options.Store, registrar: options.Registrar, hookURL: hookURL, logger: options.Logger}, nil
+	return &Service{store: options.Store, registrar: options.Registrar, hookURL: hookURL,
+		recorder: options.Recorder, clock: options.Now, logger: options.Logger}, nil
 }
 
 // Run checks the use cases a vendor holds every interval until ctx ends, for the reports a
@@ -263,7 +272,9 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 	}
 	var brand Brand
 	if profile.VendorBrandID == "" {
-		brand, err = s.registrar.RegisterBrand(ctx, profile)
+		brand, err = routing.Call(ctx, s.feeMeter(ctx, ModelBrand, useCase.CustomerID,
+			map[string]string{AttributeEntityType: profile.LegalEntityType}),
+			func(ctx context.Context) (Brand, error) { return s.registrar.RegisterBrand(ctx, profile) })
 	} else {
 		brand, err = s.registrar.Brand(ctx, profile.VendorBrandID)
 	}
@@ -285,11 +296,20 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 		log.Notes, log.VendorPayload = "The vendor refused the brand: "+brand.Status+".", brand.Raw
 		return s.store.MoveUseCase(ctx, &useCase, VendorPending, log)
 	}
-	campaign, err := s.registrar.RegisterCampaign(ctx, brand.ID, useCase, s.hookURL)
+	campaign, err := routing.Call(ctx, s.feeMeter(ctx, ModelCampaign, useCase.CustomerID,
+		map[string]string{AttributeUseCaseType: useCase.UseCaseType}),
+		func(ctx context.Context) (Campaign, error) {
+			return s.registrar.RegisterCampaign(ctx, brand.ID, useCase, s.hookURL)
+		})
 	if err != nil {
 		return err
 	}
 	useCase.VendorCampaignID, useCase.VendorStatus = campaign.ID, campaign.Status
+	if useCase.Vendor == "" {
+		useCase.Vendor = s.registrar.Name()
+	}
+	// A registrar charges a campaign's first months when it registers it.
+	s.billUpfront(useCase, s.now().UTC())
 	log.Notes, log.VendorPayload = "Registered as campaign "+campaign.ID+".", campaign.Raw
 	return s.store.MoveUseCase(ctx, &useCase, VendorPending, log)
 }

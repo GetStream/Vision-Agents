@@ -193,6 +193,21 @@ func (s *Store) UseCasesInStatus(ctx context.Context, status string, limit int, 
 	return useCases, nil
 }
 
+// UseCasesWithCampaigns is every use case registered as a campaign at a vendor and in one of
+// statuses: what a vendor bills a campaign's months for.
+func (s *Store) UseCasesWithCampaigns(ctx context.Context, statuses ...string) ([]UseCase, error) {
+	useCases := []UseCase{}
+	err := s.db.NewSelect().Model(&useCases).
+		Where("vendor_campaign_id <> ''").
+		Where("status IN (?)", bun.In(statuses)).
+		Order("id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: use cases with campaigns: %w", err))
+	}
+	return useCases, nil
+}
+
 // HasUseCaseIn reports whether an app holds a use case in any of statuses.
 func (s *Store) HasUseCaseIn(ctx context.Context, customerID string, statuses ...string) (bool, error) {
 	found, err := s.db.NewSelect().Model((*UseCase)(nil)).
