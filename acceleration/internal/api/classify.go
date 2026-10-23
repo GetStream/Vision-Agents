@@ -93,7 +93,7 @@ func classifyFailed(err error) error {
 	case errors.Is(err, decisionmodel.ErrUnavailable):
 		return unavailable(err.Error())
 	}
-	return invalidRequest(err.Error())
+	return refusedRequest(err)
 }
 
 // decisionRequestOf builds the questions through decisionmodel's constructors, which are what keep each

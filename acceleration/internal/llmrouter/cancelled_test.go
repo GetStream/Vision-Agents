@@ -47,6 +47,9 @@ func (k *statSink) QuoteStat(routing.ProviderConfig, routing.Stat) pricing.Quote
 	return pricing.Quote{}
 }
 
+// Billable is true: nothing here asks money of an admission.
+func (k *statSink) Billable(routing.ProviderConfig) bool { return true }
+
 // only is the single row the session wrote.
 func (k *statSink) only(t *testing.T) routing.Stat {
 	t.Helper()

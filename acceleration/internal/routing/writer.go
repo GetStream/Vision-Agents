@@ -57,6 +57,7 @@ type Writer struct {
 	logger       *slog.Logger
 	gate         Gate
 	shipper      *shipper
+	written      func([]Acked)
 	writeTimeout time.Duration
 	queueSize    int64
 
@@ -105,6 +106,9 @@ type WriterOptions struct {
 	// Shipped is told which rows the usage service has, a row possibly more than once (see
 	// Acked). Optional.
 	Shipped func(acked []Acked)
+	// Written is told which rows the shard has as each batch commits, a row it already had
+	// included: the ledger a deployment with no usage service reads its spend from. Optional.
+	Written func(written []Acked)
 	// Settle is how long a written batch may wait for the shipper before it is left to the
 	// sweeper, which sends what started that long ago; defaults to 30 s, the sweeper's.
 	Settle time.Duration
@@ -134,6 +138,7 @@ func NewWriter(options WriterOptions) *Writer {
 		live:         options.Live,
 		logger:       logger,
 		gate:         options.Gate,
+		written:      options.Written,
 		writeTimeout: timeout,
 		queueSize:    int64(size),
 		queue:        make(chan queued, size),
@@ -496,6 +501,9 @@ func (w *Writer) writeRows(rows []pending) {
 			}
 			usageWritten.Add(float64(len(written)))
 			usageDuplicates.Add(float64(len(rows) - len(written)))
+			if w.written != nil {
+				w.written(ackedOf(requests))
+			}
 			if w.shipper != nil {
 				w.shipper.offer(writtenRows(requests, written))
 			}
@@ -531,6 +539,15 @@ func (w *Writer) writeRows(rows []pending) {
 		delay = min(delay*2, retryMost)
 		taken = 0
 	}
+}
+
+// ackedOf is the rows as the shard has them.
+func ackedOf(requests []store.Request) []Acked {
+	acked := make([]Acked, len(requests))
+	for i, request := range requests {
+		acked[i] = Acked{UsageID: request.UsageID, OrganizationID: request.OrganizationID, CostMicros: request.CostMicros}
+	}
+	return acked
 }
 
 // writtenRows is the rows a batch wrote, each usage id once. A row whose id was already in the

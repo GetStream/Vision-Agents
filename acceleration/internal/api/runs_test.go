@@ -160,7 +160,7 @@ func (s *RunsSuite) TestAModelThatFailsIsAModelFailure() {
 	s.Equal(codeModelFailed, failure.Code)
 }
 
-func (s *RunsSuite) TestASpentBudgetIsBudgetExceeded() {
+func (s *RunsSuite) TestASpentBudgetIsAPaymentRequired() {
 	s.useApp(s.data.createApp())
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/app",
 		map[string]any{"budget": map[string]any{"limit_micros": 1_000, "interval": "daily"}}, nil))
@@ -168,11 +168,19 @@ func (s *RunsSuite) TestASpentBudgetIsBudgetExceeded() {
 		Modality: "llm", CustomerID: s.customerID(), Provider: "echo", Model: "echo-model",
 		StartedAt: time.Now().UTC(), CostMicros: 5_000, Success: true,
 	}))
+	config := s.config("echo/echo-model")
 
-	status, failure := s.runFails(CreateRunRequest{ConfigId: s.config("echo/echo-model"), Input: "hello"})
+	// The budget is measured in the background, so the run that warms the app may pass.
+	s.Require().Eventually(func() bool {
+		status, _ := s.serverClient.call(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: config, Input: "hello"})
+		return status != http.StatusOK
+	}, 5*time.Second, 50*time.Millisecond)
+	status, failure := s.runFails(CreateRunRequest{ConfigId: config, Input: "hello"})
 
-	s.Equal(http.StatusForbidden, status, "waiting does not refill a budget, so it is no 429 to retry")
-	s.Equal(codeBudgetExceeded, failure.Code)
+	s.Equal(http.StatusPaymentRequired, status, "waiting does not refill a budget, so it is no 429 to retry")
+	s.Equal(ErrorTypePaymentRequired, failure.Type)
+	s.Equal(codeSpendLimitReached, failure.Code)
+	s.Contains(failure.Message, "the app's daily budget of")
 }
 
 func (s *RunsSuite) TestARunOverTheAppsLimitIsToldWhenToRetry() {

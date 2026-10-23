@@ -1001,6 +1001,7 @@ const (
 	ErrorTypeNotAcceptable        ErrorType = "not_acceptable"
 	ErrorTypeNotFound             ErrorType = "not_found"
 	ErrorTypePayloadTooLarge      ErrorType = "payload_too_large"
+	ErrorTypePaymentRequired      ErrorType = "payment_required"
 	ErrorTypePermission           ErrorType = "permission"
 	ErrorTypeRateLimited          ErrorType = "rate_limited"
 	ErrorTypeTimeout              ErrorType = "timeout"
@@ -1028,6 +1029,8 @@ func (e ErrorType) Valid() bool {
 	case ErrorTypeNotFound:
 		return true
 	case ErrorTypePayloadTooLarge:
+		return true
+	case ErrorTypePaymentRequired:
 		return true
 	case ErrorTypePermission:
 		return true
@@ -5017,7 +5020,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: the app's or the organization's budget is spent, and the message says which and when it resets, so retrying before then is refused again), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -5026,7 +5029,7 @@ type ErrorDetail struct {
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
 
-	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
+	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 	Type ErrorType `json:"type"`
 }
 
@@ -5035,7 +5038,7 @@ type ErrorResponse struct {
 	Error ErrorDetail `json:"error"`
 }
 
-// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
+// ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
@@ -8690,6 +8693,9 @@ type InternalError = ErrorResponse
 
 // NotFound The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
 type NotFound = ErrorResponse
+
+// PaymentRequired The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
+type PaymentRequired = ErrorResponse
 
 // Unauthorized The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
 type Unauthorized = ErrorResponse
@@ -31543,6 +31549,8 @@ type ListCallsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -31562,6 +31570,11 @@ func (r ListCallsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCallsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListCallsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -31612,6 +31625,8 @@ type AnalyzeReviewsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -31633,6 +31648,11 @@ func (r AnalyzeReviewsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AnalyzeReviewsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -31688,6 +31708,8 @@ type GetCallResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -31709,6 +31731,11 @@ func (r GetCallResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCallResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -31764,6 +31791,8 @@ type GetCallEventsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -31785,6 +31814,11 @@ func (r GetCallEventsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallEventsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCallEventsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -31840,6 +31874,8 @@ type GetCallTimelineResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -31861,6 +31897,11 @@ func (r GetCallTimelineResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallTimelineResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCallTimelineResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -31916,6 +31957,8 @@ type CreateCallTokenResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -31937,6 +31980,11 @@ func (r CreateCallTokenResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateCallTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateCallTokenResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -31992,6 +32040,8 @@ type GetCallTokensResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32013,6 +32063,11 @@ func (r GetCallTokensResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallTokensResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCallTokensResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32068,6 +32123,8 @@ type GetCallTranscriptResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32089,6 +32146,11 @@ func (r GetCallTranscriptResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallTranscriptResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCallTranscriptResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32144,6 +32206,8 @@ type ListCampaignsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -32163,6 +32227,11 @@ func (r ListCampaignsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCampaignsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListCampaignsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32213,6 +32282,8 @@ type CreateCampaignResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32234,6 +32305,11 @@ func (r CreateCampaignResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateCampaignResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32289,6 +32365,8 @@ type GetCampaignResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32310,6 +32388,11 @@ func (r GetCampaignResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCampaignResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32365,6 +32448,8 @@ type ListCampaignContactsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32386,6 +32471,11 @@ func (r ListCampaignContactsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCampaignContactsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListCampaignContactsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32441,6 +32531,8 @@ type AddCampaignContactsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32462,6 +32554,11 @@ func (r AddCampaignContactsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AddCampaignContactsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AddCampaignContactsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32517,6 +32614,8 @@ type PauseCampaignResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32538,6 +32637,11 @@ func (r PauseCampaignResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PauseCampaignResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PauseCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32593,6 +32697,8 @@ type StartCampaignResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32614,6 +32720,11 @@ func (r StartCampaignResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r StartCampaignResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StartCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32669,6 +32780,8 @@ type ListChannelAccountsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -32688,6 +32801,11 @@ func (r ListChannelAccountsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListChannelAccountsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32738,6 +32856,8 @@ type ConnectChannelResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -32757,6 +32877,11 @@ func (r ConnectChannelResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ConnectChannelResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ConnectChannelResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32889,6 +33014,8 @@ type LinkChannelNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32910,6 +33037,11 @@ func (r LinkChannelNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r LinkChannelNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -32963,6 +33095,8 @@ type DisconnectChannelResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -32979,6 +33113,11 @@ func (r DisconnectChannelResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DisconnectChannelResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DisconnectChannelResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33034,6 +33173,8 @@ type CreateChatTokenResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -33053,6 +33194,11 @@ func (r CreateChatTokenResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateChatTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateChatTokenResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33103,6 +33249,8 @@ type ListAgentConfigsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -33122,6 +33270,11 @@ func (r ListAgentConfigsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListAgentConfigsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListAgentConfigsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33172,6 +33325,8 @@ type CreateAgentConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -33193,6 +33348,11 @@ func (r CreateAgentConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateAgentConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateAgentConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33246,6 +33406,8 @@ type DeleteAgentConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33262,6 +33424,11 @@ func (r DeleteAgentConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33317,6 +33484,8 @@ type GetAgentConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33338,6 +33507,11 @@ func (r GetAgentConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAgentConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAgentConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33393,6 +33567,8 @@ type PatchAgentConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33416,6 +33592,11 @@ func (r PatchAgentConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PatchAgentConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33476,6 +33657,8 @@ type UpdateAgentConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33499,6 +33682,11 @@ func (r UpdateAgentConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateAgentConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateAgentConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33559,6 +33747,8 @@ type GetAgentChangesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33580,6 +33770,11 @@ func (r GetAgentChangesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAgentChangesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAgentChangesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33635,6 +33830,8 @@ type ListConfigPluginsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33656,6 +33853,11 @@ func (r ListConfigPluginsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConfigPluginsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConfigPluginsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33709,6 +33911,8 @@ type DisconnectPluginResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33725,6 +33929,11 @@ func (r DisconnectPluginResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DisconnectPluginResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DisconnectPluginResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33780,6 +33989,8 @@ type AuthorizePluginResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33801,6 +34012,11 @@ func (r AuthorizePluginResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AuthorizePluginResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AuthorizePluginResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33854,6 +34070,8 @@ type DeletePluginClientResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33870,6 +34088,11 @@ func (r DeletePluginClientResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeletePluginClientResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeletePluginClientResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -33925,6 +34148,8 @@ type SetPluginClientResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -33946,6 +34171,11 @@ func (r SetPluginClientResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SetPluginClientResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetPluginClientResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34001,6 +34231,8 @@ type ListConnectionsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -34020,6 +34252,11 @@ func (r ListConnectionsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConnectionsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34070,6 +34307,8 @@ type CreateConnectionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -34089,6 +34328,11 @@ func (r CreateConnectionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateConnectionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34137,6 +34381,8 @@ type DeleteConnectionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34155,6 +34401,11 @@ func (r DeleteConnectionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteConnectionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34215,6 +34466,8 @@ type GetConnectionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34236,6 +34489,11 @@ func (r GetConnectionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetConnectionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34291,6 +34549,8 @@ type CreateAuthorizationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34312,6 +34572,11 @@ func (r CreateAuthorizationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateAuthorizationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34367,6 +34632,8 @@ type PutConnectionCredentialsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34390,6 +34657,11 @@ func (r PutConnectionCredentialsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PutConnectionCredentialsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PutConnectionCredentialsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34450,6 +34722,8 @@ type ListConnectionInvocationsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34471,6 +34745,11 @@ func (r ListConnectionInvocationsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectionInvocationsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34524,6 +34803,8 @@ type ProxyConnectionDeleteResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34548,6 +34829,11 @@ func (r ProxyConnectionDeleteResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ProxyConnectionDeleteResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ProxyConnectionDeleteResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34621,6 +34907,8 @@ type ProxyConnectionGetResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34645,6 +34933,11 @@ func (r ProxyConnectionGetResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ProxyConnectionGetResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ProxyConnectionGetResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34718,6 +35011,8 @@ type ProxyConnectionPatchResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34742,6 +35037,11 @@ func (r ProxyConnectionPatchResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ProxyConnectionPatchResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ProxyConnectionPatchResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34815,6 +35115,8 @@ type ProxyConnectionPostResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34839,6 +35141,11 @@ func (r ProxyConnectionPostResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ProxyConnectionPostResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ProxyConnectionPostResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -34912,6 +35219,8 @@ type ProxyConnectionPutResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -34936,6 +35245,11 @@ func (r ProxyConnectionPutResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ProxyConnectionPutResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ProxyConnectionPutResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35016,6 +35330,8 @@ type ExportConnectionTokenResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35043,6 +35359,11 @@ func (r ExportConnectionTokenResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ExportConnectionTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35108,6 +35429,8 @@ type ListConnectionToolsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35129,6 +35452,11 @@ func (r ListConnectionToolsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectionToolsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConnectionToolsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35184,6 +35512,8 @@ type ApproveConnectionToolsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35207,6 +35537,11 @@ func (r ApproveConnectionToolsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ApproveConnectionToolsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35267,6 +35602,8 @@ type ValidateConnectionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35288,6 +35625,11 @@ func (r ValidateConnectionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ValidateConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ValidateConnectionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35343,6 +35685,8 @@ type ListConnectorAuditResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -35362,6 +35706,11 @@ func (r ListConnectorAuditResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectorAuditResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35412,6 +35761,8 @@ type ListConnectorsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -35431,6 +35782,11 @@ func (r ListConnectorsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectorsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConnectorsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35481,6 +35837,8 @@ type CreateConnectorResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -35500,6 +35858,11 @@ func (r CreateConnectorResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateConnectorResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateConnectorResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35726,6 +36089,8 @@ type DeleteConnectorResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35744,6 +36109,11 @@ func (r DeleteConnectorResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteConnectorResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteConnectorResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35804,6 +36174,8 @@ type GetConnectorResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35825,6 +36197,11 @@ func (r GetConnectorResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetConnectorResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetConnectorResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35880,6 +36257,8 @@ type ListConnectorEventDestinationsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -35899,6 +36278,11 @@ func (r ListConnectorEventDestinationsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectorEventDestinationsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -35949,6 +36333,8 @@ type CreateConnectorEventDestinationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -35972,6 +36358,11 @@ func (r CreateConnectorEventDestinationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateConnectorEventDestinationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36030,6 +36421,8 @@ type DeleteConnectorEventDestinationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36046,6 +36439,11 @@ func (r DeleteConnectorEventDestinationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteConnectorEventDestinationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36101,6 +36499,8 @@ type RotateConnectorEventDestinationSecretResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36122,6 +36522,11 @@ func (r RotateConnectorEventDestinationSecretResponse) GetJSON400() *BadRequest 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RotateConnectorEventDestinationSecretResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36175,6 +36580,8 @@ type DeleteConnectorOAuthClientResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36191,6 +36598,11 @@ func (r DeleteConnectorOAuthClientResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36246,6 +36658,8 @@ type GetConnectorOAuthClientResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36267,6 +36681,11 @@ func (r GetConnectorOAuthClientResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36324,6 +36743,8 @@ type SetConnectorOAuthClientResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36354,6 +36775,11 @@ func (r SetConnectorOAuthClientResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SetConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36417,6 +36843,8 @@ type DeleteConnectorProviderAppResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36439,6 +36867,11 @@ func (r DeleteConnectorProviderAppResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteConnectorProviderAppResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36511,6 +36944,8 @@ type SetConnectorProviderAppResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36543,6 +36978,11 @@ func (r SetConnectorProviderAppResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SetConnectorProviderAppResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36613,6 +37053,8 @@ type GetConversationCommandResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -36632,6 +37074,11 @@ func (r GetConversationCommandResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetConversationCommandResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetConversationCommandResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -36682,6 +37129,8 @@ type GetConversationMessagesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -36701,6 +37150,11 @@ func (r GetConversationMessagesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetConversationMessagesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36751,6 +37205,8 @@ type CreateGuestUserResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -36770,6 +37226,11 @@ func (r CreateGuestUserResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateGuestUserResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateGuestUserResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36820,6 +37281,8 @@ type ClaimGuestUserResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -36843,6 +37306,11 @@ func (r ClaimGuestUserResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ClaimGuestUserResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36903,6 +37371,8 @@ type IngestKnowledgeResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -36922,6 +37392,11 @@ func (r IngestKnowledgeResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IngestKnowledgeResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r IngestKnowledgeResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -36972,6 +37447,8 @@ type ListKnowledgeDocumentsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -36991,6 +37468,11 @@ func (r ListKnowledgeDocumentsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListKnowledgeDocumentsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37039,6 +37521,8 @@ type DeleteKnowledgeDocumentResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37055,6 +37539,11 @@ func (r DeleteKnowledgeDocumentResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteKnowledgeDocumentResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37110,6 +37599,8 @@ type GetKnowledgeDocumentResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37131,6 +37622,11 @@ func (r GetKnowledgeDocumentResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetKnowledgeDocumentResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37186,6 +37682,8 @@ type ListKnowledgeDocumentPassagesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37207,6 +37705,11 @@ func (r ListKnowledgeDocumentPassagesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListKnowledgeDocumentPassagesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListKnowledgeDocumentPassagesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37262,6 +37765,8 @@ type ListKnowledgeUrlsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -37281,6 +37786,11 @@ func (r ListKnowledgeUrlsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListKnowledgeUrlsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37331,6 +37841,8 @@ type AddKnowledgeUrlResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -37350,6 +37862,11 @@ func (r AddKnowledgeUrlResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AddKnowledgeUrlResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AddKnowledgeUrlResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37398,6 +37915,8 @@ type DeleteKnowledgeUrlResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37414,6 +37933,11 @@ func (r DeleteKnowledgeUrlResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteKnowledgeUrlResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteKnowledgeUrlResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37469,6 +37993,8 @@ type GetKnowledgeUrlResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37490,6 +38016,11 @@ func (r GetKnowledgeUrlResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetKnowledgeUrlResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37545,6 +38076,8 @@ type IndexKnowledgeUrlResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37566,6 +38099,11 @@ func (r IndexKnowledgeUrlResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IndexKnowledgeUrlResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37621,6 +38159,8 @@ type ListKnowledgeUrlPassagesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37642,6 +38182,11 @@ func (r ListKnowledgeUrlPassagesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListKnowledgeUrlPassagesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListKnowledgeUrlPassagesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37697,6 +38242,8 @@ type ListAgentLogsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -37718,6 +38265,11 @@ func (r ListAgentLogsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListAgentLogsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListAgentLogsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37771,6 +38323,8 @@ type StreamAgentLogsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -37787,6 +38341,11 @@ func (r StreamAgentLogsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r StreamAgentLogsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StreamAgentLogsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37840,6 +38399,8 @@ type GetAgentLogResponse struct {
 	JSON200 *AgentLog
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -37858,6 +38419,11 @@ func (r GetAgentLogResponse) GetJSON200() *AgentLog {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAgentLogResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAgentLogResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37918,6 +38484,8 @@ type ListCustomModelsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -37937,6 +38505,11 @@ func (r ListCustomModelsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCustomModelsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListCustomModelsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -37987,6 +38560,8 @@ type CreateCustomModelResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -38010,6 +38585,11 @@ func (r CreateCustomModelResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateCustomModelResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateCustomModelResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38068,6 +38648,8 @@ type DeleteCustomModelResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38084,6 +38666,11 @@ func (r DeleteCustomModelResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteCustomModelResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38139,6 +38726,8 @@ type GetCustomModelResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38160,6 +38749,11 @@ func (r GetCustomModelResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCustomModelResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCustomModelResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38215,6 +38809,8 @@ type UpdateCustomModelResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38240,6 +38836,11 @@ func (r UpdateCustomModelResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateCustomModelResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38305,6 +38906,8 @@ type ListPluginsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -38324,6 +38927,11 @@ func (r ListPluginsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListPluginsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListPluginsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38504,6 +39112,8 @@ type CreateRunResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *ErrorResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38531,6 +39141,11 @@ func (r CreateRunResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateRunResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateRunResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38601,6 +39216,8 @@ type ListScheduledTasksResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -38622,6 +39239,11 @@ func (r ListScheduledTasksResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListScheduledTasksResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListScheduledTasksResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38677,6 +39299,8 @@ type CreateScheduledTaskResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38702,6 +39326,11 @@ func (r CreateScheduledTaskResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38765,6 +39394,8 @@ type DeleteScheduledTaskResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38781,6 +39412,11 @@ func (r DeleteScheduledTaskResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38836,6 +39472,8 @@ type GetScheduledTaskResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38857,6 +39495,11 @@ func (r GetScheduledTaskResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38912,6 +39555,8 @@ type UpdateScheduledTaskResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -38933,6 +39578,11 @@ func (r UpdateScheduledTaskResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -38988,6 +39638,8 @@ type PauseScheduledTaskResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39009,6 +39661,11 @@ func (r PauseScheduledTaskResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PauseScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PauseScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39064,6 +39721,8 @@ type ResumeScheduledTaskResponse struct {
 	JSON400 *ErrorResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39087,6 +39746,11 @@ func (r ResumeScheduledTaskResponse) GetJSON400() *ErrorResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ResumeScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ResumeScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39147,6 +39811,8 @@ type RunScheduledTaskResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39170,6 +39836,11 @@ func (r RunScheduledTaskResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RunScheduledTaskResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RunScheduledTaskResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39230,6 +39901,8 @@ type ListScheduledTaskRunsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39251,6 +39924,11 @@ func (r ListScheduledTaskRunsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListScheduledTaskRunsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListScheduledTaskRunsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39306,6 +39984,8 @@ type CreateSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39329,6 +40009,11 @@ func (r CreateSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39389,6 +40074,8 @@ type QuerySessionsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -39406,6 +40093,11 @@ func (r QuerySessionsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r QuerySessionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r QuerySessionsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -39449,6 +40141,8 @@ type DeleteSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -39463,6 +40157,11 @@ func (r DeleteSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -39513,6 +40212,8 @@ type GetSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39534,6 +40235,11 @@ func (r GetSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39589,6 +40295,8 @@ type UpdateSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39610,6 +40318,11 @@ func (r UpdateSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39665,6 +40378,8 @@ type GetSessionCommandResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -39684,6 +40399,11 @@ func (r GetSessionCommandResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSessionCommandResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSessionCommandResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -39734,6 +40454,8 @@ type InterruptSessionCommandResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -39755,6 +40477,11 @@ func (r InterruptSessionCommandResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r InterruptSessionCommandResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -39810,6 +40537,8 @@ type ForkSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39831,6 +40560,11 @@ func (r ForkSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ForkSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ForkSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39884,6 +40618,8 @@ type InterruptSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39900,6 +40636,11 @@ func (r InterruptSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r InterruptSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r InterruptSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -39953,6 +40694,8 @@ type DeleteSessionMemoriesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -39969,6 +40712,11 @@ func (r DeleteSessionMemoriesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteSessionMemoriesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40024,6 +40772,8 @@ type RespondSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40047,6 +40797,11 @@ func (r RespondSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RespondSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RespondSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40107,6 +40862,8 @@ type ListResponsesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40128,6 +40885,11 @@ func (r ListResponsesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListResponsesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListResponsesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40183,6 +40945,8 @@ type CreateResponseResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40206,6 +40970,11 @@ func (r CreateResponseResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateResponseResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateResponseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40266,6 +41035,8 @@ type ListResponseItemsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40287,6 +41058,11 @@ func (r ListResponseItemsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListResponseItemsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListResponseItemsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40340,6 +41116,8 @@ type RewindSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40356,6 +41134,11 @@ func (r RewindSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RewindSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RewindSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40409,6 +41192,8 @@ type SaySessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40425,6 +41210,11 @@ func (r SaySessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SaySessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SaySessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40480,6 +41270,8 @@ type SetSessionSettingsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40501,6 +41293,11 @@ func (r SetSessionSettingsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SetSessionSettingsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40554,6 +41351,8 @@ type StopSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -40568,6 +41367,11 @@ func (r StopSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r StopSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StopSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -40618,6 +41422,8 @@ type ListSessionToolsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -40637,6 +41443,11 @@ func (r ListSessionToolsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSessionToolsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListSessionToolsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -40687,6 +41498,8 @@ type StopSessionVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -40706,6 +41519,11 @@ func (r StopSessionVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r StopSessionVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -40756,6 +41574,8 @@ type StartSessionVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40779,6 +41599,11 @@ func (r StartSessionVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r StartSessionVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40839,6 +41664,8 @@ type ListSimulationRunsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -40858,6 +41685,11 @@ func (r ListSimulationRunsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSimulationRunsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListSimulationRunsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40908,6 +41740,8 @@ type GetSimulationRunResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -40929,6 +41763,11 @@ func (r GetSimulationRunResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSimulationRunResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSimulationRunResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -40984,6 +41823,8 @@ type CancelSimulationRunResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41005,6 +41846,11 @@ func (r CancelSimulationRunResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CancelSimulationRunResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CancelSimulationRunResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41060,6 +41906,8 @@ type ListSimulationsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -41079,6 +41927,11 @@ func (r ListSimulationsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSimulationsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListSimulationsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41129,6 +41982,8 @@ type CreateSimulationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41150,6 +42005,11 @@ func (r CreateSimulationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateSimulationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateSimulationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41203,6 +42063,8 @@ type DeleteSimulationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41219,6 +42081,11 @@ func (r DeleteSimulationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteSimulationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteSimulationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41274,6 +42141,8 @@ type GetSimulationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41295,6 +42164,11 @@ func (r GetSimulationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSimulationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSimulationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41350,6 +42224,8 @@ type UpdateSimulationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41371,6 +42247,11 @@ func (r UpdateSimulationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateSimulationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateSimulationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41426,6 +42307,8 @@ type RunSimulationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41447,6 +42330,11 @@ func (r RunSimulationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RunSimulationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RunSimulationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41502,6 +42390,8 @@ type ListSkillsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -41521,6 +42411,11 @@ func (r ListSkillsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSkillsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListSkillsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41571,6 +42466,8 @@ type CreateSkillResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41594,6 +42491,11 @@ func (r CreateSkillResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateSkillResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateSkillResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41652,6 +42554,8 @@ type DeleteSkillResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41668,6 +42572,11 @@ func (r DeleteSkillResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteSkillResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteSkillResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41723,6 +42632,8 @@ type GetSkillResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41744,6 +42655,11 @@ func (r GetSkillResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSkillResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSkillResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41799,6 +42715,8 @@ type UpdateSkillResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -41822,6 +42740,11 @@ func (r UpdateSkillResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateSkillResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateSkillResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41882,6 +42805,8 @@ type SyncAgentResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -41903,6 +42828,11 @@ func (r SyncAgentResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SyncAgentResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SyncAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -41956,6 +42886,8 @@ type DeleteUserConnectionsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -41970,6 +42902,11 @@ func (r DeleteUserConnectionsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteUserConnectionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42018,6 +42955,8 @@ type TruncateMemoriesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -42032,6 +42971,11 @@ func (r TruncateMemoriesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r TruncateMemoriesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r TruncateMemoriesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42082,6 +43026,8 @@ type ListVoicesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -42101,6 +43047,11 @@ func (r ListVoicesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListVoicesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListVoicesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42151,6 +43102,8 @@ type CreateVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -42172,6 +43125,11 @@ func (r CreateVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42227,6 +43185,8 @@ type ListLibraryVoicesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -42246,6 +43206,11 @@ func (r ListLibraryVoicesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListLibraryVoicesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42296,6 +43261,8 @@ type PreviewLibraryVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42317,6 +43284,11 @@ func (r PreviewLibraryVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PreviewLibraryVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42372,6 +43344,8 @@ type ListVoiceProvidersResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -42391,6 +43365,11 @@ func (r ListVoiceProvidersResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListVoiceProvidersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42439,6 +43418,8 @@ type DeleteVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42455,6 +43436,11 @@ func (r DeleteVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42510,6 +43496,8 @@ type GetVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42531,6 +43519,11 @@ func (r GetVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42586,6 +43579,8 @@ type UpdateVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42609,6 +43604,11 @@ func (r UpdateVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42669,6 +43669,8 @@ type PrepareVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42690,6 +43692,11 @@ func (r PrepareVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PrepareVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PrepareVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42745,6 +43752,8 @@ type PreviewVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42766,6 +43775,11 @@ func (r PreviewVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PreviewVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PreviewVoiceResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42821,6 +43835,8 @@ type AddVoiceSampleResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -42842,6 +43858,11 @@ func (r AddVoiceSampleResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AddVoiceSampleResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42897,6 +43918,8 @@ type QueryAuditResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -42916,6 +43939,11 @@ func (r QueryAuditResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r QueryAuditResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r QueryAuditResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -42966,6 +43994,8 @@ type ClassifyResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON429 the response for an HTTP 429 `application/json` response
@@ -42989,6 +44019,11 @@ func (r ClassifyResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ClassifyResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ClassifyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -43172,6 +44207,8 @@ type ListDataChangesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON410 the response for an HTTP 410 `application/json` response
@@ -43195,6 +44232,11 @@ func (r ListDataChangesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListDataChangesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListDataChangesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43253,6 +44295,8 @@ type ExportDataResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -43269,6 +44313,11 @@ func (r ExportDataResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ExportDataResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ExportDataResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43324,6 +44373,8 @@ type ImportDataResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -43345,6 +44396,11 @@ func (r ImportDataResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ImportDataResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ImportDataResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43400,6 +44456,8 @@ type DetectResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -43421,6 +44479,11 @@ func (r DetectResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DetectResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DetectResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43476,6 +44539,8 @@ type GenerateImageResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -43497,6 +44562,11 @@ func (r GenerateImageResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GenerateImageResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GenerateImageResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43552,6 +44622,8 @@ type GetBusinessProfileResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -43573,6 +44645,11 @@ func (r GetBusinessProfileResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetBusinessProfileResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43628,6 +44705,8 @@ type SaveBusinessProfileResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -43647,6 +44726,11 @@ func (r SaveBusinessProfileResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SaveBusinessProfileResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43697,6 +44781,8 @@ type PlacePhoneCallResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -43718,6 +44804,11 @@ func (r PlacePhoneCallResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PlacePhoneCallResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PlacePhoneCallResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43773,6 +44864,8 @@ type TransferPhoneCallResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -43794,6 +44887,11 @@ func (r TransferPhoneCallResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r TransferPhoneCallResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r TransferPhoneCallResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -43847,6 +44945,8 @@ type PressPhoneDigitsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -43863,6 +44963,11 @@ func (r PressPhoneDigitsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PressPhoneDigitsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PressPhoneDigitsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44007,6 +45112,8 @@ type ListPhoneNumbersResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -44026,6 +45133,11 @@ func (r ListPhoneNumbersResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListPhoneNumbersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListPhoneNumbersResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44076,6 +45188,8 @@ type BuyPhoneNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44097,6 +45211,11 @@ func (r BuyPhoneNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r BuyPhoneNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r BuyPhoneNumberResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44152,6 +45271,8 @@ type SearchPhoneNumbersResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44173,6 +45294,11 @@ func (r SearchPhoneNumbersResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SearchPhoneNumbersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SearchPhoneNumbersResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44226,6 +45352,8 @@ type ReleasePhoneNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44242,6 +45370,11 @@ func (r ReleasePhoneNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ReleasePhoneNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ReleasePhoneNumberResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44297,6 +45430,8 @@ type AttachPhoneNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44318,6 +45453,11 @@ func (r AttachPhoneNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AttachPhoneNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AttachPhoneNumberResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44373,6 +45513,8 @@ type ListOptOutsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -44392,6 +45534,11 @@ func (r ListOptOutsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListOptOutsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListOptOutsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44442,6 +45589,8 @@ type CreateOptOutResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -44461,6 +45610,11 @@ func (r CreateOptOutResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateOptOutResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateOptOutResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44509,6 +45663,8 @@ type RevokeOptOutResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44525,6 +45681,11 @@ func (r RevokeOptOutResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RevokeOptOutResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RevokeOptOutResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44580,6 +45741,8 @@ type GetPhoneSandboxResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -44599,6 +45762,11 @@ func (r GetPhoneSandboxResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetPhoneSandboxResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44649,6 +45817,8 @@ type SetSandboxRecipientsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -44668,6 +45838,11 @@ func (r SetSandboxRecipientsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SetSandboxRecipientsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44718,6 +45893,8 @@ type ListSipTrunksResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44741,6 +45918,11 @@ func (r ListSipTrunksResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSipTrunksResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListSipTrunksResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44801,6 +45983,8 @@ type CreateSipTrunkResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44824,6 +46008,11 @@ func (r CreateSipTrunkResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateSipTrunkResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44882,6 +46071,8 @@ type DeleteSipTrunkResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44900,6 +46091,11 @@ func (r DeleteSipTrunkResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteSipTrunkResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -44960,6 +46156,8 @@ type GetSipTrunkResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -44983,6 +46181,11 @@ func (r GetSipTrunkResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSipTrunkResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSipTrunkResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45043,6 +46246,8 @@ type UpdateSipTrunkResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45066,6 +46271,11 @@ func (r UpdateSipTrunkResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateSipTrunkResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45126,6 +46336,8 @@ type AddTrunkNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45149,6 +46361,11 @@ func (r AddTrunkNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AddTrunkNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45209,6 +46426,8 @@ type ListUseCasesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -45228,6 +46447,11 @@ func (r ListUseCasesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListUseCasesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListUseCasesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45278,6 +46502,8 @@ type CreateUseCaseResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -45297,6 +46523,11 @@ func (r CreateUseCaseResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateUseCaseResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateUseCaseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45345,6 +46576,8 @@ type DeleteUseCaseResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45363,6 +46596,11 @@ func (r DeleteUseCaseResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteUseCaseResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45423,6 +46661,8 @@ type GetUseCaseResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45444,6 +46684,11 @@ func (r GetUseCaseResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetUseCaseResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetUseCaseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45499,6 +46744,8 @@ type UpdateUseCaseResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45522,6 +46769,11 @@ func (r UpdateUseCaseResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateUseCaseResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45582,6 +46834,8 @@ type ListUseCaseReviewsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45603,6 +46857,11 @@ func (r ListUseCaseReviewsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListUseCaseReviewsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45658,6 +46917,8 @@ type SubmitUseCaseResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -45681,6 +46942,11 @@ func (r SubmitUseCaseResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SubmitUseCaseResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45739,6 +47005,8 @@ type ListPhoneVendorsResponse struct {
 	JSON200 *[]PhoneVendor
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -45753,6 +47021,11 @@ func (r ListPhoneVendorsResponse) GetJSON200() *[]PhoneVendor {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListPhoneVendorsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListPhoneVendorsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45803,6 +47076,8 @@ type GetAppPolicyResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -45822,6 +47097,11 @@ func (r GetAppPolicyResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAppPolicyResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAppPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45872,6 +47152,8 @@ type UpdateAppPolicyResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -45891,6 +47173,11 @@ func (r UpdateAppPolicyResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateAppPolicyResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -45941,6 +47228,8 @@ type GetOrganizationPolicyResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -45960,6 +47249,11 @@ func (r GetOrganizationPolicyResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetOrganizationPolicyResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46010,6 +47304,8 @@ type UpdateOrganizationPolicyResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46029,6 +47325,11 @@ func (r UpdateOrganizationPolicyResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateOrganizationPolicyResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46079,6 +47380,8 @@ type ListRouterConfigsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46098,6 +47401,11 @@ func (r ListRouterConfigsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListRouterConfigsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListRouterConfigsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46148,6 +47456,8 @@ type CreateRouterConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -46169,6 +47479,11 @@ func (r CreateRouterConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateRouterConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r CreateRouterConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46222,6 +47537,8 @@ type DeleteRouterConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -46238,6 +47555,11 @@ func (r DeleteRouterConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r DeleteRouterConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteRouterConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46293,6 +47615,8 @@ type GetRouterConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -46314,6 +47638,11 @@ func (r GetRouterConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetRouterConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetRouterConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46369,6 +47698,8 @@ type UpdateRouterConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -46392,6 +47723,11 @@ func (r UpdateRouterConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r UpdateRouterConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateRouterConfigResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46452,6 +47788,8 @@ type SearchResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46471,6 +47809,11 @@ func (r SearchResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SearchResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SearchResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -46519,6 +47862,8 @@ type GetAppSettingsResponse struct {
 	JSON200 *AppSettings
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46535,6 +47880,11 @@ func (r GetAppSettingsResponse) GetJSON200() *AppSettings {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAppSettingsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAppSettingsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46590,6 +47940,8 @@ type GetActivityResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46609,6 +47961,11 @@ func (r GetActivityResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetActivityResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetActivityResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46659,6 +48016,8 @@ type GetAgentStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46678,6 +48037,11 @@ func (r GetAgentStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAgentStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAgentStatsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46728,6 +48092,8 @@ type RunRollupResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46747,6 +48113,11 @@ func (r RunRollupResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RunRollupResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RunRollupResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46797,6 +48168,8 @@ type GetSpendResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46816,6 +48189,11 @@ func (r GetSpendResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSpendResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSpendResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46866,6 +48244,8 @@ type GetTagKeysResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -46885,6 +48265,11 @@ func (r GetTagKeysResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTagKeysResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetTagKeysResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -46935,6 +48320,8 @@ type TranscribeRecordingResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -46956,6 +48343,11 @@ func (r TranscribeRecordingResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r TranscribeRecordingResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r TranscribeRecordingResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47011,6 +48403,8 @@ type GetTranscriptionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47032,6 +48426,11 @@ func (r GetTranscriptionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTranscriptionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetTranscriptionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47087,6 +48486,8 @@ type RecordSpeechResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47108,6 +48509,11 @@ func (r RecordSpeechResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RecordSpeechResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RecordSpeechResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47163,6 +48569,8 @@ type GetSpeechResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47184,6 +48592,11 @@ func (r GetSpeechResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSpeechResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSpeechResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47239,6 +48652,8 @@ type GetTurnStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -47258,6 +48673,11 @@ func (r GetTurnStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTurnStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetTurnStatsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47308,6 +48728,8 @@ type ListProvidersResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47329,6 +48751,11 @@ func (r ListProvidersResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListProvidersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListProvidersResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47384,6 +48811,8 @@ type ListRoutesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47405,6 +48834,11 @@ func (r ListRoutesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListRoutesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListRoutesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47460,6 +48894,8 @@ type ResolveTargetResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47481,6 +48917,11 @@ func (r ResolveTargetResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ResolveTargetResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ResolveTargetResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47536,6 +48977,8 @@ type GetStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47557,6 +49000,11 @@ func (r GetStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetStatsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -47612,6 +49060,8 @@ type GetTagStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -47633,6 +49083,11 @@ func (r GetTagStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTagStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetTagStatsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
@@ -52572,6 +54027,13 @@ func ParseListCallsResponse(rsp *http.Response) (*ListCallsResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -52625,6 +54087,13 @@ func ParseAnalyzeReviewsResponse(rsp *http.Response) (*AnalyzeReviewsResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -52687,6 +54156,13 @@ func ParseGetCallResponse(rsp *http.Response) (*GetCallResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -52747,6 +54223,13 @@ func ParseGetCallEventsResponse(rsp *http.Response) (*GetCallEventsResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -52809,6 +54292,13 @@ func ParseGetCallTimelineResponse(rsp *http.Response) (*GetCallTimelineResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -52869,6 +54359,13 @@ func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -52931,6 +54428,13 @@ func ParseGetCallTokensResponse(rsp *http.Response) (*GetCallTokensResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -52991,6 +54495,13 @@ func ParseGetCallTranscriptResponse(rsp *http.Response) (*GetCallTranscriptRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53053,6 +54564,13 @@ func ParseListCampaignsResponse(rsp *http.Response) (*ListCampaignsResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53106,6 +54624,13 @@ func ParseCreateCampaignResponse(rsp *http.Response) (*CreateCampaignResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53168,6 +54693,13 @@ func ParseGetCampaignResponse(rsp *http.Response) (*GetCampaignResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53228,6 +54760,13 @@ func ParseListCampaignContactsResponse(rsp *http.Response) (*ListCampaignContact
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53290,6 +54829,13 @@ func ParseAddCampaignContactsResponse(rsp *http.Response) (*AddCampaignContactsR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53350,6 +54896,13 @@ func ParsePauseCampaignResponse(rsp *http.Response) (*PauseCampaignResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53412,6 +54965,13 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53473,6 +55033,13 @@ func ParseListChannelAccountsResponse(rsp *http.Response) (*ListChannelAccountsR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53526,6 +55093,13 @@ func ParseConnectChannelResponse(rsp *http.Response) (*ConnectChannelResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53654,6 +55228,13 @@ func ParseLinkChannelNumberResponse(rsp *http.Response) (*LinkChannelNumberRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53710,6 +55291,13 @@ func ParseDisconnectChannelResponse(rsp *http.Response) (*DisconnectChannelRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53772,6 +55360,13 @@ func ParseCreateChatTokenResponse(rsp *http.Response) (*CreateChatTokenResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53826,6 +55421,13 @@ func ParseListAgentConfigsResponse(rsp *http.Response) (*ListAgentConfigsRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53879,6 +55481,13 @@ func ParseCreateAgentConfigResponse(rsp *http.Response) (*CreateAgentConfigRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53936,6 +55545,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -53998,6 +55614,13 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54058,6 +55681,13 @@ func ParsePatchAgentConfigResponse(rsp *http.Response) (*PatchAgentConfigRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -54127,6 +55757,13 @@ func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54195,6 +55832,13 @@ func ParseGetAgentChangesResponse(rsp *http.Response) (*GetAgentChangesResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54256,6 +55900,13 @@ func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54312,6 +55963,13 @@ func ParseDisconnectPluginResponse(rsp *http.Response) (*DisconnectPluginRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -54374,6 +56032,13 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54430,6 +56095,13 @@ func ParseDeletePluginClientResponse(rsp *http.Response) (*DeletePluginClientRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -54492,6 +56164,13 @@ func ParseSetPluginClientResponse(rsp *http.Response) (*SetPluginClientResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54553,6 +56232,13 @@ func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54607,6 +56293,13 @@ func ParseCreateConnectionResponse(rsp *http.Response) (*CreateConnectionRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54656,6 +56349,13 @@ func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -54725,6 +56425,13 @@ func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54786,6 +56493,13 @@ func ParseCreateAuthorizationResponse(rsp *http.Response) (*CreateAuthorizationR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54846,6 +56560,13 @@ func ParsePutConnectionCredentialsResponse(rsp *http.Response) (*PutConnectionCr
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -54915,6 +56636,13 @@ func ParseListConnectionInvocationsResponse(rsp *http.Response) (*ListConnection
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54971,6 +56699,13 @@ func ParseProxyConnectionDeleteResponse(rsp *http.Response) (*ProxyConnectionDel
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -55057,6 +56792,13 @@ func ParseProxyConnectionGetResponse(rsp *http.Response) (*ProxyConnectionGetRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55141,6 +56883,13 @@ func ParseProxyConnectionPatchResponse(rsp *http.Response) (*ProxyConnectionPatc
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -55227,6 +56976,13 @@ func ParseProxyConnectionPostResponse(rsp *http.Response) (*ProxyConnectionPostR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55311,6 +57067,13 @@ func ParseProxyConnectionPutResponse(rsp *http.Response) (*ProxyConnectionPutRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -55401,6 +57164,13 @@ func ParseExportConnectionTokenResponse(rsp *http.Response) (*ExportConnectionTo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55489,6 +57259,13 @@ func ParseListConnectionToolsResponse(rsp *http.Response) (*ListConnectionToolsR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55549,6 +57326,13 @@ func ParseApproveConnectionToolsResponse(rsp *http.Response) (*ApproveConnection
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -55618,6 +57402,13 @@ func ParseValidateConnectionResponse(rsp *http.Response) (*ValidateConnectionRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55679,6 +57470,13 @@ func ParseListConnectorAuditResponse(rsp *http.Response) (*ListConnectorAuditRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55733,6 +57531,13 @@ func ParseListConnectorsResponse(rsp *http.Response) (*ListConnectorsResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55786,6 +57591,13 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -55976,6 +57788,13 @@ func ParseDeleteConnectorResponse(rsp *http.Response) (*DeleteConnectorResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56044,6 +57863,13 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56105,6 +57931,13 @@ func ParseListConnectorEventDestinationsResponse(rsp *http.Response) (*ListConne
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56158,6 +57991,13 @@ func ParseCreateConnectorEventDestinationResponse(rsp *http.Response) (*CreateCo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56223,6 +58063,13 @@ func ParseDeleteConnectorEventDestinationResponse(rsp *http.Response) (*DeleteCo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56284,6 +58131,13 @@ func ParseRotateConnectorEventDestinationSecretResponse(rsp *http.Response) (*Ro
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56340,6 +58194,13 @@ func ParseDeleteConnectorOAuthClientResponse(rsp *http.Response) (*DeleteConnect
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56401,6 +58262,13 @@ func ParseGetConnectorOAuthClientResponse(rsp *http.Response) (*GetConnectorOAut
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56469,6 +58337,13 @@ func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAut
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56540,6 +58415,13 @@ func ParseDeleteConnectorProviderAppResponse(rsp *http.Response) (*DeleteConnect
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56630,6 +58512,13 @@ func ParseSetConnectorProviderAppResponse(rsp *http.Response) (*SetConnectorProv
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56712,6 +58601,13 @@ func ParseGetConversationCommandResponse(rsp *http.Response) (*GetConversationCo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56765,6 +58661,13 @@ func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationM
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56820,6 +58723,13 @@ func ParseCreateGuestUserResponse(rsp *http.Response) (*CreateGuestUserResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56873,6 +58783,13 @@ func ParseClaimGuestUserResponse(rsp *http.Response) (*ClaimGuestUserResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -56942,6 +58859,13 @@ func ParseIngestKnowledgeResponse(rsp *http.Response) (*IngestKnowledgeResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56996,6 +58920,13 @@ func ParseListKnowledgeDocumentsResponse(rsp *http.Response) (*ListKnowledgeDocu
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57045,6 +58976,13 @@ func ParseDeleteKnowledgeDocumentResponse(rsp *http.Response) (*DeleteKnowledgeD
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -57107,6 +59045,13 @@ func ParseGetKnowledgeDocumentResponse(rsp *http.Response) (*GetKnowledgeDocumen
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57167,6 +59112,13 @@ func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowle
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -57229,6 +59181,13 @@ func ParseListKnowledgeUrlsResponse(rsp *http.Response) (*ListKnowledgeUrlsRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57283,6 +59242,13 @@ func ParseAddKnowledgeUrlResponse(rsp *http.Response) (*AddKnowledgeUrlResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57332,6 +59298,13 @@ func ParseDeleteKnowledgeUrlResponse(rsp *http.Response) (*DeleteKnowledgeUrlRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -57394,6 +59367,13 @@ func ParseGetKnowledgeUrlResponse(rsp *http.Response) (*GetKnowledgeUrlResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57454,6 +59434,13 @@ func ParseIndexKnowledgeUrlResponse(rsp *http.Response) (*IndexKnowledgeUrlRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -57516,6 +59503,13 @@ func ParseListKnowledgeUrlPassagesResponse(rsp *http.Response) (*ListKnowledgeUr
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57577,6 +59571,13 @@ func ParseListAgentLogsResponse(rsp *http.Response) (*ListAgentLogsResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57631,6 +59632,13 @@ func ParseStreamAgentLogsResponse(rsp *http.Response) (*StreamAgentLogsResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57684,6 +59692,13 @@ func ParseGetAgentLogResponse(rsp *http.Response) (*GetAgentLogResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -57753,6 +59768,13 @@ func ParseListCustomModelsResponse(rsp *http.Response) (*ListCustomModelsRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57806,6 +59828,13 @@ func ParseCreateCustomModelResponse(rsp *http.Response) (*CreateCustomModelRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -57871,6 +59900,13 @@ func ParseDeleteCustomModelResponse(rsp *http.Response) (*DeleteCustomModelRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57932,6 +59968,13 @@ func ParseGetCustomModelResponse(rsp *http.Response) (*GetCustomModelResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -57992,6 +60035,13 @@ func ParseUpdateCustomModelResponse(rsp *http.Response) (*UpdateCustomModelRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -58067,6 +60117,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -58225,6 +60282,13 @@ func ParseCreateRunResponse(rsp *http.Response) (*CreateRunResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58307,6 +60371,13 @@ func ParseListScheduledTasksResponse(rsp *http.Response) (*ListScheduledTasksRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58367,6 +60438,13 @@ func ParseCreateScheduledTaskResponse(rsp *http.Response) (*CreateScheduledTaskR
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -58439,6 +60517,13 @@ func ParseDeleteScheduledTaskResponse(rsp *http.Response) (*DeleteScheduledTaskR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58499,6 +60584,13 @@ func ParseGetScheduledTaskResponse(rsp *http.Response) (*GetScheduledTaskRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -58561,6 +60653,13 @@ func ParseUpdateScheduledTaskResponse(rsp *http.Response) (*UpdateScheduledTaskR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58622,6 +60721,13 @@ func ParsePauseScheduledTaskResponse(rsp *http.Response) (*PauseScheduledTaskRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58682,6 +60788,13 @@ func ParseResumeScheduledTaskResponse(rsp *http.Response) (*ResumeScheduledTaskR
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -58751,6 +60864,13 @@ func ParseRunScheduledTaskResponse(rsp *http.Response) (*RunScheduledTaskRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58819,6 +60939,13 @@ func ParseListScheduledTaskRunsResponse(rsp *http.Response) (*ListScheduledTaskR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58879,6 +61006,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -58948,6 +61082,13 @@ func ParseQuerySessionsResponse(rsp *http.Response) (*QuerySessionsResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58990,6 +61131,13 @@ func ParseDeleteSessionResponse(rsp *http.Response) (*DeleteSessionResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -59044,6 +61192,13 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -59106,6 +61261,13 @@ func ParseUpdateSessionResponse(rsp *http.Response) (*UpdateSessionResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59167,6 +61329,13 @@ func ParseGetSessionCommandResponse(rsp *http.Response) (*GetSessionCommandRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59220,6 +61389,13 @@ func ParseInterruptSessionCommandResponse(rsp *http.Response) (*InterruptSession
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -59282,6 +61458,13 @@ func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59339,6 +61522,13 @@ func ParseInterruptSessionResponse(rsp *http.Response) (*InterruptSessionRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59395,6 +61585,13 @@ func ParseDeleteSessionMemoriesResponse(rsp *http.Response) (*DeleteSessionMemor
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -59459,6 +61656,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -59528,6 +61732,13 @@ func ParseListResponsesResponse(rsp *http.Response) (*ListResponsesResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59588,6 +61799,13 @@ func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -59657,6 +61875,13 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59714,6 +61939,13 @@ func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59770,6 +62002,13 @@ func ParseSaySessionResponse(rsp *http.Response) (*SaySessionResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -59832,6 +62071,13 @@ func ParseSetSessionSettingsResponse(rsp *http.Response) (*SetSessionSettingsRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59889,6 +62135,13 @@ func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59942,6 +62195,13 @@ func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -59997,6 +62257,13 @@ func ParseStopSessionVoiceResponse(rsp *http.Response) (*StopSessionVoiceRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60050,6 +62317,13 @@ func ParseStartSessionVoiceResponse(rsp *http.Response) (*StartSessionVoiceRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60119,6 +62393,13 @@ func ParseListSimulationRunsResponse(rsp *http.Response) (*ListSimulationRunsRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60172,6 +62453,13 @@ func ParseGetSimulationRunResponse(rsp *http.Response) (*GetSimulationRunRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60234,6 +62522,13 @@ func ParseCancelSimulationRunResponse(rsp *http.Response) (*CancelSimulationRunR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60295,6 +62590,13 @@ func ParseListSimulationsResponse(rsp *http.Response) (*ListSimulationsResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60348,6 +62650,13 @@ func ParseCreateSimulationResponse(rsp *http.Response) (*CreateSimulationRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60405,6 +62714,13 @@ func ParseDeleteSimulationResponse(rsp *http.Response) (*DeleteSimulationRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60467,6 +62783,13 @@ func ParseGetSimulationResponse(rsp *http.Response) (*GetSimulationResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60527,6 +62850,13 @@ func ParseUpdateSimulationResponse(rsp *http.Response) (*UpdateSimulationRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60589,6 +62919,13 @@ func ParseRunSimulationResponse(rsp *http.Response) (*RunSimulationResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60650,6 +62987,13 @@ func ParseListSkillsResponse(rsp *http.Response) (*ListSkillsResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60703,6 +63047,13 @@ func ParseCreateSkillResponse(rsp *http.Response) (*CreateSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60768,6 +63119,13 @@ func ParseDeleteSkillResponse(rsp *http.Response) (*DeleteSkillResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60829,6 +63187,13 @@ func ParseGetSkillResponse(rsp *http.Response) (*GetSkillResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60889,6 +63254,13 @@ func ParseUpdateSkillResponse(rsp *http.Response) (*UpdateSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -60958,6 +63330,13 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61015,6 +63394,13 @@ func ParseDeleteUserConnectionsResponse(rsp *http.Response) (*DeleteUserConnecti
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61064,6 +63450,13 @@ func ParseTruncateMemoriesResponse(rsp *http.Response) (*TruncateMemoriesRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -61119,6 +63512,13 @@ func ParseListVoicesResponse(rsp *http.Response) (*ListVoicesResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61172,6 +63572,13 @@ func ParseCreateVoiceResponse(rsp *http.Response) (*CreateVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -61234,6 +63641,13 @@ func ParseListLibraryVoicesResponse(rsp *http.Response) (*ListLibraryVoicesRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61287,6 +63701,13 @@ func ParsePreviewLibraryVoiceResponse(rsp *http.Response) (*PreviewLibraryVoiceR
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -61349,6 +63770,13 @@ func ParseListVoiceProvidersResponse(rsp *http.Response) (*ListVoiceProvidersRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61398,6 +63826,13 @@ func ParseDeleteVoiceResponse(rsp *http.Response) (*DeleteVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -61460,6 +63895,13 @@ func ParseGetVoiceResponse(rsp *http.Response) (*GetVoiceResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61520,6 +63962,13 @@ func ParseUpdateVoiceResponse(rsp *http.Response) (*UpdateVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -61589,6 +64038,13 @@ func ParsePrepareVoiceResponse(rsp *http.Response) (*PrepareVoiceResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61649,6 +64105,13 @@ func ParsePreviewVoiceResponse(rsp *http.Response) (*PreviewVoiceResponse, error
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -61711,6 +64174,13 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61772,6 +64242,13 @@ func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -61825,6 +64302,13 @@ func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -62005,6 +64489,13 @@ func ParseListDataChangesResponse(rsp *http.Response) (*ListDataChangesResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62065,6 +64556,13 @@ func ParseExportDataResponse(rsp *http.Response) (*ExportDataResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62127,6 +64625,13 @@ func ParseImportDataResponse(rsp *http.Response) (*ImportDataResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62187,6 +64692,13 @@ func ParseDetectResponse(rsp *http.Response) (*DetectResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62249,6 +64761,13 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62309,6 +64828,13 @@ func ParseGetBusinessProfileResponse(rsp *http.Response) (*GetBusinessProfileRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62371,6 +64897,13 @@ func ParseSaveBusinessProfileResponse(rsp *http.Response) (*SaveBusinessProfileR
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62424,6 +64957,13 @@ func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62486,6 +65026,13 @@ func ParseTransferPhoneCallResponse(rsp *http.Response) (*TransferPhoneCallRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62542,6 +65089,13 @@ func ParsePressPhoneDigitsResponse(rsp *http.Response) (*PressPhoneDigitsRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62684,6 +65238,13 @@ func ParseListPhoneNumbersResponse(rsp *http.Response) (*ListPhoneNumbersRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62737,6 +65298,13 @@ func ParseBuyPhoneNumberResponse(rsp *http.Response) (*BuyPhoneNumberResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62799,6 +65367,13 @@ func ParseSearchPhoneNumbersResponse(rsp *http.Response) (*SearchPhoneNumbersRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62855,6 +65430,13 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -62917,6 +65499,13 @@ func ParseAttachPhoneNumberResponse(rsp *http.Response) (*AttachPhoneNumberRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -62978,6 +65567,13 @@ func ParseListOptOutsResponse(rsp *http.Response) (*ListOptOutsResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63032,6 +65628,13 @@ func ParseCreateOptOutResponse(rsp *http.Response) (*CreateOptOutResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63081,6 +65684,13 @@ func ParseRevokeOptOutResponse(rsp *http.Response) (*RevokeOptOutResponse, error
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -63143,6 +65753,13 @@ func ParseGetPhoneSandboxResponse(rsp *http.Response) (*GetPhoneSandboxResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63197,6 +65814,13 @@ func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipient
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63250,6 +65874,13 @@ func ParseListSipTrunksResponse(rsp *http.Response) (*ListSipTrunksResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -63319,6 +65950,13 @@ func ParseCreateSipTrunkResponse(rsp *http.Response) (*CreateSipTrunkResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63382,6 +66020,13 @@ func ParseDeleteSipTrunkResponse(rsp *http.Response) (*DeleteSipTrunkResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -63451,6 +66096,13 @@ func ParseGetSipTrunkResponse(rsp *http.Response) (*GetSipTrunkResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63518,6 +66170,13 @@ func ParseUpdateSipTrunkResponse(rsp *http.Response) (*UpdateSipTrunkResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -63587,6 +66246,13 @@ func ParseAddTrunkNumberResponse(rsp *http.Response) (*AddTrunkNumberResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63655,6 +66321,13 @@ func ParseListUseCasesResponse(rsp *http.Response) (*ListUseCasesResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63709,6 +66382,13 @@ func ParseCreateUseCaseResponse(rsp *http.Response) (*CreateUseCaseResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63758,6 +66438,13 @@ func ParseDeleteUseCaseResponse(rsp *http.Response) (*DeleteUseCaseResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -63827,6 +66514,13 @@ func ParseGetUseCaseResponse(rsp *http.Response) (*GetUseCaseResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63887,6 +66581,13 @@ func ParseUpdateUseCaseResponse(rsp *http.Response) (*UpdateUseCaseResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -63956,6 +66657,13 @@ func ParseListUseCaseReviewsResponse(rsp *http.Response) (*ListUseCaseReviewsRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64016,6 +66724,13 @@ func ParseSubmitUseCaseResponse(rsp *http.Response) (*SubmitUseCaseResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64078,6 +66793,13 @@ func ParseListPhoneVendorsResponse(rsp *http.Response) (*ListPhoneVendorsRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64131,6 +66853,13 @@ func ParseGetAppPolicyResponse(rsp *http.Response) (*GetAppPolicyResponse, error
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64186,6 +66915,13 @@ func ParseUpdateAppPolicyResponse(rsp *http.Response) (*UpdateAppPolicyResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64239,6 +66975,13 @@ func ParseGetOrganizationPolicyResponse(rsp *http.Response) (*GetOrganizationPol
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64294,6 +67037,13 @@ func ParseUpdateOrganizationPolicyResponse(rsp *http.Response) (*UpdateOrganizat
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64348,6 +67098,13 @@ func ParseListRouterConfigsResponse(rsp *http.Response) (*ListRouterConfigsRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64401,6 +67158,13 @@ func ParseCreateRouterConfigResponse(rsp *http.Response) (*CreateRouterConfigRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64458,6 +67222,13 @@ func ParseDeleteRouterConfigResponse(rsp *http.Response) (*DeleteRouterConfigRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64520,6 +67291,13 @@ func ParseGetRouterConfigResponse(rsp *http.Response) (*GetRouterConfigResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64580,6 +67358,13 @@ func ParseUpdateRouterConfigResponse(rsp *http.Response) (*UpdateRouterConfigRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64649,6 +67434,13 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64695,6 +67487,13 @@ func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64757,6 +67556,13 @@ func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64810,6 +67616,13 @@ func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64865,6 +67678,13 @@ func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -64918,6 +67738,13 @@ func ParseGetSpendResponse(rsp *http.Response) (*GetSpendResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -64973,6 +67800,13 @@ func ParseGetTagKeysResponse(rsp *http.Response) (*GetTagKeysResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -65026,6 +67860,13 @@ func ParseTranscribeRecordingResponse(rsp *http.Response) (*TranscribeRecordingR
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -65088,6 +67929,13 @@ func ParseGetTranscriptionResponse(rsp *http.Response) (*GetTranscriptionRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -65148,6 +67996,13 @@ func ParseRecordSpeechResponse(rsp *http.Response) (*RecordSpeechResponse, error
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -65210,6 +68065,13 @@ func ParseGetSpeechResponse(rsp *http.Response) (*GetSpeechResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -65271,6 +68133,13 @@ func ParseGetTurnStatsResponse(rsp *http.Response) (*GetTurnStatsResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -65324,6 +68193,13 @@ func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -65386,6 +68262,13 @@ func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -65446,6 +68329,13 @@ func ParseResolveTargetResponse(rsp *http.Response) (*ResolveTargetResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
@@ -65508,6 +68398,13 @@ func ParseGetStatsResponse(rsp *http.Response) (*GetStatsResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -65568,6 +68465,13 @@ func ParseGetTagStatsResponse(rsp *http.Response) (*GetTagStatsResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Forbidden

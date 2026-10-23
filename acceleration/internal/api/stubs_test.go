@@ -115,6 +115,8 @@ func reasoningConfig() routing.ModalityConfig {
 	// Reached by name only: no shortcut asks for Latin.
 	config.Providers = append(config.Providers,
 		routing.ProviderConfig{Provider: "echo", Model: "echo-model", Languages: []string{"la"}},
+		// Run by the deployment itself with no price, so it costs nothing.
+		routing.ProviderConfig{Provider: "echo", Model: "local-model", Languages: []string{"la"}, Local: true},
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},

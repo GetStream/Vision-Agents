@@ -150,7 +150,7 @@ export type paths = {
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
          *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
-         *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`.
+         *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended` (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs nothing is still served; the socket then closes with 1008.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
         readonly get: operations["streamModality"];
@@ -2472,7 +2472,7 @@ export type paths = {
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
          *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `call` are server-side only. A `call` is refused from a backend too, with an `error` frame carrying `code` and `error_type`: the socket carries the audio, so the session joins no Stream call.
          *     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
-         *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
+         *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with, and so does a session refused for money: `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`).
          *     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
          */
         readonly get: operations["openSocketSession"];
@@ -5890,7 +5890,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: the app's or the organization's budget is spent, and the message says which and when it resets, so retrying before then is refused again), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -5906,10 +5906,10 @@ export type components = {
             readonly error: components["schemas"]["ErrorDetail"];
         };
         /**
-         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
+         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
          * @enum {string}
          */
-        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
+        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "payment_required" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -9262,6 +9262,15 @@ export type components = {
                 readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description The organization may not spend money now, so work that costs money is refused: its credit is spent (insufficient_credits), its spend hard limit for the day or the month is reached whatever its credit (system_limit_reached), or a budget is spent (spend_limit_reached). The message says which, and for a limit when it resets. Work on a model that costs nothing is still served. */
+        readonly PaymentRequired: {
+            headers: {
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description The customer header is missing */
         readonly Unauthorized: {
             headers: {
@@ -9354,6 +9363,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9382,6 +9392,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9415,6 +9426,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9451,6 +9463,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9487,6 +9500,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9551,6 +9565,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -9578,6 +9593,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9609,6 +9625,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9637,6 +9654,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9669,6 +9687,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9697,6 +9716,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9725,6 +9745,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9754,6 +9775,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Service Unavailable */
@@ -9787,6 +9809,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -9815,6 +9838,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9843,6 +9867,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9871,6 +9896,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9903,6 +9929,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9931,6 +9958,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9959,6 +9987,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -9984,6 +10013,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -10012,6 +10042,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -10037,6 +10068,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10156,6 +10188,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10185,6 +10218,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -10214,6 +10248,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -10242,6 +10277,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -10278,6 +10314,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10310,6 +10347,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10345,6 +10383,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10377,6 +10416,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10414,6 +10454,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10442,6 +10483,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10470,6 +10512,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10504,6 +10547,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10538,6 +10582,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10566,6 +10611,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10600,6 +10646,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -10628,6 +10675,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -10655,6 +10703,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10684,6 +10733,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10725,6 +10775,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10757,6 +10808,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -10799,6 +10851,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -10827,6 +10880,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10896,6 +10950,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -10965,6 +11020,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -11029,6 +11085,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -11098,6 +11155,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The connection is not connected */
@@ -11163,6 +11221,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11209,6 +11268,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11241,6 +11301,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11282,6 +11343,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11314,6 +11376,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -11345,6 +11408,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -11373,6 +11437,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -11400,6 +11465,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11429,6 +11495,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11471,6 +11538,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -11502,6 +11570,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11539,6 +11608,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11569,6 +11639,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11597,6 +11668,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11638,6 +11710,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11682,6 +11755,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -11723,6 +11797,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11776,6 +11851,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -11965,6 +12041,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -11996,6 +12073,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12024,6 +12102,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             /** @description This app does not admit guests */
             readonly 403: {
                 headers: {
@@ -12060,6 +12139,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description That guest was already claimed */
@@ -12098,6 +12178,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12125,6 +12206,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12152,6 +12234,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12178,6 +12261,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12206,6 +12290,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12234,6 +12319,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12262,6 +12348,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12289,6 +12376,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12315,6 +12403,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12343,6 +12432,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12371,6 +12461,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12409,6 +12500,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
@@ -12443,6 +12535,7 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12491,6 +12584,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
@@ -12529,6 +12623,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12557,6 +12652,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -12602,6 +12698,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12634,6 +12731,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -12678,6 +12776,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -12706,6 +12805,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -12831,6 +12931,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             /** @description Not the app's backend, or the app's or organization's budget is spent */
             readonly 403: {
                 headers: {
@@ -12902,6 +13003,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Not Implemented */
@@ -12942,6 +13044,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The id is taken, or the user is at their active-task limit */
@@ -12988,6 +13091,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13014,6 +13118,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13046,6 +13151,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13074,6 +13180,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13110,6 +13217,7 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The task is completed, or the user is at their active-task limit */
@@ -13147,6 +13255,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13189,6 +13298,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13218,6 +13328,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description A session with that id already exists */
@@ -13255,6 +13366,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13281,6 +13393,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -13312,6 +13425,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13342,6 +13456,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -13371,6 +13486,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             /** @description The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same request id. */
@@ -13442,6 +13558,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13468,6 +13585,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13494,6 +13612,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13533,6 +13652,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The request id was already accepted with different content */
@@ -13575,6 +13695,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13607,6 +13728,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The request id was already accepted with different content */
@@ -13651,6 +13773,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13681,6 +13804,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13711,6 +13835,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13743,6 +13868,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13769,6 +13895,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -13796,6 +13923,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -13827,6 +13955,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Voice is on another call */
@@ -13864,6 +13993,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -13892,6 +14022,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 500: components["responses"]["InternalError"];
         };
     };
@@ -13919,6 +14050,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -13946,6 +14078,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13974,6 +14107,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -13999,6 +14133,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14027,6 +14162,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14055,6 +14191,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14087,6 +14224,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14113,6 +14251,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14141,6 +14280,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14169,6 +14309,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14197,6 +14338,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -14234,6 +14376,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14266,6 +14409,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -14301,6 +14445,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14352,6 +14497,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -14386,6 +14532,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14411,6 +14558,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14435,6 +14583,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14463,6 +14612,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -14499,6 +14649,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14531,6 +14682,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -14566,6 +14718,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14598,6 +14751,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14630,6 +14784,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14662,6 +14817,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14690,6 +14846,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14718,6 +14875,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -14743,6 +14901,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14771,6 +14930,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -14799,6 +14959,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             /** @description The classifier is rate limiting. Ask again after a wait. */
             readonly 429: {
@@ -14995,6 +15156,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description The changes since that cursor are no longer kept, so export again. */
             readonly 410: {
@@ -15037,6 +15199,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to export from. */
@@ -15074,6 +15237,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to import into. */
@@ -15111,6 +15275,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15170,6 +15335,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15195,6 +15361,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15224,6 +15391,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15252,6 +15420,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15281,6 +15450,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15310,6 +15480,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15420,6 +15591,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15448,6 +15620,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15474,6 +15647,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15505,6 +15679,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15548,6 +15723,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15578,6 +15754,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15606,6 +15783,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15630,6 +15808,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -15655,6 +15834,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15683,6 +15863,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15707,6 +15888,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15745,6 +15927,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15781,6 +15964,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15815,6 +15999,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15855,6 +16040,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15895,6 +16081,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -15934,6 +16121,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15962,6 +16150,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -15988,6 +16177,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16019,6 +16209,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16053,6 +16244,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16094,6 +16286,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16121,6 +16314,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16154,6 +16348,7 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16178,6 +16373,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16206,6 +16402,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16230,6 +16427,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16258,6 +16456,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16282,6 +16481,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16310,6 +16510,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
@@ -16346,6 +16547,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16378,6 +16580,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description Conflict */
@@ -16413,6 +16616,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16442,6 +16646,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16465,6 +16670,7 @@ export interface operations {
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             /** @description Service Unavailable */
@@ -16504,6 +16710,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16533,6 +16740,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16561,6 +16769,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16605,6 +16814,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16636,6 +16846,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
@@ -16664,6 +16875,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16692,6 +16904,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16721,6 +16934,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16749,6 +16963,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
@@ -16782,6 +16997,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };

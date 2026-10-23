@@ -308,7 +308,7 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 		RequireOwnStreamApp: document.RequireOwnStreamApp,
 	}
 	if document.Budget != nil {
-		spent, resets, err := s.policies.Spent(ctx, scope, id, *document.Budget)
+		spent, resets, err := s.policies.BudgetSpent(ctx, scope, id, *document.Budget)
 		if err != nil {
 			return Policy{}, err
 		}

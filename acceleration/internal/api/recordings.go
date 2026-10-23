@@ -109,6 +109,9 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		transcript, provider, failure := s.streams.Transcriptions.Transcribe(ctx, sttrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Source: source})
+		if answer, refused := moneyError(failure); refused {
+			return nil, answer
+		}
 		subtitles, subErr := stt.Subtitles(transcript, held.Output)
 		if failure == nil {
 			failure = subErr
