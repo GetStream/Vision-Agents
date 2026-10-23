@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
@@ -259,6 +261,31 @@ func (s *ProxySuite) TestClosingTheSandboxEndsItsProxyCredential() {
 
 	s.Require().NoError(box.Close())
 
+	s.Zero(s.exists(key))
+}
+
+// TestACloseARunOutlastsStillEndsItsProxyCredential: Close waits for the run until its timeout,
+// and the record goes then, not at its expiry, so the proxy refuses the running code.
+func (s *ProxySuite) TestACloseARunOutlastsStillEndsItsProxyCredential() {
+	box := s.proxied(sandbox.Config{}, "http://203.0.113.7:8091")
+	box.timeout = time.Second
+	ran, release := s.platform.outlasting(s.T(), box)
+	s.platform.mu.Lock()
+	var setup struct{ Envs map[string]string }
+	s.Require().NoError(json.Unmarshal([]byte(s.platform.rawCommands[0]), &setup))
+	s.platform.mu.Unlock()
+	proxy, err := url.Parse(setup.Envs["HTTPS_PROXY"])
+	s.Require().NoError(err)
+	credential, _ := proxy.User.Password()
+	sum := sha256.Sum256([]byte(credential))
+	key := "sandbox:egress:" + hex.EncodeToString(sum[:])
+	s.Require().EqualValues(1, s.exists(key))
+
+	s.ErrorIs(box.Close(), context.DeadlineExceeded)
+
+	s.Zero(s.exists(key))
+	release()
+	s.NoError(<-ran)
 	s.Zero(s.exists(key))
 }
 
