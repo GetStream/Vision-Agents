@@ -19,6 +19,10 @@ const statQueueSize = 512
 // statWriteTimeout bounds a single write so a stuck backend cannot wedge the writer.
 const statWriteTimeout = 5 * time.Second
 
+// unnamedTierEvery is how often a service tier the price list does not name is logged for
+// one model, so a busy one is not logged on every row.
+const unnamedTierEvery = 10 * time.Minute
+
 // Owner is who a unit of work belongs to and how the customer wants it labelled. It
 // travels with a session so every row the session produces is attributed the same way.
 type Owner struct {
@@ -106,6 +110,9 @@ type Recorder struct {
 	// dropped counts stats lost to a full queue or to a Record after Close, reported once on
 	// shutdown.
 	dropped atomic.Int64
+	// tiersWarned is when each service tier the price list does not name was last logged,
+	// by provider, model and tier.
+	tiersWarned sync.Map
 }
 
 // NewRecorder starts the background writer. The pricer prices every row; nil prices
@@ -151,6 +158,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		return
 	}
 
+	r.warnUnnamedTier(config, entry.Attributes["service_tier"])
 	request := row(r.modality, config, entry)
 	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
@@ -174,6 +182,35 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	default:
 		r.dropped.Add(1)
 	}
+}
+
+// warnUnnamedTier logs a service tier the vendor served at that the provider's price does
+// not name, which is priced at the default rates: how a vendor renaming a tier shows up.
+// Rows are recorded from many goroutines, so the time is swapped in rather than read and
+// then written.
+func (r *Recorder) warnUnnamedTier(config ProviderConfig, tier string) {
+	if tier == "" || tier == "default" {
+		return
+	}
+	if _, named := config.Price.ServiceTiers[tier]; named {
+		return
+	}
+	key := [3]string{config.Provider, config.Model, tier}
+	now := time.Now()
+	for {
+		last, seen := r.tiersWarned.LoadOrStore(key, now)
+		if !seen {
+			break
+		}
+		if now.Sub(last.(time.Time)) < unnamedTierEvery {
+			return
+		}
+		if r.tiersWarned.CompareAndSwap(key, last, now) {
+			break
+		}
+	}
+	r.logger.Warn("the vendor served a tier the price list does not name, priced at the default rates",
+		"modality", r.modality, "provider", config.Provider, "model", config.Model, "service_tier", tier)
 }
 
 // row is the request a stat records, before it is priced: what it is priced by is what it

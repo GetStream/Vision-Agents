@@ -2433,7 +2433,10 @@ llm:
     # times input; a prompt over 272k tokens costs twice the input, cached and write rates
     # and 1.5 times the output for the whole request; and the tier OpenAI answer that they
     # served a request at multiplies every rate: flex and batch half, fast twice, and
-    # ultrafast, which only GPT-6 Astra and GPT-6.1 Sol offer, six times.
+    # ultrafast, which only GPT-6 Astra and GPT-6.1 Sol offer, six times. Fast was called
+    # priority until July 2026, and GPT-5.6 and earlier still answer priority for a fast
+    # request, so priority is priced as fast. A tier not named here is priced at the
+    # default rates and logged.
     - provider: openai
       model: gpt-5.6-luna
       description: "OpenAI's small, fast model. Reads images, and costs little."
@@ -2449,7 +2452,7 @@ llm:
         per_million_cache_write_input_tokens: 0.25
         per_million_output_tokens: 1.20
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # GPT-6 Luna, which takes over from GPT-5.6 Luna as what vlm prefers: half the input
     # price and well under half the output, and Artificial Analysis put it at the lowest cost
@@ -2481,7 +2484,7 @@ llm:
         per_million_cache_write_input_tokens: 0.125
         per_million_output_tokens: 0.50
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
     # is the dearest of this tier by some way and its thinking is billed as output, which is
@@ -2568,7 +2571,7 @@ llm:
         per_million_cache_write_input_tokens: 2.50
         per_million_output_tokens: 12.00
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no
@@ -2590,7 +2593,7 @@ llm:
         per_million_cache_write_input_tokens: 5.00
         per_million_output_tokens: 20.00
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # Anthropic's own pick for most work, and top of the Artificial Analysis Intelligence
     # Index at 58 - at max effort. The provider reaches it over Anthropic's
@@ -2751,7 +2754,7 @@ llm:
         per_million_cache_write_input_tokens: 2.50
         per_million_output_tokens: 10.00
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
     # llm-thinking prefers, so this is the model the skills run on unless it is down.
@@ -2778,7 +2781,7 @@ llm:
         per_million_cache_write_input_tokens: 2.50
         per_million_output_tokens: 10.00
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, ultrafast: 6 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2, ultrafast: 6 }
 
     # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
     # the Artificial Analysis Intelligence Index, the top of the non-Anthropic field. It
@@ -2803,7 +2806,7 @@ llm:
         per_million_cache_write_input_tokens: 12.50
         per_million_output_tokens: 50.00
         context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
-        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, ultrafast: 6 }
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2, ultrafast: 6 }
 
     # Meta's Muse Spark 1.3 on their hosted Model API, 48 on the Artificial Analysis
     # Intelligence Index at max effort and 45 at xhigh, and at around 230-250 output tokens
@@ -3482,7 +3485,7 @@ decision_model:
 
     # Everything below is reached through OpenRouter's Decisions API with one key, at
     # OpenRouter's listed rate (openrouter.ai/api/v1/models?output_modalities=decisions,
-    # read 2026-10-09). None declares a data_policy: what happens to a request depends on
+    # read 2026-10-09) unless its entry says otherwise. None declares a data_policy: what happens to a request depends on
     # the vendor OpenRouter forwards it to, so a customer who asks for a policy is kept
     # away from all of them rather than promised something nobody checked.
     #
@@ -3509,8 +3512,8 @@ decision_model:
     # Clef Flash is Cloudflare's 9B decision model, and the most accurate on fine-grained
     # intents of the five JevStation compared (jevstation.com/decision-models, 2026-10-07).
     # Its rate, like Liquid D1's and Clef's below, is what OpenRouter charged per input
-    # token in the cost it returned with each answer (2026-10-20), which differs from the
-    # listed rate above.
+    # token in the cost it returned with each answer (2026-10-20), which differs from
+    # OpenRouter's listed rate.
     - provider: openrouter
       model: cloudflare/clef-flash
       description: "Cloudflare's small decision model. Very quick, and sharp on fine-grained intents."

@@ -152,6 +152,11 @@ func (s *RoutingSuite) TestTheTierOpenAIServedATurnAtPricesIt() {
 	s.EqualValues(2, at(luna, "batch"))
 	s.EqualValues(7, at(luna, "fast"))
 	s.EqualValues(3, at(luna, "ultrafast"), "GPT-6 Luna has no ultrafast tier, so the name prices nothing extra")
+	for _, older := range []string{"openai/gpt-5.6-luna", "openai/gpt-5.6-terra", "openai/gpt-5.6-sol"} {
+		provider, _ := s.builtIn(LLM, older)
+		s.Equalf(2*at(provider, "default"), at(provider, "priority"),
+			"%s answers priority for a fast request, which is billed as fast", older)
+	}
 	s.EqualValues(2_040, at(astra, "ultrafast"), "six times 90 + 250 µ$")
 }
 

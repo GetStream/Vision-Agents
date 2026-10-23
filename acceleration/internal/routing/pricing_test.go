@@ -5,7 +5,9 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
@@ -195,6 +197,29 @@ func (s *RoutingSuite) TestAServiceTierThePriceListDoesNotNameIsPricedAtTheDefau
 
 	s.EqualValues(1_000_000, quote(list, LLM, provider, map[string]string{"service_tier": "flex"}, used).CostMicros)
 	s.EqualValues(2_000_000, quote(list, LLM, provider, map[string]string{"service_tier": "default"}, used).CostMicros)
+}
+
+func (s *RoutingSuite) TestATierThePriceListDoesNotNameIsLoggedOnce() {
+	provider := ProviderConfig{Provider: "openai", Model: "gpt", Price: Price{
+		PerMillionInputTokens: 2,
+		ServiceTiers:          map[string]float64{"flex": 0.5},
+	}}
+	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
+	s.Require().NoError(err)
+	logs := &bytes.Buffer{}
+	done := make(chan struct{})
+	close(done)
+	// It keeps every stat in its queue rather than writing it anywhere.
+	recorder := &Recorder{modality: LLM, live: &live.Client{}, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil)),
+		queue: make(chan queued, 16), done: done}
+
+	for _, tier := range []string{"turbo", "turbo", "flex", "default", ""} {
+		recorder.Record(provider, Stat{Usage: Usage{InputTokens: 1_000}, Attributes: map[string]string{"service_tier": tier}})
+	}
+
+	s.Equal(1, strings.Count(logs.String(), "does not name"), "one line per model and tier, and none for a tier it names")
+	s.Contains(logs.String(), "service_tier=turbo")
+	s.Contains(logs.String(), "model=gpt")
 }
 
 func (s *RoutingSuite) TestConfigRejectsAServiceTierAtNoRate() {
