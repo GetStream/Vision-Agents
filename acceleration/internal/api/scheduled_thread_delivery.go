@@ -122,7 +122,7 @@ func (s *Server) taskThreadSession(ctx context.Context, delivery scheduledDelive
 	found, running := s.sessions.ByConversationWhere(cid, func(customer string, _ int64) bool {
 		return customer == delivery.CustomerID
 	})
-	if running && found.Spec().PersistConversation {
+	if running {
 		return found, false, nil
 	}
 	config, err := s.store.AgentConfig(ctx, delivery.CustomerID, delivery.ConfigID)
