@@ -50,7 +50,7 @@ func (s *CustomModelRecorderSuite) SetupSuite() {
 func (s *CustomModelRecorderSuite) SetupTest() {
 	s.logs = &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(s.logs, nil))
-	prices, err := pricing.NewList("config", nil, logger)
+	prices, err := pricing.NewList("config", nil, 0, logger)
 	s.Require().NoError(err)
 	s.recorder = routing.NewRecorder(routing.LLM, s.store, nil, prices, logger)
 }

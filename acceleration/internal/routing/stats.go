@@ -127,7 +127,7 @@ func NewRecorderOn(modality Modality, writer *Writer, pricer pricing.Pricer, log
 func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, writer *Writer, pricer pricing.Pricer, logger *slog.Logger) *Recorder {
 	if pricer == nil {
 		// An empty list cannot be refused.
-		pricer, _ = pricing.NewList("none", nil, logger)
+		pricer, _ = pricing.NewList("none", nil, 0, logger)
 	}
 	r := &Recorder{modality: modality, pricer: pricer, logger: logger, gate: gate, writer: writer}
 	if writer == nil {
@@ -159,12 +159,15 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	request := row(r.modality, config, entry)
 	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
+	request.BaseCostMicros, request.PriceVersion = priced.BaseCostMicros, priced.Version
 	if entry.CostMicros != 0 {
 		// Quoted outright by the vendor, such as a number's monthly charge, which no rate
-		// prices: what it charged is spend. Generated tokens keep their share of it.
-		request.CostMicros = entry.CostMicros
-		request.OutputCostMicros = min(priced.OutputCostMicros, entry.CostMicros)
-		request.Billable = priced.Billable || entry.CostMicros > 0
+		// prices: it is resold with the markup, and what the vendor charged is the base.
+		// Generated tokens keep their share of it.
+		resold := r.pricer.Quoted(ItemOf(r.modality, config, entry.Attributes), entry.CostMicros)
+		request.CostMicros, request.BaseCostMicros, request.PriceVersion = resold.CostMicros, resold.BaseCostMicros, resold.Version
+		request.OutputCostMicros = min(priced.OutputCostMicros, resold.CostMicros)
+		request.Billable = priced.Billable || resold.Billable
 	}
 	if request.UsageID == uuid.Nil {
 		request.UsageID = uuid.Must(uuid.NewV7())

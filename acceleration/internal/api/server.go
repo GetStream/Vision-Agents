@@ -111,9 +111,13 @@ const clientAccessibleExtension = "x-client-accessible"
 type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
-	// Pricer is what the providers' rates are read from. Nil is routing.Prices of the
-	// routers' configs.
+	// Pricer is what the providers' rates are read from. Nil is Prices when it is set, else
+	// routing.Prices of the routers' configs.
 	Pricer pricing.Pricer
+	// Prices is the price list in force, read from Store's price tables. With it, /health
+	// reports not ready until it is ready, and a price change made through the management API
+	// is read back at once. Nil serves the price list operations from Store alone.
+	Prices *pricing.Active
 	Store  *store.Store
 	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
 	// router configs, voices -- through whatever cache is in front of Postgres. Built
@@ -313,6 +317,7 @@ type Options struct {
 type Server struct {
 	routers            map[routing.Modality]routing.Inspector
 	pricer             pricing.Pricer
+	prices             *pricing.Active
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
@@ -475,6 +480,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 	pricer := options.Pricer
+	if pricer == nil && options.Prices != nil {
+		pricer = options.Prices
+	}
 	if pricer == nil {
 		capabilities := routing.Config{}
 		for modality, router := range options.Routers {
@@ -489,6 +497,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server := &Server{
 		routers:            options.Routers,
 		pricer:             pricer,
+		prices:             options.Prices,
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,
@@ -1339,6 +1348,17 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 		dependencies[string(modality)] = "ok"
 	}
 
+	// A router reading its prices from the database is not ready until it has read them, so
+	// it never serves on the price files it carries, which have no markup.
+	if s.prices != nil {
+		if err := s.prices.Ready(); err != nil {
+			dependencies["prices"] = err.Error()
+			healthy = false
+		} else {
+			dependencies["prices"] = "ok"
+		}
+	}
+
 	if !healthy {
 		return &healthResponse{
 			Status: http.StatusServiceUnavailable,
@@ -1885,10 +1905,11 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 	}
 }
 
-// providerPrice is the token rates a model is billed at, and nil for a model not billed
-// by the token.
+// providerPrice is the token rates a model is billed at, the markup in force included, and
+// nil for a model not billed by the token. A customer is shown what they are charged, never
+// the vendor's rates.
 func (s *Server) providerPrice(modality Modality, config routing.ProviderConfig) *ProviderPrice {
-	entry, _ := s.pricer.Entry(routing.ItemOf(routing.Modality(modality), config, nil))
+	entry, _ := s.pricer.Charged(routing.ItemOf(routing.Modality(modality), config, nil))
 	input, output := perMillion(entry.Rates[pricing.InputTokens]), perMillion(entry.Rates[pricing.OutputTokens])
 	if input == 0 && output == 0 {
 		return nil

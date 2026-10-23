@@ -11,7 +11,7 @@ import (
 
 // Prices is the price list for work on the config's providers when nobody passed one: the
 // rates the config sets itself, then the vendor list embedded in the binary, with the
-// providers it marks local. A router passes the list it was given instead.
+// providers it marks local, with no markup. A router passes the list it was given instead.
 func Prices(config Config, logger *slog.Logger) (*pricing.List, error) {
 	var own []pricing.Entry
 	for _, entry := range PriceEntries(config) {
@@ -22,7 +22,7 @@ func Prices(config Config, logger *slog.Logger) (*pricing.List, error) {
 		}
 	}
 	entries := prices.Merge(prices.File{Entries: own}, prices.Vendor())
-	return pricing.NewList(prices.EmbeddedVersion(""), prices.WithLocal(entries, LocalItems(config)), logger)
+	return pricing.NewList(prices.EmbeddedVersion(""), prices.WithLocal(entries, LocalItems(config)), 0, logger)
 }
 
 // PriceEntries is the price list the config's price: blocks declare, at the vendors' rates:

@@ -80,6 +80,7 @@ from .campaign_request import CampaignRequest
 from .campaign_request_tags import CampaignRequestTags
 from .campaign_state import CampaignState
 from .campaign_tags import CampaignTags
+from .cancel_price_change_input import CancelPriceChangeInput
 from .candidate import Candidate
 from .channel_account import ChannelAccount
 from .channel_identity import ChannelIdentity
@@ -304,6 +305,33 @@ from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
+from .price_change import PriceChange
+from .price_change_entry import PriceChangeEntry
+from .price_change_entry_rates import PriceChangeEntryRates
+from .price_change_entry_when import PriceChangeEntryWhen
+from .price_change_input import PriceChangeInput
+from .price_change_kind import PriceChangeKind
+from .price_change_page import PriceChangePage
+from .price_entry import PriceEntry
+from .price_entry_charged_rates import PriceEntryChargedRates
+from .price_entry_input import PriceEntryInput
+from .price_entry_input_rates import PriceEntryInputRates
+from .price_entry_input_when import PriceEntryInputWhen
+from .price_entry_rates import PriceEntryRates
+from .price_entry_when import PriceEntryWhen
+from .price_item import PriceItem
+from .price_item_when import PriceItemWhen
+from .price_list import PriceList
+from .price_preview import PricePreview
+from .price_preview_item import PricePreviewItem
+from .price_preview_item_rate_factors import PricePreviewItemRateFactors
+from .price_preview_item_when import PricePreviewItemWhen
+from .price_rate import PriceRate
+from .price_tier import PriceTier
+from .price_tier_rates import PriceTierRates
+from .priced_entry import PricedEntry
+from .priced_entry_charged_rates import PricedEntryChargedRates
+from .priced_entry_rates import PricedEntryRates
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
@@ -451,6 +479,10 @@ from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
+from .upcoming_price_entry import UpcomingPriceEntry
+from .upcoming_price_entry_charged_rates import UpcomingPriceEntryChargedRates
+from .upcoming_price_entry_rates import UpcomingPriceEntryRates
+from .upcoming_price_entry_when import UpcomingPriceEntryWhen
 from .update_scheduled_task_request import UpdateScheduledTaskRequest
 from .update_session_request import UpdateSessionRequest
 from .update_session_request_custom import UpdateSessionRequestCustom
@@ -555,6 +587,7 @@ __all__ = (
     "CampaignRequestTags",
     "CampaignState",
     "CampaignTags",
+    "CancelPriceChangeInput",
     "Candidate",
     "ChannelAccount",
     "ChannelIdentity",
@@ -777,6 +810,33 @@ __all__ = (
     "PostalAddress",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
+    "PriceChange",
+    "PriceChangeEntry",
+    "PriceChangeEntryRates",
+    "PriceChangeEntryWhen",
+    "PriceChangeInput",
+    "PriceChangeKind",
+    "PriceChangePage",
+    "PriceEntry",
+    "PriceEntryChargedRates",
+    "PriceEntryInput",
+    "PriceEntryInputRates",
+    "PriceEntryInputWhen",
+    "PriceEntryRates",
+    "PriceEntryWhen",
+    "PriceItem",
+    "PriceItemWhen",
+    "PriceList",
+    "PricePreview",
+    "PricePreviewItem",
+    "PricePreviewItemRateFactors",
+    "PricePreviewItemWhen",
+    "PriceRate",
+    "PriceTier",
+    "PriceTierRates",
+    "PricedEntry",
+    "PricedEntryChargedRates",
+    "PricedEntryRates",
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
@@ -924,6 +984,10 @@ __all__ = (
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
+    "UpcomingPriceEntry",
+    "UpcomingPriceEntryChargedRates",
+    "UpcomingPriceEntryRates",
+    "UpcomingPriceEntryWhen",
     "UpdateScheduledTaskRequest",
     "UpdateSessionRequest",
     "UpdateSessionRequestCustom",

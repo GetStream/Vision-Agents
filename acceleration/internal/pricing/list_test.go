@@ -3,6 +3,7 @@ package pricing
 import (
 	"bytes"
 	"log/slog"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func (s *PricingSuite) SetupTest() {
 
 // list is a price list of the entries, logging to s.logs.
 func (s *PricingSuite) list(entries ...Entry) *List {
-	list, err := NewList("test", entries, slog.New(slog.NewTextHandler(s.logs, nil)))
+	list, err := NewList("test", entries, 0, slog.New(slog.NewTextHandler(s.logs, nil)))
 	s.Require().NoError(err)
 	return list
 }
@@ -336,7 +337,7 @@ func (s *PricingSuite) TestUnpricedListsTheBillableItemsWithNoRate() {
 }
 
 func (s *PricingSuite) TestNewListRefusesTwoEntriesForTheSameItem() {
-	_, err := NewList("test", []Entry{terra, terra}, nil)
+	_, err := NewList("test", []Entry{terra, terra}, 0, nil)
 
 	s.ErrorContains(err, "two entries")
 }
@@ -347,25 +348,25 @@ func (s *PricingSuite) TestNewListRefusesTwoEntriesOneItemWouldMatchEqually() {
 	flex := llmEntry("m", nil)
 	flex.When = map[string]string{"service_tier": "flex"}
 
-	_, err := NewList("test", []Entry{ca, flex}, nil)
+	_, err := NewList("test", []Entry{ca, flex}, 0, nil)
 
 	s.ErrorContains(err, "two entries")
 }
 
 func (s *PricingSuite) TestNewListRefusesARateWithNoUnit() {
-	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: {USD: 1}})}, nil)
+	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: {USD: 1}})}, 0, nil)
 
 	s.ErrorContains(err, "a rate needs a unit")
 }
 
 func (s *PricingSuite) TestNewListRefusesAnUnknownMeter() {
-	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{"tokens": perMillion(1)})}, nil)
+	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{"tokens": perMillion(1)})}, 0, nil)
 
 	s.ErrorContains(err, "not a meter")
 }
 
 func (s *PricingSuite) TestNewListRefusesANegativeRate() {
-	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: perMillion(-1)})}, nil)
+	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{InputTokens: perMillion(-1)})}, 0, nil)
 
 	s.ErrorContains(err, "below zero")
 }
@@ -374,7 +375,7 @@ func (s *PricingSuite) TestNewListRefusesATierMissingARate() {
 	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1), OutputTokens: perMillion(4)})
 	entry.Tiers = []Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(2)}}}
 
-	_, err := NewList("test", []Entry{entry}, nil)
+	_, err := NewList("test", []Entry{entry}, 0, nil)
 
 	s.ErrorContains(err, "no output_tokens rate")
 }
@@ -384,13 +385,13 @@ func (s *PricingSuite) TestNewListRefusesTiersOutOfOrder() {
 	entry := llmEntry("m", rates)
 	entry.Tiers = []Tier{{AboveInputTokens: 2_000, Rates: rates}, {AboveInputTokens: 1_000, Rates: rates}}
 
-	_, err := NewList("test", []Entry{entry}, nil)
+	_, err := NewList("test", []Entry{entry}, 0, nil)
 
 	s.ErrorContains(err, "not above the one before it")
 }
 
 func (s *PricingSuite) TestNewListRefusesAnEntryWithNoModel() {
-	_, err := NewList("test", []Entry{{Modality: "llm", Provider: "openai"}}, nil)
+	_, err := NewList("test", []Entry{{Modality: "llm", Provider: "openai"}}, 0, nil)
 
 	s.ErrorContains(err, "needs a modality, a provider and a model")
 }
@@ -409,13 +410,28 @@ func (s *PricingSuite) TestAVersionFollowsOneRule() {
 	listed := llmEntry("listed", map[Meter]Rate{InputTokens: perMillion(1)})
 	local := llmEntry("local", nil)
 	local.Local = true
-	list := s.list(written, listed, local)
+	localRated := llmEntry("local-rated", map[Meter]Rate{InputTokens: perMillion(0.1)})
+	localRated.Local, localRated.Version = true, "20261110140000_local_rate"
+	list := s.list(written, listed, local, localRated)
 	used := Quantities{InputTokens: 1_000}
 
 	s.Equal("20261110130000_seed", list.Quote(llmItem("written", nil), used).Version, "the change that wrote the entry")
 	s.Equal("test", list.Quote(llmItem("listed", nil), used).Version, "the list's own version")
-	s.Empty(list.Quote(llmItem("local", nil), used).Version, "a local entry is priced by no change")
+	s.Empty(list.Quote(llmItem("local", nil), used).Version, "a local entry with no rate is priced by no change")
+	s.Equal("20261110140000_local_rate", list.Quote(llmItem("local-rated", nil), used).Version,
+		"a local entry with a rate is priced by the change that wrote it")
 	s.Empty(list.Quote(llmItem("unknown", nil), used).Version, "unpriced work is priced by nothing")
+}
+
+func (s *PricingSuite) TestARateDearerThanAnyUnitIsRefused() {
+	_, err := NewList("test", []Entry{llmEntry("m", map[Meter]Rate{OutputTokens: {USD: 1_000_000_001, Per: 1_000_000}})}, 0, nil)
+	s.ErrorContains(err, "more than $1000 a unit")
+
+	_, err = NewList("test", []Entry{llmEntry("m", map[Meter]Rate{OutputTokens: {USD: math.Inf(1), Per: 1}})}, 0, nil)
+	s.ErrorContains(err, "more than $1000 a unit")
+
+	_, err = NewList("test", []Entry{llmEntry("m", map[Meter]Rate{OutputTokens: {USD: 1_000, Per: 1}})}, 0, nil)
+	s.NoError(err, "a thousand dollars a unit is the most, and allowed")
 }
 
 func (s *PricingSuite) TestNewListRefusesAMarkupOutOfRange() {
@@ -423,7 +439,7 @@ func (s *PricingSuite) TestNewListRefusesAMarkupOutOfRange() {
 	markup := int64(MaxMarkupBps + 1)
 	entry.MarkupBps = &markup
 
-	_, err := NewList("test", []Entry{entry}, nil)
+	_, err := NewList("test", []Entry{entry}, 0, nil)
 
 	s.ErrorContains(err, "outside 0 to 100000")
 }

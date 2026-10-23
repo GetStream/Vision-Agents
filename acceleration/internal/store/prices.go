@@ -271,8 +271,12 @@ func ReleaseName(release string) string {
 // taken effect under a change not cancelled, ties going to the later change. An item whose
 // newest entry withdrew it is left out.
 func (s *Store) ActivePriceEntries(ctx context.Context, at time.Time) ([]PriceEntry, error) {
+	return activePriceEntries(ctx, s.db, at)
+}
+
+func activePriceEntries(ctx context.Context, db bun.IDB, at time.Time) ([]PriceEntry, error) {
 	var newest []PriceEntry
-	err := s.db.NewRaw(`
+	err := db.NewRaw(`
 SELECT DISTINCT ON (pe.modality, pe.provider, pe.model, pe.attributes) pe.*
 FROM price_entries AS pe
 JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL
@@ -294,8 +298,12 @@ ORDER BY pe.modality, pe.provider, pe.model, pe.attributes, pe.effective_at DESC
 // ActiveMarkup is the list's markup in basis points at at: the one the newest change in force
 // that set one says, or 0 when none has.
 func (s *Store) ActiveMarkup(ctx context.Context, at time.Time) (int64, error) {
+	return activeMarkup(ctx, s.db, at)
+}
+
+func activeMarkup(ctx context.Context, db bun.IDB, at time.Time) (int64, error) {
 	var markup int64
-	err := s.db.NewSelect().Model((*PriceChange)(nil)).Column("markup_bps").
+	err := db.NewSelect().Model((*PriceChange)(nil)).Column("markup_bps").
 		Where("cancelled_at IS NULL").
 		Where("effective_at <= ?", at).
 		Where("markup_bps IS NOT NULL").
@@ -314,8 +322,12 @@ func (s *Store) ActiveMarkup(ctx context.Context, at time.Time) (int64, error) {
 // NextPriceChangeAt is when the next change not cancelled takes effect after after, and
 // whether one is scheduled, so a list in memory can switch at that moment.
 func (s *Store) NextPriceChangeAt(ctx context.Context, after time.Time) (time.Time, bool, error) {
+	return nextPriceChangeAt(ctx, s.db, after)
+}
+
+func nextPriceChangeAt(ctx context.Context, db bun.IDB, after time.Time) (time.Time, bool, error) {
 	var next sql.NullTime
-	err := s.db.NewSelect().Model((*PriceChange)(nil)).ColumnExpr("min(effective_at)").
+	err := db.NewSelect().Model((*PriceChange)(nil)).ColumnExpr("min(effective_at)").
 		Where("cancelled_at IS NULL").
 		Where("effective_at > ?", after).
 		Scan(ctx, &next)
@@ -335,8 +347,12 @@ type UpcomingPriceEntry struct {
 // UpcomingPriceEntries is every entry of a change not cancelled that takes effect after after,
 // soonest first.
 func (s *Store) UpcomingPriceEntries(ctx context.Context, after time.Time) ([]UpcomingPriceEntry, error) {
+	return upcomingPriceEntries(ctx, s.db, after)
+}
+
+func upcomingPriceEntries(ctx context.Context, db bun.IDB, after time.Time) ([]UpcomingPriceEntry, error) {
 	var changes []PriceChange
-	err := s.db.NewSelect().Model(&changes).
+	err := db.NewSelect().Model(&changes).
 		Where("cancelled_at IS NULL").
 		Where("effective_at > ?", after).
 		Scan(ctx)
@@ -351,7 +367,7 @@ func (s *Store) UpcomingPriceEntries(ctx context.Context, after time.Time) ([]Up
 		reasons[change.Name] = change.Reason
 	}
 	var entries []PriceEntry
-	err = s.db.NewSelect().Model(&entries).
+	err = db.NewSelect().Model(&entries).
 		Where("change IN (?)", bun.In(slices.Collect(maps.Keys(reasons)))).
 		Order("effective_at", "change", "id").
 		Scan(ctx)
@@ -375,11 +391,17 @@ func (s *Store) PriceChange(ctx context.Context, name string) (PriceChange, []Pr
 	if err != nil {
 		return PriceChange{}, nil, stack.Wrap(fmt.Errorf("store: price change: %w", err))
 	}
-	var entries []PriceEntry
-	if err := s.db.NewSelect().Model(&entries).Where("change = ?", name).Order("id").Scan(ctx); err != nil {
-		return PriceChange{}, nil, stack.Wrap(fmt.Errorf("store: price change: %w", err))
+	entries, err := priceEntriesOf(ctx, s.db, name)
+	return change, entries, err
+}
+
+// priceEntriesOf is the entries a change wrote, in the order it wrote them.
+func priceEntriesOf(ctx context.Context, db bun.IDB, name string) ([]PriceEntry, error) {
+	entries := []PriceEntry{}
+	if err := db.NewSelect().Model(&entries).Where("change = ?", name).Order("id").Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: price change: %w", err))
 	}
-	return change, entries, nil
+	return entries, nil
 }
 
 // VendorCostAttribute is the row attribute a vendor's own figure for what the work cost is

@@ -642,7 +642,7 @@ func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
 func (s *PhoneSuite) TestAFailedNumberPurchaseIsNeitherBillableNorUnpriced() {
 	config := s.config()
 	logs := &bytes.Buffer{}
-	prices, err := pricing.NewList("config", PriceEntries(config), slog.New(slog.NewTextHandler(logs, nil)))
+	prices, err := pricing.NewList("config", PriceEntries(config), 0, slog.New(slog.NewTextHandler(logs, nil)))
 	s.Require().NoError(err)
 
 	for _, vendor := range append([]Vendor{{Vendor: SIPTrunkVendor}}, config.Vendors...) {

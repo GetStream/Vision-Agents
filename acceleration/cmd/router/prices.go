@@ -37,7 +37,8 @@ const pricesUsage = `usage: router prices <command>
   sync --dry-run             what the next start would load from ROUTER_PRICES_FILE and
                              vendor.json, writing nothing. Reads the database
   check [--file path]        parse a price file (default: the embedded vendor.json) and
-                             build a price list from it, with no database
+                             build a price list from it, with no database; a --file is
+                             also laid over vendor.json as a router's start lays it
   drift [--since 168h] [--json]
                              per model, how far the cost of rows whose vendor said what it
                              charged is from that figure, over every shard. Reads the database
@@ -45,12 +46,17 @@ const pricesUsage = `usage: router prices <command>
                              write the price: blocks of a routing config as a price file
 
 No command writes a price: a router loads its price files when it starts, and adds only the
-items its database has never priced.
+items its database has never priced. After that a price changes through the management API.
 `
 
 // priceRetry is how long a router waits to load its price files into the database again
 // after a load failed.
 const priceRetry = 30 * time.Second
+
+// priceReload is how often a router reads the price list in force again, so a change made
+// through another router prices here within it. A scheduled change is read at the moment it
+// takes effect as well.
+const priceReload = 30 * time.Second
 
 // priceAttempt bounds one load, so the first, made before the router serves, cannot keep it
 // from serving: a database that answers slowly fails the attempt, and the retry takes over.
@@ -115,20 +121,31 @@ func loadPriceFiles(settings config.Config) (store.PriceLoad, error) {
 	}
 	files, names = append(files, prices.Vendor()), append(names, prices.VendorFile)
 	merged := prices.Merge(files...)
-	if _, err := pricing.NewList("merged", merged, slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := pricing.NewList("merged", merged, 0, slog.New(slog.DiscardHandler)); err != nil {
 		return store.PriceLoad{}, fmt.Errorf("prices: %s: %w", strings.Join(names, " over "), err)
 	}
 	return store.PriceLoad{Entries: merged, MarkupBps: files[0].MarkupBps, Source: strings.Join(names, ", "), Release: releaseName()}, nil
 }
 
-// startPriceSync loads the price files into the database once, and when that fails keeps
-// trying every interval in the background until it succeeds or ctx ends. A database that
-// cannot be written now is no reason to refuse calls; the router prices from the files it
-// embeds meanwhile.
-func startPriceSync(ctx context.Context, pgStore *store.Store, load store.PriceLoad, every time.Duration, logger *slog.Logger) {
-	if syncPricesOnce(ctx, pgStore, load, every, logger) {
-		return
+// startPrices loads the price files into the database and starts the price list every row is
+// priced by: the load first, so a router whose load succeeds reads a seeded list at once, then
+// the list. A load that failed is retried in the background, and the list is read again the
+// moment a retry succeeds rather than up to an interval later, so a fresh database goes ready
+// right after its seed.
+func startPrices(ctx context.Context, pgStore *store.Store, capabilities routing.Config, fallback *pricing.List,
+	load store.PriceLoad, requireEntries bool, retry, reload time.Duration, logger *slog.Logger) *pricing.Active {
+	loaded := syncPricesOnce(ctx, pgStore, load, retry, logger)
+	active := newActivePrices(ctx, pgStore, capabilities, fallback, requireEntries, reload, logger)
+	if !loaded {
+		retryPriceSync(ctx, pgStore, load, retry, logger, func() { _ = active.Reload(ctx) })
 	}
+	return active
+}
+
+// retryPriceSync tries the load every interval in the background until it succeeds, then
+// calls onLoaded, or until ctx ends. A database that cannot be written now is no reason to
+// refuse calls; the router prices from the files it embeds meanwhile.
+func retryPriceSync(ctx context.Context, pgStore *store.Store, load store.PriceLoad, every time.Duration, logger *slog.Logger, onLoaded func()) {
 	go func() {
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
@@ -139,6 +156,7 @@ func startPriceSync(ctx context.Context, pgStore *store.Store, load store.PriceL
 			case <-ticker.C:
 			}
 			if syncPricesOnce(ctx, pgStore, load, every, logger) {
+				onLoaded()
 				return
 			}
 		}
@@ -243,7 +261,7 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 		shown.Entries = append(shown.Entries, shownEntry{Entry: entry, Charged: charged.Rates, ChargedTiers: charged.Tiers,
 			EffectiveAt: row.EffectiveAt.UTC(), ChargedMarkup: chargedMarkup})
 	}
-	list, err := pricing.NewList("database", prices.WithLocal(entries, routing.LocalItems(routingConfig)), slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList(pricing.ActiveVersion, prices.WithLocal(entries, routing.LocalItems(routingConfig)), markup, slog.New(slog.DiscardHandler))
 	if err != nil {
 		return fmt.Errorf("prices: the list in force does not build: %w", err)
 	}
@@ -429,8 +447,8 @@ func medianOf(values []float64) float64 {
 	return (sorted[middle-1] + sorted[middle]) / 2
 }
 
-// runPricesCheck parses a price file and builds a list from it, so a malformed file fails in
-// CI rather than at a router's start.
+// runPricesCheck parses a price file and builds a list from it, and from it laid over
+// vendor.json, so a file that would stop a router's start fails in CI instead.
 func runPricesCheck(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("prices check", flag.ContinueOnError)
 	path := flags.String("file", "", "the price file to check; empty checks the embedded vendor.json")
@@ -439,18 +457,26 @@ func runPricesCheck(args []string, out io.Writer) error {
 	}
 	file := prices.Vendor()
 	name := prices.VendorFile
+	merged := ""
 	if *path != "" {
 		var err error
 		if file, err = prices.Load(*path); err != nil {
 			return err
 		}
 		name = *path
+		// Laid over vendor.json as a router's start lays it, so an entry that would stop the
+		// start, such as one matching an item as well as a vendor entry does, stops the check.
+		load, err := loadPriceFiles(config.Config{PricesFile: *path})
+		if err != nil {
+			return err
+		}
+		merged = fmt.Sprintf("; %d entries laid over %s", len(load.Entries), prices.VendorFile)
 	}
 	markup := "no markup"
 	if file.MarkupBps != nil {
 		markup = fmt.Sprintf("a markup of %d basis points", *file.MarkupBps)
 	}
-	_, err := fmt.Fprintf(out, "%s: %d entries, %s\n", name, len(file.Entries), markup)
+	_, err := fmt.Fprintf(out, "%s: %d entries, %s%s\n", name, len(file.Entries), markup, merged)
 	return err
 }
 

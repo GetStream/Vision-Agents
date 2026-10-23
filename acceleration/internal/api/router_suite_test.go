@@ -81,6 +81,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // suiteConnections caps each suite's pool, so ten suites at once stay well inside the
@@ -339,6 +340,12 @@ type RouterSuite struct {
 	// manageOff builds the router with no manage key, as a deployment that never set
 	// ROUTER_AUTH_MANAGE_KEY has, for a suite about that to set before it starts the harness.
 	manageOff bool
+	// pricedFromDatabase seeds the price list from the embedded vendor list, as a router's
+	// first start does, and prices the LLM router's rows and the API from it, read every
+	// priceReload, for a suite about the price list to set before it starts the harness.
+	// prices is that list.
+	pricedFromDatabase bool
+	prices             *pricing.Active
 
 	utils testUtils
 	data  testData
@@ -437,6 +444,9 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.configs.Close)
 	s.relayPrefix = uuid.NewString()
 
+	if s.pricedFromDatabase {
+		s.prices = s.databasePrices(logger)
+	}
 	policies := s.policies(logger)
 	s.limiter = s.quota(liveClient, policies, logger)
 	streams := s.routers(s.limiter, policies, logger)
@@ -525,6 +535,7 @@ func (s *RouterSuite) SetupSuite() {
 	}
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
+		Prices:    s.prices,
 		Streams:   streams,
 		Relay:     s.relayBus(s.shard, logger),
 		Directory: directory,
@@ -821,9 +832,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register(routing.CustomProvider, func(spec routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: spec.Endpoint.BaseURL + " " + spec.Endpoint.Model + " " + spec.Endpoint.APIKey}, nil
 	})
+	// Nil unless the suite prices from the database: a nil *pricing.Active is no nil Pricer.
+	var pricer pricing.Pricer
+	if s.prices != nil {
+		pricer = s.prices
+	}
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
-		Quota: limiter, Gate: gate, Logger: logger,
+		Quota: limiter, Gate: gate, Pricer: pricer, Logger: logger,
 		Models: llmrouter.NewCustomModels(s.configs, s.sealer, false),
 	})
 	s.Require().NoError(err)
@@ -901,6 +917,25 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	}
 }
 
+// suitePriceReload is how often a suite pricing from the database reads its list again: a
+// tenth of a second rather than a router's 30, so a change made in a test prices within it.
+const suitePriceReload = 100 * time.Millisecond
+
+// databasePrices seeds the suite's price list from the embedded vendor list, as a router's
+// first start does (once: every later start finds it seeded and adds nothing it already has),
+// and reads it every suitePriceReload until the suite ends.
+func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: prices.Vendor().Entries, Source: prices.VendorFile, Release: "suite"})
+	s.Require().NoError(err)
+	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
+	s.Require().NoError(err)
+	return pricing.NewActive(ctx, pricing.ActiveOptions{
+		Source: s.store.PriceSource(), Fallback: fallback, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
+	})
+}
+
 // sessionManager runs conversations, writing them down in Stream Chat through a stand-in
 // for the chat backend: what a session records is under test, what Stream does with it is
 // not.
@@ -967,7 +1002,7 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	// here is the HTTP surface in front of them.
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
-	phonePrices, err := pricing.NewList("config", phone.PriceEntries(config), logger)
+	phonePrices, err := pricing.NewList("config", phone.PriceEntries(config), 0, logger)
 	s.Require().NoError(err)
 
 	service, err := phone.NewService(phone.ServiceOptions{

@@ -89,7 +89,7 @@ func (s *PriceFileSuite) TestTheVendorFilePricesWhatRouterYamlDid() {
 		s.T().Skip("router.yaml carries no price: blocks: pass -priced-config=<a routing config with them> to check vendor.json against one")
 	}
 	discard := slog.New(slog.DiscardHandler)
-	want, err := pricing.NewList("config", declared, discard)
+	want, err := pricing.NewList("config", declared, 0, discard)
 	s.Require().NoError(err)
 	got, err := prices.Embedded(routing.LocalItems(routingConfig), "test", discard)
 	s.Require().NoError(err)
@@ -257,7 +257,38 @@ func (s *PriceFileSuite) TestCheckingAGoodFileSaysItsMarkup() {
 
 	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
 
-	s.Equal(path+": 0 entries, a markup of 1500 basis points\n", out.String())
+	s.Equal(fmt.Sprintf("%s: 0 entries, a markup of 1500 basis points; %d entries laid over vendor.json\n",
+		path, len(prices.Vendor().Entries)), out.String())
+}
+
+// TestCheckingAFileRefusesWhatWouldStopTheStart: an entry the file alone takes, but that an
+// item would match as well as one of vendor.json's, is refused as a router's start refuses it.
+func (s *PriceFileSuite) TestCheckingAFileRefusesWhatWouldStopTheStart() {
+	path := filepath.Join(s.T().TempDir(), "own-prices.json")
+	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [
+		{"modality": "llm", "provider": "openai", "model": "gpt-5.6-luna", "when": {"region": "eu"},
+		 "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`), 0o600))
+
+	err := runPricesCheck([]string{"--file", path}, &bytes.Buffer{})
+
+	s.ErrorContains(err, "would match equally")
+	_, err = loadPriceFiles(config.Config{PricesFile: path})
+	s.ErrorContains(err, "would match equally", "the start refuses it too")
+}
+
+func (s *PriceFileSuite) TestCheckingAGoodFileCountsItLaidOverTheVendorFile() {
+	vendor := prices.Vendor().Entries[0]
+	path := filepath.Join(s.T().TempDir(), "own-prices.json")
+	s.Require().NoError(os.WriteFile(path, []byte(fmt.Sprintf(`{"entries": [
+		{"modality": "llm", "provider": "own", "model": "own-model", "rates": {"input_tokens": {"usd": 3, "per": 1000000}}},
+		{"modality": %q, "provider": %q, "model": %q, "rates": {"input_tokens": {"usd": 7, "per": 1000000}}}]}`,
+		vendor.Modality, vendor.Provider, vendor.Model)), 0o600))
+	var out bytes.Buffer
+
+	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
+
+	s.Equal(fmt.Sprintf("%s: 2 entries, no markup; %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+1),
+		out.String(), "one new item, and one that replaces vendor.json's")
 }
 
 // ownConfig is a routing config of one priced and one local model, as a deployment of its

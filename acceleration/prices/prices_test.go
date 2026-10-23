@@ -29,7 +29,7 @@ func llm(model string, input float64) pricing.Entry {
 }
 
 func (s *PricesSuite) TestTheVendorFileIsAValidList() {
-	_, err := pricing.NewList("vendor", Vendor().Entries, slog.New(slog.DiscardHandler))
+	_, err := pricing.NewList("vendor", Vendor().Entries, 0, slog.New(slog.DiscardHandler))
 
 	s.Require().NoError(err)
 	s.NotEmpty(Vendor().Entries)

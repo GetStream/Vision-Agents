@@ -492,6 +492,68 @@ OR to_regclass('public.price_changes') IS NOT NULL`).Scan(&exists))
 	s.exec(db, oldRequestInsert)
 }
 
+// auditCancelledVersion is the migration that lets audit_log record a cancelled price change
+// (T1 C).
+const auditCancelledVersion int64 = 20261110140000
+
+// TestTheAuditLogTakesCancelledAndThePreviousRouterStillWrites: a database holding a row of
+// every action the CHECK allowed migrates, keeps them all, and takes cancelled and nothing else
+// new. The router before it still migrates the database as a no-op and writes its requests and
+// audit rows. Down keeps the cancelled rows and refuses new ones.
+func (s *MigrationOrderSuite) TestTheAuditLogTakesCancelledAndThePreviousRouterStillWrites() {
+	db := s.open()
+	before := s.migrationBefore(auditCancelledVersion)
+	s.upTo(db, before)
+	audit := func(action string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO audit_log (id, customer_id, resource_type, resource_id, "+
+			"action, source, created_at) VALUES (?, '', 'price_list', 'change', ?, 'manage', now())", newID(), action)
+		return err
+	}
+	rows := func() int {
+		var count int
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM audit_log").Scan(&count))
+		return count
+	}
+	for _, action := range []string{"created", "updated", "deleted", "synced"} {
+		s.Require().NoError(audit(action), action)
+	}
+	s.Require().ErrorContains(audit("cancelled"), "audit_log_action_check")
+
+	s.upTo(db, auditCancelledVersion)
+
+	s.Equal(4, rows())
+	s.Require().NoError(audit(AuditCancelled))
+	s.Require().ErrorContains(audit("withdrawn"), "audit_log_action_check")
+	// Added NOT VALID: the old CHECK already held for every row, so none is read again.
+	var validated bool
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT convalidated FROM pg_constraint "+
+		"WHERE conname = 'audit_log_action_check' AND conrelid = 'audit_log'::regclass").Scan(&validated))
+	s.False(validated)
+
+	previous := fstest.MapFS{}
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	s.Require().NoError(err)
+	for _, name := range carried {
+		if version, _, _ := strings.Cut(name, "_"); version >= strconv.FormatInt(auditCancelledVersion, 10) {
+			continue
+		}
+		body, err := fs.ReadFile(migrations.FS, name)
+		s.Require().NoError(err)
+		previous[name] = &fstest.MapFile{Data: body}
+	}
+	goose.SetBaseFS(previous)
+	s.Require().NoError(goose.SetDialect("postgres"))
+	s.Require().NoError(goose.UpContext(s.ctx, db.DB().DB, "."), "the previous router migrates a newer database as a no-op")
+	s.exec(db, oldRequestInsert)
+	s.Require().NoError(audit(AuditCreated))
+
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", before))
+	s.Equal(6, rows())
+	s.Require().ErrorContains(audit(AuditCancelled), "audit_log_action_check")
+	s.Require().NoError(audit(AuditCreated))
+}
+
 func (s *MigrationOrderSuite) auditRows(db *Store) int {
 	var rows int
 	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_audit").Scan(&rows))
