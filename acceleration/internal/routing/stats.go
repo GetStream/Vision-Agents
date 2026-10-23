@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
-	"sync"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,8 +19,12 @@ import (
 const drainTimeout = 15 * time.Second
 
 // unnamedTierEvery is how often a service tier the price list does not name is logged for
-// one model, so a busy one is not logged on every row.
-const unnamedTierEvery = 10 * time.Minute
+// one model, so a busy one is not logged on every row. usageLogEvery is the same for an item
+// whose rows say its usage is missing, estimated or does not add up.
+const (
+	unnamedTierEvery = 10 * time.Minute
+	usageLogEvery    = 10 * time.Minute
+)
 
 // Owner is who a unit of work belongs to and how the customer wants it labelled. It
 // travels with a session so every row the session produces is attributed the same way.
@@ -74,14 +78,87 @@ type Stat struct {
 	// CostMicros overrides the priced amount for work that is not billed by the units in
 	// Usage, such as a phone number's monthly charge, where the vendor quotes the price
 	// outright rather than a rate to multiply. Zero leaves the pricing to the rates.
-	CostMicros   int64
-	Success      bool
-	ErrorCode    string
-	ErrorMessage string
+	CostMicros int64
+	// Free records the work priced as usual and not billed, for work given away.
+	Free bool
+	// VendorTotalTokens is the vendor's own count of every token the work used, where it
+	// sent one. It is not stored: a row whose tokens do not add up to it is counted, since
+	// the difference is a part of the bill the adapter missed.
+	VendorTotalTokens int64
+	Success           bool
+	ErrorCode         string
+	ErrorMessage      string
 	// Fatal marks a failure that ended the session for a reason the provider gives every
 	// caller, such as an account it refuses. It makes the provider unavailable for one
 	// health window, however much it served before.
 	Fatal bool
+}
+
+// Use adds what the work used to the stat: the meters with a column of their own into Usage,
+// which is what the stats endpoints read, and the rest into Meters. Usage's input is the whole
+// prompt, so cached and cache-written tokens are added to it as well.
+func (s *Stat) Use(used pricing.Quantities) {
+	for meter, quantity := range used {
+		if quantity == 0 {
+			continue
+		}
+		switch meter {
+		case pricing.InputTokens:
+			s.InputTokens += quantity
+		case pricing.CachedInputTokens:
+			s.InputTokens += quantity
+			s.CachedInputTokens += quantity
+		case pricing.CacheWriteInputTokens:
+			s.InputTokens += quantity
+			s.addMeter(meter, quantity)
+		case pricing.OutputTokens:
+			s.OutputTokens += quantity
+		case pricing.AudioMs:
+			s.AudioMs += quantity
+		case pricing.Characters:
+			s.Characters += quantity
+		case pricing.Images:
+			s.Images += quantity
+		case pricing.Pixels:
+			s.Pixels += quantity
+		case pricing.Requests:
+			s.Requests += quantity
+		default:
+			s.addMeter(meter, quantity)
+		}
+	}
+}
+
+func (s *Stat) addMeter(meter pricing.Meter, quantity int64) {
+	if s.Meters == nil {
+		s.Meters = pricing.Quantities{}
+	}
+	s.Meters[meter] += quantity
+}
+
+// Attribute sets one attribute on the stat.
+func (s *Stat) Attribute(name, value string) {
+	if s.Attributes == nil {
+		s.Attributes = map[string]string{}
+	}
+	s.Attributes[name] = value
+}
+
+// AttributeUsageEstimated is "true" on a row whose quantities the router counted because the
+// vendor never said what the work used.
+const AttributeUsageEstimated = "usage_estimated"
+
+// Estimated marks the stat's quantities as the router's own count.
+func (s *Stat) Estimated() { s.Attribute(AttributeUsageEstimated, "true") }
+
+// VendorCost keeps what the vendor said the work cost, when it said. It never prices the row:
+// the price list is checked against it.
+func (s *Stat) VendorCost(work any) {
+	if costed, ok := work.(pricing.VendorCosted); ok {
+		if micros := costed.VendorCostMicros(); micros > 0 {
+			s.Attribute(store.VendorCostAttribute, strconv.FormatInt(micros, 10))
+		}
+	}
 }
 
 // ErrorCancelled is the ErrorCode of work its caller gave up on, whether before the provider
@@ -90,6 +167,11 @@ type Stat struct {
 // but the provider did nothing wrong, so it is kept out of its health. What it generated
 // before it was cut off is still billed.
 const ErrorCancelled = store.ErrorCancelled
+
+// ErrorTimeout is the ErrorCode of work that ran past a deadline, its caller's or the router's
+// own limit on a provider, before it finished. It failed, and what the provider generated
+// until then is billed.
+const ErrorTimeout = "timeout"
 
 // Recorder prices stats and hands them to a Writer, which writes them to Postgres and Redis
 // off the request path. A conversation must never wait on a database, so recording only
@@ -107,7 +189,10 @@ type Recorder struct {
 	own bool
 	// tiersWarned is when each service tier the price list does not name was last logged,
 	// by provider, model and tier.
-	tiersWarned sync.Map
+	tiersWarned throttle
+	// missingLogged, estimatedLogged and mismatchLogged are when each item was last logged
+	// for billable work with no usage, with an estimate, and with tokens that do not add up.
+	missingLogged, estimatedLogged, mismatchLogged throttle
 }
 
 // NewRecorder starts a writer of the recorder's own, closed with it. The pricer prices
@@ -156,6 +241,24 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.warnUnnamedTier(config, entry.Attributes)
+	request, priced := r.priced(config, entry)
+	if request.UsageID == uuid.Nil {
+		request.UsageID = uuid.Must(uuid.NewV7())
+	}
+
+	r.watch(config, entry, request, priced)
+	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal})
+}
+
+// lose prices the stat as Record would and loses its row at once, logged in full and counted
+// as invalid, for work that was done and cannot be written as it is.
+func (r *Recorder) lose(config ProviderConfig, entry Stat, cause error) {
+	request, _ := r.priced(config, entry)
+	r.writer.lose([]store.Request{request}, lostInvalid, cause)
+}
+
+// priced is the stat's row priced, and the quote of its quantities.
+func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pricing.Quote) {
 	request := row(r.modality, config, entry)
 	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
@@ -169,18 +272,15 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		request.OutputCostMicros = min(priced.OutputCostMicros, resold.CostMicros)
 		request.Billable = priced.Billable || resold.Billable
 	}
-	if request.UsageID == uuid.Nil {
-		request.UsageID = uuid.Must(uuid.NewV7())
+	if entry.Free {
+		request.Billable = false
 	}
-
-	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal})
+	return request, priced
 }
 
 // warnUnnamedTier logs a service tier the vendor served at that the price list has no entry
 // for, which is priced at the default rates: how a vendor renaming a tier shows up. A
 // customer's own model is priced from its config, so its config is what must name the tier.
-// Rows are recorded from many goroutines, so the time is swapped in rather than read and
-// then written.
 func (r *Recorder) warnUnnamedTier(config ProviderConfig, attributes map[string]string) {
 	tier := attributes["service_tier"]
 	if tier == "" || tier == "default" {
@@ -193,19 +293,8 @@ func (r *Recorder) warnUnnamedTier(config ProviderConfig, attributes map[string]
 	} else if entry, ok := r.pricer.Entry(ItemOf(r.modality, config, attributes)); ok && entry.When["service_tier"] == tier {
 		return
 	}
-	key := [3]string{config.Provider, config.Model, tier}
-	now := time.Now()
-	for {
-		last, seen := r.tiersWarned.LoadOrStore(key, now)
-		if !seen {
-			break
-		}
-		if now.Sub(last.(time.Time)) < unnamedTierEvery {
-			return
-		}
-		if r.tiersWarned.CompareAndSwap(key, last, now) {
-			break
-		}
+	if !r.tiersWarned.due([3]string{config.Provider, config.Model, tier}, unnamedTierEvery) {
+		return
 	}
 	r.logger.Warn("the vendor served a tier the price list does not name, priced at the default rates",
 		"modality", r.modality, "provider", config.Provider, "model", config.Model, "service_tier", tier)

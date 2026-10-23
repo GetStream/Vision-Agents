@@ -85,19 +85,9 @@ func newUsageClient(settings config.Config, pgStore *store.Store, logger *slog.L
 // startUsageAlerts runs the process's usage alerts, tagged with its shard, until the returned
 // function stops them.
 func startUsageAlerts(ctx context.Context, source, shard string, logger *slog.Logger) (stop func()) {
-	background, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	loop := alerts.New(alerts.Options{
+	return startAlerts(ctx, alerts.New(alerts.Options{
 		Logger: logger, Source: source, Tags: map[string]string{"shard": shard}, Every: usageAlertEvery, Limit: usageAlertLimit,
-	}, routing.Alerts(usageAlertLimit)...)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		loop.Run(background)
-	}()
-	return func() {
-		cancel()
-		<-done
-	}
+	}, routing.Alerts(usageAlertLimit)...))
 }
 
 // startUsageSweeper runs the shard's sweeper until the returned function stops it and it has

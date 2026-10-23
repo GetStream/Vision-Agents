@@ -3,7 +3,6 @@ package decisionrouter
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -35,12 +34,19 @@ func newSession(
 }
 
 // Classify puts one request's questions to the selected classifier.
+//
+// The usage is reported and the cost left to the price list rather than worked out here: a
+// classifier is billed by what it read, and only the list knows what this deployment pays for
+// it. A request that failed is not charged, and its row is kept so the wait still shows up.
 func (s *Session) Classify(
 	ctx context.Context, request decisionmodel.Request,
 ) (decisionmodel.Result, error) {
-	started := time.Now()
-	answered, err := s.provider.Classify(ctx, request)
-	s.record(started, answered.Usage, err)
+	answered, err := routing.Call(ctx, routing.Meter{
+		Recorder: s.recorder, Config: s.config, Owner: s.owner,
+		Code: func(error) string { return "classify_failed" },
+	}, func(ctx context.Context) (decisionmodel.Result, error) {
+		return s.provider.Classify(ctx, request)
+	})
 	if err != nil {
 		return decisionmodel.Result{}, err
 	}
@@ -58,33 +64,4 @@ func (s *Session) Close() error {
 	var err error
 	s.closeOnce.Do(func() { err = s.provider.Close() })
 	return err
-}
-
-// record files one judgement.
-//
-// The usage is reported and the cost left to the configured rates, rather than being worked
-// out here: a classifier is billed by what it read, and only the config knows what this
-// deployment pays for it. A request that failed reports no usage, since a judgement that
-// did not arrive is not one to charge for, and the row is kept so the wait still shows up.
-func (s *Session) record(started time.Time, used decisionmodel.Usage, err error) {
-	if s.recorder == nil {
-		return
-	}
-
-	stat := routing.Stat{
-		Owner:     s.owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Usage: routing.Usage{
-			InputTokens:  used.InputTokens,
-			OutputTokens: used.OutputTokens,
-		},
-		Success: err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = "classify_failed"
-		stat.ErrorMessage = err.Error()
-		stat.Usage = routing.Usage{}
-	}
-	s.recorder.Record(s.config, stat)
 }

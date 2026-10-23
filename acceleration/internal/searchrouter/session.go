@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
@@ -87,9 +86,12 @@ func (s *Session) Close() error {
 
 // ask puts one question to one provider and records what it cost.
 func (s *Session) ask(ctx context.Context, provider search.Provider, config routing.ProviderConfig, query search.Query) (search.Result, error) {
-	started := time.Now()
-	found, err := provider.Search(ctx, query)
-	s.record(config, started, err)
+	found, err := routing.Call(ctx, routing.Meter{
+		Recorder: s.recorder, Config: config, Owner: s.owner,
+		Code: func(error) string { return "search_failed" },
+	}, func(ctx context.Context) (search.Result, error) {
+		return provider.Search(ctx, query)
+	})
 	if err != nil {
 		return search.Result{}, err
 	}
@@ -107,28 +109,4 @@ func (s *Session) moveTo(failed routing.ProviderConfig, next *Session) {
 	}
 	_ = s.provider.Close()
 	s.provider, s.config = next.provider, next.config
-}
-
-// record files one search as a request row. A search API bills by the call rather than by
-// what it read, so a search is one request.
-func (s *Session) record(config routing.ProviderConfig, started time.Time, err error) {
-	if s.recorder == nil {
-		return
-	}
-
-	stat := routing.Stat{
-		Owner:     s.owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Usage:     routing.Usage{Requests: 1},
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = "search_failed"
-		stat.ErrorMessage = err.Error()
-		// A search that failed is not billed, so the row records what was waited for
-		// without charging for it.
-		stat.Usage = routing.Usage{}
-	}
-	s.recorder.Record(config, stat)
 }

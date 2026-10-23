@@ -418,11 +418,17 @@ func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
 
-	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		p.err = err
-	} else if err != nil {
+	switch err := p.upstream.Err(); {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
 		// A cancelled stream is barge-in or shutdown, not a provider failure.
 		w.Cancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Ours or the caller's: the provider billed what it generated until then.
+		w.TimedOut()
+		p.err = err
+	default:
+		p.err = err
 	}
 
 	p.upstream.Close()

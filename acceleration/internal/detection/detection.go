@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -159,6 +160,11 @@ type Result struct {
 	// Billed is how many images the vendor charged for, which is more than one for a
 	// vendor asked once per class. Zero means one.
 	Billed int
+}
+
+// Used is the images the vendor charged for.
+func (r Result) Used() pricing.Quantities {
+	return pricing.Quantities{pricing.Images: int64(max(r.Billed, 1))}
 }
 
 // Code is why a detection failed, in the few words a caller can act on.

@@ -131,6 +131,25 @@ func (s *PricingSuite) TestAZeroRateWrittenOutStopsTheFallback() {
 	s.Equal(int64(2_000), quote.CostMicros)
 }
 
+func (s *PricingSuite) TestAQuoteSaysWhetherTheWorkUsedAnythingItIsPricedBy() {
+	list := s.list(Entry{Modality: "sts", Provider: "xai", Model: "voice", Rates: map[Meter]Rate{
+		AudioMs:           {USD: 4.8, Per: 3_600_000},
+		OutputAudioTokens: {USD: 0, Per: 1_000_000},
+	}})
+	item := Item{Modality: "sts", Provider: "xai", Model: "voice"}
+
+	s.True(list.Quote(item, Quantities{AudioMs: 2_000}).Rated)
+	s.True(list.Quote(item, Quantities{OutputAudioTokens: 40}).Rated, "a zero rate written out is still what the work is priced by")
+	s.False(list.Quote(item, Quantities{InputTextTokens: 40}).Rated, "a meter the entry has no rate for")
+	s.False(list.Quote(item, Quantities{AudioMs: 0}).Rated, "a meter that used nothing")
+}
+
+func (s *PricingSuite) TestQuantitiesOfNothingAreZero() {
+	s.True(Quantities{}.Zero())
+	s.True(Quantities{InputTokens: 0, OutputTokens: 0}.Zero())
+	s.False(Quantities{InputTokens: 0, Requests: 1}.Zero())
+}
+
 // TestACacheWriteIsPricedAtItsOwnRate is a first turn OpenAI cached whole: 3 tokens read
 // fresh, 2,386 written to the cache and 22 generated, which OpenAI billed 6,235 µ$. At the
 // input rate the writes would come to 5,042.

@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -183,37 +182,18 @@ func (r *Router) draw(
 ) (Generation, error) {
 	defer provider.Close()
 
-	started := time.Now()
-	result, err := provider.Generate(ctx, request)
-
-	// A failed generation is not billed, so the row records what was waited for without
-	// charging for it.
-	var usage routing.Usage
-	if err == nil {
-		usage.Images = int64(len(result.Images))
-		for _, picture := range result.Images {
-			usage.Pixels += int64(picture.Width) * int64(picture.Height)
-		}
-	}
-	stat := routing.Stat{
-		Owner:     owner,
-		StartedAt: started.UTC(),
-		LatencyMs: routing.MsSince(started),
-		Usage:     usage,
-		Success:   err == nil,
-	}
-	if err != nil {
-		stat.ErrorCode = string(imagegen.CodeOf(err))
-		stat.ErrorMessage = err.Error()
-	}
-	r.Recorder().Record(config, stat)
-
+	result, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: owner,
+		Code: func(err error) string { return string(imagegen.CodeOf(err)) },
+	}, func(ctx context.Context) (imagegen.Result, error) {
+		return provider.Generate(ctx, request)
+	})
 	generation := Generation{Provider: config.Provider, Model: config.Model}
 	if err != nil {
 		return generation, err
 	}
 	generation.Images = result.Images
-	generation.CostMicros = r.Quote(config, usage).CostMicros
+	generation.CostMicros = r.Quote(config, result.Used()).CostMicros
 	return generation, nil
 }
 

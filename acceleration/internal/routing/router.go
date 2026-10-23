@@ -380,9 +380,11 @@ func (r *Router[P]) Config() ModalityConfig { return r.config }
 // Recorder is where a modality's session writes its stat rows.
 func (r *Router[P]) Recorder() *Recorder { return r.recorder }
 
-// Quote is what that usage of the provider costs, priced as its row is.
-func (r *Router[P]) Quote(config ProviderConfig, usage Usage) pricing.Quote {
-	return r.recorder.Quote(config, usage)
+// Quote is what work on the provider that used that costs, priced as its row is.
+func (r *Router[P]) Quote(config ProviderConfig, used pricing.Quantities) pricing.Quote {
+	var stat Stat
+	stat.Use(used)
+	return r.recorder.QuoteStat(config, stat)
 }
 
 // Builds reports whether a provider has a factory registered here. It does not build

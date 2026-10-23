@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -169,4 +170,55 @@ func ShareAbove(histogram prometheus.Collector, bound, share float64, span time.
 		holds := count > 0 && over/count > share
 		return holds, map[string]any{"above": over, "observations": count, "bound": bound, "over": span.String()}
 	}
+}
+
+// IncreasedPer holds for each series of a counter vector that rose since it last held, once
+// limit has passed since then: given the loop's limit it holds exactly when the loop sends, so
+// a rise the limit held back is sent once it has passed rather than forgotten. A series is the
+// item named by its values of labels joined by "/", and where keeps only the series whose
+// labels have those values.
+func IncreasedPer(collector prometheus.Collector, limit time.Duration, labels []string, where map[string]string) ItemCheck {
+	var mu sync.Mutex
+	baseline := map[string]float64{}
+	fired := map[string]time.Time{}
+	return func(now time.Time) map[string]map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		values := map[string]float64{}
+		for _, metric := range collect(collector) {
+			pairs := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				pairs[pair.GetName()] = pair.GetValue()
+			}
+			if !matches(pairs, where) {
+				continue
+			}
+			named := make([]string, len(labels))
+			for i, label := range labels {
+				named[i] = pairs[label]
+			}
+			values[strings.Join(named, "/")] += metric.GetCounter().GetValue()
+		}
+		var held map[string]map[string]any
+		for item, value := range values {
+			if value <= baseline[item] || (!fired[item].IsZero() && now.Sub(fired[item]) < limit) {
+				continue
+			}
+			if held == nil {
+				held = map[string]map[string]any{}
+			}
+			held[item] = map[string]any{"value": value, "increase": value - baseline[item]}
+			baseline[item], fired[item] = value, now
+		}
+		return held
+	}
+}
+
+func matches(pairs, where map[string]string) bool {
+	for label, value := range where {
+		if pairs[label] != value {
+			return false
+		}
+	}
+	return true
 }

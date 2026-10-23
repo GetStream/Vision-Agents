@@ -103,6 +103,29 @@ type Item struct {
 // Quantities is how much of each meter one unit of work used.
 type Quantities map[Meter]int64
 
+// Zero reports whether nothing was used.
+func (q Quantities) Zero() bool {
+	for _, quantity := range q {
+		if quantity != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Metered is a result that says what its work used, in the units it is priced by. Recording
+// a call takes only results that implement it, so a new result type that cannot say what it
+// used does not compile where it would be recorded.
+type Metered interface {
+	Used() Quantities
+}
+
+// VendorCosted is a result whose vendor said what the work cost it, in millionths of a
+// dollar. It never prices the work: it is kept beside the row to check the price list by.
+type VendorCosted interface {
+	VendorCostMicros() int64
+}
+
 // Rate is USD for every Per units of a meter. Increment rounds the quantity up to a
 // multiple of itself, and Minimum is the least billed once anything is used.
 type Rate struct {
@@ -173,6 +196,9 @@ type Quote struct {
 	Version   string
 	Billable  bool
 	Unpriced  bool
+	// Rated is true when some meter the work used is one the entry has a rate for, a zero
+	// rate included: false for priced work is work that reported none of what it is billed by.
+	Rated bool
 }
 
 // Pricer prices units of work.
@@ -255,11 +281,13 @@ func (e Entry) quote(used Quantities, markupBps int64) Quote {
 
 	// Summed in sorted order, so a cost never depends on map order.
 	var micros, outputMicros float64
+	rated := false
 	for _, meter := range slices.Sorted(maps.Keys(used)) {
 		rate, ok := rateOf(rates, meter)
 		if !ok {
 			continue
 		}
+		rated = rated || used[meter] != 0
 		cost := rate.micros(used[meter])
 		micros += cost
 		if slices.Contains(OutputMeters, meter) {
@@ -273,6 +301,7 @@ func (e Entry) quote(used Quantities, markupBps int64) Quote {
 		BaseCostMicros:   roundHalfUp(micros),
 		MarkupBps:        markupBps,
 		Billable:         true,
+		Rated:            rated,
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -265,4 +267,49 @@ func (s *AlertsSuite) TestShareAboveReadsThePercentileOverTheSpan() {
 	}
 	holds, _ = check(start.Add(12 * time.Minute))
 	s.False(holds, "the slow ones are older than the span")
+}
+
+func (s *AlertsSuite) TestEachItemOfAConditionIsAnAlertOfItsOwn() {
+	missing := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_missing_total"}, []string{"modality", "model"})
+	missing.WithLabelValues("llm", "a").Inc()
+	missing.WithLabelValues("llm", "b").Inc()
+	condition := Condition{Name: "missing", Level: Warn,
+		Items: IncreasedPer(missing, time.Hour, []string{"modality", "model"}, nil)}
+
+	s.run(s.loop(time.Hour, time.Hour, condition), 50*time.Millisecond)
+
+	events := s.sent()
+	s.Require().Len(events, 2)
+	s.Equal([]string{"usage_missing:llm/a"}, events[0].Fingerprint)
+	s.Equal([]string{"usage_missing:llm/b"}, events[1].Fingerprint)
+	s.Equal("llm/a", events[0].Tags["item"])
+	s.Equal("missing", events[0].Tags["usage_alert"])
+	s.Equal(sentry.LevelError, events[0].Level, "a warning does not page")
+	s.Contains(s.logs.String(), "item=llm/a")
+}
+
+func (s *AlertsSuite) TestAnItemIsSentAtMostOncePerLimitAndThenAgain() {
+	missing := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_missing_total"}, []string{"model"})
+	check := IncreasedPer(missing, time.Hour, []string{"model"}, nil)
+	start := time.Now()
+
+	s.Empty(check(start), "nothing has gone missing")
+	missing.WithLabelValues("a").Inc()
+	s.Equal(map[string]map[string]any{"a": {"value": 1.0, "increase": 1.0}}, check(start.Add(time.Second)))
+	missing.WithLabelValues("a").Inc()
+	missing.WithLabelValues("b").Inc()
+	s.Equal([]string{"b"}, slices.Collect(maps.Keys(check(start.Add(time.Minute)))),
+		"a is held back by the limit, and b is not")
+	s.Equal(map[string]map[string]any{"a": {"value": 2.0, "increase": 1.0}}, check(start.Add(2*time.Hour)),
+		"a rise the limit held back is sent once it has passed")
+	s.Empty(check(start.Add(3 * time.Hour)))
+}
+
+func (s *AlertsSuite) TestAnItemConditionCountsOnlyTheSeriesItIsAbout() {
+	estimated := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_estimated_total"}, []string{"model", "reason"})
+	estimated.WithLabelValues("a", "cancelled").Add(3)
+	estimated.WithLabelValues("b", "missing").Inc()
+	check := IncreasedPer(estimated, time.Hour, []string{"model"}, map[string]string{"reason": "missing"})
+
+	s.Equal([]string{"b"}, slices.Collect(maps.Keys(check(time.Now()))))
 }
