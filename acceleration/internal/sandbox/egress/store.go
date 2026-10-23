@@ -32,6 +32,11 @@ type Grant struct {
 	Connection core.ConnectionRef `json:"connection"`
 	// Binding is the agent config's binding the grant comes from, the name logs give it.
 	Binding string `json:"binding"`
+	// Config, Connector and Selection are the binding as the session opened it
+	// (sandbox.Grant): the proxy sends the token only while the config still binds it so.
+	Config    string `json:"config"`
+	Connector string `json:"connector"`
+	Selection string `json:"selection"`
 	// Scheme is the connection's auth scheme, which reads its token from its credential.
 	Scheme string `json:"scheme"`
 	// Placeholder is the value of the sandbox's env var for the grant.

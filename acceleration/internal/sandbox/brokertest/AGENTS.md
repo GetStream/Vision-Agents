@@ -14,7 +14,7 @@ One test function builds the suite with `New`, which returns a `Subject` for a s
 
 `daytona/secrets_test.go` (`TestSecretsBrokerContract`) is the example: Daytona's API is an `httptest.Server`; `egress/broker_test.go` (`TestProxyBrokerContract`) runs it against the egress proxy. Tests that need the provider's real wire (egress) run live, per broker (`daytona_live_test.go`).
 
-## What it covers (attack table A1-A13 of wave 13, and A15)
+## What it covers (attack table A1-A13 of wave 13, A15 and A16)
 
 | Case | Tests |
 | --- | --- |
@@ -22,6 +22,7 @@ One test function builds the suite with `New`, which returns a `Subject` for a s
 | A8: two sessions never share a credential | `TestTwoSessionsNeverShareACredential` |
 | A9: Close leaves nothing with the provider | `TestClosingLeavesNothingWithTheProvider` |
 | A10: a revoked connection is withdrawn; a failed renewal is kept and asked again; a refused withdrawal is an error and is retried | `TestAConnectionRevokedMidSessionIsWithdrawn`, `TestACredentialUnavailableJustNowIsKeptAndAskedForAgain`, `TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried` |
+| A16: a binding the agent config drops mid-session: a live egress refuses its next request, every broker withdraws it before the next run, and putting it back gives the sandbox nothing again (AI-1686) | `TestABindingRemovedMidSessionIsWithdrawn` |
 | A13: no token in a log line or an error (`TearDownTest`, after every test), on Prepare and on refresh | `TestAProviderThatRefusesLeavesTheTokenInNoError`, `TestARefusedRefreshIsAnErrorWithoutTheToken` |
 | A15: git pushes a commit holding the placeholder, with the placeholder as Basic auth's password; github.com gets the token in `Authorization` alone and the file as it was. Only a broker with a `Subject.Push` runs it (egress: `git http-backend` behind a TLS stand-in for github.com). Daytona's skips: its egress is Daytona's, and no test here reaches it. Its `run_code` description is checked in `daytona/secrets_test.go`, and the live staging E2E of 2026-10-22 (session 01a16514-923c-7843-9214-40a94453f194) showed it replaces the placeholder in git's Base64 Basic header | `TestAGitPushCarriesTheTokenInAuthorizationAlone` |
 | A new revision is handed over before the next run; a disconnected or required grant behaves as the session expects | `TestANewRevisionIsHandedOverBeforeTheNextRun`, `TestADisconnectedConnectionGivesNoEnvAndAWarning`, `TestARequiredGrantWithoutACredentialRefusesTheSandbox` |

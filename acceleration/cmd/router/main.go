@@ -578,7 +578,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
-	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, connectors.Schemes, logger)
+	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, pgStore, connectors.Schemes, logger)
 	if err != nil {
 		return err
 	}

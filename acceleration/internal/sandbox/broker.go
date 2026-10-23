@@ -16,6 +16,11 @@ type Grant struct {
 	Connection core.ConnectionRef
 	// Binding is the agent config's binding the grant comes from.
 	Binding string
+	// Config is the agent config Binding is in. Connector and Selection are what Binding bound
+	// when the session opened: its connector, and how it picks its connection
+	// (store.ConnectionBinding.Type). The grant gives a token only while Config still binds
+	// Binding so, with sandbox set (session.SandboxBound).
+	Config, Connector, Selection string
 	// Scheme is the connection's auth scheme, which reads its token from its credential.
 	Scheme string
 	// Env is the env var code in the sandbox reads the placeholder from, such as GITHUB_TOKEN.

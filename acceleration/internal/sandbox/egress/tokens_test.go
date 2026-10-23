@@ -4,6 +4,7 @@ package egress_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -33,6 +34,9 @@ type ResolverTokensSuite struct {
 	registry    core.Registry
 	tokens      egress.Tokens
 	grant       egress.Grant
+	// bound is the grant bound saw last, and unbound what it says.
+	bound   sandbox.Grant
+	unbound error
 }
 
 func TestResolverTokensSuite(t *testing.T) {
@@ -58,7 +62,10 @@ func (s *ResolverTokensSuite) SetupSuite() {
 		"empty_bearer": sends{Scheme: bearer.New(), authorization: "Bearer "}, "basic": sends{Scheme: bearer.New(), authorization: "Basic eDp5"}}}
 	connections, err := resolver.New(resolver.Config{Store: db, Credentials: s.credentials, Schemes: s.registry.Schemes})
 	s.Require().NoError(err)
-	s.tokens = egress.ResolverTokens(connections, s.registry.Schemes)
+	s.tokens = egress.ResolverTokens(connections, s.registry.Schemes, func(_ context.Context, grant sandbox.Grant) error {
+		s.bound = grant
+		return s.unbound
+	})
 }
 
 // SetupTest makes a connection of a new customer that holds gho_first.
@@ -81,8 +88,9 @@ sources:
 	connection := &store.ConnectorConnection{CustomerID: customer, ConnectorID: definition.ID, DefinitionRevision: definition.Revision,
 		OwnerType: store.OwnerApp, AuthScheme: bearer.Name}
 	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, s.registry, connection))
+	s.unbound = nil
 	s.grant = egress.Grant{Connection: core.ConnectionRef{CustomerID: customer, ConnectionID: connection.ID}, Binding: "forge",
-		Scheme: bearer.Name, Placeholder: "va_ph_forge", Hosts: []string{"api.forge.example"}}
+		Config: "config-1", Connector: definition.ID, Selection: "fixed", Scheme: bearer.Name, Placeholder: "va_ph_forge", Hosts: []string{"api.forge.example"}}
 	s.hold("gho_first", store.ConnectionConnected)
 }
 
@@ -115,6 +123,18 @@ func (s *ResolverTokensSuite) TestAConnectionThatIsNotConnectedOrIsGoneGivesNoCr
 
 	s.ErrorIs(reauthorize, sandbox.ErrNoCredential)
 	s.ErrorIs(deleted, sandbox.ErrNoCredential)
+}
+
+// TestABindingTheConfigDroppedGivesNoToken: bound is asked with the binding as the record
+// holds it, and its refusal is the answer, though the connection holds a token.
+func (s *ResolverTokensSuite) TestABindingTheConfigDroppedGivesNoToken() {
+	s.unbound = fmt.Errorf("%w: the agent config no longer binds it", sandbox.ErrNoCredential)
+
+	_, err := s.tokens(s.ctx, s.grant)
+
+	s.ErrorIs(err, sandbox.ErrNoCredential)
+	s.Equal(sandbox.Grant{Connection: s.grant.Connection, Binding: "forge", Config: "config-1", Connector: s.grant.Connector,
+		Selection: "fixed"}, s.bound)
 }
 
 // TestASchemeThatIsNotRegisteredOrSendsNoBearerGivesNoCredential.
