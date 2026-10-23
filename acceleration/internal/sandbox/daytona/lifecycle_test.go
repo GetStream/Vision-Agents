@@ -186,6 +186,62 @@ func (s *LifecycleSuite) TestADeletedSandboxIsMadeAgain() {
 	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "gone", "created sandbox-2 1 vCPU 1 GiB 3 GiB container")
 }
 
+func (s *LifecycleSuite) TestASandboxDeletedWhileBusyIsMadeAgainAndTheRunRetried() {
+	box := s.box(sandbox.Lifecycle{IdleStop: time.Minute}, nil)
+	s.run(box)
+	s.daytona.Gone("sandbox-1")
+
+	ran, err := box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err, "a sandbox someone else deleted while in use is made again")
+	s.Equal("ran\n", ran.Output)
+	s.Equal([]string{"sandbox-1: print(1)", "sandbox-2: print(2)"}, s.daytona.Ran(), "the run tried once more, in the new one")
+	s.Equal([]string{"created sandbox-1 1 vCPU 1 GiB 3 GiB container", "gone", "created sandbox-2 1 vCPU 1 GiB 3 GiB container"},
+		s.meter.all(), "the old sandbox's meter stopped")
+	s.Contains(s.logs.String(), `msg="a sandbox in use was deleted by someone else; making another" sandbox=sandbox-1`)
+
+	s.Require().NoError(box.Write(s.ctx, "data/in.csv", []byte("a,b")))
+	s.daytona.Gone("sandbox-2")
+	s.Require().NoError(box.Write(s.ctx, "data/in.csv", []byte("c,d")))
+	s.Equal(map[string][]byte{"data/in.csv": []byte("c,d")}, s.daytona.Files("sandbox-3"), "a write is retried the same way")
+	generation, err := box.Ready(s.ctx)
+	s.Require().NoError(err)
+	s.Equal(3, generation)
+}
+
+func (s *LifecycleSuite) TestASandboxInAFailedStateIsDeletedAndMadeAgain() {
+	for _, state := range []string{"error", "build_failed", "unknown"} {
+		s.SetupTest()
+		box := s.box(sandbox.Lifecycle{IdleStop: 200 * time.Millisecond}, nil)
+		s.run(box)
+		s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped")
+		s.daytona.SetState("sandbox-1", state)
+
+		_, err := box.Run(s.ctx, "print(2)", nil)
+
+		s.Require().NoError(err, state)
+		s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "%s: deleted, not started", state)
+		s.NotContains(s.daytona.Calls(), "POST /api/sandbox/sandbox-1/start", state)
+		s.Equal([]string{"sandbox-1: print(1)", "sandbox-2: print(2)"}, s.daytona.Ran(), state)
+		s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "gone", "created sandbox-2 1 vCPU 1 GiB 3 GiB container")
+		s.Contains(s.logs.String(), "deleted a sandbox in a state it cannot run code in; making another\" sandbox=sandbox-1 state="+state)
+	}
+}
+
+func (s *LifecycleSuite) TestAnOrphanIsLeftWhenCloseGivesUpWaiting() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour}, nil)
+	s.run(box)
+	box.gate <- struct{}{}
+	box.timeout = 100 * time.Millisecond
+
+	s.ErrorIs(box.Close(), context.DeadlineExceeded, "work still holds the sandbox")
+	s.Empty(s.daytona.Deleted())
+	box.done()
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "gone")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted by its own timer once the work ended and it idled")
+}
+
 func (s *LifecycleSuite) TestAnIdleSandboxIsBilledAsStoppedThenGone() {
 	box := s.box(sandbox.Lifecycle{IdleStop: 100 * time.Millisecond, StoppedDelete: 200 * time.Millisecond}, nil)
 

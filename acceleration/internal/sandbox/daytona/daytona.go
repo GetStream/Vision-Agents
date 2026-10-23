@@ -122,6 +122,8 @@ type Sandbox struct {
 	box                 *sdk.Sandbox
 	gate                chan struct{}
 	closed              atomic.Bool
+	// abandoned says a Close gave up waiting for the gate, so deleted nothing.
+	abandoned atomic.Bool
 	timeout, runTimeout time.Duration
 	config              sandbox.Config
 	grants              []sandbox.Grant
@@ -208,7 +210,7 @@ func (s *Sandbox) Ready(ctx context.Context) (int, error) {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	}
-	err := s.started(ctx)
+	err := s.use(ctx, func() error { return nil })
 	return s.generation, err
 }
 
@@ -222,28 +224,32 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	case <-ctx.Done():
 		return sandbox.Result{}, ctx.Err()
 	}
-	if err := s.started(ctx); err != nil {
-		return sandbox.Result{}, err
-	}
-	if s.broker != nil {
-		if err := s.broker.BeforeRun(ctx); err != nil {
-			return sandbox.Result{}, err
+	var ran *types.ExecuteResponse
+	err := s.use(ctx, func() error {
+		if s.broker != nil {
+			if err := s.broker.BeforeRun(ctx); err != nil {
+				return err
+			}
 		}
-	}
-	run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
-	defer cancel()
-	ran, err := s.box.Process.CodeRun(run, code, options.WithCodeRunTimeout(s.runTimeout),
-		options.WithCodeRunParams(types.CodeRunParams{Env: s.mount.RunEnv}))
+		run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
+		defer cancel()
+		var err error
+		ran, err = s.box.Process.CodeRun(run, code, options.WithCodeRunTimeout(s.runTimeout),
+			options.WithCodeRunParams(types.CodeRunParams{Env: s.mount.RunEnv}))
+		return err
+	})
 	if err != nil {
 		return sandbox.Result{}, err
 	}
+	fetch, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
 	result := sandbox.Result{Output: ran.Result, ExitCode: ran.ExitCode}
 	for i, wanted := range outputs {
 		if i == sandbox.MaxFiles {
 			result.Missing = append(result.Missing, outputs[i:]...)
 			break
 		}
-		data, err := s.box.FileSystem.DownloadFile(run, wanted, nil)
+		data, err := s.box.FileSystem.DownloadFile(fetch, wanted, nil)
 		if err != nil || len(data) == 0 || len(data) > sandbox.MaxFileBytes {
 			result.Missing = append(result.Missing, wanted)
 			continue
@@ -261,19 +267,55 @@ func (s *Sandbox) Write(ctx context.Context, name string, data []byte) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	return s.use(ctx, func() error {
+		if dir := path.Dir(name); dir != "." {
+			made, err := s.box.Process.ExecuteCommand(ctx, "mkdir -p "+quoted(dir), options.WithCommandEnv(s.mount.RunEnv))
+			if err != nil {
+				return stack.Wrap(err)
+			}
+			if made.ExitCode != 0 {
+				return stack.Wrap(fmt.Errorf("daytona: mkdir %s: %s", dir, made.Result))
+			}
+		}
+		return stack.Wrap(s.box.FileSystem.UploadFile(ctx, data, name))
+	})
+}
+
+// use makes sure there is a sandbox running and calls call in it. A sandbox deleted while in
+// use, by anyone but this Sandbox, shows as Daytona not finding it: it is forgotten, its meter
+// stopped, another made, and call made once more there. The caller holds the gate.
+func (s *Sandbox) use(ctx context.Context, call func() error) error {
+	err := s.started(ctx)
+	if err == nil {
+		err = call()
+	}
+	if !s.vanished(ctx, err) {
+		return err
+	}
 	if err := s.started(ctx); err != nil {
 		return err
 	}
-	if dir := path.Dir(name); dir != "." {
-		made, err := s.box.Process.ExecuteCommand(ctx, "mkdir -p "+quoted(dir), options.WithCommandEnv(s.mount.RunEnv))
-		if err != nil {
-			return stack.Wrap(err)
-		}
-		if made.ExitCode != 0 {
-			return stack.Wrap(fmt.Errorf("daytona: mkdir %s: %s", dir, made.Result))
-		}
+	return call()
+}
+
+// vanished reports whether err is Daytona not finding the sandbox because it was deleted, as
+// a read of its state confirms, and forgets it if so. The caller holds the gate.
+func (s *Sandbox) vanished(ctx context.Context, err error) bool {
+	if s.box == nil || !errors.Is(err, sdkerrors.ErrNotFound) {
+		return false
 	}
-	return stack.Wrap(s.box.FileSystem.UploadFile(ctx, data, name))
+	id := s.box.ID
+	read, end := context.WithTimeout(ctx, stateTimeout)
+	defer end()
+	readErr := s.box.RefreshData(read)
+	deleted := errors.Is(readErr, sdkerrors.ErrNotFound) ||
+		readErr == nil && (s.box.State == "destroyed" || s.box.State == "destroying")
+	if !deleted {
+		return false
+	}
+	s.logger.Warn("a sandbox in use was deleted by someone else; making another", "sandbox", id, "error", err)
+	s.lost()
+	return true
 }
 
 // started creates the sandbox the first time it is needed, starts it again once Daytona has
@@ -364,8 +406,10 @@ func (s *Sandbox) lapsed() bool {
 }
 
 // revive reads the state of a sandbox that may have lapsed, starts it again if Daytona stopped
-// it, and forgets it if Daytona deleted it, so that started makes another. The caller holds
-// the gate.
+// it, waits for one Daytona is bringing up, and forgets it if Daytona deleted it, so that
+// started makes another. Only a started sandbox is running: one in any other state, such as
+// error or build_failed, is deleted and forgotten too, its meter stopped rather than billed as
+// running. The caller holds the gate.
 func (s *Sandbox) revive(ctx context.Context) error {
 	read, end := context.WithTimeout(ctx, s.timeout)
 	defer end()
@@ -378,6 +422,7 @@ func (s *Sandbox) revive(ctx context.Context) error {
 		return stack.Wrap(err)
 	}
 	switch s.box.State {
+	case "started":
 	case "destroyed", "destroying":
 		s.lost()
 		return nil
@@ -386,10 +431,18 @@ func (s *Sandbox) revive(ctx context.Context) error {
 			return stack.Wrap(err)
 		}
 		fallthrough
-	case "stopped", "archived":
+	case "stopped", "archiving", "archived":
 		if err := s.box.StartWithTimeout(read, s.timeout); err != nil {
 			return stack.Wrap(err)
 		}
+	case "creating", "starting", "restoring", "resuming", "pending_build", "building_snapshot", "pulling_snapshot",
+		"resizing", "snapshotting", "forking":
+		if err := s.box.WaitForStart(read, s.timeout); err != nil {
+			return stack.Wrap(err)
+		}
+	default:
+		s.discard(read)
+		return nil
 	}
 	switch {
 	case s.gone:
@@ -400,6 +453,21 @@ func (s *Sandbox) revive(ctx context.Context) error {
 	}
 	s.stoppedAt, s.confirmed, s.gone = time.Time{}, false, false
 	return nil
+}
+
+// discard deletes a sandbox in a state code cannot run in, and forgets it. One Daytona would not
+// delete is left to the sweep, which deletes it once its session has ended. The caller holds
+// the gate.
+func (s *Sandbox) discard(ctx context.Context) {
+	id, state := s.box.ID, string(s.box.State)
+	err := s.box.Delete(ctx)
+	if err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
+		s.logger.Warn("could not delete a sandbox in a state it cannot run code in; making another all the same",
+			"sandbox", id, "state", state, "error", err)
+	} else {
+		s.logger.Warn("deleted a sandbox in a state it cannot run code in; making another", "sandbox", id, "state", state)
+	}
+	s.lost()
 }
 
 // lost forgets a sandbox Daytona has deleted, so the next one is made. The caller holds the
@@ -414,8 +482,14 @@ func (s *Sandbox) lost() {
 
 // arm sets the timer for the sandbox's next point in its lifecycle: where Daytona stops it for
 // idling, where its stopped state is read to see that it did, and where Daytona deletes it.
-// The caller holds the gate.
+// A sandbox whose Close gave up waiting for the gate is an orphan from here, as one Close could
+// not delete is: billed on as one, and deleted by this timer once idle. The caller holds the
+// gate.
 func (s *Sandbox) arm() {
+	if s.abandoned.Load() && s.box != nil && !s.gone && !s.orphaned {
+		s.orphaned = true
+		s.meter.Orphaned()
+	}
 	s.epoch++
 	if s.timer != nil {
 		s.timer.Stop()
@@ -614,7 +688,8 @@ func mediaType(name string, data []byte) string {
 // Close deletes the sandbox. One Daytona would not delete is an orphan: it keeps its identity,
 // so Close can be tried again, and its meter, since Daytona still bills it. Its timer then
 // tries the delete again once it has idled, and failing that it is billed as stopped until
-// Daytona's own timer deletes it.
+// Daytona's own timer deletes it. A Close that gives up waiting for work still in the sandbox
+// leaves an orphan the same way, once the work is done.
 func (s *Sandbox) Close() error {
 	s.closed.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
@@ -626,6 +701,14 @@ func (s *Sandbox) Close() error {
 			<-s.gate
 		}()
 	case <-ctx.Done():
+		s.abandoned.Store(true)
+		// Work that ended as Close gave up has armed the timer already, without the orphan.
+		select {
+		case s.gate <- struct{}{}:
+			s.arm()
+			<-s.gate
+		default:
+		}
 		return ctx.Err()
 	}
 

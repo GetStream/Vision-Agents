@@ -104,6 +104,9 @@ func (s *Server) Holds(box Box) {
 // Stop stops a sandbox, as Daytona's auto-stop does.
 func (s *Server) Stop(id string) { s.set(id, Stopped) }
 
+// SetState puts a sandbox in any state Daytona names, such as error or build_failed.
+func (s *Server) SetState(id, state string) { s.set(id, state) }
+
 // Gone deletes a sandbox and forgets it, as Daytona's auto-delete does: a read of it is a 404.
 func (s *Server) Gone(id string) {
 	s.mu.Lock()
@@ -330,9 +333,13 @@ func (s *Server) sandbox(box *Box) map[string]any {
 }
 
 // toolbox serves a sandbox's toolbox: code runs, commands and files. A sandbox that is not
-// started refuses all of it. The caller holds mu.
+// started refuses all of it, and one deleted is not found. The caller holds mu.
 func (s *Server) toolbox(w http.ResponseWriter, r *http.Request, id, rest string) {
 	box, ok := s.boxes[id]
+	if s.gone[id] || ok && box.State == Destroyed {
+		answer(w, http.StatusNotFound, map[string]any{"message": "sandbox " + id + " not found", "statusCode": 404})
+		return
+	}
 	if !ok || box.State != Started {
 		answer(w, http.StatusBadRequest, map[string]any{"message": "sandbox " + id + " is not started"})
 		return

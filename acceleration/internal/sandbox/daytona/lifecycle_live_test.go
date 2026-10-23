@@ -64,8 +64,8 @@ func (s *LiveLifecycleSuite) TestASandboxIsCreatedWithLabelsAndALifecycle() {
 }
 
 // TestAStoppedSandboxIsStartedAgain stops the sandbox as Daytona's timer would, and runs code
-// in it again. Before T4 E the second run did not start it: it waited for a start that never
-// came, or reached a toolbox that refused it.
+// in it again. Before sandboxes kept a lifecycle the second run did not start it: it waited
+// for a start that never came, or reached a toolbox that refused it.
 func (s *LiveLifecycleSuite) TestAStoppedSandboxIsStartedAgain() {
 	box := s.box()
 	_, err := box.Run(s.ctx, "open('/tmp/kept', 'w').write('here')", nil)
