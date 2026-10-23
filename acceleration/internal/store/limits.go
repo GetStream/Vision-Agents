@@ -434,7 +434,8 @@ func (s *Store) SubjectSpendSince(ctx context.Context, ref usage.SubjectRef, sin
 		case usage.SubjectUser:
 			query = query.Where("user_id = ?", ref.UserID)
 		case usage.SubjectCategory, usage.SubjectAppCategory:
-			query = query.Where("usage_categories @> ARRAY[?]::text[]", ref.Category)
+			// Said apart, so the sum reads requests_category_spend_idx alone.
+			query = query.Where("usage_categories @> ARRAY[?]::text[]", ref.Category).Where("usage_categories <> '{}'")
 		}
 		err := query.Scan(ctx, &spent)
 		return spent, err

@@ -16,8 +16,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
-// Around 20261112120000_limits.sql. beforeLimits is the newest migration before it on the
-// feature branch, where every development and staging database is.
+// Around 20261112120000_limits.sql. beforeLimits is the migration just before it, where a
+// database that already runs the previous release stands.
 const (
 	beforeLimits      int64 = 20261111121000
 	limitsTable       int64 = 20261112120000
