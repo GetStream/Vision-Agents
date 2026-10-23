@@ -1071,6 +1071,12 @@ func (s *SessionSuite) TestAnLLMOnlyManagerAnswersTextAndRefusesVoice() {
 	s.Empty(s.edges, "unsupported voice must not open a call")
 }
 
+func (s *SessionSuite) TestAManagerWithNoStoreHasNoRowsToWaitFor() {
+	s.manages()
+
+	s.NoError(s.manager.FlushRecords(s.ctx))
+}
+
 func (s *SessionSuite) TestVoiceWithoutATTSRouterIsRefusedBeforeOpeningACall() {
 	s.manages()
 	manager, err := NewManager(ManagerOptions{LLM: s.manager.options.LLM, STT: s.manager.options.STT, Edge: s.manager.options.Edge})

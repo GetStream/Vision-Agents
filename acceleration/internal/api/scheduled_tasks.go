@@ -278,7 +278,7 @@ func (s *Server) scheduledTaskSession(ctx context.Context, customerID, userID, i
 			return spec.ConfigID, spec.ConversationID, nil
 		}
 	}
-	row, err := s.store.StoredSession(ctx, customerID, id)
+	row, err := s.storedSession(ctx, customerID, id)
 	if err != nil || row.UserID != userID {
 		return "", "", errUnknownSession
 	}
