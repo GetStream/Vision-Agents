@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -86,11 +87,12 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	pongs := make(chan float64)
 	replies := make(chan frame)
 	writerDone := make(chan struct{})
-	defer close(writerDone)
+	stopTaking := sync.OnceFunc(func() { close(writerDone) })
+	defer stopTaking()
 	go func() {
 		gone <- s.readWorker(connection, worker, pongs, replies, writerDone)
 	}()
-	s.writeCalls(connection, worker, gone, pongs, replies)
+	s.writeCalls(connection, worker, gone, pongs, replies, stopTaking)
 
 	s.logger.Info("a dispatch worker stopped waiting", "worker", worker.ID)
 }
@@ -139,9 +141,14 @@ func registrationOf(r *http.Request) (dispatch.Registration, string) {
 }
 
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
-// the socket breaks. Both queues close together, so either arm reporting a closed channel
-// means the worker was released. gone carries why the reader stopped.
-func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan error, pongs <-chan float64, replies <-chan frame) {
+// the socket breaks. gone carries why the reader stopped, and stopTaking tells
+// the reader the writer takes no more pongs or replies from it.
+func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan error, pongs <-chan float64, replies <-chan frame, stopTaking func()) {
+	// A reader left handing over a pong would never read the worker's answer to the close.
+	end := func(code int, reason string) {
+		stopTaking()
+		closeBeforeReader(connection, code, reason, gone)
+	}
 	connection.SetWriteDeadline(time.Now().Add(writeWait))
 	ready := frame{"type": "ready", "worker_id": worker.ID}
 	if err := connection.WriteJSON(ready); err != nil {
@@ -166,13 +173,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case call, open := <-worker.ToolCalls():
-			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
-				return
-			}
+		case call := <-worker.ToolCalls():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(toolCallFrame(call)); err != nil {
 				// The session waiting on it is failed when the worker is released, which
@@ -182,13 +183,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case call, open := <-worker.Calls():
-			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
-				return
-			}
+		case call := <-worker.Calls():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(callFrame(call)); err != nil {
 				// The call is already out of the pool, so there is nobody else it can be
@@ -198,13 +193,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case message, open := <-worker.Messages():
-			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
-				return
-			}
+		case message := <-worker.Messages():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(messageFrame(message)); err != nil {
 				s.logger.Error("could not hand a message to a worker",
@@ -219,9 +208,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 			}
 
 		case <-s.draining:
-			connection.SetWriteDeadline(time.Now().Add(writeWait))
-			connection.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseGoingAway, "router restarting"))
+			end(websocket.CloseGoingAway, "router restarting")
 			return
 
 		case stopped := <-gone:

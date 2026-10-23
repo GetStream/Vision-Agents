@@ -218,9 +218,7 @@ func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.E
 			return
 		case event, open := <-events:
 			if !open {
-				connection.SetWriteDeadline(time.Now().Add(writeWait))
-				connection.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"))
+				closeBeforeReader(connection, websocket.CloseNormalClosure, "the session ended", gone)
 				return
 			}
 			if !asked.takes(event) {
