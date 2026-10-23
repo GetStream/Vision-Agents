@@ -136,8 +136,9 @@ func (s *Session) SampleRate() int { return s.provider.SampleRate() }
 // Capabilities is what the model serving this session can be asked for.
 func (s *Session) Capabilities() sts.Capabilities { return s.provider.Capabilities() }
 
-// Quote is what that usage of this session's provider costs, priced as its row is, so a
-// caller can report a cost without reaching for the router's prices.
+// Quote is what that usage of this session's provider costs on its totals, as a reply whose
+// vendor reports no split by modality is priced, so a caller can report a cost without
+// reaching for the router's prices. A row with a split is priced by the split instead.
 func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
 // STS exposes the underlying provider so callers can reach provider-specific features.

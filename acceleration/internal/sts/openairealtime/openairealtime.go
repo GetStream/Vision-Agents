@@ -1425,6 +1425,9 @@ func usageOf(reported *usage) sts.Usage {
 		cost.OutputTextTokens = output.TextTokens
 		cost.OutputAudioTokens = output.AudioTokens
 		cost.ReasoningTokens = output.ReasoningTokens
+		// The split replaces the output total in the price, so whatever the details leave
+		// out is billed as text rather than not at all.
+		cost.OutputTextTokens += max(reported.OutputTokens-output.TextTokens-output.AudioTokens, 0)
 	}
 	return cost
 }

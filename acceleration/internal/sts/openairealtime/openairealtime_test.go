@@ -184,7 +184,8 @@ func (s *RealtimeSuite) TestTheReplyIsTimedFromWhenTheCallerStopped() {
 	s.False(complete.Interrupted)
 	s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait began when the caller stopped")
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
-	s.Equal(sts.Usage{InputTokens: 100, CachedInputTokens: 10, OutputTokens: 50, InputAudioTokens: 80, OutputAudioTokens: 45}, complete.Usage)
+	s.Equal(sts.Usage{InputTokens: 100, CachedInputTokens: 10, OutputTokens: 50, InputAudioTokens: 80, OutputTextTokens: 5, OutputAudioTokens: 45},
+		complete.Usage)
 }
 
 func (s *RealtimeSuite) TestACommitStandsInForSpeechStoppedUnderSemanticTurns() {
@@ -407,8 +408,8 @@ func (s *RealtimeSuite) TestOpenAIUsageIsStillReadFromTheResponse() {
 	provider.handleMessage(created("resp_1"))
 	provider.handleMessage(finished)
 
-	s.Equal(sts.Usage{InputTokens: 12, CachedInputTokens: 4, OutputTokens: 30, InputAudioTokens: 8, OutputAudioTokens: 24},
-		s.settled(provider))
+	s.Equal(sts.Usage{InputTokens: 12, CachedInputTokens: 4, OutputTokens: 30, InputAudioTokens: 8, OutputTextTokens: 6, OutputAudioTokens: 24},
+		s.settled(provider), "the 6 output tokens the details leave out are billed as text")
 }
 
 // TestTheUsageIsSplitByModality uses a spoken turn as gpt-realtime-2.1 reported it: most of

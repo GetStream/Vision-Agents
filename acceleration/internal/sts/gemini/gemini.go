@@ -1062,6 +1062,11 @@ func usageOf(reported usageMetadata) sts.Usage {
 			cost.InputImageTokens += detail.TokenCount
 		}
 	}
+	// A prompt with no details is priced at the audio rate, the dearest and what a prompt
+	// with no split costs: summed with a turn that has them, it would otherwise go unbilled.
+	if len(reported.PromptTokensDetails) == 0 {
+		cost.InputAudioTokens = reported.PromptTokenCount
+	}
 	for _, detail := range reported.ResponseTokensDetails {
 		switch detail.Modality {
 		case "TEXT":
