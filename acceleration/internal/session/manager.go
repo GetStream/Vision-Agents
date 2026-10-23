@@ -1533,7 +1533,7 @@ func (m *Manager) Shutdown() error {
 	}
 	var failures []error
 	for _, found := range running {
-		if err := found.Close(); err != nil {
+		if err := found.halt(); err != nil {
 			failures = append(failures, err)
 		}
 	}

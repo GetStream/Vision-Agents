@@ -747,3 +747,19 @@ func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
 		{Role: llm.Assistant, Content: "Hello."},
 	}, voice.current().History())
 }
+
+func (s *SessionSuite) TestACommandRunningWhenTheRouterStopsIsLeftInterrupted() {
+	s.persists()
+	running := s.commands()
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "Question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.Equal("Question", s.asked())
+
+	s.Require().NoError(s.manager.Shutdown())
+
+	s.eventually(func() bool {
+		saved := s.stored(running)
+		return len(saved) == 2 && saved[1].FinishedAt != nil
+	}, "the reply should be stored as finished")
+	s.Equal("interrupted", s.stored(running)[1].State, "a reply the router stopped is not one the caller cancelled")
+}

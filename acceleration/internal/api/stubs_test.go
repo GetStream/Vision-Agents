@@ -123,6 +123,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "stuck", Model: "stuck-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},

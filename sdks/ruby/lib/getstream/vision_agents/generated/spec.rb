@@ -1612,7 +1612,7 @@ module GetStream
         }.freeze,
         "watchSession" => {
           method: :get, path: "/v1/agents/sessions/{id}/events",
-          path_params: %w[id].freeze, query: %w[interim decisions replay_pending_tools tools].freeze,
+          path_params: %w[id].freeze, query: %w[interim decisions replay_pending_tools tools resumable cursor request_id].freeze,
           body: nil, body_required: false,
           socket: true, client_accessible: true
         }.freeze,
