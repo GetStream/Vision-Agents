@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +32,12 @@ func (s *SocketSessionSuite) SetupTest() {
 // starts opens a socket session that greets with the given words and returns it with the
 // session it was answered with.
 func (s *SocketSessionSuite) starts(greeting string) (*websocket.Conn, map[string]any) {
-	connection := s.serverClient.opens("/v1/agents/socket")
+	return s.startsAs(s.serverClient, greeting)
+}
+
+// startsAs is starts for the client given.
+func (s *SocketSessionSuite) startsAs(client *testClient, greeting string) (*websocket.Conn, map[string]any) {
+	connection := client.opens("/v1/agents/socket")
 	s.Require().NoError(connection.WriteJSON(map[string]any{
 		"type": "start", "sample_rate": 24_000,
 		"session": map[string]any{"greeting": map[string]any{"text": greeting}},
@@ -253,4 +259,64 @@ func (s *SocketSessionSuite) TestAnAnonymousSocketCannotMoveAUsersTimezone() {
 	zone, err = s.store.UserTimezone(context.Background(), s.customerID(), user.userID)
 	s.Require().NoError(err)
 	s.Equal("Europe/Amsterdam", zone, "a name nobody checked speaks for nobody's zone")
+}
+
+// The socket is a socket session's call, and voice stopped on it hangs that call up: voice
+// is refused afterwards rather than started on a call already over, and the session carries
+// on in writing.
+func (s *SocketSessionSuite) TestVoiceStoppedOnASocketSessionIsNotStartedAgain() {
+	_, answered := s.startsAs(s.client, s.utils.uuid())
+	id := answered["session"].(map[string]any)["id"].(string)
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodDelete, "/v1/agents/sessions/"+id+"/voice", nil, nil))
+
+	status, failure := s.client.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/voice", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(errSocketVoiceEnded.Message, failure)
+	watching := s.client.opens("/v1/agents/sessions/" + id + "/events")
+	status, failure = s.client.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/responses",
+		CreateResponseRequest{Text: "Still there?", RequestId: pointerTo(s.utils.uuid())})
+	s.Require().Equal(http.StatusAccepted, status, failure)
+	s.NotEmpty(s.await(watching, "responded"), "the session no longer answers in writing")
+	s.Equal(Live, s.client.getSession(id).State)
+}
+
+// The control: voice started on a socket session it is already on changes nothing.
+func (s *SocketSessionSuite) TestStartingVoiceOnALiveSocketSessionChangesNothing() {
+	_, answered := s.startsAs(s.client, s.utils.uuid())
+	id := answered["session"].(map[string]any)["id"].(string)
+
+	var started Session
+	status := s.client.do(http.MethodPost, "/v1/agents/sessions/"+id+"/voice", nil, &started)
+
+	s.Equal(http.StatusOK, status)
+	s.Equal(Live, started.State)
+	s.Equal(answered["session"].(map[string]any)["call_id"], started.CallId)
+}
+
+// Voice started while it is being stopped is refused as voice started after it was stopped,
+// whichever of the two reaches the socket's call first: the call is never joined again.
+func (s *SocketSessionSuite) TestVoiceStartedWhileItIsStoppedIsRefusedOrUnchanged() {
+	for range 20 {
+		_, answered := s.startsAs(s.client, s.utils.uuid())
+		id := answered["session"].(map[string]any)["id"].(string)
+		var wg sync.WaitGroup
+		var status int
+		var failure string
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			status, failure = s.client.failure(http.MethodPost, "/v1/agents/sessions/"+id+"/voice", nil)
+		}()
+		go func() {
+			defer wg.Done()
+			s.client.do(http.MethodDelete, "/v1/agents/sessions/"+id+"/voice", nil, nil)
+		}()
+		wg.Wait()
+
+		if status != http.StatusOK {
+			s.Require().Equal(http.StatusBadRequest, status, failure)
+			s.Require().Equal(errSocketVoiceEnded.Message, failure)
+		}
+	}
 }
