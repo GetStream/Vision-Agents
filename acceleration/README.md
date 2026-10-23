@@ -1155,8 +1155,9 @@ runtime lookup is unchanged.
 `knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
 question about prices or opening hours is answered out of the handbook rather than guessed
 at. Each search is a `requests` row with modality `knowledge`, like everything else that
-costs money: a `lookup` of the bytes turbopuffer billed it as searching (at least 1.28 GB) and
-returning, and each write or delete request a `write` of the bytes written.
+costs money: a `lookup`, priced per lookup, carrying the bytes turbopuffer billed it as
+searching (at least 1.28 GB) and returning, and each write or delete request a `write` of the
+bytes written. What each cost turbopuffer is kept as `attributes.provider_cost_micros`.
 
 Storage is sampled hourly by `router usage storage`: one `storage` row per knowledge base and
 hour, of its size as `byte_hours`, owned by its app under `job:knowledge_storage`. By default

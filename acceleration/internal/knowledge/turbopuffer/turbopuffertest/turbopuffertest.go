@@ -59,7 +59,8 @@ func Start(t testing.TB) *Server {
 	return server
 }
 
-// Holds says a namespace exists and holds bytes, whatever was written to it.
+// Holds says a namespace exists and holds bytes, whatever was written to it: its metadata
+// reports them, and a query on it is billed as searching them.
 func (s *Server) Holds(namespace string, bytes int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -184,6 +185,9 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request, namespace string)
 		if matches(stored, asked.RankBy, asked.Filters) {
 			matched = append(matched, stored)
 		}
+	}
+	if held, sized := s.sizes[namespace]; sized {
+		size = held
 	}
 	if asked.Limit > 0 && len(matched) > asked.Limit {
 		matched = matched[:asked.Limit]

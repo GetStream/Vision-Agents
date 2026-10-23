@@ -134,6 +134,8 @@ func TestProviderCostFollowsTurbopuffersFormula(t *testing.T) {
 		{"a 128 KB batch gets about 22% off", listCost.write(128_000), 199_310},
 		{"a lookup on a small namespace costs 1.28 GB queried",
 			listCost.query(queryBilling{BytesQueried: 1_280_000_000}), 1_280},
+		{"a lookup on a 10 GB namespace costs its 10 GB queried",
+			listCost.query(queryBilling{BytesQueried: 10_000_000_000}), 10_000},
 		{"a GB stored for an hour", listCost.stored(1_000_000_000), 452_055},
 	}
 	for _, c := range cases {

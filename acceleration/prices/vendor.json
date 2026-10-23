@@ -174,7 +174,7 @@
     {"modality":"phone","provider":"plivo","model":"call","free":true},
     {"modality":"phone","provider":"plivo","model":"transfer","free":true},
     {"modality":"phone","provider":"plivo","model":"number","free":true},
-    {"modality":"knowledge","provider":"turbopuffer","model":"lookup","rates":{"bytes_queried":{"usd":1,"per":1000000000000000},"bytes_returned":{"usd":0.05,"per":1000000000},"requests":{"usd":0,"per":1},"results":{"usd":0,"per":1}}},
+    {"modality":"knowledge","provider":"turbopuffer","model":"lookup","rates":{"bytes_queried":{"usd":0,"per":1},"bytes_returned":{"usd":0,"per":1},"requests":{"usd":0.00128,"per":1000},"results":{"usd":0,"per":1}}},
     {"modality":"knowledge","provider":"turbopuffer","model":"write","rates":{"bytes_written":{"usd":2,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}}},
     {"modality":"knowledge","provider":"turbopuffer","model":"storage","rates":{"byte_hours":{"usd":0.33,"per":730000000000}}},
     {"modality":"memory","provider":"mem0","model":"search","rates":{"requests":{"usd":2.49,"per":1000}}},

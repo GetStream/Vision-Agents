@@ -64,10 +64,6 @@ const kilobyte = 1000
 // listPage is how many namespaces one listing asks for, turbopuffer's most.
 const listPage = 1000
 
-// MinimumQueried is the least turbopuffer bills a query as having searched, 1.28 GB, however
-// small the namespace.
-const MinimumQueried = 1_280_000_000
-
 // Cost is what turbopuffer charges per unit, by meter: bytes_queried and bytes_returned for a
 // query, bytes_written for a write (its minimum is per request), byte_hours for storage. It is
 // the deployment's config, so a change in turbopuffer's prices is not a change of code. A
@@ -396,18 +392,14 @@ func (s *Store) Client() *http.Client { return s.client }
 // Close releases nothing: the store holds no connection of its own.
 func (s *Store) Close() error { return nil }
 
-// queried is what one query was billed. turbopuffer reports the bytes queried with its 1.28 GB
-// minimum applied; the minimum is applied here too, so a query is never priced below what
-// turbopuffer bills for one, whatever a response says.
+// queried is what one query was billed.
 func (s *Store) queried(response queryResponse) knowledge.Billed {
-	billing := response.Billing
-	billing.BytesQueried = max(billing.BytesQueried, MinimumQueried)
 	return knowledge.Billed{
 		Requests:      1,
-		BytesQueried:  billing.BytesQueried,
-		BytesReturned: billing.BytesReturned,
+		BytesQueried:  response.Billing.BytesQueried,
+		BytesReturned: response.Billing.BytesReturned,
 		Results:       int64(len(response.Rows)),
-		CostNanos:     s.cost.query(billing),
+		CostNanos:     s.cost.query(response.Billing),
 	}
 }
 

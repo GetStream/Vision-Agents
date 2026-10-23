@@ -39,24 +39,6 @@ func (s *PricesSuite) TestTheVendorFileIsAValidList() {
 	s.NotEmpty(Vendor().Entries)
 }
 
-func (s *PricesSuite) TestALookupIsPricedByTheBytesTurbopufferBillsItAsSearching() {
-	lookup := pricing.Item{Modality: "knowledge", Provider: "turbopuffer", Model: "lookup"}
-	searching := func(queried int64) pricing.Quantities {
-		return pricing.Quantities{pricing.Requests: 1, pricing.BytesQueried: queried, pricing.BytesReturned: 1_000, pricing.Results: 5}
-	}
-	atList, err := pricing.NewList("vendor", Vendor().Entries, 0, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
-	marked, err := pricing.NewList("vendor", Vendor().Entries, 2_500, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
-
-	minimum := atList.Quote(lookup, searching(1_280_000_000))
-	s.EqualValues(1, minimum.CostMicros, "1.28 GB at $1 a PB and a KB returned at $0.05 a GB is 1.33 µ$, rounded half up")
-	s.True(minimum.Billable)
-	s.EqualValues(2, marked.Quote(lookup, searching(1_280_000_000)).CostMicros, "the same lookup with a markup rounds up")
-	s.EqualValues(10, atList.Quote(lookup, searching(10_000_000_000)).CostMicros,
-		"a 10 GB namespace is billed what turbopuffer bills for searching it")
-}
-
 func (s *PricesSuite) TestTheVendorFileHasNoMarkup() {
 	vendor := Vendor()
 

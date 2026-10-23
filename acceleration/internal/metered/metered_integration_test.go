@@ -139,6 +139,28 @@ func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 	s.Equal("20.000", rows[0].Attributes[routing.AttributeProviderCostMicros], "a small write is billed its 10 KB minimum")
 }
 
+func (s *MeteredSuite) TestALookupOnALargeNamespaceSellsAtTheMinimumAndKeepsWhatItCost() {
+	base, server := s.fixture()
+	owned := base.For(s.owner)
+	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
+	s.Require().NoError(owned.Upsert(s.ctx, namespace, []knowledge.Document{
+		{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"},
+	}))
+	server.Holds(namespace, 10_000_000_000)
+
+	_, err := owned.Search(s.ctx, knowledge.Query{Namespace: namespace, Text: "penny"})
+	s.Require().NoError(err)
+
+	rows := s.rows()
+	s.Require().Len(rows, 2, "the write and the lookup")
+	lookup := rows[1]
+	s.Equal(KnowledgeLookup, lookup.Model)
+	s.EqualValues(10_000_000_000, lookup.Quantities()[pricing.BytesQueried], "the bytes turbopuffer billed are on the row")
+	s.EqualValues(1, lookup.CostMicros, "priced per lookup, at turbopuffer's minimum, until a large-namespace rate exists")
+	s.Equal("10.002", lookup.Attributes[routing.AttributeProviderCostMicros],
+		"10 GB queried at $1 a PB, and 43 bytes returned: what shows a namespace costing more than it pays")
+}
+
 func (s *MeteredSuite) TestAFailedLookupIsRecordedAndNotBilled() {
 	base, _ := s.fixture()
 
