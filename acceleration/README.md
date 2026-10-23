@@ -427,12 +427,15 @@ customer may do, so an agent's speech never waits on a database:
   spend hard limit and this day's and month's spend. Budgets are summed from Postgres on a loop
   of their own every 10 s, four at a time, so a slow Postgres never makes a balance stale. With
   no usage service there is no credit or spend hard limit, only budgets.
-- What this router recorded since is held against the organization by usage id, from the
-  moment the row is recorded until a read asked for after the usage service acked it (or,
-  with none, after the row was written) has landed: counted twice for a moment, never not at
-  all. A hold no ack reaches, as a row another router's sweeper shipped, is let go once a read
-  asked for 10 minutes after it has landed, and logged; while no read lands, as through an
-  outage of the usage service, every hold is kept.
+- What this router recorded since is held by usage id from the moment the row is recorded,
+  and each ledger lets go of it on its own read: against the balance and the spend hard
+  limit, once a standing asked for after the usage service had the row lands (its ack, or the
+  shard showing the row shipped, as by another router's sweeper); against the budgets, once a
+  sum asked for after the shard wrote the row lands. Counted twice for a moment, never not at
+  all. A row a ledger is never known to have is let go 10 minutes after the later of when it
+  was held and when that ledger last failed to read, and logged; while no read lands, every
+  hold is kept. A limit or a budget counts only what was held in its current UTC window; the
+  balance counts everything held.
 
 In that order: a suspended organization is refused everything, 403 `account_suspended`. A
 balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
@@ -448,9 +451,12 @@ by reason.
 
 Telephony asks the same admission: buying a number, placing or transferring a call, and every
 text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
-so a refusal of money refuses it (402, or 403 `account_suspended`), and a call to one of the
-organization's numbers is hung up. Releasing a number is never refused. A scheduled task that
-could not be delivered for money records the refusal's code.
+so a refusal of money refuses it (402, or 403 `account_suspended`). A call to one of the
+organization's numbers is left unanswered: rejected before it is answered on Telnyx, and
+answered by no agent over Stream SIP. Releasing a number is never refused. A campaign is
+refused at start, and one refused midway pauses with the refusal's code as `paused_reason`
+and keeps its contacts. A scheduled task that could not be delivered for money records the
+refusal's code.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.

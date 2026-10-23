@@ -1243,6 +1243,9 @@ type Campaign struct {
 	CreatedAt   time.Time         `bun:"created_at,notnull"`
 	StartedAt   *time.Time        `bun:"started_at"`
 	FinishedAt  *time.Time        `bun:"finished_at"`
+	// PausedReason is the code of what refused a call when the router paused the campaign
+	// itself, as telephony_suspended or insufficient_credits; empty otherwise.
+	PausedReason string `bun:"paused_reason,nullzero"`
 
 	// APIKey, UserID and UsageCategories are who scheduled the campaign, as the request that
 	// created it named them: the calls it places later are owned by them.

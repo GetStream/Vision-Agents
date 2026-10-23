@@ -11,13 +11,16 @@
 package campaign
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -95,6 +98,9 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 		return stack.Wrap(errors.New("campaign: a campaign needs one of your numbers to call from"))
 	}
 	if err := r.phone.Suspended(ctx, customerID); err != nil {
+		return err
+	}
+	if err := r.phone.Admit(ctx, customerID); err != nil {
 		return err
 	}
 	// The config is read once, here, rather than per call: a campaign is one agent
@@ -220,11 +226,11 @@ func (r *Runner) ring(
 	spec := session.FromConfig(config)
 
 	placed, err := r.phone.Call(ctx, placing(campaign, contact))
-	if errors.Is(err, phone.ErrSuspended) {
+	if reason := pausing(err); reason != "" {
 		// Nobody was rung, so the contact stays to be rung once the campaign is started
 		// again, and every router running this campaign stops at its next call.
-		r.logger.Info("paused a campaign of a suspended app", "campaign", campaign.ID)
-		r.stop(campaign, store.Paused)
+		r.logger.Info("paused a campaign that may not place calls", "campaign", campaign.ID, "reason", reason)
+		r.pause(campaign, reason)
 		return
 	}
 	if err != nil {
@@ -359,6 +365,32 @@ func (r *Runner) stop(campaign store.Campaign, state string) {
 
 	if err := r.store.SetCampaignState(ctx, campaign.CustomerID, campaign.ID, state); err != nil {
 		r.logger.Error("could not record how a campaign ended",
+			"campaign", campaign.ID, "error", err)
+	}
+}
+
+// pausing is why a refused call pauses the whole campaign rather than fails one contact: a
+// suspended app's telephony, or an organization that may not pay, refuses every call after it
+// too. It is the code the campaign records, or "" for a refusal of this contact alone.
+func pausing(err error) string {
+	switch {
+	case errors.Is(err, phone.ErrSuspended):
+		return "telephony_suspended"
+	case errors.Is(err, dlc.ErrUnpaid):
+		return cmp.Or(policy.Code(err), "payment_required")
+	}
+	return ""
+}
+
+// pause stops the campaign as stop does, recording why.
+func (r *Runner) pause(campaign store.Campaign, reason string) {
+	r.forget(campaign.ID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+
+	if err := r.store.PauseCampaign(ctx, campaign.CustomerID, campaign.ID, reason); err != nil {
+		r.logger.Error("could not record why a campaign paused",
 			"campaign", campaign.ID, "error", err)
 	}
 }

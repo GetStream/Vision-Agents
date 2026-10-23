@@ -86,8 +86,19 @@ func (s *Store) CustomerCampaigns(ctx context.Context, customerID string) ([]Cam
 }
 
 // SetCampaignState records what a campaign is now doing. Starting one stamps when it
-// first started, and finishing one stamps when it stopped having anybody left to ring.
+// first started, and finishing one stamps when it stopped having anybody left to ring. Either
+// clears why the router last paused it.
 func (s *Store) SetCampaignState(ctx context.Context, customerID, id, state string) error {
+	return s.setCampaignState(ctx, customerID, id, state, "")
+}
+
+// PauseCampaign pauses a campaign the router stopped itself, saying why with the code of what
+// refused its next call.
+func (s *Store) PauseCampaign(ctx context.Context, customerID, id, reason string) error {
+	return s.setCampaignState(ctx, customerID, id, Paused, reason)
+}
+
+func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, reason string) error {
 	if customerID == "" || id == "" {
 		return stack.Wrap(errors.New("store: a customer and a campaign id are required"))
 	}
@@ -95,6 +106,7 @@ func (s *Store) SetCampaignState(ctx context.Context, customerID, id, state stri
 	now := time.Now().UTC()
 	query := s.db.NewUpdate().Model((*Campaign)(nil)).
 		Set("state = ?", state).
+		Set("paused_reason = NULLIF(?, '')", reason).
 		Where("id = ?", id).
 		Where("customer_id = ?", customerID)
 	switch state {

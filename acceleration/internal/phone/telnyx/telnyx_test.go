@@ -423,6 +423,13 @@ func (s *TelnyxSuite) TestHangingUpIsTeXMLThatEndsTheCall() {
 	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Hangup/></Response>`, string(plan.Body))
 }
 
+func (s *TelnyxSuite) TestRejectingIsTeXMLWhoseFirstVerbLeavesTheCallUnanswered() {
+	plan := RenderReject()
+
+	s.Equal("application/xml", plan.ContentType)
+	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Reject reason="rejected"/></Response>`, string(plan.Body))
+}
+
 func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {
 	_, err := dialTrunk(phone.Bridge{}, 0)
 

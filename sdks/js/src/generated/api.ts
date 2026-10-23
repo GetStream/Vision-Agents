@@ -413,7 +413,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Start ringing
-         * @description Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+         * @description Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["startCampaign"];
@@ -4642,6 +4642,8 @@ export type components = {
             readonly from_number: string;
             readonly id: string;
             readonly name: string;
+            /** @description Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it. */
+            readonly paused_reason?: string;
             /** Format: date-time */
             readonly started_at?: string;
             /** @enum {string} */

@@ -3616,16 +3616,19 @@ type CallUsage struct {
 
 // Campaign defines model for Campaign.
 type Campaign struct {
-	Concurrency int                `json:"concurrency"`
-	ConfigId    string             `json:"config_id"`
-	CreatedAt   time.Time          `json:"created_at"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
-	FromNumber  string             `json:"from_number"`
-	Id          string             `json:"id"`
-	Name        string             `json:"name"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	State       CampaignState      `json:"state"`
-	Tags        *map[string]string `json:"tags,omitempty"`
+	Concurrency int        `json:"concurrency"`
+	ConfigId    string     `json:"config_id"`
+	CreatedAt   time.Time  `json:"created_at"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	FromNumber  string     `json:"from_number"`
+	Id          string     `json:"id"`
+	Name        string     `json:"name"`
+
+	// PausedReason Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.
+	PausedReason *string            `json:"paused_reason,omitempty"`
+	StartedAt    *time.Time         `json:"started_at,omitempty"`
+	State        CampaignState      `json:"state"`
+	Tags         *map[string]string `json:"tags,omitempty"`
 }
 
 // CampaignState defines model for Campaign.State.
@@ -9882,7 +9885,7 @@ type ClientInterface interface {
 
 	// StartCampaign Start ringing
 	//
-	// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+	// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
@@ -12787,7 +12790,7 @@ func (c *Client) PauseCampaign(ctx context.Context, id string, reqEditors ...Req
 
 // StartCampaign Start ringing
 //
-// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
@@ -28616,7 +28619,7 @@ type ClientWithResponsesInterface interface {
 
 	// StartCampaignWithResponse Start ringing
 	//
-	// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+	// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -49433,7 +49436,7 @@ func (c *ClientWithResponses) PauseCampaignWithResponse(ctx context.Context, id 
 
 // StartCampaignWithResponse Start ringing
 //
-// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).

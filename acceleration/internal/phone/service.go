@@ -127,6 +127,12 @@ func (s *Service) Suspended(ctx context.Context, customerID string) error {
 	return stack.Wrap(ErrSuspended)
 }
 
+// Admit refuses a customer whose organization may not pay for telephony now, as the gate every
+// call passes would, so work that would place calls can be refused before it starts.
+func (s *Service) Admit(ctx context.Context, customerID string) error {
+	return s.gate.Admit(ctx, customerID)
+}
+
 // streamFor is the app new lines for a customer are made in, and its pin.
 func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int64, error) {
 	if s.apps != nil {

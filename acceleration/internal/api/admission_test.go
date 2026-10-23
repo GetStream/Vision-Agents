@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -16,9 +17,11 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
@@ -291,7 +294,7 @@ func (s *AdmissionSuite) TestWithCreditTelephonyGetsPastItsMoney() {
 	}
 }
 
-func (s *AdmissionSuite) TestACallToANumberOfAnOrganizationThatMayNotPayIsHungUp() {
+func (s *AdmissionSuite) TestACallToANumberOfAnOrganizationThatMayNotPayIsRejectedUnanswered() {
 	e164 := s.utils.number()
 	s.line.attach(e164, "sip:"+e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
 	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
@@ -299,7 +302,9 @@ func (s *AdmissionSuite) TestACallToANumberOfAnOrganizationThatMayNotPayIsHungUp
 	status, _, body := s.line.deliver(s.line.call(e164), true)
 
 	s.Equal(http.StatusOK, status)
-	s.Contains(body, "<Hangup/>", "the vendor bills an answered call's minutes, and the agent on it")
+	s.Contains(body, `<Response><Reject reason="rejected"/></Response>`,
+		"Reject as the first verb leaves the call unanswered, so no second of it is billed")
+	s.NotContains(body, "<Hangup/>", "a hang-up answers the call first")
 	s.NotContains(body, "trunk-password")
 	s.Contains(s.logged.String(), "may not pay for it")
 	s.Contains(s.logged.String(), "code=insufficient_credits")
@@ -313,9 +318,123 @@ func (s *AdmissionSuite) TestACallToANumberOfAnOrganizationThatMayNotPayIsHungUp
 	s.usage.Suspend(s.T(), s.organization(), "fraud review")
 	s.Eventually(func() bool {
 		_, _, body := s.line.deliver(s.line.call(e164), true)
-		return strings.Contains(body, "<Hangup/>")
-	}, 10*time.Second, 50*time.Millisecond, "and hung up once suspended")
+		return strings.Contains(body, "<Reject")
+	}, 10*time.Second, 50*time.Millisecond, "and rejected once suspended")
 	s.Contains(s.logged.String(), "code=account_suspended")
+}
+
+func (s *AdmissionSuite) TestACallArrivingOverStreamForAnOrganizationThatMayNotPayIsNotAnswered() {
+	for _, refused := range []string{codeInsufficientCredits, codeAccountSuspended} {
+		s.Run(refused, func() {
+			s.SetupTest()
+			e164, callID := s.utils.number(), "phone-"+s.utils.uuid()
+			ctx := context.Background()
+			s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+				E164: e164, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+			}))
+			s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), e164,
+				store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: "default", CallID: callID}))
+			if refused == codeAccountSuspended {
+				s.usage.Credit(s.T(), s.organization(), 10_000_000)
+				s.usage.Suspend(s.T(), s.organization(), "fraud review")
+			}
+			s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+			worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+			defer release()
+
+			s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCall("default:"+callID)))
+
+			select {
+			case call := <-worker.Calls():
+				s.Failf("an agent answered", "%s reached a worker", call.CallID)
+			case <-time.After(200 * time.Millisecond):
+			}
+			s.Contains(s.logged.String(), "may not pay for it unanswered")
+			s.Contains(s.logged.String(), "code="+refused)
+		})
+	}
+}
+
+func (s *AdmissionSuite) TestACampaignCannotStartWhenItsOrganizationMayNotPay() {
+	created := s.campaign()
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil)
+
+	s.Equal(http.StatusPaymentRequired, status)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal(codeInsufficientCredits, answered.Error.Code)
+	s.Equal(ContactStatePending, s.campaignContacts(created.Id)[0].State, "nobody was rung")
+}
+
+func (s *AdmissionSuite) TestACampaignRefusedForMoneyMidwayPausesAndKeepsItsContacts() {
+	for _, refused := range []string{codeInsufficientCredits, codeAccountSuspended} {
+		s.Run(refused, func() {
+			s.SetupTest()
+			s.usage.Credit(s.T(), s.organization(), 10_000_000)
+			s.Require().Eventually(func() bool {
+				return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
+			}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+			created := s.campaign()
+			// Locking the contact's row holds the runner off it, as SKIP LOCKED claims, so the
+			// campaign starts with credit and its call comes once the credit is gone.
+			ctx := context.Background()
+			locked, err := s.store.DB().BeginTx(ctx, nil)
+			s.Require().NoError(err)
+			defer locked.Rollback() //nolint:errcheck // nothing was written
+			_, err = locked.ExecContext(ctx, "SELECT id FROM campaign_contacts WHERE campaign_id = ? FOR UPDATE", created.Id)
+			s.Require().NoError(err)
+			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+
+			if refused == codeAccountSuspended {
+				s.usage.Suspend(s.T(), s.organization(), "fraud review")
+			} else {
+				s.usage.Credit(s.T(), s.organization(), -10_000_000)
+			}
+			s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+			s.Require().NoError(locked.Rollback())
+
+			var campaign Campaign
+			s.Require().Eventually(func() bool {
+				s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id, nil, &campaign))
+				return campaign.State == CampaignStatePaused
+			}, 10*time.Second, 50*time.Millisecond, "paused at the refused call")
+			s.Equal(refused, value(campaign.PausedReason))
+			s.NotEqual(ContactStateFailed, s.campaignContacts(created.Id)[0].State,
+				"kept, as for a suspension: starting the campaign again releases it to be rung")
+
+			if refused == codeAccountSuspended {
+				s.usage.Restore(s.T(), s.organization())
+			} else {
+				s.usage.Credit(s.T(), s.organization(), 10_000_000)
+			}
+			s.Require().Eventually(func() bool {
+				return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
+			}, 10*time.Second, 50*time.Millisecond, "paid again")
+			var started Campaign
+			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, &started))
+			s.Nil(started.PausedReason, "starting it again clears why it paused")
+		})
+	}
+}
+
+// campaign is a campaign over a stored config with one person to ring.
+func (s *AdmissionSuite) campaign() Campaign {
+	var created Campaign
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns", map[string]any{
+		"name": "campaign-" + s.utils.uuid(), "config_id": s.data.createAgentConfig().Id, "from_number": s.utils.number(),
+	}, &created))
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts",
+		map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}}}, nil))
+	return created
+}
+
+func (s *AdmissionSuite) campaignContacts(campaignID string) []Contact {
+	var listed []Contact
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID+"/contacts", nil, &listed))
+	return listed
 }
 
 func (s *AdmissionSuite) TestInlineSpeechWithNoCreditIsAPaymentRequired() {
@@ -380,4 +499,13 @@ func (s *AdmissionSuite) TestAScheduledDeliveryRefusedForMoneyIsRecordedUnderIts
 	s.Equal(codeInsufficientCredits, deliveryReason(undeliveredFinally(scheduling.ReasonFailed, policy.ErrNoCredits)),
 		"a session that could not open for it")
 	s.Equal(scheduling.ReasonOnACall, deliveryReason(undelivered(scheduling.ReasonOnACall, errors.New("on a call"))))
+}
+
+func (s *AdmissionSuite) TestThePolicysCodesAreTheAPIs() {
+	for _, refusal := range []error{policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent} {
+		answer, ok := moneyError(refusal)
+		s.Require().True(ok)
+		s.Equal(answer.Code, policy.Code(refusal), "a campaign records the code the API answers")
+	}
+	s.Empty(policy.Code(errors.New("anything else")))
 }

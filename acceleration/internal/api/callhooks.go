@@ -155,6 +155,14 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 			"call", event.CallCid, "customer", number.CustomerID, "error", err)
 		return
 	}
+	// The vendor bills the minutes of a call an agent answers, and the agent is billed work,
+	// so an organization that may not pay has nobody answer.
+	if err := s.gate.Admit(r.Context(), number.CustomerID); err != nil {
+		answer, _ := moneyError(err)
+		s.logger.Info("left an arriving call to an organization that may not pay for it unanswered",
+			"call", event.CallCid, "customer", number.CustomerID, "code", answer.Code)
+		return
+	}
 	// Only a call that rings a number is worth recording as delivered: every video call in
 	// the app arrives here too.
 	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
