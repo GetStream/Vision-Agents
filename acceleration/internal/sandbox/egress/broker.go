@@ -168,7 +168,8 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 		}
 		placeholder := "va_ph_" + rand.Text()
 		prepared = append(prepared, held{grant: grant, entry: Grant{Connection: grant.Connection, Binding: grant.Binding,
-			Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts}})
+			Config: grant.Config, Connector: grant.Connector, Selection: grant.Selection, Scheme: grant.Scheme,
+			Placeholder: placeholder, Hosts: grant.Hosts}})
 		env[grant.Env] = placeholder
 	}
 	if len(prepared) == 0 {
