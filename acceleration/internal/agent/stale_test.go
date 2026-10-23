@@ -52,7 +52,8 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	input := s.model.requests()[1].Input
 	s.Equal("two", input[len(input)-2].Content, "the words the dropped reply was for are still in the history")
 	s.Equal("Hey. Can you help me find after school care for the kids?", input[len(input)-1].Content)
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
 		"none of the dropped reply may go out")
 	s.oneDropSince(dropped)
 	s.Equal(1.0, testutil.ToFloat64(settledOverAgent.WithLabelValues("1", "true", "interrupt"))-overAgent,
@@ -140,7 +141,8 @@ func (s *AgentSuite) TestWordsAfterAnotherVoiceTookTheFloorAreNotRuledOnAgain() 
 	s.mutters(nash, "hold on please")
 
 	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 3 }, "the caller was never heard")
-	s.Never(func() bool { return countOf[Decided](s.reported()) > decided }, 100*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Decided](events.seen()) > decided }, 100*time.Millisecond, 5*time.Millisecond,
 		"a reply already abandoned is no reply to drop")
 }
 
@@ -294,7 +296,8 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 	s.mutters(nash, "tell me more please")
 
 	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the caller was never heard")
-	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Interrupted](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a reply that had ended was dropped")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
@@ -349,7 +352,8 @@ func (s *AgentSuite) TestAResumedUtteranceRestatingAnsweredWordsPlusAMurmurLeave
 
 	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeReplacement, Text: "two mm", Language: "en", Utterance: 7})
 
-	s.Never(func() bool { return s.model.abandoned(two) || testutil.ToFloat64(staleReplies) > dropped },
+	model := s.model
+	s.Never(func() bool { return model.abandoned(two) || testutil.ToFloat64(staleReplies) > dropped },
 		300*time.Millisecond, 5*time.Millisecond, "a murmur restated with the answered words dropped the reply")
 }
 
@@ -377,7 +381,8 @@ func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
 
 	s.agent.perform(Action{Kind: ActInterrupt, Unheard: true, Participant: nash, TurnID: two})
 
-	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Interrupted](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a reply already heard was dropped as unheard")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
@@ -392,7 +397,8 @@ func (s *AgentSuite) TestADropLandingAfterAnotherTurnTookTheFloorLeavesThatTurnP
 
 	s.agent.perform(Action{Kind: ActInterrupt, Unheard: true, Participant: nash, TurnID: two})
 
-	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Interrupted](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a drop meant for another turn interrupted the one speaking")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
@@ -602,7 +608,8 @@ func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorr
 	s.model.writes(newer.ID, "Six at seven, gluten free and a peanut allergy noted.")
 	s.model.finishes(newer.ID)
 
-	s.Never(func() bool { return len(s.model.requests()) > 2 }, 200*time.Millisecond, 5*time.Millisecond,
+	model := s.model
+	s.Never(func() bool { return len(model.requests()) > 2 }, 200*time.Millisecond, 5*time.Millisecond,
 		"the queued words were answered again on their own")
 	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
 	logged := s.logs.records("dropped a queued turn the caller has said more after")
@@ -694,5 +701,49 @@ func (s *AgentSuite) TestAResponseStillBeingOpenedIsNotYetAbandoned() {
 	close(hold)
 	<-done
 	s.False(model.abandoned("opening"), "an opened response nobody dropped is not abandoned")
+	_ = model.Close()
+}
+
+func (s *AgentSuite) TestWritingAResponseStillBeingOpenedWaitsForIt() {
+	// The test reads the id from requests() as soon as Create records it, and writes to the
+	// response before Create has stored it. The write must wait for the response, not
+	// dereference nothing.
+	hold := make(chan struct{})
+	model := newStubLLM()
+	model.holdCreate = hold
+	created := make(chan *llm.Stream, 1)
+	go func() {
+		stream, err := model.Create(s.ctx, llm.ResponseParams{ID: "opening"})
+		s.NoError(err)
+		created <- stream
+	}()
+	s.eventually(func() bool { return len(model.requests()) == 1 }, "the request was never recorded")
+
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		model.writes("opening", "Two of what?")
+		model.finishes("opening")
+	}()
+	close(hold)
+
+	var stream *llm.Stream
+	select {
+	case stream = <-created:
+	case <-time.After(settleFor):
+		s.FailNow("Create never came back")
+	}
+	select {
+	case <-written:
+	case <-time.After(settleFor):
+		s.FailNow("the write never reached the response")
+	}
+	var text string
+	for stream.Next() {
+		if delta, ok := stream.Current().(llm.OutputTextDelta); ok {
+			text += delta.Delta
+		}
+	}
+	s.Equal("Two of what?", text)
 	_ = model.Close()
 }

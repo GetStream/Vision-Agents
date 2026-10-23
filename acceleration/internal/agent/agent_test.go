@@ -368,12 +368,27 @@ func (s *stubLLM) composeRequests() []llm.ResponseParams {
 
 // writes streams a piece of a response the test is writing itself.
 func (s *stubLLM) writes(responseID, delta string) {
-	s.script(responseID).OutputText(delta)
+	s.opened(responseID).OutputText(delta)
 }
 
 // finishes settles a response the test was writing itself.
 func (s *stubLLM) finishes(responseID string) {
-	s.script(responseID).Done()
+	s.opened(responseID).Done()
+}
+
+// opened is the script for responseID once Create has stored it. The request is recorded
+// before the script is stored, so a test that read the ID from requests() waits here for it.
+func (s *stubLLM) opened(responseID string) *llmtest.Script {
+	deadline := time.Now().Add(settleFor)
+	for {
+		if script := s.script(responseID); script != nil {
+			return script
+		}
+		if time.Now().After(deadline) {
+			panic("the response " + responseID + " was never opened")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func (s *stubLLM) script(responseID string) *llmtest.Script {
@@ -1543,7 +1558,8 @@ func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAf
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"the reply should be asked for while the flow controller is still deciding")
 	s.Len(s.flow.requests(), 1)
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
 		"nothing may be spoken before the ruling says to answer")
 	s.Empty(s.agent.History(), "the words are not the conversation's until they are answered")
 
@@ -1571,7 +1587,8 @@ func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() 
 
 	close(ruling)
 
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
 		"a reply to speech the agent was not meant to answer must never be heard")
 	s.Empty(s.agent.History())
 	s.Zero(countOf[Responding](s.reported()))
@@ -1625,7 +1642,8 @@ func (s *AgentSuite) TestAUnifiedReplyThatIgnoresItsTurnIsNeverHeard() {
 	s.says(participant, "mom where is my backpack")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
 		"words the agent was not meant to answer must never be answered")
 	s.Empty(s.agent.History())
 }
@@ -1640,7 +1658,8 @@ func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
 	s.says(participant, "hello")
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
 
-	s.Never(func() bool { return len(s.model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+	model := s.model
+	s.Never(func() bool { return len(model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
 		"without speculation the reply is only asked for once the ruling is in")
 	close(ruling)
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
@@ -2525,7 +2544,8 @@ func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
 		presenceTick+100*time.Millisecond, 10*time.Millisecond,
 		"a follow-up must not start while speech is still going out")
 
@@ -2553,7 +2573,8 @@ func (s *AgentSuite) TestAStuckPlayoutSignalDoesNotStrandAFollowUp() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
 		presenceTick+100*time.Millisecond, 10*time.Millisecond,
 		"a fresh tail still gets time to drain")
 
@@ -3458,11 +3479,13 @@ func (s *AgentSuite) TestBargeInDropsQueuedSpeechBeforeTheVoiceInterruptReturns(
 
 	s.False(s.edge.SpeechPending(), "queued speech must be dropped before a blocking voice interruption returns")
 	s.Empty(s.edge.heard(), "audio queued before the interruption must be removed")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+	model := s.model
+	s.Require().Never(func() bool { return len(model.requests()) > 1 },
 		100*time.Millisecond, 5*time.Millisecond, "the replacement reply must wait for the voice interruption")
 
 	s.synthesises(turnID)
-	s.Require().Never(func() bool { return len(s.edge.heard()) > 0 },
+	edge := s.edge
+	s.Require().Never(func() bool { return len(edge.heard()) > 0 },
 		100*time.Millisecond, 5*time.Millisecond, "late audio from the abandoned reply must stay unheard")
 
 	openVoice()
@@ -3855,7 +3878,8 @@ func (s *AgentSuite) TestAReplyThatPromisesNothingIsNotChasedUp() {
 	s.says(participant, "can you check an order")
 
 	s.eventually(func() bool { return s.spokenText("Which order is it") }, "the reply was not spoken")
-	s.Never(func() bool { return len(s.model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
+	model := s.model
+	s.Never(func() bool { return len(model.requests()) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
 		"a question to the caller owes no tool")
 }
 
