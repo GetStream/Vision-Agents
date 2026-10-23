@@ -191,6 +191,13 @@ func lockMigrations(ctx context.Context, conn *sql.Conn) error {
 var usageIndexes = []struct{ name, create string }{
 	{"requests_usage_id_idx", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS requests_usage_id_idx ON requests (usage_id)"},
 	{"requests_to_ship_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_to_ship_idx ON requests (started_at) WHERE to_ship"},
+	// What a subject spent, summed with no usage service (20261112120000_limits.sql).
+	{"requests_key_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_key_spend_idx ON requests (customer_id, api_key, started_at) " +
+		"INCLUDE (cost_micros) WHERE billable"},
+	{"requests_user_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_user_spend_idx ON requests (customer_id, user_id, started_at) " +
+		"INCLUDE (cost_micros) WHERE billable AND user_id <> ''"},
+	{"requests_category_spend_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_category_spend_idx ON requests (customer_id, started_at) " +
+		"INCLUDE (cost_micros, usage_categories) WHERE billable AND usage_categories <> '{}'"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left
