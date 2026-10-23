@@ -798,7 +798,8 @@ func (s *SchedulerSuite) TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelive
 	scheduler.Start(ctx)
 	s.T().Cleanup(scheduler.Close)
 	s.Require().Eventually(func() bool {
-		return scheduler.Running() > 0 && len(s.runs(first)) == 1
+		runs := s.runs(first)
+		return scheduler.Running() > 0 && len(runs) == 1 && runs[0].State == store.ScheduledTaskRunRunning
 	}, 10*time.Second, 10*time.Millisecond, "the task is claimed and in delivery")
 
 	stop()
@@ -810,7 +811,7 @@ func (s *SchedulerSuite) TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelive
 	}, 10*time.Second, 10*time.Millisecond, "the delivery in flight finishes")
 	s.Require().Eventually(func() bool {
 		return scheduler.Running() == 0
-	}, 10*time.Second, 10*time.Millisecond, "a task other suites left is finished too")
+	}, 10*time.Second, 10*time.Millisecond, "every slot is freed once its delivery ends")
 	s.Never(func() bool {
 		return len(s.runs(second)) > 0
 	}, 2*poll, 50*time.Millisecond, "nothing new is claimed")
