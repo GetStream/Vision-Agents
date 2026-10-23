@@ -158,30 +158,23 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	// The conversation ending is the other way the socket closes: the agent hangs up, and
 	// reading stops when the connection does. The close waits for the read loop below to take
 	// the caller's answer, and this handler waits for it before the connection is closed.
+	// When the read loop returns first, on a stop or a broken socket, detaching closes events,
+	// so the close is still sent; closeBeforeReader bounds the wait for it to closeWait.
 	events, detach := created.Watch()
-	defer detach()
 	readDone := make(chan struct{})
 	hungUp := make(chan struct{})
 	defer func() {
 		close(readDone)
+		detach()
 		<-hungUp
 	}()
 	go func() {
 		defer close(hungUp)
-		for {
-			select {
-			case _, open := <-events:
-				if open {
-					continue
-				}
-				closeBeforeReader(connection, websocket.CloseNormalClosure, "the conversation is over", readDone)
-				// A caller that never answers leaves the read loop reading; closing ends it.
-				_ = connection.Close()
-				return
-			case <-readDone:
-				return
-			}
+		for range events {
 		}
+		closeBeforeReader(connection, websocket.CloseNormalClosure, "the conversation is over", readDone)
+		// A caller that never answers leaves the read loop reading; closing ends it.
+		_ = connection.Close()
 	}()
 
 	for {

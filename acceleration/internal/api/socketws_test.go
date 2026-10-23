@@ -134,6 +134,17 @@ func (s *SocketSessionSuite) TestAConversationEndedByTheRouterWaitsForTheCallerT
 	s.heldUntilAnswered(held)
 }
 
+// A caller's stop ends the conversation with the same close as the router ending it.
+func (s *SocketSessionSuite) TestAStopEndsTheSocketWithTheConversationOver() {
+	connection, _ := s.starts(s.utils.uuid())
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "stop"}))
+
+	_, ended := s.socketEnd(connection)
+	closed := s.closedWith(ended, websocket.CloseNormalClosure)
+	s.Equal("the conversation is over", closed.Text)
+}
+
 func (s *SocketSessionSuite) TestACallerWithNoCredentialsIsRefused() {
 	_, status := s.unauthenticatedClient.watch("/v1/agents/socket")
 
