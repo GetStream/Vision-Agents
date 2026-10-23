@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 
@@ -266,6 +267,15 @@ func (s *AgentSuite) TestOnlyWhatTheCallerSaidIsScreened() {
 	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"the turn was never answered")
+	// The check runs beside the model and the reply waits for its verdict, so the turn's
+	// reply, not its request, is what says its words were screened.
+	turn := s.model.requests()[0].ID
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			responded, ok := event.(Responded)
+			return ok && responded.TurnID == turn
+		})
+	}, "the turn's reply never came")
 
 	s.Equal([]string{"how do I render a message list"}, s.guards.screened())
 }
