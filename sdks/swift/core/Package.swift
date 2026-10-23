@@ -3,11 +3,11 @@ import PackageDescription
 
 let package = Package(
     name: "vision-agents-core",
-    // iOS 17 is the floor because the session state is @Observable. The alternative was
-    // shipping an ObservableObject path beside it for older phones, which doubles the state
-    // layer to serve devices that will not be running a new SDK anyway. iOS only, because
-    // Stream Video is, and Stream Chat's macOS build does not compile under Swift 6.
-    platforms: [.iOS(.v17)],
+    // iOS 15 is the floor. The session state is an ObservableObject rather than @Observable,
+    // which would have made it iOS 17, and nothing else here or in the Stream SDKs needs more.
+    // iOS only, because Stream Video is, and Stream Chat's macOS build does not compile under
+    // Swift 6.
+    platforms: [.iOS(.v15)],
     products: [
         .library(name: "VisionAgentsCore", targets: ["VisionAgentsCore"])
     ],

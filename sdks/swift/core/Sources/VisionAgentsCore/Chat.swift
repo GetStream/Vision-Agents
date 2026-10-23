@@ -1,6 +1,5 @@
 import Foundation
 import StreamChat
-import os
 
 private let kind = "chat"
 
@@ -45,7 +44,7 @@ extension AgentSession {
 /// one it has expired.
 private func connect(_ backend: Backend, _ credentials: StreamCredentials) async throws -> ChatClient {
     let client = ChatClient(config: ChatClientConfig(apiKeyString: credentials.apiKey))
-    let unused = OSAllocatedUnfairLock<String?>(initialState: credentials.token)
+    let unused = AllocatedUnfairLock<String?>(credentials.token)
     let user = credentials.user
     try await client.connectUser(
         userInfo: UserInfo(id: user.id, name: user.originalName, imageURL: user.imageURL),

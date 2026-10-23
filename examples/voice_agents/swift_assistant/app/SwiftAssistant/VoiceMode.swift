@@ -1,3 +1,4 @@
+import Combine
 import StreamChatAI
 import StreamVideo
 import StreamVideoSwiftUI
@@ -18,8 +19,10 @@ struct VoiceMode: View {
     let chat: AgentChat
 
     @Environment(\.dismiss) private var dismiss
-    @State private var voice: VoiceSession?
+    @StateObject private var current = CurrentVoice()
     @State private var failure: String?
+
+    private var voice: VoiceSession? { current.session }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -41,9 +44,9 @@ struct VoiceMode: View {
                 CameraPreview(state: call.state)
             }
 
-            AgentPresence(voice: voice, isStarting: voice == nil && failure == nil)
+            AgentPresence(current: current, isStarting: voice == nil && failure == nil)
 
-            if let request = chat.session.approvals.first {
+            if let request = chat.approvals.first {
                 ApprovalCard(request: request, session: chat.session)
                     .id(request.id)
                     .padding(.horizontal)
@@ -73,7 +76,7 @@ struct VoiceMode: View {
             try await chat.session.startVoice()
             let voice = try await VoiceSession.attach(
                 agents: Assistant.agents, sessionID: chat.session.id)
-            self.voice = voice
+            current.session = voice
             await voice.session.start()
             await voice.join()
         } catch is CancellationError {
@@ -90,6 +93,20 @@ struct VoiceMode: View {
         _ = try? await chat.session.stopVoice()
         dismiss()
     }
+}
+
+/// The voice session once a call has started, for the views to observe: a view observes an
+/// object it is given when it is made, and the session comes later. A change to the session, or
+/// to its conversation, is a change to this.
+@MainActor
+private final class CurrentVoice: ObservableObject {
+    @Published var session: VoiceSession? {
+        didSet {
+            following = session?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        }
+    }
+
+    private var following: AnyCancellable?
 }
 
 /// What the camera shows, which is what Juno sees when it looks.
@@ -112,7 +129,7 @@ private struct CameraPreview: View {
 
 /// The camera, mute, and back to the chat.
 private struct CallControls: View {
-    let voice: VoiceSession
+    @ObservedObject var voice: VoiceSession
     let onHangUp: () -> Void
 
     var body: some View {
@@ -159,8 +176,10 @@ private struct CallControls: View {
 /// holding the phone speaks, with theirs in `Self.personColors`, crossfading between the two.
 /// Its own view so that the levels, read thirty times a second, redraw only this.
 private struct AgentPresence: View {
-    let voice: VoiceSession?
+    @ObservedObject var current: CurrentVoice
     let isStarting: Bool
+
+    private var voice: VoiceSession? { current.session }
 
     /// The colors the glow takes while the person is talking. The agent's are the
     /// appearance's, which is Stream's accent.

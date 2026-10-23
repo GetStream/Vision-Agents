@@ -1,5 +1,5 @@
+import Combine
 import Foundation
-import Observation
 import StreamVideo
 
 private let kind = "video"
@@ -26,25 +26,28 @@ extension VisionAgents {
 ///
 /// The transcript comes over the session socket rather than out of the call, so what is said
 /// is readable even before anybody is listening to it. That is `session`, which is the same
-/// `AgentSession` a text conversation uses.
+/// `AgentSession` a text conversation uses. A change to `session` is a change to this, so a
+/// view observing the voice session follows its conversation too.
 @MainActor
-@Observable
-public final class VoiceSession {
+public final class VoiceSession: ObservableObject {
     /// The conversation: the transcript, and what the agent is doing.
     public let session: AgentSession
 
     /// The Stream call this device is on, once it has joined.
-    public private(set) var call: Call?
+    @Published public private(set) var call: Call?
 
     /// Whether this device's microphone is on.
-    public private(set) var isMuted = false
+    @Published public private(set) var isMuted = false
 
     /// Whether this device's camera is on.
-    public private(set) var isCameraEnabled = false
+    @Published public private(set) var isCameraEnabled = false
 
     /// Why joining failed, or nil. Set rather than thrown because joining happens in a
     /// `task`, where there is nobody to throw to.
-    public private(set) var failure: (any Error)?
+    @Published public private(set) var failure: (any Error)?
+
+    /// Passes the conversation's changes on as this one's.
+    private var following: AnyCancellable?
 
     private let agents: VisionAgents
     /// True when this device called `start`, false when it attached to a session something
@@ -82,6 +85,7 @@ public final class VoiceSession {
         self.agents = agents
         self.session = session
         self.createdLocally = createdLocally
+        following = session.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     /// Joins the call from this device.

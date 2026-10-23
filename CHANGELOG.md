@@ -6,6 +6,10 @@
 
 `turn_id` is optional in the session socket's `tool_approval`: an answer to a connector call held for approval needs none. The Go client's generated `acceleration.ToolApprovalCommand.TurnId` is now a `*string`, so code that sets it takes its address (AI-1640, #1182).
 
+### The Swift SDK runs on iOS 15, and its sessions are `ObservableObject`s
+
+`VisionAgentsCore` needs iOS 15 rather than 17. `AgentSession` and `VoiceSession` are `ObservableObject`s with `@Published` properties in place of `@Observable`, so a view holds one with `@StateObject` or `@ObservedObject` rather than `@State`. A `VoiceSession` passes its `session`'s changes on as its own, so observing it follows its conversation too. An app's own `@Observable` model that reads a session subscribes to its publishers, as the Swift demos' `AgentChat` does with `$conversation`.
+
 ### The Swift SDK's `User` and JSON values are StreamCore's
 
 `VisionAgentsCore` now generates its client with the generator Stream Chat and Stream Video use, on StreamCore, and drops its own copies of what StreamCore already has. `User` is StreamCore's: `User(id:name:imageURL:)`, with `name` optional and `imageURL` a `URL` in place of `image`. `JSONValue` is gone in favour of StreamCore's `RawJSON`, in tool arguments and parameters, `AgentEvent.fields`, and `custom` on sessions and guests: `.object` is `.dictionary`, `.null` is `.nil`, and `stringValue`, `boolValue` and `arrayValue` are optional, so `arguments["id"]?.stringValue ?? ""` reads as before. `import VisionAgentsCore` brings both in. The SDK no longer depends on swift-openapi-runtime, swift-openapi-urlsession or swift-http-types.
@@ -2573,6 +2577,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- The Swift SDK reads a timestamp without fractional seconds, such as `2026-10-02T17:00:00Z`, on iOS before 26. Go writes no fraction when a value has none, and the SDK refused those there: a session, guest or step-up carrying one failed to read, and a remembered guest's expiry was lost.
 - Starting voice (`POST /v1/agents/sessions/{id}/voice`) on a socket session (`/v1/agents/socket`) whose voice was stopped (`DELETE` on the same path) answers 400 `invalid_request`, "voice on a socket session cannot be started again once stopped: open a new socket". The socket is the session's call, and stopping voice hangs it up, so the agent joined a call already over and the router crashed with "close of closed channel". The session carries on in writing until the socket closes. Starting voice on a socket session that is still on its socket changes nothing, as before (AI-1405).
 - A sandbox whose code is still running when its session ends loses its connectors' credentials at once: the Daytona secret, or the egress proxy's record, is deleted when the sandbox's close stops waiting for the run. Daytona's secret stayed until the hourly sweep, the proxy's record for up to 31 minutes. A connector the sandbox cannot get a credential for no longer puts the provider's error text in the `run_code` result or the router's logs: they say whether the connection needs a reconnect, or the kind of failure (AI-1685, AI-1684).
 - A connector binding with `sandbox: true` that is removed from its agent config mid-session, or no longer has `sandbox`, or now binds another connector or connection, stops giving the session's sandbox its credential: under the Daytona broker the secret is withdrawn before the next `run_code`, and under the proxy broker the next request with the placeholder gets 401. It kept working until the session ended. Once withdrawn, a binding put back reaches only the next session (AI-1686).

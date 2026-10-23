@@ -13,9 +13,10 @@ channel: the reply streaming in, each round of the model's reasoning, each tool 
 question a tool asks before it runs. Add `StreamChatAI` to the app target beside
 `VisionAgentsCore`; it needs Xcode 27 to add with SPM.
 
-iOS 17 is the floor. It is `@Observable`'s floor, and the alternative was an `ObservableObject`
-path beside it to serve devices that will not be running a new SDK anyway. It is iOS only,
-because Stream Video is and Stream Chat's macOS build does not compile under Swift 6.
+iOS 15 is the floor. `AgentSession` and `VoiceSession` are `ObservableObject`s, so a view holds
+one with `@StateObject` or `@ObservedObject`, and observing a `VoiceSession` follows its
+conversation too. It is iOS only, because Stream Video is and Stream Chat's macOS build does
+not compile under Swift 6.
 
 SPM has no way to depend on a subdirectory of a tagged repository, so the examples reach the
 package by path. Shipping it means splitting `core/` into its own repository from CI, or a

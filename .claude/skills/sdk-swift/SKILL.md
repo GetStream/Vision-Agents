@@ -9,7 +9,7 @@ The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the pa
 [`sdks/swift`](../../../sdks/swift) already follow, so a change lands consistently rather than
 re-litigating them. Where a rule has an exception, the exception is written down.
 
-Assume Swift 6 language mode with complete strict concurrency, iOS 17, SPM only.
+Assume Swift 6 language mode with complete strict concurrency, iOS 15, SPM only.
 
 ## The package
 
@@ -49,7 +49,7 @@ and committed for the demo apps.
 
 ## Concurrency
 
-The conversation state is `@MainActor @Observable`; the socket is an `actor`. Not an actor
+The conversation state is a `@MainActor` `ObservableObject`; the socket is an `actor`. Not an actor
 holding the state with a main-actor projection beside it: that is two truths and a window in
 which they disagree.
 
@@ -87,9 +87,12 @@ task owns the object that owns the task, and `deinit` never runs to cancel it.
 
 ## Observation
 
-`@Observable`, which is why the floor is iOS 17. The alternative was an `ObservableObject`
-path beside it; two state systems in one SDK diverge. Presenting `@Observable` as the API
-while claiming iOS 15 would be a lie, since the type does not exist there.
+`ObservableObject` with `@Published`, which is why the floor can be iOS 15: `@Observable` is
+iOS 17. Do not add an `@Observable` path beside it; two state systems in one SDK diverge.
+`VoiceSession` passes its `AgentSession`'s `objectWillChange` on as its own, so a view
+observing the voice session follows `voice.session` too, as nested reads did under
+`@Observable`. An app holding a session it does not have yet keeps it in an `ObservableObject`
+of its own, the shape of StreamVideo's `CallViewModel`; the demos' `CurrentVoice` is one.
 
 If a public stream of events is ever added, it must be a `func events()` handing each caller
 its own bounded continuation — never one stored `AsyncStream` property. A single stream is not
@@ -166,8 +169,10 @@ Rewrap deliberately:
   value the server added.
 - **Dates** go through `RouterDates`, which `JSONDecoder.default`, the decoder `DefaultAPI` is
   built with, reads every timestamp with. It exists because Go writes as many fractional digits
-  as a value needs and none when it needs none. Test fractional seconds, no fractional seconds,
-  offsets and malformed input.
+  as a value needs and none when it needs none. Before iOS 26, a format style that includes
+  fractional seconds refuses a timestamp without them, so `RouterDates` reads twice. Test
+  fractional seconds, no fractional seconds, offsets and malformed input, on the oldest
+  simulator runtime there is as well as the newest: Foundation parses differently across them.
 - **Open-ended objects** are StreamCore's `RawJSON`, which the generator already emits.
 
 `generate.py` carries an explicit allowlist of operation ids and **fails if any of them is
