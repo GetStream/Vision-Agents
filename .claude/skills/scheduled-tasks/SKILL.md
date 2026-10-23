@@ -43,8 +43,10 @@ The tools also need (`Manager.schedulingRunner`, `internal/session/schedule_tool
 
 - a router with a database;
 - a session that is not incognito, opened on a config;
-- a caller that is a verified user or a backend acting for one (`X-Stream-User-Id`). A guest
-  or an anonymous caller gets no tools.
+- a caller that is a verified user or a backend acting for one (`X-Stream-User-Id`), or the
+  person who wrote in an SMS (Telnyx) or WhatsApp thread, and only when that person writes,
+  not someone else in the thread (the task is theirs and keeps the thread; a Linq chat and a
+  Slack thread get no tools). A guest or an anonymous caller gets no tools.
 
 The REST create does not need `scheduling.enabled` (`internal/api/scheduled_tasks.go:752`).
 

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -267,6 +268,21 @@ func (s *SecretsSuite) TestASandboxDaytonaWouldNotDeleteStillLosesItsSecrets() {
 
 	s.Error(s.box.Close())
 
+	s.Empty(s.platform.secretNames())
+}
+
+// TestACloseARunOutlastsStillDeletesTheSecret: Close waits for the run until its timeout, and
+// the secret goes then, not at the sweep. The run that outlasted it brings none back.
+func (s *SecretsSuite) TestACloseARunOutlastsStillDeletesTheSecret() {
+	s.box.timeout = time.Second
+	ran, release := s.platform.outlasting(s.T(), s.box)
+	s.Require().Len(s.platform.secretNames(), 1)
+
+	s.ErrorIs(s.box.Close(), context.DeadlineExceeded)
+
+	s.Empty(s.platform.secretNames())
+	release()
+	s.NoError(<-ran)
 	s.Empty(s.platform.secretNames())
 }
 

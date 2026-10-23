@@ -16,11 +16,15 @@ import (
 // sandbox.ErrNoCredential means the connection gives none until it is reconnected.
 type Tokens func(ctx context.Context, grant Grant) (string, error)
 
-// ResolverTokens asks connections for the credential on every call, so nothing keeps a copy
-// and a revoked connection stops at its next request, and reads the token as grant's scheme
-// sends it.
-func ResolverTokens(connections core.Resolver, schemes map[string]core.Scheme) Tokens {
+// ResolverTokens asks bound whether the agent config still binds grant, and connections for
+// the credential, on every call, so nothing keeps a copy and a revoked connection or a dropped
+// binding stops at its next request, and reads the token as grant's scheme sends it.
+func ResolverTokens(connections core.Resolver, schemes map[string]core.Scheme, bound func(context.Context, sandbox.Grant) error) Tokens {
 	return func(ctx context.Context, grant Grant) (string, error) {
+		if err := bound(ctx, sandbox.Grant{Connection: grant.Connection, Binding: grant.Binding, Config: grant.Config,
+			Connector: grant.Connector, Selection: grant.Selection}); err != nil {
+			return "", err
+		}
 		scheme, found := schemes[grant.Scheme]
 		if !found {
 			return "", stack.Wrap(fmt.Errorf("%w: egress: there is no scheme %q", sandbox.ErrNoCredential, grant.Scheme))

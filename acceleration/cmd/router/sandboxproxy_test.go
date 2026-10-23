@@ -38,7 +38,7 @@ import (
 // TestARouterWithoutAProxyAddressServesNoProxy is the control: unset, as on every router
 // before the proxy, there is nothing to listen with.
 func TestARouterWithoutAProxyAddressServesNoProxy(t *testing.T) {
-	proxy, err := newSandboxProxy(config.Defaults().CodeSandbox, nil, nil, nil, slog.New(slog.DiscardHandler))
+	proxy, err := newSandboxProxy(config.Defaults().CodeSandbox, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, err)
 	require.Nil(t, proxy)
@@ -50,10 +50,10 @@ func TestAProxyAddressWithoutRedisOrConnectorsDoesNotStart(t *testing.T) {
 	settings := config.Defaults().CodeSandbox
 	settings.ProxyAddr = ":8091"
 
-	_, err := newSandboxProxy(settings, nil, nil, nil, slog.New(slog.DiscardHandler))
+	_, err := newSandboxProxy(settings, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 	require.ErrorContains(t, err, "redis.addr")
-	_, err = newSandboxProxy(settings, nil, &resolver.Resolver{}, nil, slog.New(slog.DiscardHandler))
+	_, err = newSandboxProxy(settings, nil, &resolver.Resolver{}, nil, nil, slog.New(slog.DiscardHandler))
 	require.ErrorContains(t, err, "redis.addr")
 
 	address := os.Getenv("ROUTER_REDIS_ADDR")
@@ -63,7 +63,7 @@ func TestAProxyAddressWithoutRedisOrConnectorsDoesNotStart(t *testing.T) {
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
-	_, err = newSandboxProxy(settings, redis, nil, nil, slog.New(slog.DiscardHandler))
+	_, err = newSandboxProxy(settings, redis, nil, nil, nil, slog.New(slog.DiscardHandler))
 	require.ErrorContains(t, err, "connectors.enabled")
 }
 
@@ -82,7 +82,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	settings.ProxyAddr = freeAddress(t)
 	settings.ProxyCACert, settings.ProxyCAKey = newCA(t)
 
-	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, slog.New(slog.DiscardHandler))
+	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, nil, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, proxy)
 	stop, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, func(server *http.Server, listener net.Listener) {
@@ -198,7 +198,7 @@ func TestTheProxyReadsTheGrantsItsBrokerWrites(t *testing.T) {
 	settings.ProxyCACert, settings.ProxyCAKey = newCA(t)
 	var options session.ManagerOptions
 	require.NoError(t, sandboxBroker(settings, redis, &options))
-	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, slog.New(slog.DiscardHandler))
+	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, nil, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	server := httptest.NewServer(proxy)
 	t.Cleanup(server.Close)

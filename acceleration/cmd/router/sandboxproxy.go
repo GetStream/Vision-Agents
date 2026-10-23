@@ -17,12 +17,14 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // newSandboxProxy is the sandbox egress proxy code_sandbox.proxy_addr asks for, nil when it
 // is unset. It keeps the sandboxes' grants in Redis, so every replica serves every sandbox,
-// and asks connections for each token, so it needs both.
-func newSandboxProxy(settings config.CodeSandbox, redis *live.Client, connections *resolver.Resolver,
+// and asks connections for each token, so it needs both. configs, the store connections read,
+// is where it checks on each request that the agent config still binds the grant.
+func newSandboxProxy(settings config.CodeSandbox, redis *live.Client, connections *resolver.Resolver, configs *store.Store,
 	schemes map[string]core.Scheme, logger *slog.Logger) (*egress.Proxy, error) {
 	if settings.ProxyAddr == "" {
 		return nil, nil
@@ -31,7 +33,7 @@ func newSandboxProxy(settings config.CodeSandbox, redis *live.Client, connection
 		return nil, stack.Wrap(errors.New("code_sandbox.proxy_addr is set, and the sandbox egress proxy needs redis.addr " +
 			"and connectors.enabled with a database"))
 	}
-	return egress.New(egress.Options{Store: sandboxStore(redis), Tokens: egress.ResolverTokens(connections, schemes),
+	return egress.New(egress.Options{Store: sandboxStore(redis), Tokens: session.SandboxProxyTokens(connections, configs, schemes),
 		CACert: []byte(settings.ProxyCACert), CAKey: []byte(settings.ProxyCAKey), Logger: logger})
 }
 

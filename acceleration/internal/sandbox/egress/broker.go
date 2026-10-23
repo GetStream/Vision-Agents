@@ -151,11 +151,12 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 	env := map[string]string{}
 	var prepared []held
 	for _, grant := range grants {
-		// A provider's refresh error may quote its answer, so only its class is logged.
+		// A provider's refresh error may quote its answer, so only its class is logged, and a
+		// required grant's error carries none of it.
 		_, err := b.options.Tokens(ctx, grant)
 		if errors.Is(err, sandbox.ErrNoCredential) {
 			if grant.Required {
-				return sandbox.Mount{}, fmt.Errorf("egress: required connector %q gives the sandbox no credential: %w", grant.Binding, err)
+				return sandbox.Mount{}, fmt.Errorf("egress: required connector %q gives the sandbox no credential: %w", grant.Binding, sandbox.ErrNoCredential)
 			}
 			b.options.Logger.Warn("the sandbox is created without a connector's credential", "connector", grant.Binding,
 				"connection", grant.Connection.ConnectionID, "class", errorClass(err))
@@ -167,7 +168,8 @@ func (b *Broker) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.M
 		}
 		placeholder := "va_ph_" + rand.Text()
 		prepared = append(prepared, held{grant: grant, entry: Grant{Connection: grant.Connection, Binding: grant.Binding,
-			Scheme: grant.Scheme, Placeholder: placeholder, Hosts: grant.Hosts}})
+			Config: grant.Config, Connector: grant.Connector, Selection: grant.Selection, Scheme: grant.Scheme,
+			Placeholder: placeholder, Hosts: grant.Hosts}})
 		env[grant.Env] = placeholder
 	}
 	if len(prepared) == 0 {

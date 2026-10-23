@@ -616,7 +616,7 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 	if err != nil {
 		return err
 	}
-	author := authorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
+	author := AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
 	name, agentName := message.AuthorID, config.Name
 	// The agent of a thread channel writes as a user of the channel's own id: the
 	// conversation held on the channel writes as support_agent_id. The message hook finds
@@ -774,12 +774,12 @@ func (b *Bridge) refused(ctx context.Context, ref core.ConnectionRef, scheme cor
 	return outcome.Kind
 }
 
-// authorUserID is the Stream Chat user an external author writes as in a thread channel: one
+// AuthorUserID is the Stream Chat user an external author writes as in a thread channel: one
 // for each customer, connector, provider unit and author id. It is a digest so that any
 // provider's ids fit the characters every Stream id here keeps to ([A-Za-z0-9_-]), and so
 // that one person in two customers' workspaces is two users, never one that two customers
 // write as. Who the person is across channels is the contact map's (T43), not this.
-func authorUserID(customerID, connectorID, providerUnitID, authorID string) string {
+func AuthorUserID(customerID, connectorID, providerUnitID, authorID string) string {
 	sum := sha256.Sum256([]byte(customerID + "\x00" + connectorID + "\x00" + providerUnitID + "\x00" + authorID))
 	return connectorID + "-" + hex.EncodeToString(sum[:16])
 }

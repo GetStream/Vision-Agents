@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -33,7 +34,8 @@ func (m *Manager) sandboxGrant(binding store.ConnectorBinding, connection store.
 	}
 	d.grants = append(d.grants, sandbox.Grant{
 		Connection: core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID},
-		Binding:    binding.Name, Scheme: connection.AuthScheme, Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Required: binding.Required,
+		Binding:    binding.Name, Config: d.spec.ConfigID, Connector: binding.ConnectorID, Selection: binding.Connection.Type,
+		Scheme: connection.AuthScheme, Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Required: binding.Required,
 	})
 	if d.schemes == nil {
 		d.schemes = map[string]core.Scheme{}
@@ -82,13 +84,17 @@ func behindProxy(config sandbox.Config) error {
 }
 
 // sandboxTokens resolves a grant's credential and reads it as its scheme sends it: the token
-// of the Authorization header Wrap puts on a request to the grant's first host. A connection
-// that is not connected, or was deleted, gives sandbox.ErrNoCredential; a renewal that failed
-// just now (resolver.ErrTemporarilyUnavailable) does not.
+// of the Authorization header Wrap puts on a request to the grant's first host. A binding the
+// agent config dropped (SandboxBound), or a connection that is not connected, or was deleted,
+// gives sandbox.ErrNoCredential; a renewal that failed just now
+// (resolver.ErrTemporarilyUnavailable) does not.
 func (m *Manager) sandboxTokens(schemes map[string]core.Scheme) sandbox.Tokens {
 	return func(ctx context.Context, grant sandbox.Grant) (sandbox.Token, error) {
 		if m.options.Connectors.Resolver == nil {
 			return sandbox.Token{}, stack.Wrap(fmt.Errorf("%w: connectors are off on this deployment", sandbox.ErrNoCredential))
+		}
+		if err := SandboxBound(ctx, m.options.Store, grant); err != nil {
+			return sandbox.Token{}, err
 		}
 		credential, err := m.options.Connectors.Resolver.Resolve(ctx, grant.Connection, core.CredentialRequest{})
 		if errors.Is(err, resolver.ErrNotConnected) || errors.Is(err, store.ErrNoConnectorConnection) {
@@ -103,4 +109,38 @@ func (m *Manager) sandboxTokens(schemes map[string]core.Scheme) sandbox.Tokens {
 		}
 		return sandbox.Token{Value: token, Revision: credential.Revision}, nil
 	}
+}
+
+// SandboxBound is nil while grant's agent config still binds grant.Binding as the session
+// opened it: with sandbox set, to the same connector, picking its connection the same way, and
+// the same connection when that is fixed. Once it does not, or the config is gone, it wraps
+// sandbox.ErrNoCredential, so the broker withdraws the credential before the next run and the
+// egress proxy sends it with no further request, as recheck refuses a tool call. A config that
+// cannot be read just now is any other error. One read by primary key.
+func SandboxBound(ctx context.Context, configs *store.Store, grant sandbox.Grant) error {
+	config, err := configs.AgentConfig(ctx, grant.Connection.CustomerID, grant.Config)
+	if errors.Is(err, store.ErrNoAgentConfig) {
+		return fmt.Errorf("%w: %w", sandbox.ErrNoCredential, err)
+	}
+	if err != nil {
+		return err
+	}
+	index := slices.IndexFunc(config.Connectors, func(b store.ConnectorBinding) bool { return b.Name == grant.Binding })
+	if index < 0 {
+		return stack.Wrap(fmt.Errorf("%w: the agent config no longer binds %q", sandbox.ErrNoCredential, grant.Binding))
+	}
+	current := config.Connectors[index]
+	if !current.Sandbox || current.ConnectorID != grant.Connector || current.Connection.Type != grant.Selection ||
+		(current.Connection.Type == selectionFixed && current.Connection.ConnectionID != grant.Connection.ConnectionID) {
+		return stack.Wrap(fmt.Errorf("%w: the agent config binds %q differently now", sandbox.ErrNoCredential, grant.Binding))
+	}
+	return nil
+}
+
+// SandboxProxyTokens are the egress proxy's tokens: on every request it checks that the agent
+// config still binds the grant (SandboxBound) and asks connections for the credential.
+func SandboxProxyTokens(connections core.Resolver, configs *store.Store, schemes map[string]core.Scheme) egress.Tokens {
+	return egress.ResolverTokens(connections, schemes, func(ctx context.Context, grant sandbox.Grant) error {
+		return SandboxBound(ctx, configs, grant)
+	})
 }

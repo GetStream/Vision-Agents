@@ -280,7 +280,14 @@ func (s *Sandbox) Close() error {
 	case s.gate <- struct{}{}:
 		defer func() { <-s.gate }()
 	case <-ctx.Done():
-		return ctx.Err()
+		// A run still holds the sandbox, which stays, but its credential goes now: Daytona's
+		// secret would wait for the sweep, the proxy's record for its expiry.
+		if s.broker == nil {
+			return ctx.Err()
+		}
+		released, end := context.WithTimeout(context.Background(), s.timeout)
+		defer end()
+		return errors.Join(ctx.Err(), s.broker.Close(released))
 	}
 
 	// The secrets go first: a sandbox Daytona would not delete keeps no credential.
