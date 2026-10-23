@@ -35,6 +35,27 @@ import (
 type schedulingScript struct {
 	mu    sync.Mutex
 	turns [][]llm.ToolCall
+	// rounds is the tool calls of the next rounds a tool's answer starts, one entry for each.
+	rounds [][]llm.ToolCall
+}
+
+// planRound queues the tool calls of the next round a tool's answer starts: a later round
+// of the turn a person's words began.
+func (s *schedulingScript) planRound(calls ...llm.ToolCall) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rounds = append(s.rounds, calls)
+}
+
+func (s *schedulingScript) nextRound() []llm.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.rounds) == 0 {
+		return nil
+	}
+	calls := s.rounds[0]
+	s.rounds = s.rounds[1:]
+	return calls
 }
 
 // plan queues the tool calls of the next turn somebody speaks.
@@ -59,7 +80,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns = nil
+	s.turns, s.rounds = nil, nil
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and
@@ -115,12 +136,18 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 	}
 	m.mu.Unlock()
 
-	// A turn somebody started runs what the test queued; the turn a tool's
-	// answer starts is simply agreed with, and so is a call offering no tools,
-	// such as the summary of a thread's episode.
+	// A turn somebody started runs what the test queued; the round a tool's
+	// answer starts runs what the test queued for a later round, and is
+	// otherwise simply agreed with, and so is a call offering no tools, such
+	// as the summary of a thread's episode.
 	var calls []llm.ToolCall
-	if len(params.Tools) > 0 && len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User {
-		calls = m.script.next()
+	if len(params.Tools) > 0 && len(params.Input) > 0 {
+		switch params.Input[len(params.Input)-1].Role {
+		case llm.User:
+			calls = m.script.next()
+		case llm.ToolResult:
+			calls = m.script.nextRound()
+		}
 	}
 	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: m.Provider(), Model: m.Model()})
 	if failing {

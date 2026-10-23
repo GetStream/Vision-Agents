@@ -272,6 +272,22 @@ func (s *TelnyxChannelSuite) TestAZoneThePersonNamedIsTheirsForTheirNextTask() {
 	}), "the later turn's clock line is in the person's zone")
 }
 
+// A zone the person named for one task is theirs for the next task of the same turn, made in
+// a later tool round, before any other session reads it.
+func (s *TelnyxChannelSuite) TestAZoneNamedInOneRoundIsTheNextRoundsTasks() {
+	s.schedulingOn(&s.config)
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"America/New_York"}`})
+	s.schedulingScript.planRound(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Water","instructions":"Remind them to drink water.","in":"PT3H"}`})
+
+	s.smsTurn("+13125550001", "remind me to stretch in two hours, then to drink water, I am in New York")
+
+	for _, task := range s.customersTasks(2) {
+		s.Equal("America/New_York", task.Timezone, task.Title)
+	}
+}
+
 // The person's limit counts their own tasks: with one allowed, a paused task is not resumed
 // beside the one they made since.
 func (s *TelnyxChannelSuite) TestAPersonsLimitCountsTheirOwnTasksOnResume() {
