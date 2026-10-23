@@ -209,6 +209,10 @@ type converse struct {
 	// announced is when each participant said they would give every detail at once, for
 	// as long as they have not yet asked anything or said they are done.
 	announced map[string]time.Time
+	// wentOn is when each participant last went on talking before hearing any of the reply
+	// to what they had said, until a turn of theirs is answered. The flow controller is
+	// told, because the next part that sounds complete may be no more the end than the last.
+	wentOn map[string]time.Time
 	// overlaps names the participant each provisional ask still with the controller is
 	// about, so a ruling can find what was asked.
 	overlaps map[string]string
@@ -306,6 +310,7 @@ func newConverse(
 		delegated:   map[string]string{},
 		waiting:     map[string]unfinished{},
 		announced:   map[string]time.Time{},
+		wentOn:      map[string]time.Time{},
 		overlaps:    map[string]string{},
 		overlapping: map[string]overlapState{},
 		reported:    map[ActionKind]judged{},
@@ -469,6 +474,9 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 		!takesFloor(unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))) {
 		return Action{}, false
 	}
+	c.mu.Lock()
+	c.wentOn[transcript.Participant.ID] = time.Now()
+	c.mu.Unlock()
 	return c.decide(Action{
 		Kind:        ActInterrupt,
 		Reason:      "the caller said more before hearing any of the reply, so it answers words they have moved on from",
@@ -727,6 +735,10 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		Language:    ready.Language,
 		LineID:      line,
 	})
+
+	c.mu.Lock()
+	delete(c.wentOn, ready.Participant.ID)
+	c.mu.Unlock()
 
 	answer := Action{
 		Kind:        ActAnswer,
@@ -1169,6 +1181,16 @@ func (c *converse) monologue(ready candidate) bool {
 // nothing more, and it answers the same way every time, so waiting is a loop that only the
 // caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
 // misheard, and at that point asking them is better than listening to silence.
+// inParts reports whether the participant is giving a thought in parts: they went on
+// talking before hearing any of the reply to what they had said, and have not been
+// answered since. It lapses with an announced monologue's span.
+func (c *converse) inParts(participant string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	since, ok := c.wentOn[participant]
+	return ok && time.Since(since) <= monologueSpan
+}
+
 // waitedOn says the same words were waited on before.
 func (c *converse) waitedOn(ready candidate) bool {
 	c.mu.Lock()
