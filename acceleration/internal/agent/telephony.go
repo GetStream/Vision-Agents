@@ -183,7 +183,8 @@ const didNotWork = "That did not work: "
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
 // arguments, already answered since the caller last spoke. After a result Gemma often asks
 // for the same call again, and run twice a dispatch or a booking is made twice. A call that
-// failed may be tried again, since what failed may not fail twice.
+// failed may be tried again, since what failed may not fail twice, and so may one whose result
+// says nothing was done (undoneResult).
 //
 // A call that changes something is matched across the whole call: Nemotron booked a table,
 // heard "Yes, please go ahead" and booked it again, and a forced chase made Qwen book the same
@@ -195,7 +196,7 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 	changes := !readsOnly(call.Name)
 	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			strings.Contains(history[i].Content, notRun) {
+			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) {
 			continue
 		}
 		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
@@ -207,6 +208,38 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall) (string, bool
 		}
 	}
 	return "", false
+}
+
+// routerStatuses are the statuses only the router answers a connector call it held back with
+// (internal/session: connector_login.go, step_up.go, connector_tools.go; internal/plugins:
+// user.go) until the person signs in or grants a scope. A tool does not use them for its own
+// results, so they count on the status alone.
+var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
+
+// sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
+// without the person acting (internal/session: connector_login.go, connector_approval.go;
+// internal/plugins/user.go; internal/conversation/parts.go) but a third-party tool uses too:
+// {"status":"stopped","recording_id":"r1"} is a write that was done. They count only in the
+// router's own shape, exactly {status, message}.
+var sharedStatuses = []string{"declined", "expired", "failed", "stopped", "unavailable"}
+
+// undoneResult reports whether a tool result is one the router held back (routerStatuses,
+// sharedStatuses): nothing was done. Once the person has acted, the same call must run: the
+// step-up's own result tells the model to call it again.
+func undoneResult(content string) bool {
+	var body map[string]json.RawMessage
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	var status string
+	if json.Unmarshal(body["status"], &status) != nil {
+		return false
+	}
+	if slices.Contains(routerStatuses, status) {
+		return true
+	}
+	_, hasMessage := body["message"]
+	return slices.Contains(sharedStatuses, status) && hasMessage && len(body) == 2
 }
 
 // refusedBefore returns the answer of an identical call the tool already refused on this
@@ -351,7 +384,7 @@ func succeeded(history []llm.Message, name string, passed bool) bool {
 			continue
 		}
 		content := strings.ReplaceAll(message.Content, " ", "")
-		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) ||
+		if strings.HasPrefix(message.Content, didNotWork) || strings.Contains(message.Content, notRun) || undoneResult(message.Content) ||
 			passed && (strings.Contains(content, `"error"`) || strings.Contains(content, `"ok":false`)) {
 			continue
 		}
