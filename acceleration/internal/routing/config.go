@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // defaultConfigFS carries the built-in capability config so the router works without an
@@ -66,6 +67,10 @@ const (
 	Memory    Modality = "memory"
 	Knowledge Modality = "knowledge"
 	Phone     Modality = "phone"
+	// Runtime is the time an agent session is open, recorded a slice at a time (Slices) and
+	// priced by what holds it: text, voice or video. It is the deployment's own work rather
+	// than a vendor's, so it is recorded but never routed.
+	Runtime Modality = store.RuntimeModality
 )
 
 // Tier separates models tuned for latency from models tuned for output quality. It is

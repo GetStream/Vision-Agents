@@ -19,6 +19,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -234,6 +235,24 @@ func (r Result) Used() pricing.Quantities {
 	}
 	return used
 }
+
+// Attributes is the size the pictures were drawn at, so the price list can key on it. The
+// first picture's size stands for all of them, since one request draws them alike.
+func (r Result) Attributes() map[string]string {
+	if len(r.Images) == 0 {
+		return nil
+	}
+	return map[string]string{
+		AttributeWidth:  strconv.Itoa(r.Images[0].Width),
+		AttributeHeight: strconv.Itoa(r.Images[0].Height),
+	}
+}
+
+// AttributeWidth and AttributeHeight are an image row's picture size, in pixels.
+const (
+	AttributeWidth  = "width"
+	AttributeHeight = "height"
+)
 
 // Provider is an image generation provider.
 //

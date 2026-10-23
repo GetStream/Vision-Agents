@@ -283,12 +283,16 @@ type CallUsage struct {
 	Requests          int64 `bun:"requests"`
 }
 
+// RuntimeModality is the modality of the rows that bill the time a session was open, a slice
+// at a time. They cost what the session's time cost, and are not requests.
+const RuntimeModality = "runtime"
+
 // CallUsage totals the work one call paid for. Like the models it used, it is keyed by
 // agent and window rather than by call, because a request row carries the Stream call
 // rather than the session that recorded it.
 //
 // Failed requests are counted: a model that read the prompt and then fell over is still
-// billed for having read it.
+// billed for having read it. The call's runtime is in its cost and not among its requests.
 func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) (CallUsage, error) {
 	if customerID == "" || agentID == "" {
 		return CallUsage{}, stack.Wrap(errors.New("store: a customer and an agent id are required"))
@@ -301,7 +305,7 @@ func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from 
 			ColumnExpr("COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens").
 			ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
 			ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
-			ColumnExpr("COUNT(*) AS requests").
+			ColumnExpr("COUNT(*) FILTER (WHERE modality <> ?) AS requests", RuntimeModality).
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
 			Where("started_at >= ?", from)

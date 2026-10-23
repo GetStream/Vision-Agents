@@ -778,6 +778,9 @@ type AgentSuite struct {
 	// the agent a database and a Redis.
 	records *store.Store
 	live    *live.Client
+	// billing is where the model router records what each request cost, priced, when a test
+	// reads those rows. Nil records nothing.
+	billing *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
 	// voiceAsked is what the voice was opened with.
@@ -851,8 +854,14 @@ func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
 		opened++
 		return provider, nil
 	})
+	config := stubConfig()
+	if s.billing != nil {
+		for i := range config.Providers {
+			config.Providers[i].Price = routing.Price{PerMillionInputTokens: 1, PerMillionOutputTokens: 2}
+		}
+	}
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: stubConfig(), Registry: reasoning, Logger: logger,
+		Config: config, Registry: reasoning, Store: s.billing, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
