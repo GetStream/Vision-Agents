@@ -53,7 +53,9 @@ Start from the closest existing file:
    (`registration`: `operator`, `customer`, `managed`, `dcr`, `cimd`), `scopes`, `refresh`,
    `rate_limit` and `sources`. Add a `channel` block only if the provider sends messages.
    Set `sensitive: true` if the connector reads private data, and `outbound: false` on a
-   source whose tools only read (`providers/AGENTS.md`); left out, a tool counts as writing.
+   source whose tools only read (`providers/AGENTS.md`), or list the tools that only read in
+   its `read_only_tools` when others write (`google_drive.yaml`); left out, a tool counts as
+   writing.
    A source's `headers` are fixed request headers sent on every request, such as GitHub's
    `X-MCP-Toolsets` (`github.yaml`); a header the credential, the connection or MCP writes
    is refused.

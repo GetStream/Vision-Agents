@@ -96,6 +96,36 @@ func (s *ManifestSuite) TestASourceSendsDataOutUnlessItSaysOutboundFalse() {
 	}
 }
 
+// A source that offers tools that write beside ones that read sends out only the ones it does
+// not list in read_only_tools, and a source that says outbound: false sends out none.
+func (s *ManifestSuite) TestASourceSendsOutEveryToolItDoesNotListAsReadOnly() {
+	endpoints := "endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n" +
+		"    read_only_tools: [read_doc]\n"
+	parsed, err := ParseManifest(minimal(endpoints))
+	s.Require().NoError(err)
+	source := MCPSource(parsed.Sources)
+
+	s.False(source.SendsOutTool("read_doc"))
+	s.True(source.SendsOutTool("update_doc"))
+	s.True(source.SendsOut())
+
+	parsed, err = ParseManifest(minimal(endpoints + "    outbound: false\n"))
+	s.Require().NoError(err)
+	s.False(MCPSource(parsed.Sources).SendsOutTool("update_doc"))
+}
+
+func (s *ManifestSuite) TestAnEmptyReadOnlyToolIsRejected() {
+	_, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n" +
+		"    endpoint: mcp\n    read_only_tools: [read_doc, \"\"]\n"))
+	s.ErrorContains(err, "sources[0].read_only_tools[1]: is empty")
+}
+
+func (s *ManifestSuite) TestAReadOnlyToolNamedTwiceIsRejected() {
+	_, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n" +
+		"    endpoint: mcp\n    read_only_tools: [read_doc, read_doc]\n"))
+	s.ErrorContains(err, `sources[0].read_only_tools[1]: "read_doc" is named twice`)
+}
+
 // A manifest that says neither marshals as it did before the fields existed, so the seeder
 // finds a stored built-in unchanged (store.sameManifest).
 func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutThem() {
@@ -105,6 +135,7 @@ func (s *ManifestSuite) TestAManifestWithoutSensitiveOrOutboundMarshalsWithoutTh
 	s.Require().NoError(err)
 	s.NotContains(string(raw), "sensitive")
 	s.NotContains(string(raw), "outbound")
+	s.NotContains(string(raw), "read_only_tools")
 }
 
 func (s *ManifestSuite) TestAManifestNamesItsEarlierBrokenRevisionsWithAReason() {

@@ -822,7 +822,8 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 // model that reads untrusted text could be steered into sending out what it read («Nessy as
 // a connector» on AI-1538, change 13). These send data out:
 //   - a binding whose connector has a source that does not say outbound: false, as one of its
-//     tools may write, and a binding with sandbox set, whose code calls the connector's whole API;
+//     tools may write, unless every tool it grants is in the source's read_only_tools, and a
+//     binding with sandbox set, whose code calls the connector's whole API;
 //   - an MCP server or a plugin, whose tools no manifest describes, unless the plugin reaches
 //     its read-only endpoint;
 //   - a sandbox that may reach the network.
@@ -872,14 +873,23 @@ func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID stri
 }
 
 // bindingSendsOut reports whether a binding offers a tool that may send data out: one of a
-// source that does not say outbound: false, or the connector's API to sandbox code. A
+// source that does not say outbound: false, unless the binding grants it by name and the
+// source lists it in read_only_tools, or the connector's API to sandbox code. A tool pattern
+// matches tools only a session lists, so it sends out if any source may. A binding does not
+// say which source a granted name comes from, so it sends out if any source may send it. A
 // connector with no source offers no tool, and neither does a binding that grants none.
 func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) bool {
 	if binding.Sandbox {
 		return true
 	}
-	granted := len(binding.Tools) > 0 || binding.ToolPatterns != nil
-	return granted && slices.ContainsFunc(manifest.Sources, core.SourceRule.SendsOut)
+	if binding.ToolPatterns != nil {
+		return slices.ContainsFunc(manifest.Sources, core.SourceRule.SendsOut)
+	}
+	return slices.ContainsFunc(binding.Tools, func(tool store.ToolGrant) bool {
+		return slices.ContainsFunc(manifest.Sources, func(source core.SourceRule) bool {
+			return source.SendsOutTool(tool.Name)
+		})
+	})
 }
 
 // pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
