@@ -300,6 +300,26 @@ func (s *TelnyxChannelSuite) TestATaskReachesOnlyItsOwnCustomersThread() {
 	s.NotEqual(firstChannel, secondChannel)
 }
 
+// A thread task that comes due inside its quiet hours is held until they end, as every task
+// is: no turn is run and nothing is texted.
+func (s *TelnyxChannelSuite) TestAThreadTaskInItsQuietHoursIsHeld() {
+	task, _ := s.scheduledInThread("+13125550001")
+	now := time.Now().UTC()
+	task.Timezone = "UTC"
+	task.QuietHours = &store.ScheduledTaskQuietHours{Start: now.Add(-time.Hour).Format("15:04"), End: now.Add(2 * time.Hour).Format("15:04")}
+	run := s.manualRun(task)
+	run.Trigger = store.ScheduledTaskTriggerSchedule
+	sent := len(s.telnyx.sent())
+
+	_, err := s.deliverRun(task, run)
+
+	var postponed *scheduling.Postponed
+	s.Require().True(errors.As(err, &postponed), "not held: %v", err)
+	s.WithinDuration(now.Add(2*time.Hour), postponed.Until, 2*time.Minute)
+	s.Zero(s.scheduledTurns())
+	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+}
+
 // A thread task is delivered on its thread, so its deliver_to cannot be changed; its other
 // fields can.
 func (s *TelnyxChannelSuite) TestAThreadTasksDeliverToCannotChange() {
