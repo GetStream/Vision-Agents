@@ -392,6 +392,7 @@ func (s *DialogueSuite) TestAKeyWithNoQuotaLeftIsRestedForTheSessionsAfter() {
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{APIKey: spent + "," + spare, VoiceID: "v1"})
 	defer provider.Close()
+	before := quotaRefusals(s.T())
 
 	payload, err := json.Marshal(map[string]any{
 		"message": "This request exceeds your API key quota.", "error": "quota_exceeded", "code": 1008,
@@ -406,4 +407,5 @@ func (s *DialogueSuite) TestAKeyWithNoQuotaLeftIsRestedForTheSessionsAfter() {
 	pool := keypool.FromEnv(spent + "," + spare)
 	s.Equal([]string{spare, spare}, []string{pool.Next(), pool.Next()},
 		"the sessions after are opened on the key that has quota")
+	s.Equal(before+1, quotaRefusals(s.T()), "the refusal is counted")
 }
