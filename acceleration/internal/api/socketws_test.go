@@ -108,6 +108,32 @@ func (s *SocketSessionSuite) TestASocketThatDoesNotStartWithAStartFrameIsRefused
 	s.Contains(refused["error"], "start frame")
 }
 
+// A refusal is a close the caller is given time to answer, so a proxy does not drop the
+// error frame before it.
+func (s *SocketSessionSuite) TestARefusalWaitsForTheCallerToAnswerItsClose() {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "hello"}))
+
+	closed, held := s.unanswered(connection)
+
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
+	s.Empty(closed.Text)
+	s.heldUntilAnswered(held)
+}
+
+// A conversation the router ends closes the socket the same way.
+func (s *SocketSessionSuite) TestAConversationEndedByTheRouterWaitsForTheCallerToAnswerItsClose() {
+	connection, answered := s.starts(s.utils.uuid())
+	id := answered["session"].(map[string]any)["id"].(string)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/sessions/"+id, nil, nil))
+
+	closed, held := s.unanswered(connection)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Equal("the conversation is over", closed.Text)
+	s.heldUntilAnswered(held)
+}
+
 func (s *SocketSessionSuite) TestACallerWithNoCredentialsIsRefused() {
 	_, status := s.unauthenticatedClient.watch("/v1/agents/socket")
 

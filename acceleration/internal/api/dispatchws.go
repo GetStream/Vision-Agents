@@ -141,8 +141,7 @@ func registrationOf(r *http.Request) (dispatch.Registration, string) {
 }
 
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
-// the socket breaks. Both queues close together, so either arm reporting a closed channel
-// means the worker was released. gone carries why the reader stopped, and stopTaking tells
+// the socket breaks. gone carries why the reader stopped, and stopTaking tells
 // the reader the writer takes no more pongs or replies from it.
 func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan error, pongs <-chan float64, replies <-chan frame, stopTaking func()) {
 	// A reader left handing over a pong would never read the worker's answer to the close.
@@ -174,11 +173,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case call, open := <-worker.ToolCalls():
-			if !open {
-				end(websocket.CloseNormalClosure, "dispatch stopped")
-				return
-			}
+		case call := <-worker.ToolCalls():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(toolCallFrame(call)); err != nil {
 				// The session waiting on it is failed when the worker is released, which
@@ -188,11 +183,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case call, open := <-worker.Calls():
-			if !open {
-				end(websocket.CloseNormalClosure, "dispatch stopped")
-				return
-			}
+		case call := <-worker.Calls():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(callFrame(call)); err != nil {
 				// The call is already out of the pool, so there is nobody else it can be
@@ -202,11 +193,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
-		case message, open := <-worker.Messages():
-			if !open {
-				end(websocket.CloseNormalClosure, "dispatch stopped")
-				return
-			}
+		case message := <-worker.Messages():
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(messageFrame(message)); err != nil {
 				s.logger.Error("could not hand a message to a worker",
