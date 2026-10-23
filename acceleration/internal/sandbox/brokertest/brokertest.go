@@ -1,7 +1,7 @@
 // Package brokertest is the suite every sandbox.CredentialBroker passes: the contract the
 // session relies on, and the attacks on it a test can make without a sandbox's real egress
-// (A1, A2, A8, A9, A10 and A13, as far as logs and errors go, of the wave's attack table, and A15 where the
-// egress runs here; the egress ones run live for each broker). It is test code: import it only from _test.go files.
+// (A1, A2, A8, A9, A10 and A13, as far as logs and errors go, of the wave's attack table, A15 where the
+// egress runs here, and A16; the egress ones run live for each broker). It is test code: import it only from _test.go files.
 package brokertest
 
 import (
@@ -100,6 +100,12 @@ func (s *BrokerContract) connect(binding, token string, revision int) {
 // disconnect makes binding's connection one that cannot be used until it is reconnected.
 func (s *BrokerContract) disconnect(binding string) {
 	s.refuse(binding, fmt.Errorf("%w: brokertest: the connection is not connected", sandbox.ErrNoCredential))
+}
+
+// unbind is the agent config dropping binding: its tokens give ErrNoCredential, as
+// session.SandboxBound has them.
+func (s *BrokerContract) unbind(binding string) {
+	s.refuse(binding, fmt.Errorf("%w: brokertest: the agent config no longer binds it", sandbox.ErrNoCredential))
 }
 
 // unavailable makes binding's connection one whose credential cannot be had just now, as
@@ -293,6 +299,28 @@ func (s *BrokerContract) TestAConnectionRevokedMidSessionIsWithdrawn() {
 	_, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.False(ok)
 	s.Contains(s.logs.String(), `"level":"WARN"`)
+}
+
+// TestABindingRemovedMidSessionIsWithdrawn is A16: once the agent config drops a binding, a live
+// egress sends its token to no further request, and every broker withdraws it before the next
+// run. Putting the binding back gives this sandbox nothing again.
+func (s *BrokerContract) TestABindingRemovedMidSessionIsWithdrawn() {
+	subject := s.subject("session-1")
+	mount, err := subject.Broker.Prepare(s.ctx, []sandbox.Grant{grant("github", "GITHUB_TOKEN")})
+	s.Require().NoError(s.returned(err))
+
+	s.unbind("github")
+	_, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
+	s.Equal(!subject.Live, ok, "a live egress refuses the next request")
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+	_, _, ok = subject.Held(ref(mount, "GITHUB_TOKEN"))
+	s.False(ok, "the next run has no token")
+
+	s.connect("github", "gho_first", 1)
+	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
+	_, _, ok = subject.Held(ref(mount, "GITHUB_TOKEN"))
+	s.False(ok, "a binding put back stays withdrawn")
+	s.Empty(subject.Left())
 }
 
 // TestACredentialUnavailableJustNowIsKeptAndAskedForAgain: a renewal that failed just now

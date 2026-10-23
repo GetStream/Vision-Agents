@@ -44,7 +44,7 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	close(release)
 	s.mutters(nash, "Hey,")
 
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply to two kept going")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
 	s.model.writes(two, "Which two do you mean?")
 	s.synthesises(two)
 	s.says(nash, "Hey. Can you help me find after school care for the kids?")
@@ -52,7 +52,8 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	input := s.model.requests()[1].Input
 	s.Equal("two", input[len(input)-2].Content, "the words the dropped reply was for are still in the history")
 	s.Equal("Hey. Can you help me find after school care for the kids?", input[len(input)-1].Content)
-	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
 		"none of the dropped reply may go out")
 	s.oneDropSince(dropped)
 	s.Equal(1.0, testutil.ToFloat64(settledOverAgent.WithLabelValues("1", "true", "interrupt"))-overAgent,
@@ -79,7 +80,7 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 
 	s.mutters(nash, "wait no")
 
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the early reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the early reply kept going")
 	s.Len(s.model.requests(), 1, "the early reply was the one answering")
 	s.Len(s.flow.requests(), 1, "words that drop a reply are not also put to the controller")
 	s.oneDropSince(dropped)
@@ -140,7 +141,8 @@ func (s *AgentSuite) TestWordsAfterAnotherVoiceTookTheFloorAreNotRuledOnAgain() 
 	s.mutters(nash, "hold on please")
 
 	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 3 }, "the caller was never heard")
-	s.Never(func() bool { return countOf[Decided](s.reported()) > decided }, 100*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Decided](events.seen()) > decided }, 100*time.Millisecond, 5*time.Millisecond,
 		"a reply already abandoned is no reply to drop")
 }
 
@@ -234,7 +236,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBinding
 	s.says(nash, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
@@ -243,7 +245,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBinding
 
 	select {
 	case <-runner.stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("the binding asked for its call to be cancelled and it kept running")
 	}
 	s.oneDropSince(dropped)
@@ -264,7 +266,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardAnswersARunningToolStill
 	s.says(nash, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
@@ -294,7 +296,8 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 	s.mutters(nash, "tell me more please")
 
 	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the caller was never heard")
-	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Interrupted](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a reply that had ended was dropped")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
@@ -349,7 +352,8 @@ func (s *AgentSuite) TestAResumedUtteranceRestatingAnsweredWordsPlusAMurmurLeave
 
 	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeReplacement, Text: "two mm", Language: "en", Utterance: 7})
 
-	s.Never(func() bool { return s.model.script(two).Abandoned() || testutil.ToFloat64(staleReplies) > dropped },
+	model := s.model
+	s.Never(func() bool { return model.abandoned(two) || testutil.ToFloat64(staleReplies) > dropped },
 		300*time.Millisecond, 5*time.Millisecond, "a murmur restated with the answered words dropped the reply")
 }
 
@@ -365,7 +369,7 @@ func (s *AgentSuite) TestAResumedUtteranceRestatingAnsweredWordsPlusNewWordsDrop
 
 	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeReplacement, Text: "two wait no", Language: "en", Utterance: 7})
 
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply was not dropped")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply was not dropped")
 	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
 }
 
@@ -377,7 +381,8 @@ func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
 
 	s.agent.perform(Action{Kind: ActInterrupt, Unheard: true, Participant: nash, TurnID: two})
 
-	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Interrupted](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a reply already heard was dropped as unheard")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
@@ -392,7 +397,8 @@ func (s *AgentSuite) TestADropLandingAfterAnotherTurnTookTheFloorLeavesThatTurnP
 
 	s.agent.perform(Action{Kind: ActInterrupt, Unheard: true, Participant: nash, TurnID: two})
 
-	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Interrupted](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"a drop meant for another turn interrupted the one speaking")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
@@ -407,7 +413,7 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverAfterItReachedTheVoiceIsDrop
 
 	s.mutters(nash, "wait no")
 
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply kept going")
 	logged := s.dropLogged()
 	s.Require().Len(logged, 1)
 	s.Equal(true, logged[0]["sent_to_voice"])
@@ -420,7 +426,7 @@ func (s *AgentSuite) TestFinalWordsOverAReplyNobodyHeardDropIt() {
 
 	s.says(nash, "only the vegetarian options")
 
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "final words left the reply to play")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "final words left the reply to play")
 	s.oneDropSince(dropped)
 }
 
@@ -445,7 +451,7 @@ func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the correction was never answered")
 	corrected := s.model.requests()[2].ID
 	s.mutters(nash, "Nine Name is")
-	s.eventually(func() bool { return s.model.script(corrected).Abandoned() }, "the reply to the correction kept going")
+	s.eventually(func() bool { return s.model.abandoned(corrected) }, "the reply to the correction kept going")
 	s.says(nash, "Nine Name is Alvarez.")
 	s.eventually(func() bool { return len(s.model.requests()) == 4 }, "the newer words were never answered")
 
@@ -480,7 +486,7 @@ func (s *AgentSuite) TestWhatADroppedReplyWasForIsOwedToTheSameCallerAlone() {
 	s.join(true)
 	two := s.answering("two")
 	s.mutters(nash, "wait no")
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply kept going")
 	bob := stt.Participant{ID: "bob"}
 	s.speak(bob)
 
@@ -497,12 +503,12 @@ func (s *AgentSuite) TestEveryDroppedReplyInARowIsOwed() {
 	s.join(true)
 	two := s.answering("two")
 	s.mutters(nash, "wait no")
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the first reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the first reply kept going")
 	s.says(nash, "wait no three")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
 	three := s.model.requests()[1].ID
 	s.mutters(nash, "actually")
-	s.eventually(func() bool { return s.model.script(three).Abandoned() }, "the second reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(three) }, "the second reply kept going")
 
 	s.says(nash, "actually four")
 
@@ -521,12 +527,12 @@ func (s *AgentSuite) TestWhatDroppedRepliesOweKeepsOnlyTheNewestWords() {
 	s.join(true)
 	first := s.answering(numbered("w", 1, 80))
 	s.mutters(nash, "x1 x2")
-	s.eventually(func() bool { return s.model.script(first).Abandoned() }, "the first reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(first) }, "the first reply kept going")
 	s.says(nash, numbered("x", 1, 80))
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
 	second := s.model.requests()[1].ID
 	s.mutters(nash, "y1 y2")
-	s.eventually(func() bool { return s.model.script(second).Abandoned() }, "the second reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(second) }, "the second reply kept going")
 
 	s.says(nash, numbered("y", 1, 10))
 
@@ -542,7 +548,7 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsNotUsedForWhatADroppedRep
 	two := s.answering("two")
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply was never started")
 	s.mutters(nash, "wait no")
-	s.eventually(func() bool { return s.model.script(two).Abandoned() }, "the reply kept going")
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply kept going")
 
 	s.says(nash, "wait no three")
 
@@ -602,7 +608,8 @@ func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorr
 	s.model.writes(newer.ID, "Six at seven, gluten free and a peanut allergy noted.")
 	s.model.finishes(newer.ID)
 
-	s.Never(func() bool { return len(s.model.requests()) > 2 }, 200*time.Millisecond, 5*time.Millisecond,
+	model := s.model
+	s.Never(func() bool { return len(model.requests()) > 2 }, 200*time.Millisecond, 5*time.Millisecond,
 		"the queued words were answered again on their own")
 	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
 	logged := s.logs.records("dropped a queued turn the caller has said more after")
@@ -642,7 +649,7 @@ func (s *AgentSuite) TestQueuedWordsTakenInByADroppedReplyAreOwedToTheNextTurn()
 	newer := s.correctsAQueuedTurn()
 	s.Require().Contains(newer.Instructions, missedNote("Peanut allergy too."))
 	s.mutters(nash, "Under the name")
-	s.eventually(func() bool { return s.model.script(newer.ID).Abandoned() }, "the reply to the correction kept going")
+	s.eventually(func() bool { return s.model.abandoned(newer.ID) }, "the reply to the correction kept going")
 
 	s.says(nash, "Under the name Alvarez.")
 
@@ -674,4 +681,69 @@ func contents(messages []llm.Message) []string {
 		kept = append(kept, message.Content)
 	}
 	return kept
+}
+
+func (s *AgentSuite) TestAResponseStillBeingOpenedIsNotYetAbandoned() {
+	// Create records the request before it stores the response, so a wait on the response
+	// can see the request first. It must read that as "not yet", not dereference nothing.
+	hold := make(chan struct{})
+	model := newStubLLM()
+	model.holdCreate = hold
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stream, err := model.Create(s.ctx, llm.ResponseParams{ID: "opening"})
+		s.NoError(err)
+		s.NotNil(stream)
+	}()
+	s.eventually(func() bool { return len(model.requests()) == 1 }, "the request was never recorded")
+	s.False(model.abandoned("opening"), "a response not yet opened is not abandoned")
+	close(hold)
+	<-done
+	s.False(model.abandoned("opening"), "an opened response nobody dropped is not abandoned")
+	_ = model.Close()
+}
+
+func (s *AgentSuite) TestWritingAResponseStillBeingOpenedWaitsForIt() {
+	// The test reads the id from requests() as soon as Create records it, and writes to the
+	// response before Create has stored it. The write must wait for the response, not
+	// dereference nothing.
+	hold := make(chan struct{})
+	model := newStubLLM()
+	model.holdCreate = hold
+	created := make(chan *llm.Stream, 1)
+	go func() {
+		stream, err := model.Create(s.ctx, llm.ResponseParams{ID: "opening"})
+		s.NoError(err)
+		created <- stream
+	}()
+	s.eventually(func() bool { return len(model.requests()) == 1 }, "the request was never recorded")
+
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		model.writes("opening", "Two of what?")
+		model.finishes("opening")
+	}()
+	close(hold)
+
+	var stream *llm.Stream
+	select {
+	case stream = <-created:
+	case <-time.After(settleFor):
+		s.FailNow("Create never came back")
+	}
+	select {
+	case <-written:
+	case <-time.After(settleFor):
+		s.FailNow("the write never reached the response")
+	}
+	var text string
+	for stream.Next() {
+		if delta, ok := stream.Current().(llm.OutputTextDelta); ok {
+			text += delta.Delta
+		}
+	}
+	s.Equal("Two of what?", text)
+	_ = model.Close()
 }

@@ -191,7 +191,11 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
   the session.
 - Before each run a new credential revision updates the secret; a connection that needs a
-  reconnect, or was deleted, withdraws it. Daytona refuses a request that carries a placeholder it
+  reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
+  longer marks `sandbox`, or binds to another connector or connection (AI-1686, as the tool
+  recheck refuses a call). A withdrawn grant stays withdrawn for the session, even when the binding is put
+  back; the next session gets it. The proxy broker also checks the binding on every request, so
+  the placeholder stops at once; it costs one agent config read per request. Daytona refuses a request that carries a placeholder it
   does not substitute (another host, the query, another session's): 502 «could not reach upstream
   host».
 - Daytona substitutes `Authorization: Basic <placeholder>` and `Basic user:<placeholder>` to a
