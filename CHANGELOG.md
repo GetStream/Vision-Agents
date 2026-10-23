@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### The Go SDK refuses `plugins:` and `plugin_events:` in agent.yaml
+
+`agents.Load` and `agents.New` refuse a folder whose agent.yaml names `plugins:` or `plugin_events:`, with an error that names the key and points to `connectors:`. An empty or null list still loads and sends nothing, as before. Folder sync no longer sends `plugins` or `plugin_events`, and `Settings.Plugins`, `Settings.PluginEvents`, `PluginSettings` and `PluginEventSettings` are gone. Move each plugin to a `connectors:` entry (AI-1784, #1161).
+
 ### The Python SDK refuses `plugins` and `plugin_events` in agent.yaml
 
 Connectors replaced plugins. `plugins.stream` now fails to load an agent folder whose `agent.yaml` names `plugins` or `plugin_events`, with a `ValueError` that points to `connectors`, and never sends either to the router. An empty key (`plugins: []`, or the key with nothing after it) names nothing and loads (AI-1785).

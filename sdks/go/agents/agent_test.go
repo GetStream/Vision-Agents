@@ -625,18 +625,22 @@ func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
 	}
 }
 
-func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
+func TestAnAgentWhoseFolderNamesPluginsIsNotMade(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", `plugins:
-  - sentry
-  - name: linear
-    user: true
-    readonly: true
-    scopes: [read]
-  - name: calcom
-    toolsets: [bookings, availability]
-    tools: [get_bookings, get_availability]
-`)
+	write(t, root, "agent.yaml", "plugins: [sentry]\n")
+
+	if _, err := New(Options{Dir: root}); err == nil || !strings.Contains(err.Error(), "plugins is no longer read") {
+		t.Errorf("an agent naming plugins was made: %v", err)
+	}
+}
+
+// emptyPluginsYAML names plugins and plugin_events with nothing in them. Its sync body was
+// probed on 259da758b, while the SDK still read both keys.
+const emptyPluginsYAML = "name: concierge\nplugins: []\nplugin_events: []\nconnectors:\n  - linear\n"
+
+func TestSyncOfEmptyPluginKeysSendsTheBodyItSentBefore(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", emptyPluginsYAML)
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
 
@@ -646,61 +650,9 @@ func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	named := router.syncs[0].Plugins
-	if named == nil || len(*named) != 3 {
-		t.Fatalf("the plugins went as %+v", named)
-	}
-	if sentry, err := (*named)[0].AsPluginEntry0(); err != nil || sentry != "sentry" {
-		t.Errorf("a plugin with nothing said about it went as %q (%v), not its id", sentry, err)
-	}
-	linear, err := (*named)[1].AsPluginWithOptions()
-	if err != nil || linear.Name != "linear" || linear.User == nil || !*linear.User ||
-		linear.Readonly == nil || !*linear.Readonly ||
-		linear.Scopes == nil || strings.Join(*linear.Scopes, ",") != "read" {
-		t.Errorf("linear went as %+v (%v)", linear, err)
-	}
-	calcom, err := (*named)[2].AsPluginWithOptions()
-	if err != nil || calcom.User != nil || calcom.Toolsets == nil || strings.Join(*calcom.Toolsets, ",") != "bookings,availability" ||
-		calcom.Tools == nil || strings.Join(*calcom.Tools, ",") != "get_bookings,get_availability" {
-		t.Errorf("calcom went as %+v (%v)", calcom, err)
-	}
-}
-
-func TestSyncWarnsThatPluginsAreDeprecatedAndStillSendsThem(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "plugins: [sentry]\nplugin_events:\n  - plugin: sentry\n    event: issue.created\n")
-	router := newBackend(t)
-	var logged bytes.Buffer
-	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml plugins are deprecated: rename plugins to connectors" agent=triage plugins=[sentry] plugin_events=1`) {
-		t.Errorf("no deprecation warning in %q", logged.String())
-	}
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0]
-	if sent.Plugins == nil || len(*sent.Plugins) != 1 || sent.PluginEvents == nil || len(*sent.PluginEvents) != 1 {
-		t.Errorf("the plugins went as %+v and their events as %+v, not as declared", sent.Plugins, sent.PluginEvents)
-	}
-}
-
-func TestSyncWithoutPluginsWarnsOfNone(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "llm: openai/gpt-4o\n")
-	router := newBackend(t)
-	var logged bytes.Buffer
-	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	if strings.Contains(logged.String(), "deprecated") {
-		t.Errorf("an agent naming no plugins was warned: %q", logged.String())
+	const probed = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"5d7a06efa5f0e215c95f81ffe13b0585","name":"concierge"}`
+	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
+		t.Errorf("body = %s", router.syncRaw)
 	}
 }
 
@@ -906,8 +858,9 @@ func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
 }
 
 // controlYAML is an agent.yaml with no connectors key. Its sync body was probed on
-// 80773902 (connectors/tool-patterns), before connectors were read.
-const controlYAML = "name: concierge\nllm: openai/gpt-5.6\nplugins:\n  - sentry\nmcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n"
+// 80773902 (connectors/tool-patterns), before connectors were read, and again on
+// 259da758b once it named no plugins.
+const controlYAML = "name: concierge\nllm: openai/gpt-5.6\nmcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n"
 
 func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
@@ -921,7 +874,7 @@ func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const probed = `{"hash":"9d57177d6eb6a640963fc6c6775fa120","llm":"openai/gpt-5.6","mcp_servers":[{"name":"notes","url":"https://notes.example/mcp"}],"name":"concierge","plugins":["sentry"]}`
+	const probed = `{"hash":"357bca9fcbc1f2902b8344437a2baecd","llm":"openai/gpt-5.6","mcp_servers":[{"name":"notes","url":"https://notes.example/mcp"}],"name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
 	}
