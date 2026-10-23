@@ -37,8 +37,8 @@ class ManageLimitInput:
             level; an app, and a category or team within one, app level.
         note (str | Unset):
         team (str | Unset): The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
-        user_id (str | Unset): The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _
-            and -.
+        user_id (str | Unset): The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to
+            255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
     """
 
     interval: LimitInterval

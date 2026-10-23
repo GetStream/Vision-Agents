@@ -29,8 +29,8 @@ class ManageLimitResetInput:
             a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:.
         intervals (list[LimitInterval] | None | Unset): The windows to reset. Left out, every one.
         team (str | Unset): The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
-        user_id (str | Unset): The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _
-            and -.
+        user_id (str | Unset): The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to
+            255 characters of A-Z, a-z, 0-9, @, _, ., - and space.
     """
 
     organization_id: str

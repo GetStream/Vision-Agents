@@ -35,10 +35,11 @@ var (
 )
 
 // What a limit's ids may hold. A key is never an origin (hook:chat), which holds a ':'. A user
-// id is held to the characters Stream's user ids may have.
+// id is held to Stream Chat's rule for user ids: 1 to 255 bytes of ASCII letters, digits, @, _,
+// ., - and space.
 var (
 	limitKeyID  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	limitUserID = regexp.MustCompile(`^[A-Za-z0-9@_-]{1,255}$`)
+	limitUserID = regexp.MustCompile(`^[@\w .-]{1,255}$`)
 )
 
 // LimitSubject is what a limit is on: whose spend it counts.
@@ -137,7 +138,7 @@ type LimitTarget struct {
 	Subject  LimitSubject `json:"subject"`
 	AppId    string       `json:"app_id,omitempty" maxLength:"255" doc:"The app. Required at app, api_key and user level, and for an app's category or team."`
 	ApiKey   string       `json:"api_key,omitempty" maxLength:"128" doc:"The key: 1 to 128 characters of A-Z, a-z, 0-9, _ and -."`
-	UserId   string       `json:"user_id,omitempty" maxLength:"255" doc:"The end user, as the app's tokens name them: 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -."`
+	UserId   string       `json:"user_id,omitempty" maxLength:"255" doc:"The end user, as the app's tokens name them, with Stream Chat's rule for user ids: 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space."`
 	Team     string       `json:"team,omitempty" maxLength:"59" doc:"The team, for subject team or app_team: 1 to 59 characters of A-Z, a-z, 0-9, _ . and -."`
 	Category string       `json:"category,omitempty" maxLength:"64" doc:"The usage category, for subject category or app_category: 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -. A team is subject team, never a category starting team:."`
 }
@@ -598,7 +599,7 @@ func target(sent LimitTarget, level LimitLevel, organization string) (usage.Subj
 		return ref, "", invalidRequest("api_key is 1 to 128 characters of A-Z, a-z, 0-9, _ and -, and an origin such as hook:chat is no key")
 	}
 	if ref.UserID != "" && (!limitUserID.MatchString(ref.UserID) || usage.IDProblem(ref.UserID) != "") {
-		return ref, "", invalidRequest("user_id is 1 to 255 characters of A-Z, a-z, 0-9, @, _ and -")
+		return ref, "", invalidRequest("user_id is 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space, as Stream Chat's user ids are")
 	}
 	return ref, chosen, nil
 }
