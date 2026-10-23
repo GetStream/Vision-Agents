@@ -140,6 +140,7 @@ func (s *CallRecordingSuite) TestEachCallIsCountedAndTimedUnderItsOperation() {
 		s.Equal(calls, counted(op, "200", outcomeOK)-before[op], op)
 		s.Equal(uint64(calls), s.timed(op, outcomeOK)-timedBefore[op], op)
 	}
+	s.span("mem0.delete")
 }
 
 func (s *CallRecordingSuite) TestOnlyADeletionWithNothingToDeleteCountsAnEmptyList() {
