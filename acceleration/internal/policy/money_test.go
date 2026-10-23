@@ -95,15 +95,15 @@ func (l *logs) String() string {
 	return l.buf.String()
 }
 
-// billed is an enforcer reading money from the suite's usage service through a front of its
+// reading is an enforcer reading money from the suite's usage service through a front of its
 // own, and what it logged.
-type billed struct {
+type reading struct {
 	*Enforcer
 	front *front
 	logs  *logs
 }
 
-func (s *PolicySuite) billed(change ...func(*Settings)) *billed {
+func (s *PolicySuite) billed(change ...func(*Settings)) *reading {
 	service := s.usage()
 	f := s.front(service)
 	client, err := usage.NewClient(usage.ClientOptions{URL: f.server.URL, Token: service.Token})
@@ -113,7 +113,7 @@ func (s *PolicySuite) billed(change ...func(*Settings)) *billed {
 	written := &logs{}
 	logger := slog.New(slog.NewTextHandler(written, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	enforcer := s.newEnforcer(configs, logger, append([]func(*Settings){func(settings *Settings) { settings.Usage = client }}, change...)...)
-	return &billed{Enforcer: enforcer, front: f, logs: written}
+	return &reading{Enforcer: enforcer, front: f, logs: written}
 }
 
 // admit is Admit, which must refuse nothing outright.
@@ -620,6 +620,27 @@ func (s *PolicySuite) TestWithNoUsageServiceAWrittenRowLetsItsHoldGo() {
 
 	s.eventually(func() bool { return pending(s.enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond)
 	s.NoError(s.admit(s.enforcer, s.app).Spend, "counted once, in the shard")
+}
+
+func (s *PolicySuite) TestAnAppInNoOrganizationKeepsToItsOwnBudget() {
+	alone := s.app + "-alone"
+	s.save(store.ScopeApp, alone, store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}})
+	s.spend(alone, 1_000_000)
+
+	s.spendRefused(s.enforcer, alone, ErrBudgetSpent)
+	for _, enforcer := range []*Enforcer{s.enforcer, s.billed().Enforcer} {
+		s.ErrorIs(s.spendRefused(enforcer, alone, ErrBudgetSpent), ErrBudgetSpent,
+			"with or without a usage service, which is never asked about an app that bills nobody")
+	}
+}
+
+func (s *PolicySuite) TestAnAppInNoOrganizationWithNoBudgetIsNeverRefused() {
+	enforcer := s.billed()
+	alone := s.app + "-alone"
+
+	s.never(func() bool { return s.admit(enforcer.Enforcer, alone).Spend != nil }, 400*time.Millisecond, 10*time.Millisecond,
+		"no organization is no credit to read, and its tier's fail mode never applies")
+	s.Zero(enforcer.front.standings.Load())
 }
 
 func (s *PolicySuite) TestAnIdleDecisionIsDropped() {

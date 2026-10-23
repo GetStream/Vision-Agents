@@ -253,14 +253,18 @@ func (m *money) pass(ctx context.Context) {
 	now := time.Now()
 	budgets := map[string][]scoped{}
 	organizations := map[string]bool{}
-	for _, decided := range e.inUse(now) {
-		if decided.organization == "" {
-			continue
+	for app, decided := range e.inUse(now) {
+		key := decided.organization
+		if key == "" {
+			if len(decided.budgets) == 0 {
+				continue
+			}
+			key = appAccount(app)
 		}
-		organizations[decided.organization] = true
+		organizations[key] = true
 		for _, budget := range decided.budgets {
-			if !slices.Contains(budgets[decided.organization], budget) {
-				budgets[decided.organization] = append(budgets[decided.organization], budget)
+			if !slices.Contains(budgets[key], budget) {
+				budgets[key] = append(budgets[key], budget)
 			}
 		}
 	}
@@ -337,14 +341,17 @@ func (m *money) standings(ctx context.Context, organizations []string) (map[stri
 	standings := make(map[string]usage.Standing, len(organizations))
 	landed := make(map[string]time.Time, len(organizations))
 	unread := map[string]bool{}
-	if m.settings.Usage == nil {
-		now := time.Now()
-		for _, organization := range organizations {
-			standings[organization] = usage.Standing{OrganizationID: organization, Status: usage.AccountActive}
-			landed[organization] = now
+	asked := make([]string, 0, len(organizations))
+	now := time.Now()
+	for _, organization := range organizations {
+		if m.settings.Usage != nil && billed(organization) {
+			asked = append(asked, organization)
+			continue
 		}
-		return standings, landed, unread
+		standings[organization] = usage.Standing{OrganizationID: organization, Status: usage.AccountActive}
+		landed[organization] = now
 	}
+	organizations = asked
 	for start := 0; start < len(organizations); start += standingsChunk {
 		part := organizations[start:min(start+standingsChunk, len(organizations))]
 		query := usage.StandingQuery{Organizations: make([]usage.StandingOrganization, len(part))}
@@ -452,7 +459,7 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 		organization = decided.organization
 	}
 	if organization == "" {
-		return
+		organization = appAccount(owner.CustomerID)
 	}
 	m := &e.money
 	now := time.Now()
@@ -541,8 +548,15 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 			decided.organization = organization
 		}
 	}
-	if m.off() || organization == "" {
+	if m.off() {
 		return nil, nil
+	}
+	if organization == "" {
+		// An app in no organization bills nobody, and has only its own budgets to keep to.
+		if len(decided.budgets) == 0 {
+			return nil, nil
+		}
+		organization = appAccount(appID)
 	}
 	now := time.Now()
 	m.mu.Lock()
@@ -553,7 +567,7 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 		return nil, nil
 	}
 	acct.used = now
-	refusal, spend, reason := m.refusal(acct, appID, decided, now)
+	refusal, spend, reason := m.refusal(acct, billed(organization), appID, decided, now)
 	why := acct.standing.StatusReason
 	m.mu.Unlock()
 
@@ -570,12 +584,14 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 	return nil, nil
 }
 
-// refusal works spendable's answer out of the account, under m.mu, and names the reason.
-func (m *money) refusal(acct *account, appID string, decided decision, now time.Time) (refusal, spend error, reason string) {
+// refusal works spendable's answer out of the account, under m.mu, and names the reason. An
+// account that is not billed is an app's in no organization, which keeps to its budgets alone.
+func (m *money) refusal(acct *account, isBilled bool, appID string, decided decision, now time.Time) (refusal, spend error, reason string) {
+	billing := isBilled && m.settings.Usage != nil
 	if acct.read.IsZero() {
 		// Nothing read yet: admitted, unless it has gone unread for MaxStale and the tier it was
 		// last seen on, or failing that the default, fails closed.
-		if m.settings.Usage != nil && now.Sub(acct.wanted) > m.settings.MaxStale &&
+		if billing && now.Sub(acct.wanted) > m.settings.MaxStale &&
 			m.failModes[m.enforcer.knownTier(decided.organization)] != usage.FailOpen {
 			return nil, errUnreadable, reasonUnreadable
 		}
@@ -585,11 +601,11 @@ func (m *money) refusal(acct *account, appID string, decided decision, now time.
 	if standing.Status == usage.AccountSuspended {
 		return ErrSuspended, nil, reasonSuspended
 	}
-	if m.settings.Usage != nil && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
+	if billing && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
 		return nil, errUnreadable, reasonUnreadable
 	}
 	pending := acct.pending(now, scope{})
-	if m.settings.Usage != nil && standing.BalanceMicros-pending <= 0 {
+	if billing && standing.BalanceMicros-pending <= 0 {
 		return nil, errNoBalance, reasonNoCredit
 	}
 	clock := m.settings.Now()
@@ -688,6 +704,14 @@ func dollars(micros int64) string {
 	}
 	return fmt.Sprintf("%s$%s.%02d", sign, grouped.String(), cents%100)
 }
+
+// appAccount is the key of the account an app in no known organization keeps its own budgets
+// on. It bills nobody, so the usage service is never asked about it; no organization id holds
+// a NUL.
+func appAccount(appID string) string { return "\x00app\x00" + appID }
+
+// billed reports whether an account is an organization's, which the usage service bills.
+func billed(key string) bool { return !strings.HasPrefix(key, "\x00") }
 
 // knownTier is the tier this process last knew the organization by, without reading anything.
 func (e *Enforcer) knownTier(organizationID string) string {
