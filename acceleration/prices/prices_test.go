@@ -39,6 +39,27 @@ func (s *PricesSuite) TestTheVendorFileIsAValidList() {
 	s.NotEmpty(Vendor().Entries)
 }
 
+// TestOnlyALinuxContainerSandboxIsPriced: Daytona prices other classes, such as a Windows
+// vCPU, higher, so a sandbox of any other class is unpriced rather than billed at the
+// container's rates.
+func (s *PricesSuite) TestOnlyALinuxContainerSandboxIsPriced() {
+	list, err := pricing.NewList("vendor", Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	used := pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600}
+
+	for _, model := range []string{"running", "stopped"} {
+		container := list.Quote(pricing.Item{Modality: "sandbox", Provider: "daytona", Model: model,
+			Attributes: map[string]string{"class": "container"}}, used)
+		s.False(container.Unpriced, model)
+		s.Positive(container.CostMicros, model)
+		for _, class := range []string{"linux-vm", "windows", "android", ""} {
+			other := list.Quote(pricing.Item{Modality: "sandbox", Provider: "daytona", Model: model,
+				Attributes: map[string]string{"class": class}}, used)
+			s.True(other.Unpriced, "%s %s", model, class)
+		}
+	}
+}
+
 func (s *PricesSuite) TestTheVendorFileHasNoMarkup() {
 	vendor := Vendor()
 

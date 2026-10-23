@@ -103,6 +103,18 @@ func (c Config) Timeout() time.Duration {
 	return min(time.Duration(c.TimeoutMs)*time.Millisecond, MaxTimeout)
 }
 
+// Lifecycle is when a provider stops a sandbox nothing runs in, and deletes one that has
+// stopped. A provider bills a sandbox by what it holds in each of those states, so whoever
+// meters it keeps the same clock.
+type Lifecycle struct {
+	// IdleStop is how long a sandbox runs nothing before it is stopped. Zero is the
+	// provider's own default.
+	IdleStop time.Duration
+	// StoppedDelete is how long a stopped sandbox is kept before it is deleted. Zero keeps
+	// it for as long as the provider does on its own.
+	StoppedDelete time.Duration
+}
+
 // Sandbox runs code somewhere isolated from everything that matters.
 type Sandbox interface {
 	// Run executes a piece of Python and returns what it printed, and the files named in
@@ -112,6 +124,11 @@ type Sandbox interface {
 	// Write puts a file into the sandbox at a path relative to where code runs, making the
 	// directories it sits in.
 	Write(ctx context.Context, path string, data []byte) error
+	// Ready makes sure the sandbox is there to run code in, creating it, starting it again
+	// after it stopped, or making a new one after it was deleted, and says which one it is:
+	// the number goes up each time a new one is made, which holds nothing written into the
+	// one before.
+	Ready(ctx context.Context) (generation int, err error)
 	// Close releases whatever was held open to run code. Safe to call twice.
 	Close() error
 }

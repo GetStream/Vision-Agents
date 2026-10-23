@@ -1754,6 +1754,7 @@ func buildSessions(
 	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
 		return nil, err
 	}
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
 	return session.NewManager(options)
 }
 

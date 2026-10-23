@@ -216,6 +216,8 @@
     {"modality":"memory","provider":"mem0","model":"forget","free":true},
     {"modality":"tts","provider":"elevenlabs","model":"voice_clone","free":true},
     {"modality":"tts","provider":"cartesia","model":"voice_clone","free":true},
-    {"modality":"tts","provider":"fish","model":"voice_clone","free":true}
+    {"modality":"tts","provider":"fish","model":"voice_clone","free":true},
+    {"modality":"sandbox","provider":"daytona","model":"running","when":{"class":"container"},"rates":{"vcpu_seconds":{"usd":0.0504,"per":3600},"memory_gb_seconds":{"usd":0.0162,"per":3600},"disk_gb_seconds":{"usd":0.000108,"per":3600}}},
+    {"modality":"sandbox","provider":"daytona","model":"stopped","when":{"class":"container"},"rates":{"disk_gb_seconds":{"usd":0.000108,"per":3600}}}
   ]
 }
