@@ -303,6 +303,9 @@ type RouterSuite struct {
 	// providers listen on loopback, which egress refuses, to set before it starts the harness.
 	// Nil is egress's, as in the router.
 	connectorHTTP *http.Client
+	// approvalWait is how long a connector call held for approval waits, for a suite to set
+	// before it starts the harness. Zero is the router's ten minutes.
+	approvalWait time.Duration
 	// publicURL and dashboardURL are the router's ROUTER_PUBLIC_URL and DASHBOARD_BASE_URL,
 	// for a suite about connector consents to set before it starts the harness. Empty leaves
 	// them unset, as a deployment that never set them has.
@@ -451,7 +454,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.transports = transports
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
-		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL)}, logger)
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)

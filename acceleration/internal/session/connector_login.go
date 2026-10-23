@@ -207,6 +207,9 @@ func loginTools(alias string) []harness.Tool {
 // askIn has the logins ask in conv, the session's own conversation, and keep what they open
 // with chose.
 func (d *dispatcher) askIn(conv *persistent.Conversation, chose func(name, connectionID string)) {
+	if conv != nil {
+		d.approvals.asksIn(conv)
+	}
 	if d.logins != nil && conv != nil {
 		d.logins.ask, d.logins.canAsk = conv.AskToConnect, conv.CanAskToConnect
 		d.logins.shows, d.logins.connected = conv.ShowsLogin, conv.ConnectorConnected
@@ -251,11 +254,12 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 		arguments = "{}"
 	}
 	run := llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments}
-	if err := d.recheck(ctx, found); err != nil {
+	current, err := d.recheck(ctx, found)
+	if err != nil {
 		d.record(found, run, started, failure{kind: store.InvocationDenied}, err)
 		return nil, err
 	}
-	parts, how, err := d.call(ctx, found, run)
+	parts, how, err := d.call(ctx, found, current, run)
 	d.record(found, run, started, how, err)
 	return parts, err
 }

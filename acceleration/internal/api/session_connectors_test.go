@@ -53,6 +53,9 @@ func (s *SessionConnectorsSuite) SetupSuite() {
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	s.connectorHTTP = s.provider.Client()
+	// A call held for approval waits this long here, ten minutes in production, so a test can
+	// see nobody answer (connector_approvals_test.go). Every other test answers within it.
+	s.approvalWait = 5 * time.Second
 	s.RouterSuite.SetupSuite()
 	s.token = issuedToken(&s.RouterSuite, s.provider)
 }

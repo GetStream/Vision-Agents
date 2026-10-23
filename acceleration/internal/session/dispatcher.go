@@ -66,6 +66,8 @@ type dispatcher struct {
 	// and schemes their connections' schemes by binding name.
 	grants  []sandbox.Grant
 	schemes map[string]core.Scheme
+	// approvals are the calls held for their person to allow them (connector_approval.go).
+	approvals approvals
 }
 
 // route is what one offered name was opened for.
@@ -108,11 +110,12 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		return nil, errUnknownTool(call.Name)
 	}
 	started := time.Now()
-	if err := d.recheck(ctx, found); err != nil {
+	current, err := d.recheck(ctx, found)
+	if err != nil {
 		d.record(found, call, started, failure{kind: store.InvocationDenied}, err)
 		return nil, err
 	}
-	parts, how, err := d.call(ctx, found, call)
+	parts, how, err := d.call(ctx, found, current, call)
 	d.record(found, call, started, how, err)
 	return parts, err
 }
@@ -334,9 +337,17 @@ func (d *dispatcher) Close() {
 // waited reads the limiter again once it has its slot: the call it waited behind may have
 // been answered 429.
 //
+// A tool the binding's require_approval names, as the session opened it or as the config is now
+// (current), is not sent until the session's user allows the call (holdForApproval).
+//
 // It also says how the call failed, for its row and its log line: no kind when it answered,
 // else one of the store.Invocation* values.
-func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
+func (d *dispatcher) call(ctx context.Context, r route, current store.ConnectorBinding, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
+	if requiresApproval(r.binding, r.tool) || requiresApproval(current, r.tool) {
+		if allowed, parts, how, err := d.holdForApproval(ctx, r, call); !allowed {
+			return parts, how, err
+		}
+	}
 	policy := r.binding.Policy
 	if policy != nil && policy.OnInterrupt == store.InterruptWait {
 		ctx = context.WithoutCancel(ctx)
@@ -520,10 +531,10 @@ func retryAfterSeconds(wait time.Duration) int64 {
 // connection must still be live, connected, one
 // the binding may use, and reach where it reached when the session opened: the same
 // definition revision, inputs and captured metadata, which are what its endpoints are built
-// from. Two reads by primary key per call.
-func (d *dispatcher) recheck(ctx context.Context, r route) error {
-	refuse := func(why string) error {
-		return stack.Wrap(fmt.Errorf("session: connector %q: %s, so %s was not called",
+// from. Two reads by primary key per call. It returns the binding as the config holds it now.
+func (d *dispatcher) recheck(ctx context.Context, r route) (store.ConnectorBinding, error) {
+	refuse := func(why string) (store.ConnectorBinding, error) {
+		return store.ConnectorBinding{}, stack.Wrap(fmt.Errorf("session: connector %q: %s, so %s was not called",
 			r.binding.Name, why, r.binding.Name+mcp.Separator+r.tool))
 	}
 	config, err := d.store.AgentConfig(ctx, d.spec.CustomerID, d.spec.ConfigID)
@@ -559,7 +570,7 @@ func (d *dispatcher) recheck(ctx context.Context, r route) error {
 		!maps.Equal(connection.Inputs, r.connection.Inputs) || !maps.Equal(connection.Metadata, r.connection.Metadata):
 		return refuse("the connection changed where it reaches since the session opened")
 	}
-	return nil
+	return current, nil
 }
 
 // boundAlias reports whether a connector binding of the spec is called alias.

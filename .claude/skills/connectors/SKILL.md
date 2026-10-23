@@ -162,6 +162,14 @@ session's `return_url`. On iOS that is StreamChatAI's `AIToolAuthorizationView`,
 `examples/voice_agents/swift_assistant` uses for Gmail and Linear. A spoken turn on a call has
 no reply to show it on, so by voice the binding answers that it is not available.
 
+`require_approval: ["create_issue", "delete_*"]` on a binding holds each call of a tool it names
+until the session's user allows it. The call's step is `awaiting_approval`, addressed to them, and
+nothing reaches the provider before they answer with `tool_approval` (`tool_call_id`, the reply's
+`request_id`, `allowed`), on their socket or their backend's. Declined, or not answered in ten
+minutes, the call is not sent and the model is told. A session with nobody to ask (incognito, a
+run, a shared chat, an MCP event's) refuses the call at once. An entry must match a tool the
+binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
+
 For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
 router uses the user's only connected connection to that connector, if there is exactly one.
