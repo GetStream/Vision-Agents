@@ -2575,6 +2575,7 @@ Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
 - `GET /v1/{modality}/providers` lists each model's `supports`: the options it can be asked for, such as `keyterms` and `diarize`, and left out when it takes none. Which models take keyterms was only in the router's config (#1014, AI-1419).
+- `resume_history` on an agent config, or on a server-side `POST /v1/agents/sessions`, sets how a conversation a session carries on is handed back to the model. `include_tools` replays each reply's recorded tool calls and their results, so a resumed agent does not run its tools again; over `max_characters` the oldest results are trimmed first and the conversation's first message is kept. `max_messages` (1 to 100) and `max_characters` (1,000 to 400,000) replace the 100-turn and 60,000-character caps. Left out, a resumed session is handed what it was before.
 
 ## Bug Fixes
 

@@ -312,6 +312,7 @@ from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .respond_request import RespondRequest
+from .resume_history import ResumeHistory
 from .review_actor import ReviewActor
 from .review_analysis import ReviewAnalysis
 from .review_cause import ReviewCause
@@ -784,6 +785,7 @@ __all__ = (
     "RecordingSource",
     "RecordingStatus",
     "RespondRequest",
+    "ResumeHistory",
     "ReviewActor",
     "ReviewAnalysis",
     "ReviewCause",

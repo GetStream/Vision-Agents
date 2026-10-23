@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
     from ..models.plugin_with_options import PluginWithOptions
+    from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
@@ -80,6 +81,8 @@ class AgentConfigRequest:
             once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and
             the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs
             one.
+        resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
+            on.
         review (AgentReview | Unset): How a finished call under an agent is reviewed.
         role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
             app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a
@@ -138,6 +141,7 @@ class AgentConfigRequest:
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
     role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
@@ -226,6 +230,10 @@ class AgentConfigRequest:
                 else:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
+
+        resume_history: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resume_history, Unset):
+            resume_history = self.resume_history.to_dict()
 
         review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review, Unset):
@@ -316,6 +324,8 @@ class AgentConfigRequest:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if resume_history is not UNSET:
+            field_dict["resume_history"] = resume_history
         if review is not UNSET:
             field_dict["review"] = review
         if role is not UNSET:
@@ -364,6 +374,7 @@ class AgentConfigRequest:
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
+        from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
@@ -467,6 +478,13 @@ class AgentConfigRequest:
 
                 plugins.append(plugins_item)
 
+        _resume_history = d.pop("resume_history", UNSET)
+        resume_history: ResumeHistory | Unset
+        if isinstance(_resume_history, Unset):
+            resume_history = UNSET
+        else:
+            resume_history = ResumeHistory.from_dict(_resume_history)
+
         _review = d.pop("review", UNSET)
         review: AgentReview | Unset
         if isinstance(_review, Unset):
@@ -556,6 +574,7 @@ class AgentConfigRequest:
             mode=mode,
             plugin_events=plugin_events,
             plugins=plugins,
+            resume_history=resume_history,
             review=review,
             role=role,
             sandbox=sandbox,

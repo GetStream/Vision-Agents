@@ -549,7 +549,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		c.data.Owner = caller
 		c.shared, c.thread = page.shared, page.thread
 		c.active = true
-		h, tr := history(page)
+		h, tr := restored(ctx, cid, page)
 		return c, h, tr, nil
 	}
 	pin := app
@@ -611,7 +611,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		}
 	}
 	c.mu.Unlock()
-	h, tr := history(page)
+	h, tr := restored(ctx, cid, page)
 	return c, h, tr, nil
 }
 func (s *Service) History(ctx context.Context, customer, agentID, cid, before string) (Page, error) {
@@ -659,7 +659,7 @@ func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, 
 	if err != nil {
 		return nil, false, err
 	}
-	messages, truncated := history(page)
+	messages, truncated := restored(ctx, cid, page)
 	return messages, truncated, nil
 }
 
@@ -1018,14 +1018,19 @@ const (
 )
 
 func history(p Page) ([]llm.Message, bool) {
-	var out []llm.Message
-	size := 0
-	limit := MaxHistoryMessages
-	if p.shared {
-		size = utf8.RuneCountInString(sharedHistoryAttribution)
-		limit--
-	}
-	tr := p.Truncated
+	return Restore{}.history(p, nil, "")
+}
+
+// entry is one completed turn history may hand back, with the turn id of a reply.
+type entry struct {
+	message llm.Message
+	turn    string
+}
+
+// entries are the completed user and assistant turns of a page, newest first. A reply with
+// nothing to say is kept, with no content, for the tool calls it may have made.
+func entries(p Page) []entry {
+	var out []entry
 	// replied is whether a reply came after the message being read. The people's messages
 	// in a thread channel after the last reply are the ones the session is about to be told
 	// (Session.FollowUp), so they are not history yet: read here too, the model would see
@@ -1045,73 +1050,69 @@ func history(p Page) ([]llm.Message, bool) {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
-		said := m.Text
-		if m.Role == "user" && len(m.Files) > 0 {
-			// The model saw the photos with the reply to this message alone, as it does while
-			// a session is open, so history says they were sent rather than sending them again.
-			said += "\n\n" + photoNote(len(m.Files))
-		}
-		content := said
-		var artifacts []ArtifactAttachment
-		for _, artifact := range m.Artifacts {
-			if len(artifacts) == maxArtifactAttachments {
-				break
-			}
-			if validArtifact(artifact) {
-				artifacts = append(artifacts, artifact)
-			}
-		}
-		if len(artifacts) > 0 && m.Role == "assistant" {
-			envelope, _ := json.Marshal(struct {
-				Text      string               `json:"text,omitempty"`
-				Artifacts []ArtifactAttachment `json:"saved_artifact_references"`
-			}{m.Text, artifacts})
-			content = historicalArtifactContext + string(envelope)
-		}
-		if content == "" {
+		e := entryOf(p, m)
+		if e.message.Content == "" && e.turn == "" {
 			continue
 		}
-		if p.shared && m.Role == "user" {
-			// Labels are quoted user data, not instructions or authorization.
-			label := []rune(m.authorName)
-			if len(label) > MaxAuthorName {
-				label = label[:MaxAuthorName]
-			}
-			envelope, _ := json.Marshal(struct {
-				Author struct {
-					ID   string `json:"user_id"`
-					Name string `json:"display_name,omitempty"`
-				} `json:"author"`
-				Text string `json:"text"`
-			}{Author: struct {
-				ID   string `json:"user_id"`
-				Name string `json:"display_name,omitempty"`
-			}{m.authorID, string(label)}, Text: said})
-			content = string(envelope)
-		}
-		if size+utf8.RuneCountInString(content) > MaxHistoryRunes || len(out) == limit {
-			tr = true
+		out = append(out, e)
+	}
+	return out
+}
+
+func entryOf(p Page, m Message) entry {
+	said := m.Text
+	if m.Role == "user" && len(m.Files) > 0 {
+		// The model saw the photos with the reply to this message alone, as it does while
+		// a session is open, so history says they were sent rather than sending them again.
+		said += "\n\n" + photoNote(len(m.Files))
+	}
+	content := said
+	var artifacts []ArtifactAttachment
+	for _, artifact := range m.Artifacts {
+		if len(artifacts) == maxArtifactAttachments {
 			break
 		}
-		size += utf8.RuneCountInString(content)
-		role := llm.User
-		if m.Role == "assistant" {
-			role = llm.Assistant
-			// A reply that linked artifacts is restored as a record of them, not as words the
-			// model said, so it cannot learn to claim a save by writing the record.
-			if len(artifacts) > 0 {
-				role = llm.System
-			}
+		if validArtifact(artifact) {
+			artifacts = append(artifacts, artifact)
 		}
-		out = append(out, llm.Message{Role: role, Content: content})
 	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
+	if len(artifacts) > 0 && m.Role == "assistant" {
+		envelope, _ := json.Marshal(struct {
+			Text      string               `json:"text,omitempty"`
+			Artifacts []ArtifactAttachment `json:"saved_artifact_references"`
+		}{m.Text, artifacts})
+		content = historicalArtifactContext + string(envelope)
 	}
-	if p.shared && len(out) > 0 {
-		out = append([]llm.Message{{Role: llm.System, Content: sharedHistoryAttribution}}, out...)
+	if content != "" && p.shared && m.Role == "user" {
+		// Labels are quoted user data, not instructions or authorization.
+		label := []rune(m.authorName)
+		if len(label) > MaxAuthorName {
+			label = label[:MaxAuthorName]
+		}
+		envelope, _ := json.Marshal(struct {
+			Author struct {
+				ID   string `json:"user_id"`
+				Name string `json:"display_name,omitempty"`
+			} `json:"author"`
+			Text string `json:"text"`
+		}{Author: struct {
+			ID   string `json:"user_id"`
+			Name string `json:"display_name,omitempty"`
+		}{m.authorID, string(label)}, Text: said})
+		content = string(envelope)
 	}
-	return out, tr
+	role := llm.User
+	turn := ""
+	if m.Role == "assistant" {
+		role = llm.Assistant
+		turn = m.TurnID
+		// A reply that linked artifacts is restored as a record of them, not as words the
+		// model said, so it cannot learn to claim a save by writing the record.
+		if len(artifacts) > 0 {
+			role = llm.System
+		}
+	}
+	return entry{message: llm.Message{Role: role, Content: content}, turn: turn}
 }
 
 // photoNote follows a person's words in history when they sent photos with them.

@@ -343,6 +343,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	var conv *persistent.Conversation
 	var previous []llm.Message
+	reading := m.restoring(ctx, spec)
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {
@@ -360,7 +361,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -402,7 +403,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
 		if spec.Recall != nil && spec.Recall.Messages == nil {
-			recalled, cut, err := service.ContextForCaller(ctx, spec.CustomerID,
+			recalled, cut, err := service.ContextForCaller(reading, spec.CustomerID,
 				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
 				conv.Release()
@@ -429,7 +430,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			}
 		}
 		var truncated bool
-		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
+		previous, truncated, err = service.ContextForCaller(reading, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}

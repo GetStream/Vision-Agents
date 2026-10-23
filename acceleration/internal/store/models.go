@@ -411,6 +411,9 @@ type AgentConfig struct {
 	// sends a tool's full description the first time it is called instead of running it
 	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
 	ProgressiveTools bool `bun:"progressive_tools,notnull"`
+	// ResumeHistory is how the config's sessions are handed back a conversation they
+	// carry on. The zero value is the router's default.
+	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1566,6 +1569,22 @@ func (m ModelOverwrites) Empty() bool {
 	return m == ModelOverwrites{}
 }
 
+// ResumeHistory is how much of a conversation a model is handed back when a session opens
+// on it: reopened, resumed by id, joined by voice or forked. The zero value is the router's
+// default: replies as text, the newest 100 turns within 60000 characters.
+type ResumeHistory struct {
+	// IncludeTools hands each reply back with the tool calls it made and what they
+	// returned, as they were recorded. Over MaxCharacters the oldest results are trimmed
+	// first, and the conversation's first message is kept.
+	IncludeTools bool `json:"include_tools,omitempty"`
+	// MaxMessages is how many turns are handed back, zero for 100. Tool calls and their
+	// results are not turns.
+	MaxMessages int `json:"max_messages,omitempty"`
+	// MaxCharacters is how much text is handed back, tool calls and results included, zero
+	// for 60000.
+	MaxCharacters int `json:"max_characters,omitempty"`
+}
+
 // AgentSession is one session a caller opened, kept so it can be found after the process
 // that held it is gone.
 //
@@ -1615,7 +1634,10 @@ type AgentSession struct {
 	// ReturnURL is where the consents the session asks for in the chat go back to. Empty,
 	// stored as NULL, is the dashboard. Never shown in the session's own answer.
 	ReturnURL string `bun:"return_url,nullzero"`
-	State     string `bun:"state,notnull"`
+	// ResumeHistory is what the session was opened with, which reopening it keeps. Zero
+	// takes the config's.
+	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
+	State         string        `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`

@@ -348,6 +348,7 @@ func sessionRow(created *Session) store.AgentSession {
 		Project:         spec.Project,
 		Custom:          spec.Custom,
 		ModelOverwrites: spec.ModelOverwrites,
+		ResumeHistory:   spec.ResumeHistory,
 		ForkedFrom:      spec.ForkedFrom,
 		ReturnURL:       spec.ReturnURL,
 		State:           store.SessionRunning,

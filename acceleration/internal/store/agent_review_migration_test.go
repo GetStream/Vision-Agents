@@ -64,9 +64,11 @@ func (s *AgentReviewMigrationSuite) TestAConfigFromBeforeTheMigrationHasNoReview
 
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", agentReviewVersion))
 
-	config, err := s.db.AgentConfig(s.ctx, "app", "older")
-	s.Require().NoError(err)
-	s.Empty(config.ReviewInstructions)
+	// Read by column: the model has columns later migrations add.
+	var instructions string
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		`SELECT review_instructions FROM agent_configs WHERE id = 'older'`).Scan(&instructions))
+	s.Empty(instructions)
 }
 
 func (s *AgentReviewMigrationSuite) TestTheMigrationComesOffAgain() {

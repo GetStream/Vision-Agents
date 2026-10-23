@@ -228,6 +228,9 @@ type Spec struct {
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
+	// ResumeHistory is how a conversation the session carries on is handed back to the
+	// model: the session request's, else the agent config's. Zero is the router's default.
+	ResumeHistory store.ResumeHistory
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
@@ -373,6 +376,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
 		ProgressiveTools:   config.ProgressiveTools,
+		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
 		Tags:               routing.Tags(config.Tags),
 	}
