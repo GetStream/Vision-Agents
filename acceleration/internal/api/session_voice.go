@@ -44,7 +44,8 @@ func (s *Server) registerSessionVoice(api huma.API) {
 			"Starting voice on a session that is already on its call changes nothing, and naming " +
 			"another call while it is on is refused. A " +
 			"conversation in writing that ended is carried on under the same id, as a message to " +
-			"it is.",
+			"it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: " +
+			"the socket was its call, and stopping voice hung it up, so open a new socket.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The agent is on the call"},
 			"409": errorResponse("Voice is on another call"),
