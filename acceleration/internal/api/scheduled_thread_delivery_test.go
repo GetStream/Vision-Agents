@@ -362,6 +362,17 @@ func (s *TelnyxChannelSuite) TestAThreadTaskInItsQuietHoursIsHeld() {
 	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
+// A task the agent made in an SMS thread says it is delivered by SMS, where it goes.
+func (s *TelnyxChannelSuite) TestAThreadTaskSaysItIsDeliveredOnTheThreadsChannel() {
+	task, _ := s.scheduledInThread("+13125550001")
+
+	var read ScheduledTask
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/scheduled-tasks/"+task.ID, nil, &read))
+
+	s.Equal([]string{"sms"}, read.DeliverTo)
+	s.Equal([]string{"sms"}, task.Channels)
+}
+
 // A thread task is delivered on its thread, so its deliver_to cannot be changed; its other
 // fields can.
 func (s *TelnyxChannelSuite) TestAThreadTasksDeliverToCannotChange() {
@@ -446,6 +457,13 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadTaskWithinTheWindowIsSentOnThe
 	sent := s.took(2)[1]
 	s.Equal("+"+person, sent.to)
 	s.Equal("Done.", sent.text)
+}
+
+// A task the agent made in a WhatsApp thread says it is delivered on WhatsApp.
+func (s *WhatsAppChannelSuite) TestAWhatsAppThreadTaskSaysItIsDeliveredOnWhatsApp() {
+	task, _ := s.scheduledOnWhatsApp("16505551234")
+
+	s.Equal([]string{"whatsapp"}, task.Channels)
 }
 
 // A day after the person last wrote, WhatsApp takes no free text, and the manifest has no

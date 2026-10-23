@@ -177,7 +177,7 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 	}
 	spec := threadSpec(config, thread)
 	if person, personal := threadPerson(thread); personal && event.Message.User.ID == person {
-		spec.ThreadPerson, spec.ThreadChannel = person, thread.ChannelID
+		spec.ThreadPerson, spec.ThreadChannel, spec.ThreadDelivery = person, thread.ChannelID, personalThreads[thread.ConnectorID]
 	}
 	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
 }
