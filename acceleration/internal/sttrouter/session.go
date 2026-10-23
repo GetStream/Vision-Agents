@@ -3,6 +3,7 @@ package sttrouter
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,11 +45,19 @@ type Session struct {
 	readAhead chan chan struct{}
 	done      chan struct{}
 
-	// streamedMs is the audio handed to the provider since the last settled turn, which is
-	// what a turn the vendor did not measure is billed for. Guarded by mu.
-	streamedMs float64
+	// streamed is the audio each provider has taken since its last settled turn, which is what
+	// a turn the vendor did not measure is billed for, and what a provider measured by the
+	// router is billed for whatever it reports. It is kept by provider, so a failover bills
+	// each vendor the audio that vendor took. Guarded by mu.
+	streamed map[stt.STT]*streamedAudio
 
 	closeOnce sync.Once
+}
+
+// streamedAudio is audio a provider took and no row has billed yet.
+type streamedAudio struct {
+	config routing.ProviderConfig
+	ms     float64
 }
 
 func newSession(
@@ -70,6 +79,7 @@ func newSession(
 		// Unbuffered, so only a forward still running takes a request, and it answers it.
 		readAhead: make(chan chan struct{}),
 		done:      make(chan struct{}),
+		streamed:  map[stt.STT]*streamedAudio{},
 	}
 	go session.forward()
 	return session
@@ -82,10 +92,12 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 		return nil
 	}
 	s.mu.Lock()
-	provider := s.provider
-	s.streamedMs += pcm.DurationMs()
+	provider, config := s.provider, s.config
 	s.mu.Unlock()
 	err := provider.ProcessAudio(pcm, participant)
+	if err == nil {
+		s.took(provider, config, pcm.DurationMs())
+	}
 	if err != nil && s.toldOf(provider) {
 		// The provider failed while this frame was on its way to it. The caller hears of
 		// that failure, or of the next model taking over, once, and not again for the frame.
@@ -173,12 +185,15 @@ func (s *Session) forward() {
 	for {
 		event, open := s.next(current)
 		if !open {
+			// Before the events close, so whoever waits on them waits for the last row.
+			s.billUnsettled(nil)
 			return
 		}
 		if failure, ok := event.(stt.Error); ok && failure.Fatal && !transportDrop(failure) && s.reopen != nil {
 			from := current.config.Name()
 			refused = append(refused, from)
 			if next, nextConfig, err := s.reopenAnswering(refused); err == nil && s.swap(current.provider, next, nextConfig) {
+				s.billUnsettled(current.provider)
 				// Before the Failover is passed on: a write that fails meanwhile went to next.
 				current = &relay{provider: next, config: nextConfig}
 				s.pass(current, stt.Failover{Provider: nextConfig.Provider, Model: nextConfig.Model, From: from, Err: failure.Err})
@@ -237,7 +252,7 @@ func (s *Session) next(current *relay) (stt.Event, bool) {
 			if !open {
 				return nil, false
 			}
-			s.observe(current.config, event)
+			s.observe(current, event)
 			return event, true
 		case read := <-s.readAhead:
 			s.readAheadOf(current)
@@ -269,7 +284,7 @@ func (s *Session) readAheadOf(current *relay) {
 			if !open {
 				return
 			}
-			s.observe(current.config, event)
+			s.observe(current, event)
 			current.ahead = append(current.ahead, event)
 		default:
 			return
@@ -297,7 +312,7 @@ func (s *Session) swap(refusing, next stt.STT, config routing.ProviderConfig) bo
 	return true
 }
 
-func (s *Session) observe(config routing.ProviderConfig, event stt.Event) {
+func (s *Session) observe(current *relay, event stt.Event) {
 	switch typed := event.(type) {
 	case stt.Transcript:
 		// Only settled transcripts are billable work; interim ones are revisions of a
@@ -305,10 +320,7 @@ func (s *Session) observe(config routing.ProviderConfig, event stt.Event) {
 		if !typed.Final() {
 			return
 		}
-		s.mu.Lock()
-		streamedMs := s.streamedMs
-		s.streamedMs = 0
-		s.mu.Unlock()
+		streamedMs := s.claim(current.provider)
 		stat := routing.Stat{
 			Owner:     s.owner,
 			StartedAt: time.Now().UTC(),
@@ -316,13 +328,19 @@ func (s *Session) observe(config routing.ProviderConfig, event stt.Event) {
 			LatencyMs: typed.ProcessingTimeMs,
 			Success:   true,
 		}
-		if stat.AudioMs == 0 {
+		switch {
+		case stt.MeteringOf(current.provider) == stt.MeteredByRouter:
+			// The vendor bills the audio it was sent, so what was streamed since the last
+			// turn settled is the turn's bill, the silence before it included.
+			stat.AudioMs = streamedMs
+			stat.MeasuredByRouter()
+		case stat.AudioMs == 0:
 			// The vendor did not say how much audio the turn took: it is billed for what was
 			// streamed since the last turn settled, and marked, so the adapter gets fixed.
-			stat.AudioMs = int64(streamedMs)
+			stat.AudioMs = streamedMs
 			stat.Estimated()
 		}
-		s.recorder.Record(config, stat)
+		s.recorder.Record(current.config, stat)
 
 	case stt.Error:
 		stat := routing.Stat{
@@ -343,6 +361,63 @@ func (s *Session) observe(config routing.ProviderConfig, event stt.Event) {
 			// next session can still reach the model.
 			stat.Fatal = !transportDrop(typed)
 		}
+		s.recorder.Record(current.config, stat)
+	}
+}
+
+// took counts audio a provider accepted, against the config it was routed under.
+func (s *Session) took(provider stt.STT, config routing.ProviderConfig, ms float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	streamed := s.streamed[provider]
+	if streamed == nil {
+		streamed = &streamedAudio{config: config}
+		s.streamed[provider] = streamed
+	}
+	streamed.ms += ms
+}
+
+// claim is the whole milliseconds of audio the provider took since it was last billed, which
+// the row being recorded bills. The fraction left over waits for the next row, so the rows of
+// a session add up to what it streamed.
+func (s *Session) claim(provider stt.STT) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	streamed := s.streamed[provider]
+	if streamed == nil {
+		return 0
+	}
+	whole := math.Floor(streamed.ms)
+	streamed.ms -= whole
+	return int64(whole)
+}
+
+// billUnsettled records the audio the providers the router measures took and no turn has
+// billed: what a vendor heard after its last turn, when it refuses the session or the
+// session ends, since such a vendor bills every second it was sent. Nil bills every
+// provider's. What a vendor that measures itself took is its own to report.
+func (s *Session) billUnsettled(only stt.STT) {
+	s.mu.Lock()
+	var providers []stt.STT
+	for provider := range s.streamed {
+		if only == nil || provider == only {
+			providers = append(providers, provider)
+		}
+	}
+	s.mu.Unlock()
+	for _, provider := range providers {
+		if stt.MeteringOf(provider) != stt.MeteredByRouter {
+			continue
+		}
+		s.mu.Lock()
+		config := s.streamed[provider].config
+		s.mu.Unlock()
+		ms := s.claim(provider)
+		if ms <= 0 {
+			continue
+		}
+		stat := routing.Stat{Owner: s.owner, StartedAt: time.Now().UTC(), Usage: routing.Usage{AudioMs: ms}, Success: true}
+		stat.MeasuredByRouter()
 		s.recorder.Record(config, stat)
 	}
 }

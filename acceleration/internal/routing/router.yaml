@@ -65,12 +65,14 @@ stt:
         retention: none
 
     # Gemini 3.5 Transcribe over the Live API. It detects the language itself and claims
-    # 85+ of them; the list here is the ones this deployment routes on. Billed per token
-    # rather than per hour of audio: $3.50/1M audio in at 25 tokens a second, plus
-    # $21.00/1M text out, which Google puts at about $0.009 an audio minute.
+    # 85+ of them; the list here is the ones this deployment routes on. Google bills it per
+    # token: $3.50/1M audio in at 25 tokens a second ($0.005 a minute), plus $21.00/1M text
+    # out at the 175 tokens a minute Google estimates ($0.004). The Live API reports no
+    # usage for it, on a turn or as the session closes, so it is billed by the audio the
+    # router streams to it, at Google's own blended estimate of $0.009 an audio minute.
     - provider: gemini
       model: gemini-3.5-transcribe-live
-      description: "Detects the language itself and can tidy the transcript as it writes it. About -e.009 an audio minute."
+      description: "Detects the language itself and can tidy the transcript as it writes it. About $0.009 an audio minute."
       benchmark: { word_error_rate: 0.04, latency_ms: 395 }
       languages:
         [
@@ -401,8 +403,9 @@ stt:
     # from one to the other. English only: they say multilingual is coming, and until it
     # does ink-whisper is where the other languages are, on the batch endpoint.
     #
-    # Billed in credits at three a second of audio, silence included, which at the entry
-    # self-serve rate of $50 a million credits is the figure below.
+    # Billed by the second of audio input, silence included, at Cartesia's published rate of
+    # $0.0067275 a minute (about $0.40365 an hour). A turn says nothing of how long it was, so
+    # the audio the router streams to it is the bill.
     - provider: cartesia
       model: ink-2
       description: "Cartesia's live transcriber with its own turn detection, much like Flux. English only."

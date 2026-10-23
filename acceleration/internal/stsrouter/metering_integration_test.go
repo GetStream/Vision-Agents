@@ -313,7 +313,7 @@ func (s *MeteringSuite) TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns() {
 	s.Equal([]int64{1, 0, 1, 0, 1, 0}, messages, "the typed turns, and not the tool's result")
 	s.Equal([]int64{6_667, 6_667, 6_667, 2_667, 6_667, 2_000}, costs, "$4.80 an hour and $0.004 a typed turn")
 	s.EqualValues(31_335, total, "where the caller's audio before each reply priced 2,667")
-	s.Equal(map[string]string{measuredBy: measuredByRouter}, rows[5].Attributes, "no event reported the last row")
+	s.Equal(map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}, rows[5].Attributes, "no event reported the last row")
 }
 
 // TestRealtimeTranscriptionIsItsOwnRow plays back OpenAI writing down two caller turns, the

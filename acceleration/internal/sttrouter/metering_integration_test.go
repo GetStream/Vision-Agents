@@ -5,6 +5,7 @@ package sttrouter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -56,35 +57,12 @@ func (s *MeteringSuite) SetupSuite() {
 func (s *MeteringSuite) SetupTest() { s.logs = &bytes.Buffer{} }
 
 // flux is the built-in config's Flux, which is priced by the hour of audio.
-func (s *MeteringSuite) flux() routing.ProviderConfig {
-	for _, provider := range s.config[routing.STT].Providers {
-		if provider.Name() == "deepgram/flux-general-en" {
-			return provider
-		}
-	}
-	s.FailNow("the built-in config has no deepgram/flux-general-en")
-	return routing.ProviderConfig{}
-}
+func (s *MeteringSuite) flux() routing.ProviderConfig { return s.builtIn("deepgram/flux-general-en") }
 
 // estimated is how many Flux turns were billed on the router's own count because Flux did not
 // say how long they were.
 func estimated() float64 {
-	families, _ := prometheus.DefaultGatherer.Gather()
-	for _, family := range families {
-		if family.GetName() != "router_usage_estimated_total" {
-			continue
-		}
-		for _, metric := range family.GetMetric() {
-			labels := map[string]string{}
-			for _, label := range metric.GetLabel() {
-				labels[label.GetName()] = label.GetValue()
-			}
-			if labels["modality"] == "stt" && labels["model"] == "flux-general-en" && labels["reason"] == "missing" {
-				return metric.GetCounter().GetValue()
-			}
-		}
-	}
-	return 0
+	return counted("router_usage_estimated_total", "deepgram", "flux-general-en", map[string]string{"reason": "missing"})
 }
 
 // speech is that much caller audio at the rate every transcriber is fed.
@@ -100,6 +78,134 @@ func (s *MeteringSuite) settled(session *Session) {
 		}
 	}
 	s.FailNow("the session closed before the turn settled")
+}
+
+// builtIn is the built-in config's transcriber of that name.
+func (s *MeteringSuite) builtIn(name string) routing.ProviderConfig {
+	for _, provider := range s.config[routing.STT].Providers {
+		if provider.Name() == name {
+			return provider
+		}
+	}
+	s.FailNow("the built-in config has no " + name)
+	return routing.ProviderConfig{}
+}
+
+// measuredSTT is a transcriber whose vendor bills the audio it is sent and reports none of it.
+type measuredSTT struct{ quietSTT }
+
+func (*measuredSTT) Metering() stt.Metering { return stt.MeteredByRouter }
+
+// counted is the metering counter of that name for the item, with the labels given.
+func counted(name, provider, model string, labels map[string]string) float64 {
+	families, _ := prometheus.DefaultGatherer.Gather()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+	metrics:
+		for _, metric := range family.GetMetric() {
+			found := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				found[label.GetName()] = label.GetValue()
+			}
+			if found["modality"] != "stt" || found["provider"] != provider || found["model"] != model {
+				continue
+			}
+			for key, value := range labels {
+				if found[key] != value {
+					continue metrics
+				}
+			}
+			return metric.GetCounter().GetValue()
+		}
+	}
+	return 0
+}
+
+// billed is the customer's successful rows, in the order they were written.
+func (s *MeteringSuite) billed(customer string) []store.Request {
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ? AND success", customer).Order("id").Scan(s.ctx))
+	return rows
+}
+
+// TestARouterMeasuredTranscriberIsBilledEveryMillisecondItWasSent: Ink 2 reports nothing of a
+// turn's length, and Cartesia bills the audio it is sent, silence included. Two turns and the
+// half second the caller spoke before hanging up are each billed what was streamed, and add
+// up to it.
+func (s *MeteringSuite) TestARouterMeasuredTranscriberIsBilledEveryMillisecondItWasSent() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.STT, s.store, nil, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	provider := &measuredSTT{quietSTT{emitter: stt.NewEmitter(64)}}
+	owner := routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: "key-1"}}
+	session := newSession(provider, s.builtIn("cartesia/ink-2"), owner, recorder, nil, nil)
+	estimatedBefore := counted("router_usage_estimated_total", "cartesia", "ink-2", nil)
+	missingBefore := counted("router_usage_missing_total", "cartesia", "ink-2", nil)
+
+	s.Require().NoError(session.ProcessAudio(speech(1_000), stt.Participant{}))
+	provider.emitter.Send(stt.Transcript{Text: "book a table", Mode: stt.ModeFinal, AudioDurationMs: 640})
+	s.settled(session)
+	provider.emitter.Send(stt.Transcript{Text: "please", Mode: stt.ModeFinal})
+	s.settled(session)
+	s.Require().NoError(session.ProcessAudio(speech(1_500), stt.Participant{}))
+	provider.emitter.Send(stt.Transcript{Text: "for two", Mode: stt.ModeFinal})
+	s.settled(session)
+	s.Require().NoError(session.ProcessAudio(speech(500), stt.Participant{}))
+	s.Require().NoError(session.Close())
+	for range session.Events() {
+	}
+	recorder.Close()
+
+	rows := s.billed(customer)
+	var audio, costs []int64
+	for _, row := range rows {
+		audio = append(audio, row.AudioMs)
+		costs = append(costs, row.CostMicros)
+		s.Equal(map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}, row.Attributes)
+	}
+	s.Equal([]int64{1_000, 0, 1_500, 500}, audio,
+		"what was streamed, not the 640 the vendor said; a turn that followed none is the zero it was; "+
+			"what the caller said before hanging up is billed as the session ends")
+	s.Equal([]int64{112, 0, 168, 56}, costs, "Cartesia's published rate of $0.0067275 a minute")
+	s.Equal(estimatedBefore, counted("router_usage_estimated_total", "cartesia", "ink-2", nil), "the router's count is the bill, not an estimate")
+	s.Equal(missingBefore, counted("router_usage_missing_total", "cartesia", "ink-2", nil), "a zero the router counted is no missing usage")
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
+// TestAFailoverBillsEachVendorTheAudioItTook: Ink 2 takes 700 ms and refuses the session,
+// and Gemini takes over for 300 ms more. Each is billed what it was sent.
+func (s *MeteringSuite) TestAFailoverBillsEachVendorTheAudioItTook() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.STT, s.store, nil, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	first := &measuredSTT{quietSTT{emitter: stt.NewEmitter(64)}}
+	next := &measuredSTT{quietSTT{emitter: stt.NewEmitter(64)}}
+	gemini := s.builtIn("gemini/gemini-3.5-transcribe-live")
+	reopen := func([]string) (stt.STT, routing.ProviderConfig, error) { return next, gemini, nil }
+	session := newSession(first, s.builtIn("cartesia/ink-2"), routing.Owner{CustomerID: customer}, recorder, reopen, nil)
+
+	s.Require().NoError(session.ProcessAudio(speech(700), stt.Participant{}))
+	first.emitter.Send(stt.Error{Err: errors.New("account suspended"), Context: "session", Fatal: true})
+	for event := range session.Events() {
+		if _, ok := event.(stt.Failover); ok {
+			break
+		}
+	}
+	s.Require().NoError(session.ProcessAudio(speech(300), stt.Participant{}))
+	next.emitter.Send(stt.Transcript{Text: "book a table", Mode: stt.ModeFinal})
+	s.settled(session)
+	s.Require().NoError(session.Close())
+	for range session.Events() {
+	}
+	recorder.Close()
+
+	rows := s.billed(customer)
+	s.Require().Len(rows, 2)
+	s.Equal("ink-2", rows[0].Model)
+	s.EqualValues(700, rows[0].AudioMs, "the vendor that refused is billed what it took before it did")
+	s.Equal("gemini-3.5-transcribe-live", rows[1].Model)
+	s.EqualValues(300, rows[1].AudioMs, "the next vendor is billed only what it took")
+	s.EqualValues(45, rows[1].CostMicros, "$0.009 a minute")
 }
 
 func (s *MeteringSuite) TestATurnTheVendorDidNotMeasureIsBilledForWhatWasStreamed() {

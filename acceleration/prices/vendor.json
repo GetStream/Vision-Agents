@@ -114,7 +114,7 @@
     {"modality":"stt","provider":"together-nemotron","model":"nvidia/nemotron-3.5-asr-streaming-0.6b","rates":{"audio_ms":{"usd":0.27,"per":3600000}}},
     {"modality":"stt","provider":"grok","model":"grok-stt","rates":{"audio_ms":{"usd":0.2,"per":3600000}}},
     {"modality":"stt","provider":"muse","model":"muse-voice-transcribe-1.0","rates":{"audio_ms":{"usd":0.18,"per":3600000}}},
-    {"modality":"stt","provider":"cartesia","model":"ink-2","rates":{"audio_ms":{"usd":0.54,"per":3600000}}},
+    {"modality":"stt","provider":"cartesia","model":"ink-2","rates":{"audio_ms":{"usd":0.40365404,"per":3600000}}},
     {"modality":"stt","provider":"inworld","model":"inworld-stt-1","rates":{"audio_ms":{"usd":0.15,"per":3600000}}},
     {"modality":"stt","provider":"elevenlabs","model":"scribe_v2_realtime","rates":{"audio_ms":{"usd":0.39,"per":3600000}}},
     {"modality":"stt","provider":"assemblyai","model":"universal-3-6-pro","rates":{"audio_ms":{"usd":0.45,"per":3600000}}},

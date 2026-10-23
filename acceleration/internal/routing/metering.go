@@ -104,9 +104,10 @@ func (r *Recorder) watch(config ProviderConfig, entry Stat, request store.Reques
 		if reason == estimatedMissing && r.estimatedLogged.due(item, usageLogEvery) {
 			r.logger.Error("billable work recorded an estimate", fields...)
 		}
-	case quoted && !quote.Rated:
+	case quoted && !quote.Rated && request.Attributes[AttributeMeasuredBy] != MeasuredByRouter:
 		// The vendor did the work and nothing says how much: a bug in an adapter or a
-		// session, never a free request.
+		// session, never a free request. What the router measured itself is the count, even
+		// at zero.
 		usageMissing.WithLabelValues(item[:]...).Inc()
 		if r.missingLogged.due(item, usageLogEvery) {
 			r.logger.Error("billable work recorded no usage", fields...)

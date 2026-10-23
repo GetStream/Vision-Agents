@@ -153,6 +153,18 @@ func (s *RecorderSuite) TestFreeWorkWithNoQuantityIsQuiet() {
 	s.NotContains(s.logs.String(), "level=ERROR")
 }
 
+func (s *RecorderSuite) TestWorkTheRouterMeasuredAtNothingIsQuiet() {
+	before := counted(usageMissing, LLM, priced)
+	stat := Stat{Success: true}
+	stat.MeasuredByRouter()
+
+	row := s.recorded(priced, stat)
+
+	s.True(row.Billable)
+	s.Equal(before, counted(usageMissing, LLM, priced), "the router's own count is the count, even at zero")
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
 func (s *RecorderSuite) TestAFailureWithNoQuantityIsQuiet() {
 	before := counted(usageMissing, LLM, priced)
 

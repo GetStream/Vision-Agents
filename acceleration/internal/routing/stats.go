@@ -152,6 +152,18 @@ const AttributeUsageEstimated = "usage_estimated"
 // Estimated marks the stat's quantities as the router's own count.
 func (s *Stat) Estimated() { s.Attribute(AttributeUsageEstimated, "true") }
 
+// AttributeMeasuredBy names who counted a row's quantities where no vendor event did, and
+// MeasuredByRouter is the router: the audio it streamed to a vendor that bills that audio, or
+// what it streamed after the last event that reported anything.
+const (
+	AttributeMeasuredBy = "measured_by"
+	MeasuredByRouter    = "router"
+)
+
+// MeasuredByRouter marks the stat's quantities as the router's own measure, which is the bill
+// rather than an estimate of it: a zero is the count, not a vendor that said nothing.
+func (s *Stat) MeasuredByRouter() { s.Attribute(AttributeMeasuredBy, MeasuredByRouter) }
+
 // VendorCost keeps what the vendor said the work cost, when it said. It never prices the row:
 // the price list is checked against it.
 func (s *Stat) VendorCost(work any) {

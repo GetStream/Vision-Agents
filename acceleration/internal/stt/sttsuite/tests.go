@@ -22,13 +22,19 @@ func (s *Suite) TestAlmostEveryWordComesBackTheWayItWasSaid() {
 
 // TestTheWorkIsBilled: a settled turn says how much audio it took, which is what it is billed
 // by. A turn that says nothing is billed on the router's own count of the audio streamed, and
-// raises the alarm until its adapter is fixed.
+// raises the alarm until its adapter is fixed. A vendor that bills the audio it is sent
+// rather than reporting it says so (stt.MeteredByRouter), and its bill is the audio streamed,
+// so all its turn has to do is settle.
 func (s *Suite) TestTheWorkIsBilled() {
 	provider := s.Started()
 	defer s.Hangup(provider)
 
 	for _, event := range s.Collect(provider) {
 		if transcript, ok := event.(stt.Transcript); ok && transcript.Final() {
+			if stt.MeteringOf(provider) == stt.MeteredByRouter {
+				s.NotEmpty(transcript.Text, "the turn the streamed audio bills should settle on what was said")
+				return
+			}
 			s.Positive(transcript.AudioDurationMs, "the settled turn should say how much audio it took")
 			return
 		}

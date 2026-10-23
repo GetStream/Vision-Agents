@@ -203,16 +203,9 @@ func (s *Session) recordTrailing() {
 	if stat.AudioMs == 0 && typed == 0 || !s.recorder.QuoteStat(s.config, stat).Rated {
 		return
 	}
-	stat.Attribute(measuredBy, measuredByRouter)
+	stat.MeasuredByRouter()
 	s.recorder.Record(s.config, stat)
 }
-
-// measuredBy is the attribute naming who counted a row's quantities, on a row no vendor event
-// reports.
-const (
-	measuredBy       = "measured_by"
-	measuredByRouter = "router"
-)
 
 // parentSession is the attribute naming the session whose rows a row of delegated or added
 // work belongs with.
