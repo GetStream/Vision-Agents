@@ -228,6 +228,9 @@ type RouterSuite struct {
 	// memoryStore is where sessions remember, for a suite about memory to set before it
 	// starts the harness. Nil keeps them in memories.
 	memoryStore memory.Store
+	// memoryOff gives the router no memory store, as a deployment with no memory provider
+	// has, for a control suite to set before it starts the harness.
+	memoryOff bool
 
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
@@ -906,6 +909,9 @@ func (s *RouterSuite) sessionManager(
 	var remembering memory.Store = s.memories
 	if s.memoryStore != nil {
 		remembering = s.memoryStore
+	}
+	if s.memoryOff {
+		remembering = nil
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           streams.LLM,
