@@ -46,10 +46,10 @@ const deletePageSize = 100
 
 // The calls this store makes, as its metrics, spans and log name them.
 const (
-	opSearch      = "search"
-	opAdd         = "add"
-	opList        = "list"
-	opBatchDelete = "batch_delete"
+	opSearch = "search"
+	opAdd    = "add"
+	opList   = "list"
+	opDelete = "delete"
 )
 
 // How a call ended, as its metrics name it.
@@ -222,6 +222,9 @@ func (s *Store) deleteMatching(ctx context.Context, who memory.Scope, filters ma
 			return err
 		}
 		if len(page.Results) == 0 {
+			if len(deleted) == 0 {
+				emptyLists.Inc()
+			}
 			return nil
 		}
 
@@ -235,7 +238,7 @@ func (s *Store) deleteMatching(ctx context.Context, who memory.Scope, filters ma
 			batch.Memories = append(batch.Memories, batchMemory{MemoryID: found.ID})
 		}
 		var response batchDeleteResponse
-		if err := s.call(ctx, opBatchDelete, who, http.MethodDelete, "/v1/batch/", batch, &response); err != nil {
+		if err := s.call(ctx, opDelete, who, http.MethodDelete, "/v1/batch/", batch, &response); err != nil {
 			return err
 		}
 	}
@@ -293,9 +296,6 @@ func (s *Store) call(ctx context.Context, op string, who memory.Scope, method, p
 		if count, counted := resultCount(into); counted {
 			span.SetAttributes(attribute.Int("mem0.results", count))
 			fields = append(fields, "results", count)
-			if op == opList && count == 0 {
-				emptyLists.Inc()
-			}
 		}
 	}
 	s.logger.Debug("called mem0", fields...)

@@ -9,9 +9,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/suite"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -77,6 +79,15 @@ func counted(op, status, outcome string) float64 {
 
 // timed is how many calls the latency histogram holds for op and outcome.
 func (s *CallRecordingSuite) timed(op, outcome string) uint64 {
+	return s.histogram(op, outcome).GetSampleCount()
+}
+
+// timedSum is the seconds the latency histogram holds for op and outcome.
+func (s *CallRecordingSuite) timedSum(op, outcome string) float64 {
+	return s.histogram(op, outcome).GetSampleSum()
+}
+
+func (s *CallRecordingSuite) histogram(op, outcome string) *dto.Histogram {
 	families, err := prometheus.DefaultGatherer.Gather()
 	s.Require().NoError(err)
 	for _, family := range families {
@@ -89,11 +100,11 @@ func (s *CallRecordingSuite) timed(op, outcome string) uint64 {
 				labels[pair.GetName()] = pair.GetValue()
 			}
 			if labels["op"] == op && labels["outcome"] == outcome {
-				return metric.GetHistogram().GetSampleCount()
+				return metric.GetHistogram()
 			}
 		}
 	}
-	return 0
+	return &dto.Histogram{}
 }
 
 // lines is every log line written, decoded.
@@ -113,11 +124,10 @@ func (s *CallRecordingSuite) lines() []map[string]any {
 func (s *CallRecordingSuite) TestEachCallIsCountedAndTimedUnderItsOperation() {
 	before := map[string]float64{}
 	timedBefore := map[string]uint64{}
-	for _, op := range []string{opSearch, opAdd, opList, opBatchDelete} {
+	for _, op := range []string{opSearch, opAdd, opList, opDelete} {
 		before[op] = counted(op, "200", outcomeOK)
 		timedBefore[op] = s.timed(op, outcomeOK)
 	}
-	empty := testutil.ToFloat64(emptyLists)
 
 	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
 	s.Require().NoError(err)
@@ -125,13 +135,36 @@ func (s *CallRecordingSuite) TestEachCallIsCountedAndTimedUnderItsOperation() {
 	s.platform.replies = []string{`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`, `{"results":[]}`}
 	s.Require().NoError(s.store.ForgetRun(s.ctx, "router", "session-1"))
 
-	want := map[string]float64{opSearch: 1, opAdd: 1, opList: 2, opBatchDelete: 1}
+	want := map[string]float64{opSearch: 1, opAdd: 1, opList: 2, opDelete: 1}
 	for op, calls := range want {
 		s.Equal(calls, counted(op, "200", outcomeOK)-before[op], op)
 		s.Equal(uint64(calls), s.timed(op, outcomeOK)-timedBefore[op], op)
 	}
-	s.Equal(1.0, testutil.ToFloat64(emptyLists)-empty,
-		"the list that found nothing is counted; the one that found m1 and the empty search are not")
+}
+
+func (s *CallRecordingSuite) TestOnlyADeletionWithNothingToDeleteCountsAnEmptyList() {
+	empty := testutil.ToFloat64(emptyLists)
+
+	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
+	s.Require().NoError(err)
+	s.platform.replies = []string{`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`, `{"results":[]}`}
+	s.Require().NoError(s.store.ForgetRun(s.ctx, "router", "session-1"))
+	s.Equal(0.0, testutil.ToFloat64(emptyLists)-empty,
+		"a deletion that found m1 ends on an empty page without counting it; an empty search is not a list")
+
+	s.Require().NoError(s.store.Truncate(s.ctx, "router", "acme"))
+	s.Equal(1.0, testutil.ToFloat64(emptyLists)-empty, "a deletion whose first list is empty is counted once")
+}
+
+func (s *CallRecordingSuite) TestTheLatencyOfACallIsRecordedInTheHistogramAndTheLog() {
+	s.platform.delay = 50 * time.Millisecond
+	sumBefore := s.timedSum(opSearch, outcomeOK)
+
+	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
+	s.Require().NoError(err)
+
+	s.GreaterOrEqual(s.timedSum(opSearch, outcomeOK)-sumBefore, 0.05)
+	s.GreaterOrEqual(s.lines()[0]["latency_ms"], float64(50))
 }
 
 func (s *CallRecordingSuite) TestA429IsCountedUnderItsStatusAndNamedAsTheQuota() {
@@ -171,6 +204,9 @@ func (s *CallRecordingSuite) TestAMem0ThatNeverAnsweredIsCountedWithNoStatus() {
 
 	s.Error(err)
 	s.Equal(1.0, counted(opSearch, "none", outcomeTransport)-before)
+	failed := s.span("mem0.search")
+	s.Equal(codes.Error, failed.Status().Code)
+	s.NotContains(attributes(failed), attribute.Key("mem0.results"))
 	s.Equal("none", s.lines()[0]["status"])
 }
 
@@ -182,6 +218,9 @@ func (s *CallRecordingSuite) TestAnAnswerThatIsNotJSONIsCountedAsUndecodable() {
 
 	s.ErrorContains(err, "decode")
 	s.Equal(1.0, counted(opSearch, "200", outcomeDecode)-before)
+	failed := s.span("mem0.search")
+	s.Equal(codes.Error, failed.Status().Code)
+	s.NotContains(attributes(failed), attribute.Key("mem0.results"))
 }
 
 func (s *CallRecordingSuite) TestEachCallIsLoggedWithWhoseMemoriesItTouched() {

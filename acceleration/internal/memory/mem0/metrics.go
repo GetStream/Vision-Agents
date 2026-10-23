@@ -5,7 +5,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// op is the call (search, add, list, batch_delete), status mem0's HTTP status or "none"
+// op is the call (search, add, list, delete), status mem0's HTTP status or "none"
 // when it never answered, and outcome one of the outcome* constants: all fixed sets.
 var (
 	calls = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -23,6 +23,6 @@ var (
 	emptyLists = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "mem0_empty_lists_total",
-		Help:      "Lists of memories to delete that mem0 answered with none",
+		Help:      "Deletions whose first list of memories to delete mem0 answered with none",
 	})
 )
