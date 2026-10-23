@@ -35,6 +35,19 @@ func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) 
 	return nil
 }
 
+// DeleteCallResource forgets one call's use of a trunk, for a leg that was never placed.
+func (s *Store) DeleteCallResource(ctx context.Context, callType, callID, trunkID string) error {
+	_, err := s.shard.NewDelete().Model((*CallResource)(nil)).
+		Where("call_type = ?", callType).
+		Where("call_id = ?", callID).
+		Where("trunk_id = ?", trunkID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete call resource: %w", err))
+	}
+	return nil
+}
+
 // ReleaseCallResourcesInApp deletes the trunks and routes one call's legs were given in
 // one Stream app, and returns them. A call's id is only unique within an app, so an event
 // about it releases only what that app holds; unpinned also takes the rows written before

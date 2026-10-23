@@ -331,9 +331,12 @@ type PhoneNumber struct {
 	BridgePasswordSealed     []byte `bun:"bridge_password_sealed,nullzero"`
 	BridgePasswordKEKVersion int    `bun:"bridge_password_kek_version,nullzero"`
 	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
-	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
-	PurchasedAt time.Time  `bun:"purchased_at,notnull"`
-	ReleasedAt  *time.Time `bun:"released_at"`
+	UseCaseID   string    `bun:"dlc_use_case_id,nullzero"`
+	PurchasedAt time.Time `bun:"purchased_at,notnull"`
+	// AttachedAt is when the number was attached, so its callers reach an agent. A number
+	// can be on a trunk without it, to place calls only.
+	AttachedAt *time.Time `bun:"attached_at"`
+	ReleasedAt *time.Time `bun:"released_at"`
 }
 
 // CallBridge is what a vendor is told to do when the person it called picks up.
@@ -368,17 +371,20 @@ type CallBridge struct {
 type CallResource struct {
 	bun.BaseModel `bun:"table:call_resources,alias:cr"`
 
-	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
-	// call may own several, its own plus one per transfer into it.
-	TrunkID    string `bun:"trunk_id,pk"`
+	ID int64 `bun:"id,pk,autoincrement"`
+	// TrunkID is the Stream SIP trunk this call leg was given: a call may own several, its
+	// own plus one per transfer into it.
+	TrunkID    string `bun:"trunk_id,notnull"`
 	RouteID    string `bun:"route_id,notnull"`
 	CallType   string `bun:"call_type,notnull"`
 	CallID     string `bun:"call_id,notnull"`
 	CustomerID string `bun:"customer_id,notnull"`
 	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
 	// stored as NULL, is the deployment's own app.
-	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
-	CreatedAt   time.Time `bun:"created_at,notnull"`
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
+	// Shared is a trunk and rule other calls use too: the call's end deletes only this row.
+	Shared    bool      `bun:"shared,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
 }
 
 // What ended a call leg.

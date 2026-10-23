@@ -1546,6 +1546,7 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
+		Set("attached_at = NULL").
 		Set("sip_trunk_id = NULL").
 		Set("bridge_uri = NULL").
 		Set("bridge_username = NULL").
@@ -1591,6 +1592,7 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		Set("bridge_username = ?", nullable(attached.BridgeUsername)).
 		Set("bridge_password_sealed = ?", nullableBytes(attached.BridgePasswordSealed)).
 		Set("bridge_password_kek_version = ?", nullableVersion(attached.BridgePasswordKEKVersion)).
+		Set("attached_at = now()").
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").

@@ -875,3 +875,209 @@ func (s *AppsSuite) TestATransferOnAVendorWithNoAddressesAndNoPasswordIsRefusedB
 	s.Require().ErrorContains(err, "signalling addresses")
 	s.Empty(s.deployment.Trunks())
 }
+
+// sealed gives the suite's service a key to seal trunk passwords with, which lines need.
+func (s *AppsSuite) sealed() {
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	s.service.sealer = sealer
+}
+
+// anotherNumber gives a customer one more number on a vendor.
+func (s *AppsSuite) anotherNumber(customer, vendor string) string {
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: vendor, Country: "US", CustomerID: customer, PurchasedAt: time.Now().UTC(),
+	}))
+	return e164
+}
+
+// lineFor puts a customer's number on a trunk in the app the customer makes lines in.
+func (s *AppsSuite) lineFor(customer, e164 string) (TrunkLine, error) {
+	held, err := s.store.Number(s.ctx, customer, e164)
+	s.Require().NoError(err)
+	stream, pin, err := s.service.streamFor(s.ctx, customer)
+	s.Require().NoError(err)
+	return s.service.line(s.ctx, stream, pin, held)
+}
+
+func (s *AppsSuite) TestTwoNumbersOfOneVendorShareATrunk() {
+	s.ownApp()
+	s.sealed()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	other, err := s.lineFor(s.customer, second)
+	s.Require().NoError(err)
+
+	s.Equal([]string{first.TrunkID}, s.own.Trunks())
+	s.Equal(first.TrunkID, other.TrunkID)
+	s.Equal([]string{s.e164, second}, s.own.TrunkNumbers(first.TrunkID))
+	s.Equal("sip:"+second+"@sip.example.test", other.Bridge.URI, "the address names the number")
+	password, _ := s.own.TrunkAuth(first.TrunkID)
+	s.Equal(password, other.Bridge.Password, "a number joining later is given the trunk's password")
+}
+
+func (s *AppsSuite) TestTheFiftyFirstNumberOpensASecondTrunk() {
+	s.sealed()
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	for range trunkCapacity - 1 {
+		_, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+		s.Require().NoError(err)
+	}
+
+	fiftyFirst, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err)
+
+	s.Len(s.deployment.Trunks(), 2)
+	s.NotEqual(first.TrunkID, fiftyFirst.TrunkID)
+	s.Len(s.deployment.TrunkNumbers(first.TrunkID), trunkCapacity)
+	s.Len(s.deployment.TrunkNumbers(fiftyFirst.TrunkID), 1)
+}
+
+func (s *AppsSuite) TestCustomersNeverShareATrunk() {
+	s.sealed()
+	other := "customer-" + uuid.NewString()
+	theirs := s.anotherNumber(other, s.vendor.vendor)
+
+	ours, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	their, err := s.lineFor(other, theirs)
+	s.Require().NoError(err)
+
+	s.NotEqual(ours.TrunkID, their.TrunkID)
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(ours.TrunkID))
+	s.Equal([]string{theirs}, s.deployment.TrunkNumbers(their.TrunkID))
+}
+
+func (s *AppsSuite) TestVendorsNeverShareATrunk() {
+	vonage := s.vendorOnAnAllowlist()
+	s.sealed()
+
+	twilio, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	other, err := s.lineFor(s.customer, vonage.e164)
+	s.Require().NoError(err)
+
+	s.NotEqual(twilio.TrunkID, other.TrunkID)
+	_, allowed := s.deployment.TrunkAuth(other.TrunkID)
+	s.Equal(vonage.signalling, allowed, "each vendor's trunk lets in that vendor")
+}
+
+func (s *AppsSuite) TestEachNumberHasARuleOfItsOwnThatReadsTheHeader() {
+	s.sealed()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	other, err := s.lineFor(s.customer, second)
+	s.Require().NoError(err)
+
+	s.NotEqual(first.RouteID, other.RouteID)
+	for e164, routeID := range map[string]string{s.e164: first.RouteID, second: other.RouteID} {
+		rule := s.deployment.Rule(routeID)
+		s.Require().NotNil(rule)
+		s.Equal(lineCallTemplate, rule["direct_routing_configs"].(map[string]any)["call_id"])
+		s.Equal([]any{e164}, rule["called_numbers"])
+		custom := rule["call_configs"].(map[string]any)["custom_data"].(map[string]any)
+		s.Equal(e164, custom[NumberKey], "the call says which number it rang")
+	}
+	held := s.number()
+	s.Equal(first.TrunkID, held.StreamTrunkID)
+	s.Equal(first.RouteID, held.StreamRouteID)
+}
+
+func (s *AppsSuite) TestANumberAttachedBeforeSharedTrunksIsAdoptedAsItIs() {
+	s.sealed()
+	stream, pin, err := s.service.streamFor(s.ctx, s.customer)
+	s.Require().NoError(err)
+	trunkID, bridge, err := stream.CreateTrunk(s.ctx, Trunk{Name: "phone-" + s.e164, Numbers: []string{s.e164}})
+	s.Require().NoError(err)
+	routeID, err := stream.CreateRoute(s.ctx, Route{
+		Name: "phone-" + s.e164, TrunkIDs: []string{trunkID}, CalledNumbers: []string{s.e164},
+		CallID: inboundCallTemplate, CallType: defaultCallType, Custom: map[string]string{NumberKey: s.e164},
+	})
+	s.Require().NoError(err)
+	bridge, err = bridge.WithNumber(s.e164)
+	s.Require().NoError(err)
+	sealed, err := s.service.sealer.SealWithAAD(bridge.Password, bridgeAAD(s.customer, s.e164))
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.AttachNumber(s.ctx, s.customer, s.e164, store.NumberAttachment{
+		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
+		BridgeURI: bridge.URI, BridgeUsername: bridge.Username,
+		BridgePasswordSealed: sealed, BridgePasswordKEKVersion: s.service.sealer.CurrentVersion(),
+	}))
+
+	line, err := s.lineFor(s.customer, s.e164)
+
+	s.Require().NoError(err)
+	s.Equal(trunkID, line.TrunkID)
+	s.Equal(routeID, line.RouteID)
+	s.Equal(bridge, line.Bridge)
+	s.Equal([]string{trunkID}, s.deployment.Trunks(), "no new trunk")
+	rule := s.deployment.Rule(routeID)
+	direct := rule["direct_routing_configs"].(map[string]any)
+	s.Equal(lineCallTemplate, direct["call_id"])
+	s.Equal(defaultCallType, direct["call_type"])
+	s.Equal([]any{s.e164}, rule["called_numbers"])
+	s.Equal([]any{trunkID}, rule["trunk_ids"])
+	custom := rule["call_configs"].(map[string]any)["custom_data"].(map[string]any)
+	s.Equal(s.e164, custom[NumberKey], "the update keeps the number on the call")
+
+	joined, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err)
+	s.Equal(trunkID, joined.TrunkID, "the adopted trunk takes the customer's next number")
+}
+
+func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
+	s.sealed()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	var wait sync.WaitGroup
+	for _, e164 := range []string{s.e164, second} {
+		wait.Go(func() {
+			_, err := s.lineFor(s.customer, e164)
+			s.NoError(err)
+		})
+	}
+	wait.Wait()
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	s.ElementsMatch([]string{s.e164, second}, s.deployment.TrunkNumbers(trunks[0]))
+}
+
+func (s *AppsSuite) TestARefusedRuleLeavesTheNumberOffTheTrunk() {
+	s.sealed()
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	s.deployment.RateLimit("/sip/inbound_routing_rules")
+
+	_, err = s.lineFor(s.customer, second)
+
+	s.Require().Error(err)
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(first.TrunkID))
+	s.Equal([]string{first.RouteID}, s.deployment.Rules())
+	held, err := s.store.Number(s.ctx, s.customer, second)
+	s.Require().NoError(err)
+	s.Empty(held.StreamTrunkID)
+}
+
+func (s *AppsSuite) TestARefusedRuleOnANewTrunkLeavesNoTrunk() {
+	s.sealed()
+	s.deployment.RateLimit("/sip/inbound_routing_rules")
+
+	_, err := s.lineFor(s.customer, s.e164)
+
+	s.Require().Error(err)
+	s.Empty(s.deployment.Trunks())
+	s.Empty(s.number().StreamTrunkID)
+}
+
+func (s *AppsSuite) TestALineNeedsAKeyToSealTheTrunksPassword() {
+	_, err := s.lineFor(s.customer, s.e164)
+
+	s.ErrorIs(err, ErrNoSealer)
+	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
+}
