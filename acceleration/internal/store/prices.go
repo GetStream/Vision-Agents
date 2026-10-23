@@ -162,69 +162,174 @@ func (s *Store) SyncPrices(ctx context.Context, load PriceLoad) (PriceChange, []
 	var change PriceChange
 	var added []pricing.Entry
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, pricesLockTimeout); err != nil {
+		if err := lockPrices(ctx, tx); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, pricesLock); err != nil {
-			return err
-		}
-		seed, entries, err := pricesToLoad(ctx, tx, load.Entries)
-		if err != nil || len(entries) == 0 {
-			return err
-		}
-		// The database's clock, so routers whose clocks disagree still name and time their
-		// changes in one order.
-		var now time.Time
-		if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&now); err != nil {
-			return err
-		}
-		change = PriceChange{
-			EffectiveAt: now,
-			Source:      load.Source + ", router " + load.Release,
-			CreatedBy:   "router " + load.Release,
-		}
-		stamp := now.UTC().Format("20060102150405")
-		if seed {
-			change.Name, change.Kind, change.Reason = stamp+"_seed", PriceChangeSeed, "The first price list"
-			change.MarkupBps = load.MarkupBps
-		} else {
-			change.Name, change.Kind = stamp+"_release_"+ReleaseName(load.Release), PriceChangeRelease
-			change.Reason = "Items new in " + load.Release
-		}
-		if _, err := tx.NewInsert().Model(&change).Exec(ctx); err != nil {
-			return err
-		}
-		rows := make([]PriceEntry, 0, len(entries))
-		for _, entry := range entries {
-			rows = append(rows, priceEntryOf(change.Name, entry))
-		}
-		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
-			return err
-		}
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			names = append(names, prices.Name(entry))
-		}
-		changes := []AuditChange{{Field: "entries", After: names}}
-		if change.MarkupBps != nil {
-			changes = append(changes, AuditChange{Field: "markup_bps", After: *change.MarkupBps})
-		}
-		added = entries
-		return recordAuditEntry(ctx, tx, &AuditEntry{
-			ResourceType: AuditResourcePriceList,
-			ResourceID:   change.Name,
-			ResourceName: change.Reason,
-			Action:       AuditCreated,
-			Source:       AuditSourceCLI,
-			ActorID:      change.CreatedBy,
-			ActorName:    "router",
-			Changes:      changes,
-		})
+		var err error
+		change, added, err = syncPrices(ctx, tx, load)
+		return err
 	})
 	if err != nil {
 		return PriceChange{}, nil, false, stack.Wrap(fmt.Errorf("store: sync prices: %w", err))
 	}
 	return change, added, added != nil, nil
+}
+
+// lockPrices takes the lock every write to the price list takes, giving up after
+// pricesLockTimeout.
+func lockPrices(ctx context.Context, tx bun.Tx) error {
+	if _, err := tx.ExecContext(ctx, pricesLockTimeout); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, pricesLock)
+	return err
+}
+
+// syncPrices is SyncPrices in a transaction that holds the prices lock. It returns nil
+// entries when it wrote nothing.
+func syncPrices(ctx context.Context, tx bun.Tx, load PriceLoad) (PriceChange, []pricing.Entry, error) {
+	seed, entries, err := pricesToLoad(ctx, tx, load.Entries)
+	if err != nil || len(entries) == 0 {
+		return PriceChange{}, nil, err
+	}
+	// The database's clock, so routers whose clocks disagree still name and time their
+	// changes in one order.
+	var now time.Time
+	if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&now); err != nil {
+		return PriceChange{}, nil, err
+	}
+	change := PriceChange{
+		EffectiveAt: now,
+		Source:      load.Source + ", router " + load.Release,
+		CreatedBy:   "router " + load.Release,
+	}
+	stamp := now.UTC().Format("20060102150405")
+	if seed {
+		change.Name, change.Kind, change.Reason = stamp+"_seed", PriceChangeSeed, "The first price list"
+		change.MarkupBps = load.MarkupBps
+	} else {
+		change.Name, change.Kind = stamp+"_release_"+ReleaseName(load.Release), PriceChangeRelease
+		change.Reason = "Items new in " + load.Release
+	}
+	if _, err := tx.NewInsert().Model(&change).Exec(ctx); err != nil {
+		return PriceChange{}, nil, err
+	}
+	rows := make([]PriceEntry, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, priceEntryOf(change.Name, entry))
+	}
+	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
+		return PriceChange{}, nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, prices.Name(entry))
+	}
+	changes := []AuditChange{{Field: "entries", After: names}}
+	if change.MarkupBps != nil {
+		changes = append(changes, AuditChange{Field: "markup_bps", After: *change.MarkupBps})
+	}
+	err = recordAuditEntry(ctx, tx, &AuditEntry{
+		ResourceType: AuditResourcePriceList,
+		ResourceID:   change.Name,
+		ResourceName: change.Reason,
+		Action:       AuditCreated,
+		Source:       AuditSourceCLI,
+		ActorID:      change.CreatedBy,
+		ActorName:    "router",
+		Changes:      changes,
+	})
+	if err != nil {
+		return PriceChange{}, nil, err
+	}
+	return change, entries, nil
+}
+
+// PriceReload is what a reload of the price list found in it, and the seed it wrote in its
+// place.
+type PriceReload struct {
+	// At is the database's clock when the reload read the list.
+	At time.Time
+	// Changes are every change the list held, newest first: cancelled ones and those not yet
+	// in force among them. Entries is how many entries they wrote.
+	Changes []PriceChange
+	Entries int
+	// Active and MarkupBps are the list in force at At, before the reload.
+	Active    []PriceEntry
+	MarkupBps int64
+	// Seed is the change the reload wrote and Loaded its entries; both are empty on a dry run.
+	Seed   PriceChange
+	Loaded []pricing.Entry
+}
+
+// ReloadPrices empties the price list and seeds it from load, as a router's first start on a
+// fresh database does, in one transaction under the lock every load takes. Every change goes:
+// those scheduled, cancelled or setting a markup with the rest, so the list holds what the
+// files say and nothing else. TRUNCATE is what removes them, because the tables' triggers
+// refuse a DELETE; no table references either one. The audit log keeps its rows, and gains
+// one saying what the reload removed. dryRun reads the list under the lock and writes nothing.
+//
+// It is for a development database only; the caller decides that it is one.
+func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (PriceReload, error) {
+	if len(load.Entries) == 0 {
+		return PriceReload{}, stack.Wrap(errors.New("store: reload prices: the price files have no entry, so the list would be empty"))
+	}
+	var reload PriceReload
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockPrices(ctx, tx); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&reload.At); err != nil {
+			return err
+		}
+		reload.Changes = []PriceChange{}
+		if err := tx.NewSelect().Model(&reload.Changes).Order("created_at DESC", "name DESC").Scan(ctx); err != nil {
+			return err
+		}
+		var err error
+		if reload.Entries, err = tx.NewSelect().Model((*PriceEntry)(nil)).Count(ctx); err != nil {
+			return err
+		}
+		if reload.Active, err = activePriceEntries(ctx, tx, reload.At); err != nil {
+			return err
+		}
+		if reload.MarkupBps, err = activeMarkup(ctx, tx, reload.At); err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, "TRUNCATE price_entries, price_changes"); err != nil {
+			return err
+		}
+		if reload.Seed, reload.Loaded, err = syncPrices(ctx, tx, load); err != nil {
+			return err
+		}
+		if len(reload.Changes) == 0 {
+			return nil
+		}
+		names := make([]string, 0, len(reload.Changes))
+		for _, change := range reload.Changes {
+			names = append(names, change.Name)
+		}
+		return recordAuditEntry(ctx, tx, &AuditEntry{
+			ResourceType: AuditResourcePriceList,
+			ResourceID:   reload.Seed.Name,
+			ResourceName: "Every earlier change, removed by a development reload",
+			Action:       AuditDeleted,
+			Source:       AuditSourceCLI,
+			ActorID:      reload.Seed.CreatedBy,
+			ActorName:    "router prices reload",
+			Changes: []AuditChange{
+				{Field: "changes", Before: names},
+				{Field: "entries", Before: reload.Entries},
+			},
+		})
+	})
+	if err != nil {
+		return PriceReload{}, stack.Wrap(fmt.Errorf("store: reload prices: %w", busyOr(err)))
+	}
+	return reload, nil
 }
 
 // pricesToLoad is whether the database has no change yet, and the entries a load would add:

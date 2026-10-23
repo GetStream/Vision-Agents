@@ -124,7 +124,9 @@ func (s *PricesSuite) TestTheEmbeddedListNamesItsRelease() {
 
 // TestNoPriceTableIsTruncated: rows of the price list are never changed or deleted, which a
 // trigger enforces, but a trigger on rows does not see TRUNCATE. So nothing the router runs
-// may say it. Test code resets its own databases and is not read.
+// may say it, but for one statement in store.ReloadPrices, which empties a development
+// database's list (router prices reload, whose command refuses any other database). Test code
+// resets its own databases and is not read.
 func (s *PricesSuite) TestNoPriceTableIsTruncated() {
 	truncates := regexp.MustCompile(`(?i)\bTRUNCATE\s+(TABLE\s+)?(ONLY\s+)?([\w."]+\s*,\s*)*"?price_(entries|changes)\b`)
 	for _, statement := range []string{"TRUNCATE price_entries", "truncate table only price_changes",
@@ -134,6 +136,7 @@ func (s *PricesSuite) TestNoPriceTableIsTruncated() {
 	s.False(truncates.MatchString("at := now.Truncate(time.Hour) // price_entries"), "Go's Truncate is not SQL")
 	root, err := filepath.Abs("..")
 	s.Require().NoError(err)
+	reload := filepath.Join(root, "internal", "store", "prices.go")
 
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -152,7 +155,15 @@ func (s *PricesSuite) TestNoPriceTableIsTruncated() {
 		if err != nil {
 			return err
 		}
-		s.Falsef(truncates.Match(text), "%s truncates a price table", path)
+		found := truncates.FindAllIndex(text, -1)
+		if path != reload {
+			s.Emptyf(found, "%s truncates a price table", path)
+			return nil
+		}
+		s.Require().Lenf(found, 1, "%s truncates a price table outside ReloadPrices", path)
+		before := string(text[:found[0][0]])
+		s.Truef(strings.HasPrefix(before[strings.LastIndex(before, "\nfunc ")+1:], "func (s *Store) ReloadPrices("),
+			"%s truncates a price table outside ReloadPrices", path)
 		return nil
 	})
 	s.Require().NoError(err)

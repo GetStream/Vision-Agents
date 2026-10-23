@@ -375,3 +375,33 @@ func (s *PriceFileSuite) TestExportRefusesAConfigWithNoPrices() {
 
 	s.Error(err)
 }
+
+// TestReloadRunsOnlyAgainstADevelopmentDatabase: the guard, before anything opens a database.
+func (s *PriceFileSuite) TestReloadRunsOnlyAgainstADevelopmentDatabase() {
+	withDSN := func(dsn string) config.Config {
+		settings := config.Defaults()
+		settings.Postgres.DSN = dsn
+		return settings
+	}
+	for _, dsn := range []string{
+		"postgres://postgres:postgres@localhost:55432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@127.0.0.1:55432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@[::1]:55432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@postgres:5432/model_router?sslmode=disable",
+	} {
+		for _, environment := range []string{"", "local", "development", "testing"} {
+			s.T().Setenv(config.EnvVar, environment)
+			s.NoError(developmentDatabase(true, withDSN(dsn)), "%s with %s=%q", dsn, config.EnvVar, environment)
+		}
+	}
+
+	s.T().Setenv(config.EnvVar, "")
+	local := withDSN("postgres://postgres:secret@localhost:55432/model_router?sslmode=disable")
+	s.ErrorContains(developmentDatabase(false, local), "pass --development")
+	remote := developmentDatabase(true, withDSN("postgres://postgres:secret@db.example.com:5432/model_router?sslmode=require"))
+	s.ErrorContains(remote, `names the host "db.example.com"`)
+	s.NotContains(remote.Error(), "secret")
+	s.ErrorContains(developmentDatabase(true, withDSN("")), "set postgres.dsn")
+	s.T().Setenv(config.EnvVar, "staging")
+	s.ErrorContains(developmentDatabase(true, local), `ROUTER_ENV is "staging"`)
+}

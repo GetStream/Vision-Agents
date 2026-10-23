@@ -1465,7 +1465,8 @@ with the file's markup, and otherwise only the models the database has never pri
 it is, whatever the files say now. Each load is audited (`price_list`, source `cli`). A load
 that fails is retried every 30 seconds while the router serves; a file that does not parse
 stops the router at start. Rows are only ever added: a trigger refuses to change or delete
-an entry, and a change can only be cancelled before it takes effect.
+an entry, and a change can only be cancelled before it takes effect. The one exception is
+`router prices reload`, for a development database only, below.
 
 | Command | What it does |
 | --- | --- |
@@ -1474,6 +1475,27 @@ an entry, and a change can only be cancelled before it takes effect.
 | `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database |
 | `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
 | `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
+| `router prices reload --development [--dry-run]` | Development only: empties the price list and seeds it again from the price files, as a fresh database's first start does. See below |
+
+A start never changes a rate the database already has, so on a laptop an edit to
+`vendor.json` (a rate fixed, say) does not reach a database seeded before it.
+`router prices reload --development` puts the files' list back: in one transaction, under the
+lock a load takes, it empties `price_changes` and `price_entries` (every change goes, those
+scheduled, cancelled or setting a markup included), then writes the `seed` a fresh database
+gets from `ROUTER_PRICES_FILE` over `vendor.json`, with that file's markup. It prints what it
+removed, what it seeded, and the items whose price moved; `--dry-run` prints the same and
+writes nothing. The audit log keeps its rows and gains two: the removal (`deleted`) and the
+seed. Rows already recorded keep the `price_version` that priced them, which then names no
+change. Running routers read the new list within 30 seconds, so none needs a restart.
+
+It refuses to run unless all three hold: `--development` is passed, `ROUTER_ENV` is unset,
+`local`, `development` or `testing`, and `postgres.dsn` names `localhost`, a loopback address
+or `postgres` (compose's service, as the router's container reaches it):
+
+```bash
+cd acceleration && go run ./cmd/router prices reload --development --dry-run
+docker compose exec router router prices reload --development
+```
 
 Until the router prices from the database, it prices every row from its price files:
 `ROUTER_PRICES_FILE` over the embedded `vendor.json`, at the rates they give and with no
