@@ -386,6 +386,18 @@ func (p *Pipeline) Interrupt() error {
 	return p.command(Frame{"type": "interrupt"})
 }
 
+// AnswerApproval answers a tool call whose step waits for a person to allow it (an
+// ai_tool_call step awaiting_approval): the step's id, the request_id of the command its reply
+// answers, whether they allow it and, declined, what the step says. A connector call the router
+// holds for approval (a binding's require_approval) is sent only once allowed.
+func (p *Pipeline) AnswerApproval(toolCallID, requestID string, allowed bool, summary string) error {
+	frame := Frame{"type": "tool_approval", "tool_call_id": toolCallID, "request_id": requestID, "allowed": allowed}
+	if summary != "" {
+		frame["summary"] = summary
+	}
+	return p.command(frame)
+}
+
 // Leave ends the call. Safe to call after it has already ended.
 func (p *Pipeline) Leave(ctx context.Context) error {
 	p.mu.Lock()

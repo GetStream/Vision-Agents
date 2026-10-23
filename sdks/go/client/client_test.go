@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +42,8 @@ type router struct {
 	sessions []acceleration.Session
 	// items is every page of response items, each handed out for the cursor naming it.
 	items [][]acceleration.AgentResponseItem
+	// frames are what the session's socket was sent, close aside.
+	frames []map[string]any
 }
 
 func newRouter(t *testing.T) *router {
@@ -242,6 +245,9 @@ func newRouter(t *testing.T) *router {
 			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
 				return
 			}
+			backend.mu.Lock()
+			backend.frames = append(backend.frames, frame)
+			backend.mu.Unlock()
 		}
 	})
 
@@ -442,6 +448,31 @@ func TestStartingVoiceAsksTheRouterToJoinTheSessionsCall(t *testing.T) {
 	}
 	if started.CallId != "session-1" || !session.Voice.Started() {
 		t.Errorf("voice started on %q", started.CallId)
+	}
+}
+
+// A person's answer to a call held for their approval goes down the session's socket.
+func TestAnApprovalAnswerGoesDownTheSessionsSocket(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if err := session.AnswerApproval("call-1", "request-1", false, "Not now"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"type": "tool_approval", "tool_call_id": "call-1", "request_id": "request-1", "allowed": false, "summary": "Not now"}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		backend.mu.Lock()
+		sent := slices.Clone(backend.frames)
+		backend.mu.Unlock()
+		if slices.ContainsFunc(sent, func(frame map[string]any) bool { return reflect.DeepEqual(frame, want) }) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the router was sent %v, want %v", sent, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
