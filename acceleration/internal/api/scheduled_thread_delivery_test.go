@@ -373,6 +373,22 @@ func (s *TelnyxChannelSuite) TestAThreadTaskSaysItIsDeliveredOnTheThreadsChannel
 	s.Equal([]string{"sms"}, task.Channels)
 }
 
+// A task the agent schedules in a delivered task's turn keeps the thread and its channel too.
+func (s *TelnyxChannelSuite) TestATaskScheduledInATasksTurnIsDeliveredOnTheThreadToo() {
+	task, channel := s.scheduledInThread("+13125550001")
+	s.planTool("schedule_task", stretchInTwoHours)
+
+	_, _, err := s.deliverTask(task)
+
+	s.Require().NoError(err)
+	tasks := s.customersTasks(2)
+	s.Require().Len(tasks, 2)
+	for _, made := range tasks {
+		s.Equal(channel, made.ChannelThread)
+		s.Equal([]string{"sms"}, made.Channels)
+	}
+}
+
 // A thread task is delivered on its thread, so its deliver_to cannot be changed; its other
 // fields can.
 func (s *TelnyxChannelSuite) TestAThreadTasksDeliverToCannotChange() {
