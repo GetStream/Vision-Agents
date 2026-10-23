@@ -355,13 +355,14 @@ func (m *money) grantsPass(ctx context.Context) {
 		return
 	}
 	slices.Sort(keys)
+	m.countedByReconcile(ctx, db)
 	m.readGrants(ctx, db, keys)
 	m.reconcileGrants(ctx, db)
 }
 
 // readGrants reads the live grants of the accounts' organizations, within grantsTimeout, and
-// keeps them under each account. A read that fails keeps the last ones read, is a failed read
-// for the holds against them, and leaves an account never read with no grant to draw.
+// keeps them under each account. A read that fails keeps the last ones read, and the holds
+// against them, and leaves an account never read with no grant to draw.
 func (m *money) readGrants(ctx context.Context, db *store.Store, keys []string) {
 	organizations := make([]string, 0, len(keys))
 	for _, key := range keys {
@@ -372,15 +373,9 @@ func (m *money) readGrants(ctx context.Context, db *store.Store, keys []string) 
 	call, cancel := context.WithTimeout(ctx, grantsTimeout)
 	grants, err := db.LiveGrants(call, organizations, m.settings.Now())
 	cancel()
-	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
-		for _, key := range keys {
-			if acct := m.accounts[key]; acct != nil {
-				acct.grantsFailed = now
-			}
-		}
 		m.failedRead("could not read the customers' grants, answering with the last ones read", err, "organizations", len(organizations))
 		return
 	}

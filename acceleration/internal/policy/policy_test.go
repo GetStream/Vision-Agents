@@ -23,7 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
@@ -322,8 +322,77 @@ func (s *PolicySuite) TestAGrantAdmitsPastASpentLimitUntilItIsUsed() {
 
 	s.spendAs(store.Request{UsageID: usageID, CustomerID: s.app, CostMicros: 2_000_000, LimitGrants: drawn})
 	s.enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
+	s.never(func() bool {
+		s.enforcer.money.mu.Lock()
+		defer s.enforcer.money.mu.Unlock()
+		return len(s.enforcer.money.accounts[s.org].grantHeld) == 0
+	}, 200*time.Millisecond, 10*time.Millisecond, "written is not counted: the grant hold stays")
+	s.enforcer.Counted([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
 	s.never(func() bool { return s.admitted().Spend == nil }, 300*time.Millisecond, 10*time.Millisecond,
 		"once the row is written and summed, what it paid for is the grant's")
+}
+
+func (s *PolicySuite) TestWithShardsAGrantHoldStaysUntilItsRowCountsTowardTheGrant() {
+	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
+	shared, shard := testenv.Database(dsn, "policy_grants_shared"), testenv.Database(dsn, "policy_grants_shard")
+	for _, each := range []string{shared, shard} {
+		db, err := store.Open(each)
+		s.Require().NoError(err)
+		s.Require().NoError(db.Migrate(s.ctx))
+		s.Require().NoError(db.Close())
+	}
+	db, err := store.OpenShards(store.Options{DSN: shared, ShardDSN: shard, Shards: map[string]string{"here": shard}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = db.Close() })
+	s.Require().NoError(db.JoinOrganization(s.ctx, s.app, s.org))
+	configs, err := appconfig.New(appconfig.Options{Store: db})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil)
+	audit := store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI}
+	s.Require().NoError(db.CreateLimit(s.ctx, &store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app,
+		Interval: usage.Daily, LimitMicros: 1, UpdatedBy: "test"}, audit))
+	row := func(cost int64, grants []int64) store.Request {
+		return store.Request{UsageID: uuid.Must(uuid.NewV7()), CustomerID: s.app, OrganizationID: s.org, Modality: "llm",
+			Provider: "openai", Model: "gpt", StartedAt: time.Now().UTC(), CostMicros: cost, Success: true, Billable: true, LimitGrants: grants}
+	}
+	_, err = db.RecordRequests(s.ctx, []store.Request{row(1, nil)})
+	s.Require().NoError(err)
+	grant := store.LimitGrant{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app, AmountMicros: 2_000_000, Reason: "launch", Actor: "test"}
+	s.Require().NoError(db.AddGrant(s.ctx, &grant, audit))
+	s.eventually(func() bool {
+		admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
+		return err == nil && admitted.Spend == nil && len(admitted.Grants) == 1
+	}, 5*time.Second, 10*time.Millisecond, "admitted on the grant once it is read")
+
+	used := row(2_000_000, nil)
+	owner := routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{OrganizationID: s.org}}
+	used.LimitGrants = enforcer.Spent(owner, used.UsageID, used.CostMicros)
+	s.Equal([]int64{grant.ID}, used.LimitGrants)
+	// The shard has the row and nothing counted it: its count was dropped.
+	_, err = db.RecordRequests(s.ctx, []store.Request{used})
+	s.Require().NoError(err)
+	usageID := used.UsageID
+	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 2_000_000}})
+	held := func() bool {
+		enforcer.money.mu.Lock()
+		defer enforcer.money.mu.Unlock()
+		return enforcer.money.accounts[s.org].grantHeld[grant.ID] > 0
+	}
+	s.never(func() bool { return !held() }, acklessAges*quick.PendingTTL+time.Second, 20*time.Millisecond,
+		"an uncounted row stays held against its grant past every timer")
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	s.ErrorIs(admitted.Spend, ErrBudgetSpent, "the grant is not drawn twice meanwhile")
+
+	_, err = db.ReconcileGrantUses(s.ctx, []int64{grant.ID})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return !held() }, 5*time.Second, 10*time.Millisecond, "let go once the reconcile counted it")
+	read, err := db.Grant(s.ctx, "", grant.ID)
+	s.Require().NoError(err)
+	s.EqualValues(2_000_000, read.UsedMicros)
+	admitted, err = enforcer.Admit(s.ctx, ownerOf(s.app))
+	s.Require().NoError(err)
+	s.ErrorIs(admitted.Spend, ErrBudgetSpent, "the grant is used up by the row it counts")
 }
 
 func (s *PolicySuite) TestAGrantUntilMidnightIsExpiredAfterIt() {

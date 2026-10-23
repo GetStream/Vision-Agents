@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
@@ -82,17 +83,18 @@ type hold struct {
 	// balance and limits say whether it still counts against the balance and the spend hard
 	// limit, and against the customer's limits; granted whether it still counts against the
 	// grants it was drawn from, which is until a read of what they paid for, asked after the
-	// shard wrote the row, lands.
+	// writer counted the row toward them, lands.
 	balance bool
 	limits  bool
 	granted bool
 	grants  []int64
 	// ackedAt is when this process knew the usage service had the row, and mirrored whether
-	// that ack said its counters took it; writtenAt is when it knew the shard had it; zero
-	// until then.
+	// that ack said its counters took it; writtenAt is when it knew the shard had it, and
+	// countedAt when it knew the row counted toward its grants; zero until then.
 	ackedAt   time.Time
 	mirrored  bool
 	writtenAt time.Time
+	countedAt time.Time
 	// group is, for a hold that carries others, the state they were folded in; nil for a row's own.
 	group *fold
 }
@@ -110,6 +112,7 @@ type fold struct {
 	acked    bool
 	mirrored bool
 	written  bool
+	counted  bool
 }
 
 // state is the fold the hold would be carried in.
@@ -117,7 +120,7 @@ func (h *hold) state() fold {
 	return fold{
 		app: h.app, subjects: h.subjectsKey, grants: grantsKey(h.grants), hour: h.at.UTC().Truncate(time.Hour).Unix(),
 		balance: h.balance, limits: h.limits, granted: h.granted,
-		acked: !h.ackedAt.IsZero(), mirrored: h.mirrored, written: !h.writtenAt.IsZero(),
+		acked: !h.ackedAt.IsZero(), mirrored: h.mirrored, written: !h.writtenAt.IsZero(), counted: !h.countedAt.IsZero(),
 	}
 }
 
@@ -307,6 +310,16 @@ func (e *Enforcer) Written(written []routing.Acked) {
 	e.money.settled(written, false, func(h *hold) *time.Time { return &h.writtenAt }, func(f *fold) *bool { return &f.written })
 }
 
+// Counted notes the rows that count toward their grants in the shared database: a hold kept for
+// one of them stops counting against its grants once a read of them asked for after now lands.
+// It is WriterOptions.Counted.
+func (e *Enforcer) Counted(counted []routing.Acked) {
+	if e == nil || e.money.off() {
+		return
+	}
+	e.money.settled(counted, false, func(h *hold) *time.Time { return &h.countedAt }, func(f *fold) *bool { return &f.counted })
+}
+
 // settled notes that a ledger has the rows: when, in the hold of each, or by moving a folded
 // row into the fold that ledger already has. For acks it also keeps whether the usage
 // service's counters took the row, and has an account whose counters missed one read the
@@ -361,6 +374,7 @@ func (m *money) settled(rows []routing.Acked, acks bool, when func(*hold) *time.
 		into.micros += carried.micros
 		into.made = later(into.made, from.made)
 		into.ackedAt, into.writtenAt = later(into.ackedAt, from.ackedAt), later(into.writtenAt, from.writtenAt)
+		into.countedAt = later(into.countedAt, from.countedAt)
 		// The fold this joins may have been acked before: it is let go only by a read asked for
 		// after this ack too, so what it already held waits with what just joined it.
 		*when(into) = now
@@ -392,7 +406,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if counted && acct.ackless(now, m.settings.Fresh) {
 		acct.acksFailed = now
 	}
-	var expired, unwritten, waiting, waited, unacked, aged int64
+	var expired, unwritten, waiting, waited, unacked, aged, uncounted int64
 	var emptied []uuid.UUID
 	for id, held := range acct.holds {
 		if held.balance {
@@ -429,11 +443,16 @@ func (m *money) release(key string, acct *account, now time.Time) {
 			}
 		}
 		if held.granted {
+			// Only a count of the row lets it go, by the grant counter or found by
+			// countedByReconcile: a row whose count the grant counter still tries may count
+			// yet, and letting go of it first would overdraw the grant. A row this process
+			// never knew the shard to have goes acklessAges PendingTTLs on, as the writer may
+			// have lost it.
 			switch {
-			case !held.writtenAt.IsZero() && held.writtenAt.Before(acct.grantsFrom):
+			case !held.countedAt.IsZero() && held.countedAt.Before(acct.grantsFrom):
 				acct.letGoGrants(held)
-			case !acct.grantsFrom.Before(later(held.made, acct.grantsFailed).Add(ttl)):
-				unwritten += held.micros
+			case held.writtenAt.IsZero() && now.Sub(held.made) > acklessAges*ttl:
+				uncounted += held.micros
 				acct.letGoGrants(held)
 			}
 		}
@@ -466,6 +485,10 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if waiting > 0 && m.waiting.due(key, logEvery) {
 		logger.Warn("usage held against an "+noun(key)+" is past its pending_ttl with no read of its balance to count it, so it is kept",
 			append(who(key), "holds", waiting, "micros", waited, "last_failed_read", acct.balanceFailed)...)
+	}
+	if uncounted > 0 {
+		logger.Warn("usage held against an "+noun(key)+"'s grants is let go after "+(acklessAges*ttl).String()+
+			" without this router knowing the shard wrote it", append(who(key), "micros", uncounted)...)
 	}
 	if aged > 0 {
 		logger.Warn("usage held against an "+noun(key)+"'s spend limits is let go after "+(acklessAges*ttl).String()+
@@ -605,6 +628,7 @@ func (m *money) fold(acct *account, id uuid.UUID) bool {
 	into.micros += held.micros
 	into.made = later(into.made, held.made)
 	into.ackedAt, into.writtenAt = later(into.ackedAt, held.ackedAt), later(into.writtenAt, held.writtenAt)
+	into.countedAt = later(into.countedAt, held.countedAt)
 	delete(acct.holds, id)
 	if acct.remember(id, folded{into: intoID, micros: held.micros}) {
 		return true
@@ -681,6 +705,69 @@ func (m *money) shipped(ctx context.Context) {
 			return
 		}
 		m.settled(acks(found), true, func(h *hold) *time.Time { return &h.ackedAt }, func(f *fold) *bool { return &f.acked })
+	}
+}
+
+// countedByReconcile asks the shared database which of the rows held against their grants,
+// written Fresh ago or more and not known counted, count toward them, as the reconcile of any
+// router counts a row the grant counter dropped or the shard already had, and notes them
+// counted now. It runs on the grants loop before the grants are read, at most shippedPerPass
+// of them, the oldest first, within grantsTimeout; with one database the writer counts every
+// row as it writes it, so there is nothing to ask. A failed question keeps the holds.
+func (m *money) countedByReconcile(ctx context.Context, db *store.Store) {
+	if !db.Sharded() {
+		return
+	}
+	type candidate struct {
+		id     uuid.UUID
+		grants int
+		made   time.Time
+	}
+	now := time.Now()
+	var asked []candidate
+	due := func(held *hold) bool {
+		return held != nil && held.granted && held.countedAt.IsZero() && !held.writtenAt.IsZero() && now.Sub(held.writtenAt) > m.settings.Fresh
+	}
+	m.mu.Lock()
+	for _, acct := range m.accounts {
+		for id, held := range acct.holds {
+			if held.group == nil && due(held) {
+				asked = append(asked, candidate{id: id, grants: len(held.grants), made: held.made})
+			}
+		}
+		for id, carried := range acct.folded {
+			if into := acct.holds[carried.into]; due(into) {
+				asked = append(asked, candidate{id: id, grants: len(into.grants), made: into.made})
+			}
+		}
+	}
+	m.mu.Unlock()
+	if len(asked) == 0 {
+		return
+	}
+	slices.SortFunc(asked, func(a, b candidate) int { return a.made.Compare(b.made) })
+	asked = asked[:min(len(asked), shippedPerPass)]
+	call, cancel := context.WithTimeout(ctx, grantsTimeout)
+	defer cancel()
+	for start := 0; start < len(asked); start += shippedChunk {
+		part := asked[start:min(start+shippedChunk, len(asked))]
+		ids := make([]uuid.UUID, len(part))
+		for i, each := range part {
+			ids[i] = each.id
+		}
+		found, err := db.GrantUsesCounted(call, ids)
+		if err != nil {
+			m.failedRead("could not ask which rows held against their grants count toward them, so they are kept", err, "rows", len(asked))
+			return
+		}
+		var counted []uuid.UUID
+		for _, each := range part {
+			// A row counts once it counts toward each grant it names.
+			if found[each.id] >= each.grants {
+				counted = append(counted, each.id)
+			}
+		}
+		m.settled(acks(counted), false, func(h *hold) *time.Time { return &h.countedAt }, func(f *fold) *bool { return &f.counted })
 	}
 }
 

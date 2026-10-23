@@ -261,7 +261,12 @@ func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Clien
 	}
 	r := &Recorder{modality: modality, pricer: pricer, logger: logger, gate: gate, writer: writer}
 	if writer == nil {
-		r.writer = NewWriter(WriterOptions{Store: pgStore, Live: liveClient, Logger: logger})
+		options := WriterOptions{Store: pgStore, Live: liveClient, Logger: logger}
+		// A gate that holds work against its grants hears when the rows count toward them.
+		if counter, ok := gate.(interface{ Counted([]Acked) }); ok {
+			options.Counted = counter.Counted
+		}
+		r.writer = NewWriter(options)
 		r.own = true
 	}
 	return r

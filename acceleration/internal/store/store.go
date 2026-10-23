@@ -325,9 +325,9 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 // RecordRequests writes rows that are not written yet, in one transaction in this shard's
 // database, and returns the usage ids it wrote. A row whose usage id is already there is
 // skipped, so writing a batch again after a failure whose commit did land writes nothing twice.
-// A row RecordRequests wrote has its ID set. Each row it wrote counts toward the grants it
-// names (AddGrantUses): in the same transaction with one database, right after with shards,
-// where a failure is ErrGrantUsesMissing.
+// A row RecordRequests wrote has its ID set. With one database each row it wrote counts toward
+// the grants it names in the same transaction (AddGrantUses); with shards that is the caller's
+// to do, apart, since the grants are in the shared database.
 func (s *Store) RecordRequests(ctx context.Context, requests []Request) ([]uuid.UUID, error) {
 	for i := range requests {
 		if err := prepareRequest(&requests[i]); err != nil {
@@ -378,13 +378,6 @@ func (s *Store) RecordRequests(ctx context.Context, requests []Request) ([]uuid.
 		byUsage[row.UsageID] = row.ID
 	}
 	var missing error
-	if s.Sharded() {
-		// The grants are in the shared database, so the rows the shard took count toward them
-		// right after; ReconcileGrantUses finds a row a process stopped before counting.
-		if _, err := s.AddGrantUses(ctx, GrantUsesOf(sorted, ids)); err != nil {
-			missing = fmt.Errorf("%w: %w", ErrGrantUsesMissing, err)
-		}
-	}
 	var logged []*Request
 	for i := range requests {
 		id, ok := byUsage[requests[i].UsageID]

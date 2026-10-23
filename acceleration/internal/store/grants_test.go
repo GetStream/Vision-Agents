@@ -103,8 +103,20 @@ func (s *StoreSuite) grantRow(store *Store, grants []int64, cost int64, billable
 		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
 		StartedAt: s.base, CostMicros: cost, Billable: billable, Success: true, LimitGrants: grants,
 	}
-	s.Require().NoError(store.RecordRequest(s.ctx, &row))
+	s.writeAsTheWriter(store, row)
 	return row
+}
+
+// writeAsTheWriter writes the rows and counts the ones written toward their grants, as the
+// writer does: RecordRequests counts them with one database, the writer's grant counter apart
+// with shards.
+func (s *StoreSuite) writeAsTheWriter(store *Store, rows ...Request) {
+	written, err := store.RecordRequests(s.ctx, rows)
+	s.Require().NoError(err)
+	if store.Sharded() {
+		_, err = store.AddGrantUses(s.ctx, GrantUsesOf(rows, written))
+		s.Require().NoError(err)
+	}
 }
 
 // used is what the grant has paid for, as its row says.
@@ -144,8 +156,7 @@ func (s *StoreSuite) TestARowWrittenTwiceCountsOnceTowardItsGrant() {
 		UsageID: uuid.Must(uuid.NewV7()), Modality: "llm", CustomerID: "app-1", Provider: "openai", Model: "m",
 		StartedAt: s.base, CostMicros: 50, Billable: true, Success: true, LimitGrants: []int64{grant.ID},
 	}
-	_, err = s.store.RecordRequests(s.ctx, []Request{fresh, fresh})
-	s.Require().NoError(err)
+	s.writeAsTheWriter(s.store, fresh, fresh)
 	s.EqualValues(350, s.used(grant.ID), "a row sent twice in one batch counts once")
 }
 

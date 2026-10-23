@@ -24,6 +24,8 @@ BEGIN
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (grant_id, usage_id)
     );
+    -- Which rows count toward their grants, by usage id, asked by a router that holds them.
+    CREATE INDEX IF NOT EXISTS limit_grant_uses_usage_idx ON limit_grant_uses (usage_id);
 END $$;
 -- +goose StatementEnd
 

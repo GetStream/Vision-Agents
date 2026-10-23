@@ -203,12 +203,11 @@ type account struct {
 	limited    bool
 	// grants are its live grants, read every Fresh apart from the limits once it has one, each
 	// with what it had paid for; grantsFrom is when that read was asked for, which counts every
-	// row written by then, and grantsFailed when one last did not land. grantHeld is what the
-	// holds count against each grant, by id.
-	grants       []grantState
-	grantsFrom   time.Time
-	grantsFailed time.Time
-	grantHeld    map[int64]int64
+	// row counted toward them by then. grantHeld is what the holds count against each grant,
+	// by id.
+	grants     []grantState
+	grantsFrom time.Time
+	grantHeld  map[int64]int64
 	// drawn is the grants the latest admission of each owner chose, by its subjects' keys,
 	// which its rows name; dropped once unused for Idle.
 	drawn map[string]drawn

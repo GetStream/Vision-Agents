@@ -263,11 +263,6 @@ func (s *Store) ListGrants(ctx context.Context, filter GrantFilter, before int64
 	return grants, nil
 }
 
-// ErrGrantUsesMissing is RecordRequests writing its rows to a shard and failing to count them
-// toward their grants in the shared database. The rows are written; AddGrantUses with
-// GrantUsesOf counts them, and ReconcileGrantUses finds any that never were.
-var ErrGrantUsesMissing = errors.New("store: grant uses missing")
-
 // GrantUse is one row counted toward one grant: its billable cost, by its usage id.
 type GrantUse struct {
 	GrantID int64
@@ -351,6 +346,31 @@ WITH sent AS (
 )
 SELECT count(*) FROM counted`, pgdialect.Array(grants), pgdialect.Array(usageIDs), pgdialect.Array(micros)).Scan(ctx, &added)
 	return added, err
+}
+
+// GrantUsesCounted is, of the rows named by usage id, how many grants each counts toward.
+func (s *Store) GrantUsesCounted(ctx context.Context, usageIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	counted := map[uuid.UUID]int{}
+	if len(usageIDs) == 0 {
+		return counted, nil
+	}
+	ids := make([]string, len(usageIDs))
+	for i, id := range usageIDs {
+		ids[i] = id.String()
+	}
+	var rows []struct {
+		UsageID uuid.UUID `bun:"usage_id"`
+		Grants  int       `bun:"grants"`
+	}
+	err := s.db.NewRaw("SELECT usage_id, count(*) AS grants FROM limit_grant_uses WHERE usage_id = ANY(?::uuid[]) GROUP BY usage_id",
+		pgdialect.Array(ids)).Scan(ctx, &rows)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: grant uses counted: %w", err))
+	}
+	for _, row := range rows {
+		counted[row.UsageID] = row.Grants
+	}
+	return counted, nil
 }
 
 // ReconcileGrantUses counts toward the grants every billable row naming one of them, in every

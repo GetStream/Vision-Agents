@@ -632,10 +632,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	defer closeCounters()
 	var gate routing.Gate
-	var shipped, written func([]routing.Acked)
+	var shipped, written, counted func([]routing.Acked)
 	if policies != nil {
 		defer policies.Close()
-		gate, shipped, written = policies, policies.Acked, policies.Written
+		gate, shipped, written, counted = policies, policies.Acked, policies.Written, policies.Counted
 	}
 
 	// Every recorder of the process writes through this one writer, so there is one queue to
@@ -645,7 +645,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// ledger has, which lets go of what they held for them.
 	usageWriter := routing.NewWriter(routing.WriterOptions{
 		Store: pgStore, Live: liveClient, Logger: logger, Gate: gate, Usage: usageClient, Source: source,
-		Shipped: shipped, Written: written,
+		Shipped: shipped, Written: written, Counted: counted,
 	})
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
