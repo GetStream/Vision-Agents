@@ -136,6 +136,9 @@ To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `c
 skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
 `add-connector`. Plugins are deprecated.
 
+To set up, test or debug an SMS line on a Telnyx number, staging's permanent line included,
+read the `telnyx` skill (`.claude/skills/telnyx/SKILL.md`).
+
 ## Scheduled tasks
 
 To give an agent reminders and later work for its users, schedule one, or find why one never
