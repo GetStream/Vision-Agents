@@ -270,6 +270,7 @@ func (s *StreamsSuite) TestACallerThatNeverAnswersTheCloseIsHungUpOn() {
 			var timeout net.Error
 			s.False(errors.As(err, &timeout) && timeout.Timeout(), "the router still holds the socket: %v", err)
 			s.ErrorIs(err, io.EOF)
+			s.Greater(time.Since(began), closeWait/2, "the router waits for the caller's close rather than hanging up at once")
 			s.Less(time.Since(began), 1500*time.Millisecond, "the router waits for the close for about a second")
 			return
 		}

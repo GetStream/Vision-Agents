@@ -382,6 +382,9 @@ type Agent struct {
 	// a provider is still sending. It holds one entry per interruption and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// leftNoted is the reply whose audio for a left call was last logged, so a reply logs
+	// it once rather than once per chunk. Only the speech-to-speech consumer touches it.
+	leftNoted string
 	// unheard is the caller turn being answered while none of its reply has gone out, which
 	// the same caller saying more makes stale.
 	unheard unheardReply
@@ -3558,6 +3561,13 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				err = marked.PublishAudioMarked(speech, withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard))
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
+			}
+			if errors.Is(err, ErrCallLeft) {
+				if dropping != typed.SynthesisID {
+					dropping = typed.SynthesisID
+					a.logger.Debug("dropping audio for a call that has been left", "synthesis", typed.SynthesisID)
+				}
+				continue
 			}
 			if err != nil {
 				a.fail(err, "edge")
