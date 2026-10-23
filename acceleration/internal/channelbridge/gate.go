@@ -27,7 +27,7 @@ var (
 
 // Reachable says whether a reply on a thread would go out now, the words aside, so a reply
 // nobody asked for, such as a scheduled task's, is refused before the turn that writes it is
-// paid for. It asks what Reply asks (mayReply), and what the provider would refuse: a
+// paid for. It asks what Reply asks (refusesReply), and what the provider would refuse: a
 // connection that was removed (store.ErrNoConnectorConnection), and free text past the
 // provider's window (ErrOutsideWindow, pastWindow).
 func (b *Bridge) Reachable(ctx context.Context, thread store.ChannelThread) error {
@@ -35,26 +35,8 @@ func (b *Bridge) Reachable(ctx context.Context, thread store.ChannelThread) erro
 	if err != nil {
 		return err
 	}
-	source := episodeSources[thread.ConnectorID]
-	if source.optOuts != "" {
-		to, err := b.replyTo(ctx, thread)
-		if err != nil {
-			return err
-		}
-		optedOut, err := b.store.OptedOut(ctx, thread.CustomerID, to, source.optOuts)
-		if err != nil {
-			return err
-		}
-		if optedOut {
-			return stack.Wrap(ErrOptedOut)
-		}
-		allowed, err := b.allowed(ctx, thread.CustomerID, thread.ConnectorID, to)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return stack.Wrap(ErrHeldBack)
-		}
+	if err := b.refusesReply(ctx, thread); err != nil {
+		return err
 	}
 	definition, err := b.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
 	if err != nil {
@@ -99,23 +81,33 @@ func (b *Bridge) allowed(ctx context.Context, customerID, connectorID, to string
 	return err == nil, err
 }
 
-// mayReply is whether a reply may go to the person a thread's replies reach: not when they
-// opted out of the connector's opt-out channel (keywords.go), nor when the gate refuses it,
-// such as past a sandbox's daily limit.
-func (b *Bridge) mayReply(ctx context.Context, thread store.ChannelThread) (bool, error) {
+// refusesReply is why a reply may not go to the person a thread's replies reach, or nil when
+// it may: ErrOptedOut when they opted out of the connector's opt-out channel (keywords.go),
+// ErrHeldBack when the gate refuses it, such as past a sandbox's daily limit.
+func (b *Bridge) refusesReply(ctx context.Context, thread store.ChannelThread) error {
 	source := episodeSources[thread.ConnectorID]
 	if source.optOuts == "" {
-		return true, nil
+		return nil
 	}
 	to, err := b.replyTo(ctx, thread)
 	if err != nil {
-		return false, err
+		return err
 	}
 	optedOut, err := b.store.OptedOut(ctx, thread.CustomerID, to, source.optOuts)
-	if err != nil || optedOut {
-		return false, err
+	if err != nil {
+		return err
 	}
-	return b.allowed(ctx, thread.CustomerID, thread.ConnectorID, to)
+	if optedOut {
+		return stack.Wrap(ErrOptedOut)
+	}
+	allowed, err := b.allowed(ctx, thread.CustomerID, thread.ConnectorID, to)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return stack.Wrap(ErrHeldBack)
+	}
+	return nil
 }
 
 // replyTo is the person a thread's replies reach, as its opt-outs and the gate name them. On

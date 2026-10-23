@@ -324,7 +324,8 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
-		if err := b.reply(reply); err != nil {
+		// A reply nobody may be sent (refusesReply) is no failure to log.
+		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
@@ -347,7 +348,7 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 	}
 	// Nothing follows an opt-out's confirmation (keywords.go), not even a reply the agent
 	// was writing when the person texted STOP; nor a reply past the sandbox's daily limit.
-	if may, err := b.mayReply(ctx, thread); err != nil || !may {
+	if err := b.refusesReply(ctx, thread); err != nil {
 		return err
 	}
 	text := withFiles(reply.Text, reply.Files)
@@ -380,10 +381,9 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 		time.Sleep(b.retries[attempt])
 		// Nor after a STOP that came in during the wait, or the limit another reply reached.
 		checking, done := context.WithTimeout(context.Background(), sendTimeout)
-		may, checked := b.mayReply(checking, thread)
+		err = b.refusesReply(checking, thread)
 		done()
-		if checked != nil || !may {
-			err = checked
+		if err != nil {
 			break
 		}
 	}
