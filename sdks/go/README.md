@@ -104,6 +104,26 @@ finished, because a model takes seconds. `Items` is what the backend wrote down,
 the same during the conversation and a week after it ended; `session.Events()` is still the
 live view, and the two answer different questions.
 
+A text session's events survive the router restarting. When its socket drops, the SDK opens it
+again, waiting longer between attempts for up to five minutes, and the router sends what it
+missed. `Events()` stays open across it and carries a `resumed` event saying how it went:
+
+```go
+for event := range session.Events() {
+    if event.Kind == "resumed" && !event.Resumed.Complete {
+        // Some of what was said while the socket was away is gone: read it back from
+        // session.Responses.Items. A question the router stopped on its way down is
+        // interrupted and never answered, so ask it again.
+        if command := event.Resumed.Command; command != nil && command.State == "interrupted" {
+            session.Responses.Create(ctx, question)
+        }
+    }
+}
+```
+
+`Command` is the last question `Responses.Create` asked. A call's events are not reconnected:
+the call ends with the router holding it, and `Events()` closes as before.
+
 Old conversations are listed most recently updated first, or found by phrase, best match
 first:
 
