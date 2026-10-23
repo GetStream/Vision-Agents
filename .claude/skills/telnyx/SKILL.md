@@ -51,11 +51,12 @@ Staging has a permanent SMS line since 2026-10-23.
 | Connection | `81112518ea0565808d658c1464ed801b`, app-owned, token `TELNYX_API_KEY` |
 | Config | `d6187808c0b169a2d2adf279d4aae97e` "staging-sms-line": text, `llm-fast`, `scheduling.enabled`, `default_timezone` America/Toronto, binding `sms` |
 
-**Only Canadian phones get a reply.** The number sends no SMS outside the US and Canada
-(`features.sms.international_outbound` is false on `GET /v2/phone_numbers/%2B12187021098/messaging`).
-It has no approved 10DLC campaign, so US carriers refuse every reply with Telnyx error
-40010, «Not 10DLC registered». The agent still answers; the carrier drops the text. On 2026-10-23 a US T-Mobile phone got no reply and a
-Canadian phone did. The Stream brand is verified, but its campaign
+**US phones get no reply.** The number has no approved 10DLC campaign, so US carriers refuse
+every reply with Telnyx error 40010, «Not 10DLC registered». The agent still answers; the
+carrier drops the text. On 2026-10-23 a US T-Mobile phone got no reply, and a Canadian phone
+(Fido) got every reply. Phones in other countries are not tested. The number has
+`features.sms.international_outbound` false (`GET /v2/phone_numbers/%2B12187021098/messaging`),
+which can mean no SMS to them; check the outbound record (below) after a test. The Stream brand is verified, but its campaign
 (`4b3001a1-0de5-ae6e-5501-5f7aeb071f04`, "Internal Sandbox for Stream AI agents") is
 `TELNYX_FAILED` over its opt-in description and privacy policy, and the number is in no
 campaign. Check it:
@@ -153,7 +154,7 @@ The person must be a real phone. Our Twilio account cannot text US numbers: it a
 code 21408 (checked 2026-10-23). The repo `.env` sets `TWILIO_ACCOUNT_SID` twice, and the
 later one has no numbers. So ask a human to text the line, and give them the exact words.
 
-1. **A reply.** Text "hi" from a Canadian phone (see «Staging's SMS line»). A short
+1. **A reply.** Text "hi" from a phone that gets replies, such as a Canadian one (see «Staging's SMS line»). A short
    answer comes back within a few seconds.
 
    A phone that texted the line before keeps its thread, and the agent reads the whole
@@ -207,7 +208,7 @@ ticket comments (AI-1842, AI-1843).
 | What you see | Where it stopped | What to do |
 | --- | --- | --- |
 | Nothing at all, and the router logs nothing | The profile's `webhook_url` points somewhere else (an old tunnel) | Read the profile (step 1). Point it at the router (step 5) |
-| The agent answered, but the phone got nothing | A US carrier refused the reply: Telnyx error 40010, the number has no approved 10DLC campaign | Read the outbound record's `errors` (below). Text from a Canadian phone, or get the number into an approved campaign (see «Staging's SMS line») |
+| The agent answered, but the phone got nothing | A US carrier refused the reply: Telnyx error 40010, the number has no approved 10DLC campaign | Read the outbound record's `errors` (below). Text from a non-US phone, such as a Canadian one, or get the number into an approved campaign (see «Staging's SMS line») |
 | The proxy answers 401 «api_key is required» | The staging proxy does not pass the route | The route passed on 2026-10-23. See the `connectors` skill, «When it does not work» |
 | The router answers 401 «not signed by the provider» to Telnyx | Wrong signing secret, or a clock older than 5 min | Register the provider app again with `TELNYX_PUBLIC_KEY` (step 2) |
 | 200, but no reply | No connection has this number, or no config binds it (the router logs a Warn: «no agent config binds its line»). Two configs that bind it: the oldest answers, so the newer one stays silent | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
