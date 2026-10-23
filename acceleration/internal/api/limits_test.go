@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -272,6 +273,18 @@ func (s *LimitsSuite) TestAnOriginCannotHaveAKeyLimit() {
 		map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "hook:chat", "interval": "daily", "limit_micros": 1})
 
 	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *LimitsSuite) TestAUserIDFollowsStreamChatsRule() {
+	for _, id := range []string{"jane.doe", "Jane Doe", "jane@example.com", "u_1-2"} {
+		limit := s.create(map[string]any{"subject": "user", "app_id": s.customerID(), "user_id": id, "interval": "daily", "limit_micros": 1})
+		s.Equal(id, limit.UserId)
+	}
+	for _, id := range []string{"auth0|abc", "jane+doe", "jané", "a/b", strings.Repeat("u", 256)} {
+		status, _ := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+			map[string]any{"subject": "user", "app_id": s.customerID(), "user_id": id, "interval": "daily", "limit_micros": 1})
+		s.Equal(http.StatusBadRequest, status, id)
+	}
 }
 
 func (s *LimitsSuite) TestASystemFieldIsAnUnknownField() {
