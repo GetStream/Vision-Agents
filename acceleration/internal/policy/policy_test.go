@@ -634,5 +634,6 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	s.False(requires)
 	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 	s.NoError(err)
-	s.NoError(admitted.Spend, "a limit never read refuses nothing")
+	s.ErrorIs(admitted.Spend, ErrBudgetSpent, "limits never read are the default tier's to answer, which fails closed")
+	s.ErrorContains(admitted.Spend, "spend limits could not be read")
 }

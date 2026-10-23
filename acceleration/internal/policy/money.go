@@ -81,8 +81,11 @@ var errNoBalance = refusedWith(ErrNoCredits, "the organization has no credit lef
 const (
 	// standingsChunk is how many organizations one standings call asks about.
 	standingsChunk = 100
-	// readTimeout bounds one standings call, one read of limits or counters, and one sum.
+	// readTimeout bounds one standings call, one read of limits or windows, and one sum.
 	readTimeout = 5 * time.Second
+	// countersTimeout bounds one read of the counters, which happens every SpendEvery; past it,
+	// the subjects are read from the usage service instead.
+	countersTimeout = time.Second
 	// passTimeout bounds one pass of either loop.
 	passTimeout = time.Minute
 	// sumReads is how many subjects' spend is summed from Postgres at once, with no usage
@@ -100,6 +103,7 @@ const (
 	reasonNoCredit   = "no_credit"
 	reasonLimit      = "spend_limit"
 	reasonUserLimit  = "user_limit"
+	reasonLimitsRead = "limits_unreadable"
 )
 
 // enforcers is every Enforcer of this process with a running loop, which the oldest-read gauge
@@ -153,9 +157,14 @@ type money struct {
 	shippedAt time.Time
 
 	kick, kickLimits chan struct{}
-	cancel           context.CancelFunc
-	loops            sync.WaitGroup
-	stopped          sync.Once
+	// ctx is the loops', which the first reads an admission waits on run under too (reads);
+	// stopping says stop has begun, after which no first read starts.
+	ctx      context.Context
+	cancel   context.CancelFunc
+	loops    sync.WaitGroup
+	reads    sync.WaitGroup
+	stopping bool
+	stopped  sync.Once
 
 	errorLogged once
 	refusals    throttle
@@ -181,8 +190,16 @@ type account struct {
 	// what it spent at the last read of it.
 	subjects map[string]*subjectSpend
 	// readThrough asks the next read of the subjects' spend to go to the usage service rather
-	// than its counters: an ack said the counters missed a row.
-	readThrough bool
+	// than its counters: an ack said the counters missed a row. countersFailed is when the
+	// counters' Redis last failed a read, after which the service is read for Fresh.
+	readThrough    bool
+	countersFailed time.Time
+	// reading is the first read an admission waits on (firstRead), nil when none is under way,
+	// readingLate whether an admission gave up waiting on it, and firstFailed when the last of
+	// those reads did not land.
+	reading     chan struct{}
+	readingLate bool
+	firstFailed time.Time
 	// read is when the standing last landed, zero until the first. standingFrom is when the
 	// last standing that landed was asked for, spentFrom when the last read of every limited
 	// subject's spend that landed was, and throughFrom when the last of those that read the
@@ -216,9 +233,11 @@ type account struct {
 type subjectSpend struct {
 	ref  usage.SubjectRef
 	used time.Time
-	// spent is by interval; a window that has since ended counts as nothing spent.
+	// spent is by interval; a window that has since ended counts as nothing spent. read is when
+	// that landed, zero until it has, and from when the read was asked for.
 	spent map[usage.Interval]spentWindow
 	read  time.Time
+	from  time.Time
 }
 
 // spentWindow is what was spent in the window that starts at start.
@@ -248,7 +267,7 @@ func (m *money) start(e *Enforcer) {
 	}
 	m.kick, m.kickLimits = make(chan struct{}, 1), make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
+	m.ctx, m.cancel = ctx, cancel
 	enforcers.Store(e, struct{}{})
 	m.loops.Add(2)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
@@ -262,7 +281,11 @@ func (m *money) stop() {
 			return
 		}
 		m.cancel()
+		m.mu.Lock()
+		m.stopping = true
+		m.mu.Unlock()
 		m.loops.Wait()
+		m.reads.Wait()
 		m.forgetFolded()
 		enforcers.Delete(m.enforcer)
 	})
@@ -342,7 +365,7 @@ func (m *money) inUse(now time.Time) []string {
 			}
 			continue
 		}
-		if now.Sub(acct.used) > m.settings.Idle && len(acct.holds) == 0 {
+		if now.Sub(acct.used) > m.settings.Idle && len(acct.holds) == 0 && acct.reading == nil {
 			// Its folds are gone, so the ids still remembered for them are given back to the
 			// process's count.
 			for id := range acct.folded {
@@ -473,8 +496,9 @@ func (m *money) oldest() time.Duration {
 // worked out.
 //
 // The order is suspension, then the balance, then the spend hard limit, then the customer's
-// limits. Nothing a customer writes lifts the spend hard limit.
-func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, spend error) {
+// limits. Nothing a customer writes lifts the spend hard limit. An account or a limited subject
+// this process never read is read first, for at most FirstRead (firstRead).
+func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided decision) (refusal, spend error) {
 	m := &e.money
 	appID := owner.CustomerID
 	organization := decided.organization
@@ -493,6 +517,7 @@ func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, sp
 		// An app in no organization bills nobody, and has only its own limits to keep to.
 		organization = appAccount(appID)
 	}
+	m.firstRead(ctx, organization, owner)
 	now := time.Now()
 	m.mu.Lock()
 	acct := m.accounts[organization]
@@ -575,6 +600,14 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 			}
 		}
 	}
+	// Limits read MaxStale ago or never, or a limited subject's spend, are answered as the tier
+	// says, as a balance is. An account last read with no limit keeps admitting: a limit is
+	// written to the Postgres it cannot read.
+	if (acct.limited || acct.limitsRead.IsZero()) && m.enforcer.config.DB() != nil &&
+		m.limitsStale(acct, refs, now) && m.failsClosed(acct, decided.organization) {
+		return nil, refusedWith(ErrBudgetSpent, "the %s's spend limits could not be read, so work that costs money "+
+			"is refused until they can be; try again shortly", noun(key)), reasonLimitsRead, nil
+	}
 	verdict := acct.overLimits(refs, clock)
 	if verdict.refusal != nil {
 		reason := reasonLimit
@@ -653,6 +686,17 @@ func (m *money) see(acct *account, refs []usage.SubjectRef, now time.Time) {
 	if unread && m.kickLimits != nil {
 		nudge(m.kickLimits)
 	}
+}
+
+// failsClosed reports, under m.mu, whether the account's tier refuses billable work it cannot
+// check: as its standing says once one landed, else as the last standing of the tier the
+// organization was last seen on said. An account with neither, as one with no usage service or
+// an app in no organization, follows the default tier, which fails closed.
+func (m *money) failsClosed(acct *account, organization string) bool {
+	if !acct.read.IsZero() && acct.standing.Tier.FailMode != "" {
+		return acct.standing.Tier.FailMode != usage.FailOpen
+	}
+	return m.failModes[m.enforcer.knownTier(organization)] != usage.FailOpen
 }
 
 // overHardLimit is the refusal for an organization with no room left under its spend hard limit

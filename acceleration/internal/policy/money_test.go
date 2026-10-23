@@ -7,12 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,6 +64,7 @@ type front struct {
 	// windowsDown drops the reads of usage windows alone.
 	windowsDown atomic.Bool
 	standings   atomic.Int64
+	windows     atomic.Int64
 }
 
 func (s *PolicySuite) front(service *usagetest.Service) *front {
@@ -73,8 +77,11 @@ func (s *PolicySuite) front(service *usagetest.Service) *front {
 			// The connection drops, as it does when the service is gone.
 			panic(http.ErrAbortHandler)
 		}
-		if r.URL.Path == usage.PathStandings {
+		switch r.URL.Path {
+		case usage.PathStandings:
 			f.standings.Add(1)
+		case usage.PathWindows:
+			f.windows.Add(1)
 		}
 		proxy.ServeHTTP(w, r)
 	}))
@@ -717,6 +724,101 @@ func (s *PolicySuite) counted() (*Enforcer, *usagetest.Service, rueidis.Client) 
 	return enforcer, service, counters
 }
 
+// cuttable is the suites' Redis behind a TCP proxy the test can cut, as a Redis that stopped
+// answering: every connection through it is closed, and new ones are refused.
+type cuttable struct {
+	listener net.Listener
+	cut      atomic.Bool
+	mu       sync.Mutex
+	conns    []net.Conn
+}
+
+func (s *PolicySuite) cuttableRedis() (*cuttable, rueidis.Client) {
+	target := os.Getenv("ROUTER_REDIS_ADDR")
+	if target == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	c := &cuttable{listener: listener}
+	s.T().Cleanup(func() {
+		_ = listener.Close()
+		c.sever()
+	})
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			if c.cut.Load() {
+				_ = conn.Close()
+				continue
+			}
+			upstream, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = conn.Close()
+				continue
+			}
+			c.mu.Lock()
+			c.conns = append(c.conns, conn, upstream)
+			c.mu.Unlock()
+			go func() { _, _ = io.Copy(upstream, conn); _ = upstream.Close() }()
+			go func() { _, _ = io.Copy(conn, upstream); _ = conn.Close() }()
+		}
+	}()
+	options, err := rueidis.ParseURL("redis://" + listener.Addr().String() + "/" + strconv.Itoa(usagetest.RedisDB))
+	s.Require().NoError(err)
+	options.DisableCache = true
+	client, err := rueidis.NewClient(options)
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	return c, client
+}
+
+// sever cuts every connection through the proxy, and every one after.
+func (c *cuttable) sever() {
+	c.cut.Store(true)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, conn := range c.conns {
+		_ = conn.Close()
+	}
+	c.conns = nil
+}
+
+func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
+	service := usagetest.Start(s.T(), usagetest.Options{
+		DSN: usagetest.Database(s.T(), "usage_policy_counters"), RedisURL: usagetest.RedisURL(s.T()),
+		ManageKey: "manage-" + uuid.NewString(), Logger: slog.New(slog.DiscardHandler),
+	})
+	redis, counters := s.cuttableRedis()
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	front := s.front(service)
+	windows := &front.windows
+	client, err := usage.NewClient(usage.ClientOptions{URL: front.server.URL, Token: service.Token})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+		settings.Usage, settings.Counters, settings.Fresh, settings.MaxStale = client, counters, time.Hour, 2*time.Hour
+	})
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	service.Credit(s.T(), s.org, 10_000_000)
+	enforcer.Join(s.app, s.org, openTier)
+	s.Require().NoError(s.admit(enforcer, s.app).Spend, "read from the counters")
+	before := windows.Load()
+
+	redis.sever()
+	service.Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.AppID = s.app })
+
+	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
+	s.Greater(windows.Load(), before, "the service answered for the counters")
+	enforcer.money.mu.Lock()
+	failed := enforcer.money.accounts[s.org].countersFailed
+	enforcer.money.mu.Unlock()
+	s.False(failed.IsZero(), "and is read instead of them for Fresh")
+}
+
 func (s *PolicySuite) TestALimitIsReadFromTheCounters() {
 	enforcer, service, _ := s.counted()
 	s.limit(store.Limit{Subject: usage.SubjectAPIKey, Level: store.LevelAPIKey, OrganizationID: s.org, AppID: s.app,
@@ -926,22 +1028,107 @@ func (s *PolicySuite) ack(enforcer *reading, ids []uuid.UUID) {
 	enforcer.Acked(acked)
 }
 
-func (s *PolicySuite) TestStandingsStayFreshWhenLimitsCannotBeRead() {
-	enforcer := s.billed()
-	s.usage().Credit(s.T(), s.org, 1_000_000)
-	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
-	enforcer.Join(s.app, s.org, closedTier)
-	s.read(enforcer.Enforcer, s.org)
+// lockLimits holds the limits table from another session until the test ends.
+func (s *PolicySuite) lockLimits() {
 	locked, err := s.store.DB().BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
-	defer locked.Rollback() //nolint:errcheck // nothing was written
+	s.T().Cleanup(func() { _ = locked.Rollback() })
 	_, err = locked.ExecContext(s.ctx, "LOCK TABLE limits IN ACCESS EXCLUSIVE MODE")
 	s.Require().NoError(err)
+}
 
-	app, organization := s.app, s.org
-	s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, 3*quick.MaxStale, 10*time.Millisecond,
-		"a closed tier is not refused for a balance that is read on time while the limits wait on Postgres")
-	s.read(enforcer.Enforcer, organization)
+func (s *PolicySuite) TestPastMaxStaleLimitsThatCannotBeReadFollowTheTier() {
+	for tier, refused := range map[string]bool{closedTier: true, openTier: false} {
+		s.Run(tier, func() {
+			s.SetupTest()
+			enforcer := s.billed()
+			s.usage().Credit(s.T(), s.org, 1_000_000)
+			s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+			enforcer.Join(s.app, s.org, tier)
+			s.read(enforcer.Enforcer, s.org)
+			s.Require().NoError(s.admit(enforcer.Enforcer, s.app).Spend)
+			s.lockLimits()
+
+			app, organization := s.app, s.org
+			s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, quick.MaxStale/2, 10*time.Millisecond,
+				"within MaxStale the last limits read answer")
+			if !refused {
+				s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, 3*quick.MaxStale, 10*time.Millisecond,
+					"an open tier admits on the last limits read, however old")
+				return
+			}
+			spend := s.spendRefused(enforcer.Enforcer, app, ErrBudgetSpent)
+			s.ErrorContains(spend, "spend limits could not be read")
+			s.NotErrorIs(spend, ErrNoCredits, "the balance is read on time while the limits wait on Postgres")
+			s.read(enforcer.Enforcer, organization)
+		})
+	}
+}
+
+func (s *PolicySuite) TestAFreshRoutersFirstAdmissionReadsTheLimitFirst() {
+	s.limit(store.Limit{Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 500_000})
+	s.spendAs(store.Request{CustomerID: s.app, UserID: "u1", CostMicros: 600_000})
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.Fresh, settings.SumEvery = time.Hour, time.Hour })
+
+	admitted, err := enforcer.Admit(s.ctx, routing.Owner{CustomerID: s.app, Attribution: routing.Attribution{UserID: "u1"}})
+
+	s.Require().NoError(err)
+	s.ErrorIs(admitted.Spend, ErrUserLimit, "the first admission, with the loops an hour away")
+}
+
+func (s *PolicySuite) TestASubjectSeenAgainAfterIdleIsReadBeforeItsAdmission() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.spend(s.app, 400_000)
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.SumEvery = time.Hour })
+	s.Require().NoError(s.admit(enforcer, s.app).Spend)
+	s.eventually(func() bool {
+		enforcer.money.mu.Lock()
+		defer enforcer.money.mu.Unlock()
+		return enforcer.money.accounts[s.org] == nil
+	}, 5*time.Second, 10*time.Millisecond, "dropped once unused for Idle")
+
+	s.spend(s.app, 700_000)
+
+	s.ErrorIs(s.admit(enforcer, s.app).Spend, ErrBudgetSpent, "read again at its next admission, with the sums an hour away")
+}
+
+func (s *PolicySuite) TestAFirstReadThatDoesNotLandFollowsTheTier() {
+	for tier, refused := range map[string]bool{closedTier: true, openTier: false} {
+		s.Run(tier, func() {
+			s.SetupTest()
+			enforcer := s.billed(func(settings *Settings) { settings.Idle = time.Minute })
+			s.usage().Credit(s.T(), s.org, 1_000_000)
+			s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+			s.lockLimits()
+			enforcer.Join(s.app, s.org, tier)
+			s.eventually(func() bool {
+				enforcer.money.mu.Lock()
+				defer enforcer.money.mu.Unlock()
+				acct := enforcer.money.accounts[s.org]
+				return acct != nil && !acct.read.IsZero()
+			}, 5*time.Second, 5*time.Millisecond, "the standing is read; the limits wait on Postgres")
+
+			started := time.Now()
+			spend := s.admit(enforcer.Enforcer, s.app).Spend
+			waited := time.Since(started)
+
+			s.GreaterOrEqual(waited, defaultFirstRead, "it waited for the first read")
+			s.Less(waited, 4*defaultFirstRead, "for FirstRead, not for the read")
+			if !refused {
+				s.NoError(spend, "an open tier admits")
+				return
+			}
+			s.ErrorIs(spend, ErrBudgetSpent)
+			s.ErrorContains(spend, "spend limits could not be read")
+			started = time.Now()
+			s.ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrBudgetSpent)
+			s.Less(time.Since(started), defaultFirstRead, "the next waits on the read under way no longer than its own")
+		})
+	}
 }
 
 func (s *PolicySuite) TestAChangedLimitIsHeldToTheLastSpendReadAtOnce() {
