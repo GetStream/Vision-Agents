@@ -66,7 +66,8 @@ curl -sg -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/10dl
 ```
 
 To try it, text the number from your phone. To test a feature on it, change the config, or bind
-the connection to another config. Never make a second `telnyx` connection for this number: the
+the connection to another config: the next text on any thread, old or new, is answered by the
+config the line is bound to then (AI-1915, staging v0.6.139). Never make a second `telnyx` connection for this number: the
 bridge finds a connection by its number (`store.AppConnectionByAccount`).
 
 Before 2026-10-23 the profile pointed at an ngrok URL, `https://6f8b-24-8-28-137.ngrok-free.app/sms`.
@@ -154,6 +155,12 @@ later one has no numbers. So ask a human to text the line, and give them the exa
 
 1. **A reply.** Text "hi" from a Canadian phone (see «Staging's SMS line»). A short
    answer comes back within a few seconds.
+
+   A phone that texted the line before keeps its thread, and the agent reads the whole
+   thread's history. It may act on old messages: on 2026-10-23, `llm-fast` tried to cancel a
+   reminder deleted hours before, got "there is no task with that id", and still told the
+   person it had cancelled it. Read what the agent did in the router logs (below), not only
+   its reply.
 2. **A scheduled reminder** (scheduled tasks, AI-1842 and AI-1843). Text "Please remind me
    in 2 minutes to drink water". A confirmation comes back. About 2 minutes later the reminder
    comes back on the same thread. Check the task and its run:
@@ -182,6 +189,12 @@ ticket comments (AI-1842, AI-1843).
   registered for 10DLC. A text it refuses reaches no agent.
 - **A webhook older than 5 minutes is refused** (`Telnyx-Timestamp`, `max_age: 5m` in the
   manifest). Telnyx may send a webhook twice. The bridge claims each message once (`store.ClaimChannelThreadMessage`), so a retried delivery is dropped.
+- **The line's current binding answers.** A text on an existing thread is answered by the
+  config bound to the line now, the same one the bridge picks (oldest binding first). The
+  history stays in the thread channel, so a newly bound config sees the earlier messages.
+  Before AI-1915 (staging v0.6.139), an old thread kept the config of its last session: a
+  moved binding left it on the old config, and a deleted config gave no answer (`there is no
+  agent config …`).
 - **One turn per thread.** A session the hook opens is closed after the turn
   (`api/threadhooks.go` `answerThread`). The next text, or a reminder that comes due, reopens
   the conversation from the channel.
@@ -197,7 +210,7 @@ ticket comments (AI-1842, AI-1843).
 | The agent answered, but the phone got nothing | A US carrier refused the reply: Telnyx error 40010, the number has no approved 10DLC campaign | Read the outbound record's `errors` (below). Text from a Canadian phone, or get the number into an approved campaign (see «Staging's SMS line») |
 | The proxy answers 401 «api_key is required» | The staging proxy does not pass the route | The route passed on 2026-10-23. See the `connectors` skill, «When it does not work» |
 | The router answers 401 «not signed by the provider» to Telnyx | Wrong signing secret, or a clock older than 5 min | Register the provider app again with `TELNYX_PUBLIC_KEY` (step 2) |
-| 200, but no reply | No connection has this number, or no config binds it. Two configs that bind it: the oldest answers, so the newer one stays silent | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
+| 200, but no reply | No connection has this number, or no config binds it (the router logs a Warn: «no agent config binds its line»). Two configs that bind it: the oldest answers, so the newer one stays silent | `GET /v1/agents/connections?connector_id=telnyx`, then the configs' `connectors`: exactly one config binds the connection |
 | 200, but no reply, and the binding is right | The sandbox gate holds the text back, or the person has an opt-out | See «What the bridge does to a text» |
 | No reply to STOP, START or HELP | Telnyx answered it, not the agent | Expected. Read `autoresponse_type` in the webhook |
 | No reply after an earlier STOP | The person has an opt-out | Text START, or remove the opt-out |
@@ -211,6 +224,16 @@ curl -sg -H "Authorization: Bearer $TELNYX_API_KEY" "https://api.telnyx.com/v2/d
 ```
 
 Error codes: https://developers.telnyx.com/docs/messaging/messages/error-codes
+
+To read what the staging router did with a text (the webhook, the agent's tool calls, any
+error), read its pods' logs. The router pods are the ones without `gateway` or `rollup`:
+
+```bash
+C=gke_stream-gcp-2026-v2_us-east1_us-east1-acceleration
+for p in $(kubectl --context $C -n accelerate-staging get pods -o name | grep -v -e gateway -e rollup); do
+  kubectl --context $C -n accelerate-staging logs $p -c router --since=15m | grep -E 'connectors/events/telnyx|thread channel|a tool call came back|level=(ERROR|WARN)'
+done
+```
 
 ## Tests
 
