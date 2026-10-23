@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### Go's `ToolApprovalCommand.TurnId` is a `*string`
+
+`turn_id` is optional in the session socket's `tool_approval`: an answer to a connector call held for approval needs none. The Go client's generated `acceleration.ToolApprovalCommand.TurnId` is now a `*string`, so code that sets it takes its address (AI-1640, #1182).
+
 ### The Go SDK refuses `plugins:` and `plugin_events:` in agent.yaml
 
 `agents.Load` and `agents.New` refuse a folder whose agent.yaml names `plugins:` or `plugin_events:`, with an error that names the key and points to `connectors:`. An empty or null list still loads and sends nothing, as before. Folder sync no longer sends `plugins` or `plugin_events`, and `Settings.Plugins`, `Settings.PluginEvents`, `PluginSettings` and `PluginEventSettings` are gone. Move each plugin to a `connectors:` entry (AI-1784, #1161).
@@ -646,6 +650,7 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+- A connector binding takes `require_approval`: names or patterns of its tools whose every call the router holds until the session's user allows it, on the call's `ai_tool_call` step (`awaiting_approval`, with the call's arguments). The answer is the session socket's `tool_approval` with `tool_call_id` and the reply's `request_id`; the Go SDK sends it with `Session.AnswerApproval`. Declined or not answered in 10 minutes, the call is not sent and the model is told so; a session with nobody to ask refuses the call at once. A binding without it calls its tools as before (AI-1640, #1182).
 - The router can keep its key encryption key in Google Cloud KMS: set `ROUTER_AUTH_KMS_KEY` to the Cloud KMS key and `ROUTER_AUTH_KEK_V<n>_WRAPPED` to the key it wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK`. The router unwraps it with one `Decrypt` at each start, so the rows sealed under the plain key still open; with neither set, nothing changes (AI-1747, #1157; AI-1748, #1165).
 - An agent.yaml `connectors:` entry takes `sandbox: true`, which the Go SDK's folder sync (`Agent.Sync`) sends on that binding, so code in the agent's sandbox may call the connector's API with the binding's connection. Left out or false, no `sandbox` key is sent and the body is as before; a value that is not a boolean is refused (AI-1578, #1141).
 - Turn-taking metrics: `router_agent_stale_replies_dropped_total`, `router_agent_replies_started_over_caller_total{kind}`, `router_agent_played_before_interrupt_seconds{kind}`, `router_agent_flow_decisions_total{disposition,ruler}`, `router_agent_flow_decision_seconds{ruler}` and `router_agent_settled_over_agent_total{words,final,action}`; `the voice took an utterance` logs `caller_talking` (AI-1601, #1100).
