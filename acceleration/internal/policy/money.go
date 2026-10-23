@@ -623,10 +623,12 @@ type limitsVerdict struct {
 	grants  []int64
 }
 
-// overLimits is what the limits say of the subjects, checked in the order subjectsOf gives, each
-// interval from the shortest. A subject with no room under one of its limits is admitted on its
-// grant, when it has one with something left, which lifts every interval of that subject and
-// nothing else; with none, it is refused.
+// overLimits is what the limits say of the subjects, checked in the order subjectsOf gives. A
+// subject with no room under one of its limits is admitted on its grant, when it has one with
+// something left, which lifts every interval of that subject and nothing else; with none, it is
+// refused, naming of the limits spent the one whose window ends last, which is when it may spend
+// again (Retry-After for an end user). The first refusal is the answer; the later subjects are
+// still looked at, so work let through anyway, as shadow lets it, is drawn from their grants.
 func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdict {
 	var verdict limitsVerdict
 	if len(a.limits) == 0 {
@@ -635,6 +637,8 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 	for _, ref := range refs {
 		key := ref.Key(usage.CounterPrefix)
 		spend := a.subjects[key]
+		var spent store.Limit
+		var resets time.Time
 		for _, interval := range usage.Intervals {
 			limit, ok := resolve(a.limits, ref, interval)
 			if !ok {
@@ -646,16 +650,19 @@ func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) limitsVerdi
 			if room(limit, baseline, spend.spentIn(interval, start), held) > 0 {
 				continue
 			}
-			if grant, ok := grantFor(a.grants, a.grantHeld, ref, now); ok {
-				verdict.grants = append(verdict.grants, grant.grant.ID)
-				break
+			if end.After(resets) {
+				spent, resets = limit, end
 			}
-			// The first refusal is the answer; the later subjects are still looked at, so work
-			// let through anyway, as shadow lets it, is drawn from their grants.
-			if verdict.refusal == nil {
-				verdict.refusal, verdict.ref, verdict.limit = limitRefusal(limit, ref, end), ref, limit
-			}
-			break
+		}
+		if resets.IsZero() {
+			continue
+		}
+		if grant, ok := grantFor(a.grants, a.grantHeld, ref, now); ok {
+			verdict.grants = append(verdict.grants, grant.grant.ID)
+			continue
+		}
+		if verdict.refusal == nil {
+			verdict.refusal, verdict.ref, verdict.limit = limitRefusal(spent, ref, resets), ref, spent
 		}
 	}
 	return verdict
