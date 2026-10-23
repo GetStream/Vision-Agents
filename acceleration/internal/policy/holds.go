@@ -36,6 +36,9 @@ const (
 	shippedPerPass = 10_000
 	// shippedTimeout bounds asking the shard on each pass, apart from the budget sums'.
 	shippedTimeout = 15 * time.Second
+	// acklessAges is how many PendingTTLs a limits hold is kept at most while the usage service
+	// acks none of the account's rows (ackless): an hour at the default.
+	acklessAges = 6
 )
 
 // foldedInProcess is how many folded ids every account of every Enforcer remembers.
@@ -340,7 +343,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if counted && acct.ackless(now, m.settings.Fresh) {
 		acct.acksFailed = now
 	}
-	var expired, unwritten, waiting, waited, unacked int64
+	var expired, unwritten, waiting, waited, unacked, aged int64
 	var emptied []uuid.UUID
 	for id, held := range acct.holds {
 		if held.balance {
@@ -367,6 +370,10 @@ func (m *money) release(key string, acct *account, now time.Time) {
 				acct.letGoLimits(held)
 			case !acct.spentFrom.Before(later(held.made, later(acct.spendFailed, acct.acksFailed)).Add(ttl)):
 				unwritten += held.micros
+				acct.letGoLimits(held)
+			case counted && !acked && now.Sub(held.made) > acklessAges*ttl:
+				// However long the service acks nothing, a hold is kept at most this long.
+				aged += held.micros
 				acct.letGoLimits(held)
 			case counted && !acked && now.Sub(held.made) > ttl && acct.acksFailed.Equal(now):
 				unacked += held.micros
@@ -401,6 +408,10 @@ func (m *money) release(key string, acct *account, now time.Time) {
 	if waiting > 0 && m.waiting.due(key, logEvery) {
 		logger.Warn("usage held against an "+noun(key)+" is past its pending_ttl with no read of its balance to count it, so it is kept",
 			append(who(key), "holds", waiting, "micros", waited, "last_failed_read", acct.balanceFailed)...)
+	}
+	if aged > 0 {
+		logger.Warn("usage held against an "+noun(key)+"'s spend limits is let go after "+(acklessAges*ttl).String()+
+			" with the usage service acking none of its rows", append(who(key), "micros", aged, "last_ack", acct.lastAck)...)
 	}
 	if unacked > 0 && m.waiting.due(key+"\x00acks", logEvery) {
 		logger.Warn("usage held against an "+noun(key)+"'s spend limits is past its pending_ttl while the usage service acks none of its rows, so it is kept",
