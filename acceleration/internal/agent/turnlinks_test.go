@@ -30,7 +30,7 @@ const (
 func (s *AgentSuite) waitsOnATool() {
 	s.ownsTools("")
 	s.join(false)
-	runner := s.holdingTool()
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
@@ -198,7 +198,7 @@ func (s *AgentSuite) interruptsATool(policy ToolPolicy, runner ToolRunner, began
 func (s *AgentSuite) TestAToolAnsweredAsStillRunningIsLoggedSoWhenItComesBack() {
 	s.logs = &logLines{}
 	before, _ := histogramOf("router_agent_tool_call_seconds", "outcome", "still-running")
-	runner := s.holdingTool()
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.interruptsATool(ToolPolicy{Waits: true}, runner, runner.began)

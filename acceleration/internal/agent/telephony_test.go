@@ -710,7 +710,7 @@ func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() 
 	// which on a phone is indistinguishable from having been cut off.
 	s.ownsTools("")
 	s.join(false)
-	runner := s.holdingTool()
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
@@ -914,24 +914,15 @@ func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
 }
 
 // holdingTool answers only when released, whatever its context says, the way the
-// dispatcher runs a call of an on_interrupt: wait binding. It also answers once the test is
-// over, so a test that failed before releasing it does not hold the agent's Close.
+// dispatcher runs a call of an on_interrupt: wait binding.
 type holdingTool struct {
 	began   chan struct{}
 	release chan struct{}
-	over    <-chan struct{}
-}
-
-func (s *AgentSuite) holdingTool() *holdingTool {
-	return &holdingTool{began: make(chan struct{}), release: make(chan struct{}), over: s.over}
 }
 
 func (r *holdingTool) Run(_ context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
 	close(r.began)
-	select {
-	case <-r.release:
-	case <-r.over:
-	}
+	<-r.release
 	return llm.TextParts("order 12 ships tomorrow"), nil
 }
 
@@ -971,7 +962,7 @@ func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTur
 	s.ownsTools("")
 	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
 	s.join(true)
-	runner := s.holdingTool()
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
@@ -1038,8 +1029,9 @@ func (s *AgentSuite) TestAWaitToolNobodyInterruptedIsAnsweredOnceAsBefore() {
 }
 
 // heldCalls answers each call only when its own release channel is closed, whatever its
-// context says, the way the dispatcher runs a call of an on_interrupt: wait binding. Like
-// holdingTool, it answers every call once the test is over.
+// context says, the way the dispatcher runs a call of an on_interrupt: wait binding. It
+// answers every call once the test is over, so a test that failed before releasing one does
+// not hold the agent's Close.
 type heldCalls struct {
 	began   map[string]chan struct{}
 	release map[string]chan struct{}
@@ -1528,7 +1520,7 @@ func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() 
 func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
 	s.ownsTools("")
 	s.join(true)
-	runner := s.holdingTool()
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
