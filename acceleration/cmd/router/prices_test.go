@@ -375,3 +375,57 @@ func (s *PriceFileSuite) TestExportRefusesAConfigWithNoPrices() {
 
 	s.Error(err)
 }
+
+// TestReloadRunsOnlyAgainstADevelopmentDatabase: the guard, before anything opens a database.
+func (s *PriceFileSuite) TestReloadRunsOnlyAgainstADevelopmentDatabase() {
+	withDSN := func(dsn string) config.Config {
+		settings := config.Defaults()
+		settings.Postgres.DSN = dsn
+		return settings
+	}
+	for _, dsn := range []string{
+		"postgres://postgres:postgres@localhost:55432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@127.0.0.1:55432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@[::1]:55432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@postgres:5432/model_router?sslmode=disable",
+		"postgres://postgres:postgres@localhost/model_router?host=/var/run/postgresql/.s.PGSQL.5432",
+		"postgres://postgres:postgres@localhost/model_router?host=127.0.0.1:55432",
+	} {
+		for _, environment := range []string{"", "local", "development", "testing"} {
+			s.T().Setenv(config.EnvVar, environment)
+			s.NoError(developmentDatabase(true, withDSN(dsn)), "%s with %s=%q", dsn, config.EnvVar, environment)
+		}
+	}
+
+	s.T().Setenv(config.EnvVar, "")
+	local := withDSN("postgres://postgres:secret@localhost:55432/model_router?sslmode=disable")
+	s.ErrorContains(developmentDatabase(false, local), "pass --development")
+	remote := developmentDatabase(true, withDSN("postgres://postgres:secret@db.example.com:5432/model_router?sslmode=require"))
+	s.ErrorContains(remote, `names the host "db.example.com"`)
+	s.NotContains(remote.Error(), "secret")
+	// The driver connects to a host query parameter in place of the URL's host.
+	for _, dsn := range []string{
+		"postgres://postgres:secret@localhost/model_router?host=db.example.com:5432",
+		"postgres://postgres:secret@localhost:55432/model_router?sslmode=disable&host=10.0.0.7",
+	} {
+		refused := developmentDatabase(true, withDSN(dsn))
+		s.ErrorContains(refused, "connects to", dsn)
+		s.NotContains(refused.Error(), "secret")
+	}
+	for _, dsn := range []string{
+		"host=localhost user=postgres password=secret dbname=model_router",
+		"postgres://postgres:secret@/model_router",
+		"mysql://postgres:secret@localhost/model_router",
+		"postgres://:secret@localhost/model_router",
+		"postgres://postgres:secret@db.example.com/model_router?host=/var/run/postgresql/.s.PGSQL.5432",
+	} {
+		refused := developmentDatabase(true, withDSN(dsn))
+		s.Error(refused, dsn)
+		s.NotContains(refused.Error(), "secret", dsn)
+	}
+	s.ErrorContains(developmentDatabase(true, withDSN("")), "set postgres.dsn")
+	s.T().Setenv(config.EnvVar, "staging")
+	refused := developmentDatabase(true, local)
+	s.ErrorContains(refused, `ROUTER_ENV is "staging"`)
+	s.ErrorContains(refused, "unset, local, development or testing")
+}

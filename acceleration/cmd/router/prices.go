@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,6 +13,9 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -19,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -44,9 +50,21 @@ const pricesUsage = `usage: router prices <command>
                              charged is from that figure, over every shard. Reads the database
   export [--from path] [--phone] [--out path] [--strip]
                              write the price: blocks of a routing config as a price file
+  reload --development [--dry-run]
+                             development only: empty the price list and seed it again from
+                             ROUTER_PRICES_FILE and vendor.json, as a fresh database's first
+                             start does. Refused unless the database the driver connects to
+                             is on this machine (localhost, a loopback address or a unix
+                             socket) or is compose's postgres, and refused under a ROUTER_ENV
+                             such as staging. A deployment usually leaves ROUTER_ENV unset,
+                             so its remote database host is what refuses it there. A
+                             port-forward or proxy on localhost to another database passes
+                             the host check: --development is all that stops that. Both runs
+                             print the database and address they are pointed at first
 
-No command writes a price: a router loads its price files when it starts, and adds only the
-items its database has never priced. After that a price changes through the management API.
+Only reload writes a price, and only on a development database: a router loads its price files
+when it starts, and adds only the items its database has never priced. After that a price
+changes through the management API.
 `
 
 // priceRetry is how long a router waits to load its price files into the database again
@@ -85,6 +103,8 @@ func runPrices(args []string, settings config.Config, logger *slog.Logger) error
 		return runPricesDrift(ctx, args[1:], settings, os.Stdout)
 	case "export":
 		return runPricesExport(args[1:], settings, os.Stdout)
+	case "reload":
+		return runPricesReload(ctx, args[1:], settings, os.Stdout)
 	default:
 		return fmt.Errorf("unknown prices command %q\n\n%s", args[0], pricesUsage)
 	}
@@ -361,6 +381,223 @@ func runPricesSync(ctx context.Context, args []string, settings config.Config, o
 		}
 	}
 	return nil
+}
+
+// developmentEnvironments are the ROUTER_ENV values of a laptop and of the test suites.
+var developmentEnvironments = []string{"", config.Local, "development", config.Testing}
+
+// developmentHosts are the database hosts, besides a loopback address, a development reload
+// runs against: this machine, and compose.yaml's Postgres as the router's container reaches it.
+var developmentHosts = []string{"localhost", "postgres"}
+
+// developmentDatabase refuses, saying why, unless --development was passed, ROUTER_ENV is not
+// one a deployment names, and both the host postgres.dsn names and the address the driver
+// would connect to are on this machine or compose's. ROUTER_ENV unset is local, which is what
+// most deployments run with too, so it is the hosts that refuse them.
+func developmentDatabase(development bool, settings config.Config) error {
+	if !development {
+		return errors.New("router prices reload empties the price list and is for a development database only: pass --development to say this is one")
+	}
+	if environment := strings.TrimSpace(os.Getenv(config.EnvVar)); !slices.Contains(developmentEnvironments, environment) {
+		return fmt.Errorf("router prices reload is for development only, and %s is %q: it runs with %s unset, %s, development or %s",
+			config.EnvVar, environment, config.EnvVar, config.Local, config.Testing)
+	}
+	if settings.Postgres.DSN == "" {
+		return errors.New("this needs a database: set postgres.dsn")
+	}
+	// The error is not wrapped: it would print the DSN, password and all.
+	dsn, err := url.Parse(settings.Postgres.DSN)
+	if err != nil {
+		return errors.New("router prices reload: postgres.dsn is not a URL, so it cannot tell where the database is")
+	}
+	if host := dsn.Hostname(); !developmentHost(host) {
+		return fmt.Errorf("router prices reload is for a development database only, and postgres.dsn names the host %q: "+
+			"it runs against localhost, a loopback address or compose's postgres service", host)
+	}
+	network, address, err := databaseTarget(settings.Postgres.DSN)
+	if err != nil {
+		return err
+	}
+	if network == "unix" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || !developmentHost(host) {
+		return fmt.Errorf("router prices reload is for a development database only, and postgres.dsn connects to %q: "+
+			"it runs against localhost, a loopback address, a unix socket or compose's postgres service", address)
+	}
+	return nil
+}
+
+// developmentHost is whether a host is this machine or compose's Postgres.
+func developmentHost(host string) bool {
+	if address, err := netip.ParseAddr(host); err == nil && address.IsLoopback() {
+		return true
+	}
+	return slices.Contains(developmentHosts, strings.ToLower(host))
+}
+
+// databaseTarget is where the driver connects for a DSN: unix and a socket's path, or tcp and
+// host:port. That is not always the URL's host: a host query parameter replaces it.
+func databaseTarget(dsn string) (network, address string, err error) {
+	if _, err := url.Parse(dsn); err != nil {
+		return "", "", errors.New("router prices reload: postgres.dsn is not a URL, so it cannot tell where the database is")
+	}
+	// The driver panics on a DSN it cannot read, with a message that may hold the DSN.
+	defer func() {
+		if recover() != nil {
+			network, address, err = "", "", errors.New("router prices reload: the driver cannot read postgres.dsn, so it cannot tell where the database is")
+		}
+	}()
+	conf := pgdriver.NewConnector(pgdriver.WithDSN(dsn)).Config()
+	return conf.Network, conf.Addr, nil
+}
+
+// describeTarget names the database a reload is pointed at and where, as the driver reaches it
+// and as the server answers, so a port-forward to another machine shows. No password.
+func describeTarget(ctx context.Context, pgStore *store.Store, settings config.Config) (string, error) {
+	network, address, err := databaseTarget(settings.Postgres.DSN)
+	if err != nil {
+		return "", err
+	}
+	var database string
+	var server sql.NullString
+	if err := pgStore.DB().QueryRowContext(ctx,
+		"SELECT current_database(), host(inet_server_addr()) || ':' || inet_server_port()").Scan(&database, &server); err != nil {
+		return "", err
+	}
+	answers := "over a unix socket"
+	if server.Valid {
+		answers = "as " + server.String
+	}
+	return fmt.Sprintf("database %q at %s (%s), which answers %s\n", database, address, network, answers), nil
+}
+
+func runPricesReload(ctx context.Context, args []string, settings config.Config, out io.Writer) error {
+	flags := flag.NewFlagSet("prices reload", flag.ContinueOnError)
+	development := flags.Bool("development", false, "say the database is a development one; nothing runs without it")
+	dryRun := flags.Bool("dry-run", false, "say what the reload would remove and change, writing nothing")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if err := developmentDatabase(*development, settings); err != nil {
+		return err
+	}
+	load, err := loadPriceFiles(settings)
+	if err != nil {
+		return err
+	}
+	pgStore, err := openPriceStore(settings)
+	if err != nil {
+		return err
+	}
+	defer pgStore.Close()
+	target, err := describeTarget(ctx, pgStore, settings)
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, target); err != nil {
+		return err
+	}
+	reload, err := pgStore.ReloadPrices(ctx, load, *dryRun)
+	if err != nil {
+		return err
+	}
+	return describeReload(out, reload, load, *dryRun)
+}
+
+// describeReload says what a reload removed and loaded, or on a dry run would have.
+func describeReload(out io.Writer, reload store.PriceReload, load store.PriceLoad, dryRun bool) error {
+	removes, seeds := "removed", "seeded"
+	if dryRun {
+		removes, seeds = "would remove", "would seed"
+	}
+	var b strings.Builder
+	var scheduled, cancelled int
+	for _, change := range reload.Changes {
+		switch {
+		case change.CancelledAt != nil:
+			cancelled++
+		case change.EffectiveAt.After(reload.At):
+			scheduled++
+		}
+	}
+	fmt.Fprintf(&b, "%s %d price changes (%d not yet in force, %d cancelled) and their %d entries; the markup in force was %d basis points\n",
+		removes, len(reload.Changes), scheduled, cancelled, reload.Entries, reload.MarkupBps)
+	markup := "no markup"
+	if load.MarkupBps != nil {
+		markup = fmt.Sprintf("a markup of %d basis points", *load.MarkupBps)
+	}
+	if dryRun {
+		fmt.Fprintf(&b, "%s the price list from %s: %d entries, %s\n", seeds, load.Source, len(load.Entries), markup)
+	} else {
+		fmt.Fprintf(&b, "%s the price list from %s: change %s, %d entries, %s\n", seeds, load.Source, reload.Seed.Name, len(reload.Loaded), markup)
+	}
+	changed, dropped, added := priceDiff(reload.Active, load.Entries)
+	for _, group := range []struct {
+		title string
+		names []string
+	}{
+		{"priced differently by the files", changed},
+		{"in the list but not in the files, so no longer priced", dropped},
+		{"in the files but not in the list", added},
+	} {
+		if len(group.names) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "%d items %s:\n", len(group.names), group.title)
+		for _, name := range group.names {
+			fmt.Fprintf(&b, "  %s\n", name)
+		}
+	}
+	if !dryRun {
+		fmt.Fprintf(&b, "Running routers read the reloaded list within %s, so none needs a restart. Rows already recorded keep "+
+			"the price_version that priced them, which no longer names a change.\n", priceReload)
+	}
+	_, err := io.WriteString(out, b.String())
+	return err
+}
+
+// priceDiff is how the list in force differs from the files: the items each prices
+// differently, those only the list prices, and those only the files do, by name.
+func priceDiff(active []store.PriceEntry, files []pricing.Entry) (changed, dropped, added []string) {
+	inForce := make(map[string]string, len(active))
+	for _, row := range active {
+		inForce[prices.Name(row.Entry())] = priceOf(row.Entry())
+	}
+	inFiles := make(map[string]bool, len(files))
+	for _, entry := range files {
+		name := prices.Name(entry)
+		inFiles[name] = true
+		price, ok := inForce[name]
+		switch {
+		case !ok:
+			added = append(added, name)
+		case price != priceOf(entry):
+			changed = append(changed, name)
+		}
+	}
+	for name := range inForce {
+		if !inFiles[name] {
+			dropped = append(dropped, name)
+		}
+	}
+	slices.Sort(changed)
+	slices.Sort(dropped)
+	slices.Sort(added)
+	return changed, dropped, added
+}
+
+// priceOf is what an entry charges, as text two entries compare by: its JSON without the
+// change that wrote it or the local flag, neither of which is a price, and with an empty
+// map or list read as none, as the database stores it.
+func priceOf(entry pricing.Entry) string {
+	entry.Version, entry.Local = "", false
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // driftedModel is one model's rows against what its vendor said it charged.

@@ -263,6 +263,165 @@ func (s *PriceSyncSuite) TestShowListsWhatIsUnpriced() {
 	s.Equal("llm/nobody/unpriced\n", out.String())
 }
 
+// changePrice writes a change through the management API's store call: the rate a meter of
+// entry charges, taking effect at effectiveAt, or now when that is nil.
+func (s *PriceSyncSuite) changePrice(pgStore *store.Store, name string, entry pricing.Entry, usd float64, markup *int64, effectiveAt *time.Time) store.PriceChange {
+	entry.Rates = map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: usd, Per: 1_000_000}}
+	entry.Tiers, entry.Version = nil, ""
+	change, _, _, err := pgStore.CreatePriceChange(s.ctx, store.PriceChangeWrite{
+		Name: name, Reason: "A test's change", Source: "the test", EffectiveAt: effectiveAt, MarkupBps: markup,
+		Entries: []store.PriceEntryWrite{{Entry: entry}}, ActorID: "tester", ActorName: "tester",
+	}, func(store.PriceListAt) error { return nil })
+	s.Require().NoError(err)
+	return change
+}
+
+// tokenPriced is the first entry of vendor.json with an input token rate.
+func (s *PriceSyncSuite) tokenPriced() pricing.Entry {
+	for _, entry := range prices.Vendor().Entries {
+		if entry.Rates[pricing.InputTokens].USD > 0 {
+			return entry
+		}
+	}
+	s.FailNow("vendor.json prices no input tokens")
+	return pricing.Entry{}
+}
+
+// rateOf is the input token rate the list in force charges for an entry's item and When.
+func (s *PriceSyncSuite) rateOf(pgStore *store.Store, entry pricing.Entry) float64 {
+	active, err := pgStore.ActivePriceEntries(s.ctx, time.Now())
+	s.Require().NoError(err)
+	for _, row := range active {
+		if prices.Name(row.Entry()) == prices.Name(entry) {
+			return row.Rates[pricing.InputTokens].USD
+		}
+	}
+	s.FailNow("the list does not price " + prices.Name(entry))
+	return 0
+}
+
+// TestReloadPutsTheFilesPricesBack: rates changed in the database, a markup and a change
+// scheduled for later all give way to what the files say, as one seed, and the rows priced
+// before keep their price_version.
+func (s *PriceSyncSuite) TestReloadPutsTheFilesPricesBack() {
+	s.ownFile(`{"entries": [` + ownEntry + `]}`)
+	pgStore := s.started()
+	s.startRouter(pgStore)
+	vendor := s.tokenPriced()
+	own := pricing.Entry{Modality: "llm", Provider: "own", Model: "own-model"}
+	fileRate := s.rateOf(pgStore, vendor)
+	markup := int64(1_500)
+	fixed := s.changePrice(pgStore, "vendor_rate_fix", vendor, fileRate*3, &markup, nil)
+	s.changePrice(pgStore, "own_rate_fix", own, 5, nil, nil)
+	later := time.Now().Add(time.Hour)
+	s.changePrice(pgStore, "own_later", own, 7, nil, &later)
+	s.Require().InDelta(fileRate*3, s.rateOf(pgStore, vendor), 1e-12)
+	s.Require().InDelta(5.0, s.rateOf(pgStore, own), 1e-12)
+	s.Require().NoError(pgStore.RecordRequest(s.ctx, &store.Request{
+		Modality: "llm", CustomerID: "app", Provider: vendor.Provider, Model: vendor.Model, StartedAt: time.Now(),
+		CostMicros: 10, Billable: true, Success: true, PriceVersion: fixed.Name,
+	}))
+	var out bytes.Buffer
+
+	s.Require().NoError(runPricesReload(s.ctx, []string{"--development"}, s.settings, &out))
+
+	s.InDelta(fileRate, s.rateOf(pgStore, vendor), 1e-12, "vendor.json's rate")
+	s.InDelta(1.0, s.rateOf(pgStore, own), 1e-12, "the price file's rate")
+	changes := s.changes(pgStore)
+	s.Require().Len(changes, 1)
+	seed := changes[0]
+	s.Equal(store.PriceChangeSeed, seed.Kind)
+	s.Equal(s.settings.PricesFile+", vendor.json, router dev", seed.Source)
+	upcoming, err := pgStore.UpcomingPriceEntries(s.ctx, time.Now())
+	s.Require().NoError(err)
+	s.Empty(upcoming, "the scheduled change went with the rest")
+	markupNow, err := pgStore.ActiveMarkup(s.ctx, time.Now())
+	s.Require().NoError(err)
+	s.Zero(markupNow, "the price file sets no markup")
+	active, err := pgStore.ActivePriceEntries(s.ctx, time.Now())
+	s.Require().NoError(err)
+	s.Len(active, len(prices.Vendor().Entries)+1)
+
+	var audits []store.AuditEntry
+	s.Require().NoError(pgStore.DB().NewSelect().Model(&audits).Where("resource_type = ?", store.AuditResourcePriceList).
+		Order("created_at", "id").Scan(s.ctx))
+	s.Require().Len(audits, 6, "the first seed, three changes, the reload's removal and its seed")
+	removal, seedAudit := audits[4], audits[5]
+	s.Equal(store.AuditDeleted, removal.Action, "the removal is recorded first")
+	s.Regexp(`^\d{14}_reload$`, removal.ResourceID)
+	s.NotEqual(seed.Name, removal.ResourceID)
+	s.Len(removal.Changes[0].Before, 4)
+	s.Equal(store.AuditCreated, seedAudit.Action)
+	s.Equal(seed.Name, seedAudit.ResourceID)
+	s.Equal(store.AuditSourceCLI, seedAudit.Source)
+
+	var priceVersion string
+	s.Require().NoError(pgStore.ShardDB().QueryRowContext(s.ctx, "SELECT price_version FROM requests").Scan(&priceVersion))
+	s.Equal(fixed.Name, priceVersion, "a row keeps what priced it")
+
+	text := out.String()
+	s.Regexp(`^database "\w+_pricesync_\w*test" at \S+:\d+ \(tcp\), which answers as [0-9a-f.:]+:\d+\n`, text,
+		"where it is pointed comes first")
+	s.NotContains(text, "postgres:postgres")
+	s.Contains(text, "removed 4 price changes (1 not yet in force, 0 cancelled)")
+	s.Contains(text, "the markup in force was 1500 basis points")
+	s.Contains(text, "seeded the price list from "+s.settings.PricesFile+", vendor.json: change "+seed.Name)
+	s.Contains(text, "2 items priced differently by the files:\n")
+	s.Contains(text, "  "+prices.Name(vendor)+"\n")
+	s.Contains(text, "  "+prices.Name(own)+"\n")
+	s.Contains(text, "within 30s")
+}
+
+func (s *PriceSyncSuite) TestReloadDryRunWritesNothing() {
+	pgStore := s.started()
+	s.startRouter(pgStore)
+	vendor := s.tokenPriced()
+	s.changePrice(pgStore, "vendor_rate_fix", vendor, 42, nil, nil)
+	var out bytes.Buffer
+
+	s.Require().NoError(runPricesReload(s.ctx, []string{"--development", "--dry-run"}, s.settings, &out))
+
+	s.Len(s.changes(pgStore), 2)
+	s.InDelta(42.0, s.rateOf(pgStore, vendor), 1e-12)
+	s.Regexp(`^database "\w+_pricesync_\w*test" at \S+:\d+ \(tcp\)`, out.String())
+	s.Contains(out.String(), "would remove 2 price changes")
+	s.Contains(out.String(), "would seed the price list from vendor.json")
+	s.Contains(out.String(), "1 items priced differently by the files:\n  "+prices.Name(vendor)+"\n")
+}
+
+// TestReloadOnAFreshDatabaseSeedsIt: nothing to remove, the same seed a start writes.
+func (s *PriceSyncSuite) TestReloadOnAFreshDatabaseSeedsIt() {
+	pgStore := s.started()
+	var out bytes.Buffer
+
+	s.Require().NoError(runPricesReload(s.ctx, []string{"--development"}, s.settings, &out))
+
+	changes := s.changes(pgStore)
+	s.Require().Len(changes, 1)
+	s.Equal(store.PriceChangeSeed, changes[0].Kind)
+	s.Contains(out.String(), "removed 0 price changes")
+	var audits []store.AuditEntry
+	s.Require().NoError(pgStore.DB().NewSelect().Model(&audits).Where("resource_type = ?", store.AuditResourcePriceList).Scan(s.ctx))
+	s.Len(audits, 1, "only the seed's: nothing was removed")
+}
+
+// TestReloadRefusesANonDevelopmentDatabase: without --development, under staging's ROUTER_ENV
+// or against a database elsewhere, the list stays as it is.
+func (s *PriceSyncSuite) TestReloadRefusesANonDevelopmentDatabase() {
+	pgStore := s.started()
+	s.startRouter(pgStore)
+	seeded := s.changes(pgStore)
+
+	s.ErrorContains(runPricesReload(s.ctx, nil, s.settings, &bytes.Buffer{}), "pass --development")
+	remote := s.settings
+	remote.Postgres.DSN = "postgres://postgres:postgres@db.example.com:5432/model_router?sslmode=require"
+	s.ErrorContains(runPricesReload(s.ctx, []string{"--development"}, remote, &bytes.Buffer{}), `names the host "db.example.com"`)
+	s.T().Setenv(config.EnvVar, config.Staging)
+	s.ErrorContains(runPricesReload(s.ctx, []string{"--development"}, s.settings, &bytes.Buffer{}), `ROUTER_ENV is "staging"`)
+
+	s.Equal(seeded, s.changes(pgStore))
+}
+
 // TestAHeldPricesLockDoesNotKeepTheRouterFromServing: another session holds the lock a load
 // takes. The start's load gives up within its lock timeout, the router goes on, and the
 // retry loads the list once the lock is let go.

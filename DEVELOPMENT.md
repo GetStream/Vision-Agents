@@ -22,6 +22,14 @@ ROUTER_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/model_router?s
 ROUTER_REDIS_ADDR=localhost:56379 go run ./cmd/router
 ```
 
+The price list lives in that Postgres, seeded from `acceleration/prices/vendor.json` on the
+first start; later starts only add items it has never priced. After changing a rate in
+`vendor.json`, put the file's list back with
+`cd acceleration && go run ./cmd/router prices reload --development`. It refuses a database
+that is not on this machine or compose's, but a port-forward on localhost to a remote one
+passes that check, so read the database and address it prints first, and start with
+`--dry-run`. See Prices in `acceleration/README.md`.
+
 The dashboard is Volt (`GetStream/volt-dashboard`), a sibling checkout. See the `dashboard`
 skill and `acceleration/development_skills/dashboard_skill.md`.
 
