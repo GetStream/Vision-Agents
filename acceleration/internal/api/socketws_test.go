@@ -233,6 +233,19 @@ func (s *SocketSessionSuite) TestTheSocketTakesNoCall() {
 	s.Equal(errSocketCall.Message, refused["error"])
 }
 
+// A refused start frame that names a call waits for the caller to answer the close, as a refusal does.
+func (s *SocketSessionSuite) TestARefusedCallWaitsForTheCallerToAnswerItsClose() {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "session": map[string]any{"call": map[string]any{"type": "default", "id": s.utils.uuid()}},
+	}))
+
+	closed, held := s.unanswered(connection)
+
+	s.Equal(websocket.ClosePolicyViolation, closed.Code)
+	s.heldUntilAnswered(held)
+}
+
 // A socket session carries its own audio, so voice started on it names no Stream call either.
 func (s *SocketSessionSuite) TestVoiceOnASocketSessionTakesNoCall() {
 	_, answered := s.starts("hi")
