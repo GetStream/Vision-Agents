@@ -3559,6 +3559,13 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
+			if errors.Is(err, ErrCallLeft) {
+				if dropping != typed.SynthesisID {
+					dropping = typed.SynthesisID
+					a.logger.Debug("dropping audio for a call that has been left", "synthesis", typed.SynthesisID)
+				}
+				continue
+			}
 			if err != nil {
 				a.fail(err, "edge")
 			}

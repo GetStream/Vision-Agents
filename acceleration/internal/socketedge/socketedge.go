@@ -9,7 +9,7 @@ package socketedge
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -27,8 +27,9 @@ const chunkDuration = 20 * time.Millisecond
 // reply at once would have nothing left to drop when the caller cuts in.
 const playoutAhead = 400 * time.Millisecond
 
-// ErrLeft is what hearing more audio returns once the call is over.
-var ErrLeft = errors.New("socketedge: the call has been left")
+// ErrLeft is what hearing or publishing more audio returns once the call is over. It is
+// agent.ErrCallLeft, which is how the agent tells a caller hanging up from a failure.
+var ErrLeft = fmt.Errorf("socketedge: %w", agent.ErrCallLeft)
 
 // Options configures an Edge.
 type Options struct {
