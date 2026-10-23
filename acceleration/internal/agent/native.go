@@ -555,7 +555,10 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
 	}
 	if errors.Is(err, ErrCallLeft) {
-		a.logger.Debug("dropping audio for a call that has been left", "response", chunk.ResponseID)
+		if a.leftNoted != chunk.ResponseID {
+			a.leftNoted = chunk.ResponseID
+			a.logger.Debug("dropping audio for a call that has been left", "response", chunk.ResponseID)
+		}
 		return
 	}
 	if err != nil {

@@ -48,6 +48,7 @@ func (s *AgentSuite) TestSpeechForACallTheCallerLeftIsNoFailure() {
 
 	s.Empty(s.logs.records("agent failure"))
 	s.Zero(countOf[Error](s.reported()))
+	s.Len(s.logs.records("dropping audio for a call that has been left"), 1, "one line per synthesis, not per chunk")
 }
 
 // The control: an edge failing while the call goes on is still a failure, once per chunk.
@@ -65,7 +66,7 @@ func (s *AgentSuite) speaksNativelyInto(refusal error) (*logLines, *collector) {
 	edge := &refusingEdge{loopbackEdge: newLoopbackEdge(), refusal: refusal}
 	agent, err := New(Options{
 		CustomerID: "acme", Edge: edge, STS: &stsrouter.Router{}, STSTarget: "openai/gpt-realtime-2",
-		Logger: slog.New(slog.NewJSONHandler(logs, nil)),
+		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	s.Require().NoError(err)
 	agent.ctx, agent.cancel = context.WithCancel(s.ctx)
@@ -93,6 +94,7 @@ func (s *AgentSuite) TestNativeSpeechForACallTheCallerLeftIsNoFailure() {
 
 	s.Empty(logs.records("agent failure"))
 	s.Zero(countOf[Error](seen.seen()))
+	s.Len(logs.records("dropping audio for a call that has been left"), 1, "one line per response, not per chunk")
 }
 
 // The control for the speech-to-speech reply.
