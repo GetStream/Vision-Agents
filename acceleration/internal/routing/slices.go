@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"maps"
 	"strconv"
 	"sync"
 	"time"
@@ -40,12 +41,14 @@ type Slices struct {
 
 	mu sync.Mutex
 	// model is what the current slice is billed as, from is when it started, n is its number,
-	// and billed is the whole seconds the slices before it billed.
-	model   string
-	from    time.Time
-	n       int
-	billed  int64
-	stopped bool
+	// and billed is the whole seconds the slices before it billed. attributes are what every
+	// slice from here on carries.
+	model      string
+	from       time.Time
+	n          int
+	billed     int64
+	stopped    bool
+	attributes map[string]string
 
 	ticker   *time.Ticker
 	stop     chan struct{}
@@ -65,9 +68,12 @@ type SliceOptions struct {
 	// operation id.
 	Kind string
 	ID   string
-	// Quantities turns a slice's whole seconds into what it used. Nil is the seconds as
-	// pricing.Seconds.
-	Quantities func(seconds int64) pricing.Quantities
+	// Quantities turns a slice's whole seconds, billed as model, into what it used, such as a
+	// sandbox's vCPU, memory and disk seconds while it runs and its disk alone once stopped.
+	// Nil is the seconds as pricing.Seconds.
+	Quantities func(model string, seconds int64) pricing.Quantities
+	// Attributes are stored with every slice's row, such as what a sandbox reserves.
+	Attributes map[string]string
 	// Every is how long a slice runs. Zero is SliceEvery.
 	Every time.Duration
 
@@ -81,7 +87,7 @@ func StartSlices(options SliceOptions) *Slices {
 		options.Every = SliceEvery
 	}
 	if options.Quantities == nil {
-		options.Quantities = func(seconds int64) pricing.Quantities { return pricing.Quantities{pricing.Seconds: seconds} }
+		options.Quantities = func(_ string, seconds int64) pricing.Quantities { return pricing.Quantities{pricing.Seconds: seconds} }
 	}
 	now := options.now
 	if now == nil {
@@ -89,15 +95,16 @@ func StartSlices(options SliceOptions) *Slices {
 	}
 	start := now()
 	s := &Slices{
-		options: options,
-		now:     now,
-		start:   start,
-		run:     start.UTC().Format(time.RFC3339Nano),
-		model:   options.Config.Model,
-		from:    start,
-		ticker:  time.NewTicker(options.Every),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		options:    options,
+		now:        now,
+		start:      start,
+		run:        start.UTC().Format(time.RFC3339Nano),
+		model:      options.Config.Model,
+		from:       start,
+		attributes: maps.Clone(options.Attributes),
+		ticker:     time.NewTicker(options.Every),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 	go s.tick()
 	return s
@@ -138,6 +145,26 @@ func (s *Slices) Switch(model string) {
 	}
 	s.endLocked(s.now(), false)
 	s.model = model
+	s.ticker.Reset(s.options.Every)
+}
+
+// Attribute ends the current slice now, and has every slice after it carry name=value, such as
+// a sandbox's time after its session closed. A run already carrying it, or one that has
+// stopped, changes nothing.
+func (s *Slices) Attribute(name, value string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped || s.attributes[name] == value {
+		return
+	}
+	s.endLocked(s.now(), false)
+	if s.attributes == nil {
+		s.attributes = map[string]string{}
+	}
+	s.attributes[name] = value
 	s.ticker.Reset(s.options.Every)
 }
 
@@ -199,8 +226,11 @@ func (s *Slices) record(at time.Time, seconds int64) {
 		Success:     true,
 		Unmeasured:  true,
 	}
-	stat.Use(s.options.Quantities(seconds))
+	stat.Use(s.options.Quantities(s.model, seconds))
 	stat.MeasuredByRouter()
+	for name, value := range s.attributes {
+		stat.Attribute(name, value)
+	}
 	stat.Attribute(AttributeSlice, n)
 	config := s.options.Config
 	config.Model = s.model

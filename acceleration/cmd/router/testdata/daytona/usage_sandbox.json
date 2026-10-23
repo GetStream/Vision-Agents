@@ -1,0 +1,10 @@
+[
+  {"sandboxId": "sandbox-a", "totalCPUSeconds": 3600, "totalRAMGBSeconds": 3600, "totalDiskGBSeconds": 10800, "totalGPUSeconds": 0, "totalPrice": 0.0669, "firstStart": "2026-10-21T09:00:00Z", "lastEnd": "2026-10-21T10:00:00Z"},
+  {"sandboxId": "sandbox-b", "totalCPUSeconds": 1800, "totalRAMGBSeconds": 1800, "totalDiskGBSeconds": 16200, "totalGPUSeconds": 0, "totalPrice": 0.0340, "firstStart": "2026-10-21T10:00:00Z", "lastEnd": "2026-10-21T11:30:00Z"},
+  {"sandboxId": "sandbox-c", "totalCPUSeconds": 900, "totalRAMGBSeconds": 900, "totalDiskGBSeconds": 2700, "totalGPUSeconds": 0, "totalPrice": 0.0167, "firstStart": "2026-10-21T12:00:00Z", "lastEnd": "2026-10-21T12:15:00Z"},
+  {"sandboxId": "sandbox-d", "totalCPUSeconds": 900, "totalRAMGBSeconds": 900, "totalDiskGBSeconds": 2700, "totalGPUSeconds": 0, "totalPrice": 0.0167, "firstStart": "2026-10-21T13:00:00Z", "lastEnd": "2026-10-21T13:15:00Z"},
+  {"sandboxId": "sandbox-e", "totalCPUSeconds": 900, "totalRAMGBSeconds": 900, "totalDiskGBSeconds": 2700, "totalGPUSeconds": 0, "totalPrice": 0.0167, "firstStart": "2026-10-21T14:00:00Z", "lastEnd": "2026-10-21T14:15:00Z"},
+  {"sandboxId": "sandbox-f", "totalCPUSeconds": 600, "totalRAMGBSeconds": 600, "totalDiskGBSeconds": 1800, "totalGPUSeconds": 0, "totalPrice": 0.0112, "firstStart": "2026-10-21T15:00:00Z", "lastEnd": "2026-10-21T15:10:00Z"},
+  {"sandboxId": "sandbox-g", "totalCPUSeconds": 600, "totalRAMGBSeconds": 600, "totalDiskGBSeconds": 1800, "totalGPUSeconds": 0, "totalPrice": 0.0112, "firstStart": "2026-10-21T16:00:00Z", "lastEnd": "2026-10-21T16:10:00Z"},
+  {"sandboxId": "sandbox-h", "totalCPUSeconds": 0, "totalRAMGBSeconds": 0, "totalDiskGBSeconds": 0, "totalGPUSeconds": 0, "totalPrice": 0, "firstStart": "2026-10-21T17:00:00Z", "lastEnd": "2026-10-21T17:00:00Z"}
+]

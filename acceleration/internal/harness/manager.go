@@ -78,9 +78,11 @@ type manager struct {
 	// the same skill supersede the older one.
 	bySkill map[string]string
 	// written are the skill files already put into the sandbox, by skill, so a skill's
-	// scripts are written once per version rather than before every run.
-	written map[string]map[string]string
-	closed  bool
+	// scripts are written once per version rather than before every run. They were written
+	// into the sandbox's generation; a sandbox made again holds none of them.
+	written    map[string]map[string]string
+	generation int
+	closed     bool
 
 	sequence  atomic.Int64
 	drainers  sync.WaitGroup
@@ -795,12 +797,19 @@ func (m *manager) asker(name string) func(ctx context.Context, turnID, query str
 }
 
 // writeBundle puts a skill's files into the sandbox under skills/<name>/, the first time one
-// of its tasks runs code and again whenever the skill has changed since.
+// of its tasks runs code and again whenever the skill, or the sandbox, has changed since.
 func (m *manager) writeBundle(running *task) error {
 	if len(Scripts(slices.Collect(maps.Keys(running.bundle)))) == 0 {
 		return nil
 	}
+	generation, err := m.box.Ready(running.ctx)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
+	if generation != m.generation {
+		m.written, m.generation = map[string]map[string]string{}, generation
+	}
 	current := maps.Equal(m.written[running.skill], running.bundle)
 	m.mu.Unlock()
 	if current {

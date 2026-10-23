@@ -1,0 +1,252 @@
+package daytona
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
+)
+
+// told is what a sandbox told its meter, in order.
+type told struct {
+	mu   sync.Mutex
+	said []string
+}
+
+func (t *told) add(said string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.said = append(t.said, said)
+}
+
+func (t *told) Created(r Reserved) {
+	t.add(fmt.Sprintf("created %s %g vCPU %g GiB %g GiB %s", r.ID, r.CPU, r.MemoryGB, r.DiskGB, r.Class))
+}
+func (t *told) Stopped()  { t.add("stopped") }
+func (t *told) Started()  { t.add("started") }
+func (t *told) Orphaned() { t.add("orphaned") }
+func (t *told) Gone()     { t.add("gone") }
+
+func (t *told) all() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.said)
+}
+
+// lockedLog is a log a sandbox's timers write while the test reads it.
+type lockedLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+// LifecycleSuite runs sandboxes through the states Daytona keeps them in, against a Daytona
+// in process.
+type LifecycleSuite struct {
+	suite.Suite
+	ctx     context.Context
+	daytona *daytonatest.Server
+	meter   *told
+	logs    *lockedLog
+}
+
+func TestLifecycleSuite(t *testing.T) {
+	suite.Run(t, new(LifecycleSuite))
+}
+
+func (s *LifecycleSuite) SetupTest() {
+	s.ctx = context.Background()
+	s.daytona = daytonatest.Start(s.T())
+	s.meter = &told{}
+	s.logs = &lockedLog{}
+}
+
+// box is a sandbox on the test's Daytona, metered by the test, on lifecycle.
+func (s *LifecycleSuite) box(lifecycle sandbox.Lifecycle, labels map[string]string) *Sandbox {
+	box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(), Lifecycle: lifecycle, Labels: labels, Meter: s.meter,
+		Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+	return box
+}
+
+func (s *LifecycleSuite) run(box *Sandbox) {
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+}
+
+// told waits for the meter to have been told want.
+func (s *LifecycleSuite) told(want ...string) {
+	s.Eventually(func() bool { return slices.Equal(s.meter.all(), want) }, 5*time.Second, 10*time.Millisecond,
+		"the meter was told %v", s.meter.all())
+}
+
+func (s *LifecycleSuite) TestASandboxIsCreatedWithLabelsAndALifecycle() {
+	labels := map[string]string{"stream.env": "test", "stream.router": "shard-a", "stream.organization": "org-1",
+		"stream.app": "app-1", "stream.session": "session-1"}
+	box := s.box(sandbox.Lifecycle{IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, labels)
+
+	s.run(box)
+
+	s.Require().Len(s.daytona.Creations(), 1)
+	created := s.daytona.Creations()[0]
+	s.EqualValues(15, created["autoStopInterval"], "Daytona stops it when the meter does")
+	s.EqualValues(60, created["autoDeleteInterval"], "and deletes it an hour after")
+	s.NotContains(created, "autoArchiveInterval", "it is deleted long before Daytona would archive it")
+	held, ok := s.daytona.Sandbox("sandbox-1")
+	s.Require().True(ok)
+	for name, value := range labels {
+		s.Equal(value, held.Labels[name], name)
+	}
+	s.Equal("python", held.Labels["code-toolbox-language"], "Daytona's own label is kept")
+	s.Equal([]string{"created sandbox-1 1 vCPU 1 GiB 3 GiB container"}, s.meter.all(),
+		"billed from the create, at the size Daytona says it made")
+}
+
+func (s *LifecycleSuite) TestALifecycleIsInWholeMinutes() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 90 * time.Second, StoppedDelete: time.Second}, nil)
+
+	s.run(box)
+
+	created := s.daytona.Creations()[0]
+	s.EqualValues(2, created["autoStopInterval"], "rounded up, so Daytona never stops it before the meter does")
+	s.EqualValues(1, created["autoDeleteInterval"])
+}
+
+func (s *LifecycleSuite) TestWithoutALifecycleDaytonasIdleStopIsKept() {
+	box := s.box(sandbox.Lifecycle{}, nil)
+
+	s.run(box)
+
+	created := s.daytona.Creations()[0]
+	s.EqualValues(15, created["autoStopInterval"])
+	s.NotContains(created, "autoDeleteInterval", "Daytona never deletes a stopped sandbox on its own")
+}
+
+func (s *LifecycleSuite) TestABusySandboxIsNotReadBeforeEachRun() {
+	box := s.box(sandbox.Lifecycle{IdleStop: time.Minute}, nil)
+
+	for range 3 {
+		s.run(box)
+	}
+
+	s.Equal([]string{"POST /api/sandbox"}, s.daytona.Calls(), "a sandbox in use is as it was left")
+}
+
+func (s *LifecycleSuite) TestAStoppedSandboxIsStartedAgain() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 200 * time.Millisecond}, nil)
+	s.run(box)
+	s.daytona.Stop("sandbox-1")
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped")
+
+	_, err := box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err, "the next run after Daytona stopped it")
+	s.Equal([]string{"sandbox-1: print(1)", "sandbox-1: print(2)"}, s.daytona.Ran(), "in the same sandbox, files and all")
+	s.Contains(s.daytona.Calls(), "POST /api/sandbox/sandbox-1/start")
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "started")
+	generation, err := box.Ready(s.ctx)
+	s.Require().NoError(err)
+	s.Equal(1, generation, "the same sandbox")
+}
+
+func (s *LifecycleSuite) TestADeletedSandboxIsMadeAgain() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 200 * time.Millisecond}, nil)
+	s.run(box)
+	s.daytona.Gone("sandbox-1")
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped")
+
+	generation, err := box.Ready(s.ctx)
+
+	s.Require().NoError(err)
+	s.Equal(2, generation, "a new sandbox, holding nothing written into the last")
+	s.run(box)
+	s.Equal([]string{"sandbox-1: print(1)", "sandbox-2: print(1)"}, s.daytona.Ran())
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "gone", "created sandbox-2 1 vCPU 1 GiB 3 GiB container")
+}
+
+func (s *LifecycleSuite) TestAnIdleSandboxIsBilledAsStoppedThenGone() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 100 * time.Millisecond, StoppedDelete: 200 * time.Millisecond}, nil)
+
+	s.run(box)
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "gone")
+	held, _ := s.daytona.Sandbox("sandbox-1")
+	s.Equal(daytonatest.Started, held.State, "the meter keeps Daytona's clock; it deletes nothing itself")
+}
+
+func (s *LifecycleSuite) TestASandboxDaytonaDidNotStopIsReported() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 100 * time.Millisecond}, nil)
+	box.grace = 100 * time.Millisecond
+
+	s.run(box)
+
+	s.Eventually(func() bool { return strings.Contains(s.logs.String(), "Daytona has not stopped a sandbox") },
+		5*time.Second, 10*time.Millisecond)
+	s.Contains(s.logs.String(), `level=WARN msg="Daytona has not stopped a sandbox that is billed as stopped" sandbox=sandbox-1 billed_as=stopped state=started`)
+}
+
+func (s *LifecycleSuite) TestClosingDeletesTheSandboxAndEndsItsBill() {
+	box := s.box(sandbox.Lifecycle{IdleStop: time.Minute}, nil)
+	s.run(box)
+
+	s.Require().NoError(box.Close())
+
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted())
+	s.Equal([]string{"created sandbox-1 1 vCPU 1 GiB 3 GiB container", "gone"}, s.meter.all())
+}
+
+func (s *LifecycleSuite) TestASandboxDaytonaDeletedIsClosedWithoutComplaint() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 100 * time.Millisecond, StoppedDelete: 100 * time.Millisecond}, nil)
+	s.run(box)
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "gone")
+	s.daytona.Gone("sandbox-1")
+
+	s.NoError(box.Close())
+	s.Equal([]string{"created sandbox-1 1 vCPU 1 GiB 3 GiB container", "stopped", "gone"}, s.meter.all(), "gone once")
+}
+
+func (s *LifecycleSuite) TestAnOrphanIsDeletedOnceIdle() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour}, nil)
+	s.run(box)
+	s.daytona.RefuseDeletes(true)
+
+	s.Error(box.Close(), "Daytona would not delete it")
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned")
+	s.daytona.RefuseDeletes(false)
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "gone")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted once it idled, by its own timer")
+}
+
+func (s *LifecycleSuite) TestAnOrphanDaytonaWillNotDeleteIsBilledUntilDaytonaDeletesIt() {
+	box := s.box(sandbox.Lifecycle{IdleStop: 100 * time.Millisecond, StoppedDelete: 200 * time.Millisecond}, nil)
+	s.run(box)
+	s.daytona.RefuseDeletes(true)
+
+	s.Error(box.Close())
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "stopped", "gone")
+	s.Contains(s.logs.String(), "could not delete a sandbox whose session closed")
+}

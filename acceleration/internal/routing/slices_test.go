@@ -258,7 +258,38 @@ func (s *SlicesSuite) TestANilRunRecordsNothing() {
 	var run *Slices
 	s.NotPanics(func() {
 		run.Switch("voice")
+		run.Attribute("orphan", "true")
 		run.Stop()
 		run.Cancel()
 	})
+}
+
+func (s *SlicesSuite) TestWhatASliceUsedFollowsItsModelAndAttributesFollowTheRun() {
+	options, at := s.faked("running")
+	options.Quantities = func(model string, seconds int64) pricing.Quantities {
+		if model == "stopped" {
+			return pricing.Quantities{pricing.DiskGBSeconds: 3 * seconds}
+		}
+		return pricing.Quantities{pricing.VCPUSeconds: seconds, pricing.DiskGBSeconds: 3 * seconds}
+	}
+	options.Attributes = map[string]string{"sandbox_id": "sandbox-1"}
+	run := StartSlices(options)
+
+	at.to(30 * time.Second)
+	run.Switch("stopped")
+	at.to(45 * time.Second)
+	run.Attribute("orphan", "true")
+	run.Attribute("orphan", "true")
+	at.to(61 * time.Second)
+	run.Stop()
+
+	rows := s.rows(options)
+	s.Require().Len(rows, 3, "marking a run that is already marked ends nothing")
+	s.Equal(pricing.Quantities{pricing.VCPUSeconds: 30, pricing.DiskGBSeconds: 90}, rows[0].Meters)
+	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 45}, rows[1].Meters, "stopped holds disk alone")
+	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 48}, rows[2].Meters)
+	for i, row := range rows {
+		s.Equal("sandbox-1", row.Attributes["sandbox_id"], "every slice carries the run's attributes")
+		s.Equal(i == 2, row.Attributes["orphan"] == "true", "and from the mark on, the mark")
+	}
 }

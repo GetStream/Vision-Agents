@@ -227,16 +227,38 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
-	s.Equal(CodeSandbox{Broker: "daytona"}, config.CodeSandbox)
+	s.Equal(CodeSandbox{Broker: "daytona", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_SECRET_PREFIX", "stg")
 	config, _, err = Load("")
 	s.Require().NoError(err)
-	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg"}, config.CodeSandbox)
+	s.Equal(CodeSandbox{Broker: "daytona", SecretPrefix: "stg", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
+		config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "vault")
 	_, _, err = Load("")
 	s.ErrorContains(err, "code_sandbox.broker is daytona or proxy")
+}
+
+// TestASandboxStopsAfter15IdleMinutesAndIsDeletedAnHourLater: the defaults, the variables that
+// set them, and intervals Daytona cannot take refused.
+func (s *ConfigSuite) TestASandboxStopsAfter15IdleMinutesAndIsDeletedAnHourLater() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_IDLE_STOP", "5m")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_STOPPED_DELETE", "2h")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(5*time.Minute, config.CodeSandbox.IdleStop)
+	s.Equal(2*time.Hour, config.CodeSandbox.StoppedDelete)
+
+	for _, interval := range []string{"0s", "30s", "90s"} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_STOPPED_DELETE", interval)
+		_, _, err = Load("")
+		s.ErrorContains(err, "code_sandbox.stopped_delete (ROUTER_CODE_SANDBOX_STOPPED_DELETE) is a whole number of minutes", interval)
+	}
+	s.T().Setenv("ROUTER_CODE_SANDBOX_STOPPED_DELETE", "1h")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_IDLE_STOP", "-1m")
+	_, _, err = Load("")
+	s.ErrorContains(err, "code_sandbox.idle_stop (ROUTER_CODE_SANDBOX_IDLE_STOP)")
 }
 
 // TestTheProxyBrokerNeedsTheProxysURLAndCA: a sandbox must reach the proxy and trust it, its
@@ -261,7 +283,7 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "proxy", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
-		ProxyPublicURL: "http://203.0.113.7:8091"}, config.CodeSandbox)
+		ProxyPublicURL: "http://203.0.113.7:8091", IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "")
 	_, _, err = Load("")
@@ -341,7 +363,8 @@ func (s *ConfigSuite) TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA() 
 	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
 	config, _, err = Load("")
 	s.Require().NoError(err)
-	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key"}, config.CodeSandbox)
+	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
+		IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
 }
 
 // TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.
