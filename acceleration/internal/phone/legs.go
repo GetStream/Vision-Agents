@@ -31,6 +31,10 @@ const (
 	rebillTo   = 5 * time.Minute
 )
 
+// keepParticipantsFor is how long a phone's join or leave no leg was waiting for is kept for
+// the leg that opens after it: far longer than any delivery is late.
+const keepParticipantsFor = 24 * time.Hour
+
 // AttributeEndedBy says what ended a leg billed by anything other than its phone leaving or
 // the call ending: the sweep.
 const AttributeEndedBy = "ended_by"
@@ -66,9 +70,17 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 	if started {
 		leg.StartedAt = &leg.DialedAt
 	}
-	if _, err := s.store.OpenCallLeg(ctx, &leg); err != nil {
+	opened, err := s.store.OpenCallLeg(ctx, &leg)
+	switch {
+	case err != nil && !opened:
 		s.logger.Error("could not record a call leg; its minutes are not billed", "call", leg.CallType+":"+leg.CallID,
 			"vendor", leg.Vendor, "direction", leg.Direction, "error", err)
+	case err != nil:
+		s.logger.Error("could not give a call leg the phone that joined before it; it starts when the phone's join is delivered again",
+			"call", leg.CallType+":"+leg.CallID, "vendor", leg.Vendor, "direction", leg.Direction, "error", err)
+	case leg.EndedAt != nil:
+		// Its phone joined and left before it was recorded.
+		s.settleLegs(ctx, []store.CallLeg{leg})
 	}
 }
 
@@ -76,21 +88,70 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 // the person a placed call or a transfer rang, who has answered, told apart by the phone's
 // number, empty when unknown. Its minutes run from now. A phone already given its leg, by an
 // earlier delivery, starts nothing.
+//
+// Stream does not order its call events, so a join no leg is waiting for yet is kept for the
+// leg that opens later, and a phone whose leave came first has its leg ended at that leave,
+// rather than open, and billed, until the call ends.
 func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, callID, sessionID, participant, number string) error {
 	if s.store == nil || participant == "" {
 		return nil
 	}
-	_, _, err := s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, number, s.now())
-	return err
+	at := s.now()
+	left, err := s.store.ParticipantLeft(ctx, scope, callType, callID, participant)
+	if err != nil {
+		return err
+	}
+	connect := func() (store.Connection, error) {
+		leg, connection, err := s.store.ConnectCallLeg(ctx, scope, callType, callID, sessionID, participant, number, at, left)
+		if connection == store.LegConnected && leg.EndedAt != nil {
+			s.settleLegs(ctx, []store.CallLeg{leg})
+		}
+		return connection, err
+	}
+	connection, err := connect()
+	if err != nil || connection == store.LegKnown {
+		return err
+	}
+	if connection == store.NothingWaiting {
+		if err := s.store.RecordParticipant(ctx, scope, store.CallParticipant{
+			CallType: callType, CallID: callID, ParticipantSession: participant, Number: number, JoinedAt: &at,
+		}, s.now()); err != nil {
+			return err
+		}
+		// A leg opened between the two looks found nothing kept: it is connected here.
+		if connection, err = connect(); err != nil || connection == store.NothingWaiting {
+			return err
+		}
+	}
+	return s.store.ForgetParticipant(ctx, scope, callType, callID, participant)
 }
 
-// Left ends the leg of a phone that left a call, and bills its minutes.
+// Left ends the leg of a phone that left a call, and bills its minutes. A leave no leg has the
+// phone of is kept, for the phone's join delivered after it and for the leg that opens later.
 func (s *Service) Left(ctx context.Context, scope store.AppScope, callType, callID, participant string) error {
 	if s.store == nil || participant == "" {
 		return nil
 	}
-	ended, err := s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, s.now())
+	at := s.now()
+	ended, err := s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, at)
 	if err != nil {
+		return err
+	}
+	if len(ended) > 0 {
+		s.settleLegs(ctx, ended)
+		return nil
+	}
+	known, err := s.store.ParticipantHasLeg(ctx, scope, callType, callID, participant)
+	if err != nil || known {
+		return err
+	}
+	if err := s.store.RecordParticipant(ctx, scope, store.CallParticipant{
+		CallType: callType, CallID: callID, ParticipantSession: participant, LeftAt: &at,
+	}, s.now()); err != nil {
+		return err
+	}
+	// A leg given the phone between the two looks did not see the leave: it is ended here.
+	if ended, err = s.store.EndParticipantLeg(ctx, scope, callType, callID, participant, at); err != nil {
 		return err
 	}
 	s.settleLegs(ctx, ended)
@@ -155,6 +216,9 @@ func (s *Service) SweepLegs(ctx context.Context) (int, error) {
 		s.settleLeg(ctx, leg, true)
 	}
 	if err := s.rebill(ctx, now); err != nil {
+		return len(ended), err
+	}
+	if _, err := s.store.DeleteCallParticipants(ctx, now.Add(-keepParticipantsFor), legSweepBatch); err != nil {
 		return len(ended), err
 	}
 	return len(ended), nil

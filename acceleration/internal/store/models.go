@@ -447,6 +447,26 @@ func (l CallLeg) Used() pricing.Quantities {
 	return pricing.Quantities{pricing.CallSeconds: seconds}
 }
 
+// CallParticipant is a phone's join or leave of a call that no leg was waiting for when it
+// was delivered, kept for the leg that opens later (OpenCallLeg) and for the phone's join
+// that comes after its leave (ConnectCallLeg).
+type CallParticipant struct {
+	bun.BaseModel `bun:"table:call_participants,alias:cp"`
+
+	ID int64 `bun:"id,pk,autoincrement"`
+	// StreamAppPK and Unpinned are the scope of the hook that delivered it.
+	StreamAppPK        int64  `bun:"stream_app_pk,nullzero"`
+	Unpinned           bool   `bun:"unpinned,notnull"`
+	CallType           string `bun:"call_type,notnull"`
+	CallID             string `bun:"call_id,notnull"`
+	ParticipantSession string `bun:"participant_session,notnull"`
+	// Number is off the phone's participant id, empty when it named none.
+	Number     string     `bun:"number,notnull"`
+	JoinedAt   *time.Time `bun:"joined_at"`
+	LeftAt     *time.Time `bun:"left_at"`
+	RecordedAt time.Time  `bun:"recorded_at,notnull"`
+}
+
 // AgentConfig is a named set of the decisions a session is created with.
 //
 // It holds only what a caller would otherwise repeat on every call. Everything that is

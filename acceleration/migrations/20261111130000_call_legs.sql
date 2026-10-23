@@ -53,5 +53,30 @@ CREATE UNIQUE INDEX call_legs_inbound_idx ON call_legs (call_type, call_id, COAL
 CREATE UNIQUE INDEX call_legs_participant_idx ON call_legs (call_type, call_id, COALESCE(stream_app_pk, 0), participant_session)
     WHERE participant_session <> '';
 
+-- A phone's join or leave of a call that no leg was waiting for when it was delivered. Stream
+-- does not order its call events: a placed call's phone can join before the vendor's answer
+-- writes its leg, a caller before the session_started that opens theirs, and a phone's leave
+-- can come before its join. The leg that opens later takes its phone's join from here and
+-- starts when the phone joined, and a join whose leave came first ends the leg it connects.
+-- Kept in the shard that heard it, and deleted by the leg sweep a day on.
+CREATE TABLE call_participants (
+    id BIGSERIAL PRIMARY KEY,
+    -- The app the hook came from, and whether it was the deployment's own, whose legs may
+    -- name no app: what AppScope reads off the hook.
+    stream_app_pk BIGINT,
+    unpinned BOOLEAN NOT NULL DEFAULT false,
+    call_type TEXT NOT NULL,
+    call_id TEXT NOT NULL,
+    participant_session TEXT NOT NULL,
+    -- The number off the phone's sip-<number> participant id, empty when it named none.
+    number TEXT NOT NULL DEFAULT '',
+    joined_at TIMESTAMPTZ,
+    left_at TIMESTAMPTZ,
+    recorded_at TIMESTAMPTZ NOT NULL
+);
+CREATE UNIQUE INDEX call_participants_idx ON call_participants (call_type, call_id, COALESCE(stream_app_pk, 0), participant_session);
+CREATE INDEX call_participants_recorded_idx ON call_participants (recorded_at);
+
 -- +goose Down
+DROP TABLE call_participants;
 DROP TABLE call_legs;

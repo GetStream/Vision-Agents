@@ -71,7 +71,8 @@ func (p callParticipant) phone() bool {
 // Every outcome short of something that did not come from Stream is a 200. Stream retries a
 // non-2xx, and none of the reasons this cannot place a call — no worker waiting, a call
 // belonging to nobody — get better on a second delivery, while the caller is on the line for
-// the whole of it.
+// the whole of it. The one exception is a phone's join or leave the database could not take:
+// its minutes are lost unless Stream delivers it again, so it is answered 503.
 func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
@@ -127,7 +128,11 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
-		s.phoneJoinedOrLeft(r, origin, eventType, event)
+		if !s.phoneJoinedOrLeft(r, origin, eventType, event) {
+			// Stream delivers it again, which a join or leave already recorded is nothing to.
+			writeError(w, unavailable("could not record that call event"))
+			return
+		}
 
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
@@ -345,14 +350,16 @@ func phoneCallerOf(event callEvent) phoneCaller {
 
 // phoneJoinedOrLeft starts the leg of a phone that joined a call, which is when a placed call
 // or a transfer was answered, and ends and bills the leg of one that left. Anybody else coming
-// and going, as every participant of every video call in the app does, changes nothing.
-func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType string, event callEvent) {
+// and going, as every participant of every video call in the app does, changes nothing. It
+// reports false when the join or leave could not be recorded, which loses the leg's minutes
+// unless Stream delivers it again.
+func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType string, event callEvent) bool {
 	if s.phone == nil || event.Participant == nil || !event.Participant.phone() {
-		return
+		return true
 	}
 	callType, callID, split := strings.Cut(event.CallCid, ":")
 	if !split {
-		return
+		return true
 	}
 	participant := event.Participant.UserSessionID
 	var err error
@@ -363,9 +370,11 @@ func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType
 		err = s.phone.Left(r.Context(), origin.scope(), callType, callID, participant)
 	}
 	if err != nil {
-		s.logger.Error("could not record a phone joining or leaving a call", "type", eventType,
+		s.logger.Error("could not record a phone joining or leaving a call; Stream is asked to deliver it again", "type", eventType,
 			"call", event.CallCid, "error", err)
+		return false
 	}
+	return true
 }
 
 // customOf narrows the call's custom data to the strings a worker can read.

@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -254,6 +256,27 @@ func (s *TelephonyBillingSuite) TestAPhoneLeavingEndsItsLeg() {
 	s.Require().Equal(http.StatusOK, s.endAt(callID))
 	time.Sleep(500 * time.Millisecond)
 	s.Len(s.rows(phone.ModelCallMinutes), 1, "the call ending ends nothing more")
+}
+
+// A join or leave the database could not take is answered 503, so Stream delivers it again.
+func (s *TelephonyBillingSuite) TestAJoinOrLeaveTheDatabaseCouldNotTakeIsAnswered503() {
+	unreachable, err := store.Open("postgres://postgres:postgres@127.0.0.1:1/none?sslmode=disable")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unreachable.Close() })
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	failing, err := phone.NewService(phone.ServiceOptions{
+		Registry: vendors.Registry(config), Store: unreachable, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	kept := s.router.phone
+	s.router.phone = failing
+	s.T().Cleanup(func() { s.router.phone = kept })
+	callID := s.utils.uuid()
+
+	s.Equal(http.StatusServiceUnavailable, s.participant("joined", callID, "sip-+15125550123", "phone-1"))
+	s.Equal(http.StatusServiceUnavailable, s.participant("left", callID, "sip-+15125550123", "phone-1"))
+	s.Equal(http.StatusOK, s.participant("joined", callID, "agent-1", "agent-session"), "nobody's minutes ride on the agent")
 }
 
 func (s *TelephonyBillingSuite) TestALegOfACountryWithNoRateIsBillableWorkWithNoPrice() {

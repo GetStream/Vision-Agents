@@ -18,7 +18,8 @@ import (
 // OpenCallLeg records a leg of a call in this shard: an outbound one ringing, an inbound one
 // started. It reports false, and records nothing, for an inbound leg its Stream session already
 // has, ended or not: every delivery of the event announcing a call that arrives opens it, and
-// only the first does.
+// only the first does. A leg that opens takes the join of its phone delivered before it
+// (takeParticipant), and leg is what was recorded: started, or ended too, by that join.
 func (s *Store) OpenCallLeg(ctx context.Context, leg *CallLeg) (bool, error) {
 	switch {
 	case leg.CustomerID == "":
@@ -47,73 +48,267 @@ func (s *Store) OpenCallLeg(ctx context.Context, leg *CallLeg) (bool, error) {
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: open call leg: %w", err))
 	}
-	return opened > 0, nil
+	if opened == 0 {
+		return false, nil
+	}
+	if err := s.takeParticipant(ctx, leg); err != nil {
+		return true, stack.Wrap(fmt.Errorf("store: give a call leg the phone that joined before it: %w", err))
+	}
+	return true, nil
 }
 
+// takeParticipant gives a leg that just opened the join of its phone kept from before it
+// (RecordParticipant): by the leg's number, then its participant session, then, for a leg
+// that knows neither, the call's first phone to join. The leg starts when that phone joined,
+// and ends when it left if its leave was kept too.
+func (s *Store) takeParticipant(ctx context.Context, leg *CallLeg) error {
+	var matches []func(*bun.SelectQuery) *bun.SelectQuery
+	numbers := phoneNumbersOf(*leg)
+	if len(numbers) > 0 {
+		matches = append(matches, func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Where("ltrim(number, '+') IN (?)", bun.In(numbers))
+		})
+	}
+	if leg.ParticipantSession != "" {
+		matches = append(matches, func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Where("participant_session = ?", leg.ParticipantSession)
+		})
+	}
+	if len(numbers) == 0 && leg.ParticipantSession == "" {
+		matches = append(matches, func(q *bun.SelectQuery) *bun.SelectQuery { return q })
+	}
+	for _, match := range matches {
+		for _, db := range s.shards() {
+			kept := match(db.NewSelect().Model((*CallParticipant)(nil)).Column("id").
+				Where("call_type = ?", leg.CallType).Where("call_id = ?", leg.CallID).
+				Where("joined_at IS NOT NULL").Where("participant_session <> ''"))
+			if leg.StreamAppPK != 0 {
+				kept = kept.Where("stream_app_pk = ?", leg.StreamAppPK)
+			} else {
+				kept = kept.Where("unpinned")
+			}
+			var taken []CallParticipant
+			err := db.NewDelete().Model((*CallParticipant)(nil)).
+				Where("id IN (?)", kept.OrderExpr("joined_at").Limit(1).For("UPDATE SKIP LOCKED")).
+				Returning("*").
+				Scan(ctx, &taken)
+			if err != nil {
+				return err
+			}
+			if len(taken) > 0 {
+				return s.joinTaken(ctx, leg, taken[0])
+			}
+		}
+	}
+	return nil
+}
+
+// phoneNumbersOf is the numbers a leg's phone may join its call as, without a leading +: an
+// inbound leg's caller, and an outbound leg's person or the number it was placed from, which
+// a vendor may present to Stream as the caller of the call it bridges in.
+func phoneNumbersOf(leg CallLeg) []string {
+	var numbers []string
+	if remote := strings.TrimPrefix(leg.RemoteNumber, "+"); remote != "" {
+		numbers = append(numbers, remote)
+	}
+	if local := strings.TrimPrefix(leg.LocalNumber, "+"); leg.Direction == Outbound && local != "" {
+		numbers = append(numbers, local)
+	}
+	return numbers
+}
+
+// joinTaken starts a leg, which this shard holds, from the kept join of its phone, and ends it
+// if the phone's leave was kept too. A phone given a leg meanwhile keeps that one.
+func (s *Store) joinTaken(ctx context.Context, leg *CallLeg, taken CallParticipant) error {
+	update := s.shard.NewUpdate().Model((*CallLeg)(nil)).
+		Set("participant_session = CASE WHEN participant_session = '' THEN ? ELSE participant_session END", taken.ParticipantSession).
+		Set("started_at = ?", *taken.JoinedAt)
+	if taken.LeftAt != nil {
+		update = update.Set("ended_at = GREATEST(?::timestamptz, ?::timestamptz)", *taken.LeftAt, *taken.JoinedAt).
+			Set("end_reason = ?", LegLeft)
+	}
+	var joined []CallLeg
+	err := update.Where("id = ?", leg.ID).Where("ended_at IS NULL").Returning("*").Scan(ctx, &joined)
+	if isViolation(err, uniqueViolation) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(joined) > 0 {
+		*leg = joined[0]
+	}
+	return nil
+}
+
+// Connection is what a phone joining a call did to the call's legs.
+type Connection int
+
+const (
+	// NothingWaiting is no leg of the call waiting for a phone: the join is kept instead
+	// (RecordParticipant).
+	NothingWaiting Connection = iota
+	// LegConnected is the phone given its leg, which starts.
+	LegConnected
+	// LegKnown is the phone already having its leg, from an earlier or concurrent delivery.
+	LegKnown
+)
+
 // ConnectCallLeg gives a phone that joined a call, at at, the leg it is: the waiting leg whose
-// remote number is the phone's number, or when none is or the number is unknown, the call's
+// number is the phone's (phoneNumbersOf), or when none is or the number is unknown, the call's
 // inbound leg that does not know its phone yet, or else the oldest outbound leg still ringing,
 // which starts then. Stream does not order its call events, so a call whose inbound leg opened
 // without its caller has a transfer's phone joining it, and only the number tells them apart.
-// It reports false when the phone already has its leg, from an earlier delivery, or no leg of
-// the call is waiting for one.
+// A phone whose leave came first, at left, has its leg ended then too.
 func (s *Store) ConnectCallLeg(ctx context.Context, scope AppScope, callType, callID, sessionID, participant, number string,
-	at time.Time) (CallLeg, bool, error) {
+	at time.Time, left *time.Time) (CallLeg, Connection, error) {
 	at = at.UTC().Truncate(time.Microsecond)
+	known, err := s.ParticipantHasLeg(ctx, scope, callType, callID, participant)
+	if err != nil {
+		return CallLeg{}, NothingWaiting, stack.Wrap(fmt.Errorf("store: connect call leg: %w", err))
+	}
+	if known {
+		return CallLeg{}, LegKnown, nil
+	}
+	if number = strings.TrimPrefix(number, "+"); number != "" {
+		leg, connection, err := s.connectWaitingLeg(ctx, scope, callType, callID, sessionID, participant, number, at, left)
+		if err != nil || connection != NothingWaiting {
+			return leg, connection, err
+		}
+	}
+	return s.connectWaitingLeg(ctx, scope, callType, callID, sessionID, participant, "", at, left)
+}
+
+// connectWaitingLeg gives the phone the first leg of the call, across the shards, that is
+// waiting for one and, when number is not empty, that a phone of number may be: one whose
+// remote number it is first.
+func (s *Store) connectWaitingLeg(ctx context.Context, scope AppScope, callType, callID, sessionID, participant, number string,
+	at time.Time, left *time.Time) (CallLeg, Connection, error) {
+	for _, db := range s.shards() {
+		waiting := db.NewSelect().Model((*CallLeg)(nil)).Column("id").
+			Where("call_type = ?", callType).Where("call_id = ?", callID).
+			Where("ended_at IS NULL").Where("participant_session = ''").
+			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("direction = ?", Inbound).WhereOr("started_at IS NULL")
+			}).
+			ApplyQueryBuilder(scope.where)
+		if number != "" {
+			waiting = waiting.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("ltrim(remote_number, '+') = ?", number).
+					WhereOr("direction = ? AND ltrim(local_number, '+') = ?", Outbound, number)
+			}).OrderExpr("ltrim(remote_number, '+') = ? DESC", number)
+		}
+		waiting = waiting.OrderExpr("direction = ? DESC, dialed_at", Inbound).Limit(1).For("UPDATE SKIP LOCKED")
+		update := db.NewUpdate().Model((*CallLeg)(nil)).
+			Set("participant_session = ?", participant).
+			Set("stream_session_id = CASE WHEN stream_session_id = '' THEN ? ELSE stream_session_id END", sessionID).
+			Set("started_at = COALESCE(started_at, ?)", at)
+		if left != nil {
+			update = update.Set("ended_at = GREATEST(?::timestamptz, COALESCE(started_at, ?::timestamptz))",
+				left.UTC().Truncate(time.Microsecond), at).
+				Set("end_reason = ?", LegLeft)
+		}
+		var connected []CallLeg
+		err := update.Where("id IN (?)", waiting).Returning("*").Scan(ctx, &connected)
+		if isViolation(err, uniqueViolation) {
+			return CallLeg{}, LegKnown, nil
+		}
+		if err != nil {
+			return CallLeg{}, NothingWaiting, stack.Wrap(fmt.Errorf("store: connect call leg: %w", err))
+		}
+		if len(connected) > 0 {
+			return connected[0], LegConnected, nil
+		}
+	}
+	return CallLeg{}, NothingWaiting, nil
+}
+
+// RecordParticipant keeps, in this shard, a phone's join (JoinedAt) or leave (LeftAt) of a
+// call that no leg was waiting for, in the scope of the hook that delivered it, at now. A
+// second event of the same phone fills in what the first left empty: its first join and its
+// first leave are what is kept.
+func (s *Store) RecordParticipant(ctx context.Context, scope AppScope, kept CallParticipant, now time.Time) error {
+	kept.StreamAppPK, kept.Unpinned = scope.App, scope.Unpinned
+	kept.Number = strings.TrimPrefix(kept.Number, "+")
+	kept.RecordedAt = now.UTC().Truncate(time.Microsecond)
+	for _, at := range []**time.Time{&kept.JoinedAt, &kept.LeftAt} {
+		if *at != nil {
+			truncated := (*at).UTC().Truncate(time.Microsecond)
+			*at = &truncated
+		}
+	}
+	_, err := s.shard.NewInsert().Model(&kept).
+		On("CONFLICT (call_type, call_id, COALESCE(stream_app_pk, 0), participant_session) DO UPDATE").
+		Set("joined_at = COALESCE(cp.joined_at, EXCLUDED.joined_at)").
+		Set("left_at = COALESCE(cp.left_at, EXCLUDED.left_at)").
+		Set("number = CASE WHEN cp.number = '' THEN EXCLUDED.number ELSE cp.number END").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: record call participant: %w", err))
+	}
+	return nil
+}
+
+// ParticipantLeft is when a phone left a call, from the leave kept when no leg had it, or nil.
+func (s *Store) ParticipantLeft(ctx context.Context, scope AppScope, callType, callID, participant string) (*time.Time, error) {
+	lefts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]time.Time, error) {
+		var left []time.Time
+		err := db.NewSelect().Model((*CallParticipant)(nil)).Column("left_at").
+			Where("call_type = ?", callType).Where("call_id = ?", callID).
+			Where("participant_session = ?", participant).Where("left_at IS NOT NULL").
+			ApplyQueryBuilder(scope.where).Scan(ctx, &left)
+		return left, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: participant left: %w", err))
+	}
+	all := slices.Concat(lefts...)
+	if len(all) == 0 {
+		return nil, nil
+	}
+	first := slices.MinFunc(all, time.Time.Compare)
+	return &first, nil
+}
+
+// ParticipantHasLeg reports whether a leg of the call, open or ended, is the phone's.
+func (s *Store) ParticipantHasLeg(ctx context.Context, scope AppScope, callType, callID, participant string) (bool, error) {
 	known, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (bool, error) {
 		return db.NewSelect().Model((*CallLeg)(nil)).
 			Where("call_type = ?", callType).Where("call_id = ?", callID).
 			Where("participant_session = ?", participant).ApplyQueryBuilder(scope.where).Exists(ctx)
 	})
 	if err != nil {
-		return CallLeg{}, false, stack.Wrap(fmt.Errorf("store: connect call leg: %w", err))
+		return false, stack.Wrap(fmt.Errorf("store: participant has leg: %w", err))
 	}
-	if slices.Contains(known, true) {
-		return CallLeg{}, false, nil
-	}
-	if number = strings.TrimPrefix(number, "+"); number != "" {
-		leg, connected, err := s.connectWaitingLeg(ctx, scope, callType, callID, sessionID, participant, at,
-			func(q *bun.SelectQuery) *bun.SelectQuery { return q.Where("ltrim(remote_number, '+') = ?", number) })
-		if err != nil || connected {
-			return leg, connected, err
-		}
-	}
-	return s.connectWaitingLeg(ctx, scope, callType, callID, sessionID, participant, at,
-		func(q *bun.SelectQuery) *bun.SelectQuery { return q })
+	return slices.Contains(known, true), nil
 }
 
-// connectWaitingLeg gives the phone the first leg of the call, across the shards, that is
-// waiting for one and that narrow keeps.
-func (s *Store) connectWaitingLeg(ctx context.Context, scope AppScope, callType, callID, sessionID, participant string,
-	at time.Time, narrow func(*bun.SelectQuery) *bun.SelectQuery) (CallLeg, bool, error) {
-	for _, db := range s.shards() {
-		waiting := narrow(db.NewSelect().Model((*CallLeg)(nil)).Column("id").
+// ForgetParticipant deletes what was kept of a phone that has its leg now.
+func (s *Store) ForgetParticipant(ctx context.Context, scope AppScope, callType, callID, participant string) error {
+	_, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (struct{}, error) {
+		_, err := db.NewDelete().Model((*CallParticipant)(nil)).
 			Where("call_type = ?", callType).Where("call_id = ?", callID).
-			Where("ended_at IS NULL").Where("participant_session = ''").
-			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-				return q.Where("direction = ?", Inbound).WhereOr("started_at IS NULL")
-			}).
-			ApplyQueryBuilder(scope.where)).
-			OrderExpr("direction = ? DESC, dialed_at", Inbound).Limit(1).For("UPDATE SKIP LOCKED")
-		var connected []CallLeg
-		err := db.NewUpdate().Model((*CallLeg)(nil)).
-			Set("participant_session = ?", participant).
-			Set("stream_session_id = CASE WHEN stream_session_id = '' THEN ? ELSE stream_session_id END", sessionID).
-			Set("started_at = COALESCE(started_at, ?)", at).
-			Where("id IN (?)", waiting).
-			Returning("*").
-			Scan(ctx, &connected)
-		if isViolation(err, uniqueViolation) {
-			return CallLeg{}, false, nil
-		}
-		if err != nil {
-			return CallLeg{}, false, stack.Wrap(fmt.Errorf("store: connect call leg: %w", err))
-		}
-		if len(connected) > 0 {
-			return connected[0], true, nil
-		}
+			Where("participant_session = ?", participant).ApplyQueryBuilder(scope.where).Exec(ctx)
+		return struct{}{}, err
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: forget call participant: %w", err))
 	}
-	return CallLeg{}, false, nil
+	return nil
+}
+
+// DeleteCallParticipants deletes, from this shard, at most limit of the participants kept
+// before before, and reports how many.
+func (s *Store) DeleteCallParticipants(ctx context.Context, before time.Time, limit int) (int, error) {
+	result, err := s.shard.NewDelete().Model((*CallParticipant)(nil)).
+		Where("id IN (?)", s.shard.NewSelect().Model((*CallParticipant)(nil)).Column("id").
+			Where("recorded_at < ?", before.UTC()).OrderExpr("recorded_at").Limit(limit)).
+		Exec(ctx)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: delete call participants: %w", err))
+	}
+	deleted, err := result.RowsAffected()
+	return int(deleted), err
 }
 
 // EndParticipantLeg ends the open leg of a phone that left a call, at at, and returns it.
