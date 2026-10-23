@@ -130,14 +130,22 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	return stream.Observe(func(event llm.Event) { s.observe(startedAt, createdAt, params, hedge, event, charged) }), nil
 }
 
-// label puts on a response's row what its caller and its hedge say about it.
+// label puts on a response's row what its caller and its hedge say about it. The response
+// is kept only if nothing that could throw it away did: a speculative reply that was dropped
+// is not kept however its hedge ended, and neither is a hedge's losing attempt.
 func label(stat *routing.Stat, params llm.ResponseParams, hedge *hedgeAttempt) {
 	if params.Attributes != nil {
 		for name, value := range params.Attributes() {
 			stat.Attribute(name, value)
 		}
 	}
-	hedge.label(stat)
+	id, kept, hedged := hedge.outcome()
+	if !hedged {
+		return
+	}
+	stat.Attribute(routing.AttributeHedge, id)
+	kept = kept && stat.Attributes[routing.AttributeKept] != "false"
+	stat.Attribute(routing.AttributeKept, strconv.FormatBool(kept))
 }
 
 // Provider is the provider serving this session.

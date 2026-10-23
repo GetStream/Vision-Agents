@@ -51,20 +51,25 @@ func (s *HedgeRecordingSuite) SetupSuite() {
 // rig is alpha/quick and beta/steady behind one target, priced, recording for a customer of
 // the test's own, with replies hedged after recordedHedge.
 func (s *HedgeRecordingSuite) rig() (*rig, *Router) {
+	return s.rigOf("alpha", "beta")
+}
+
+// rigOf is rig with only the named candidates, in that order.
+func (s *HedgeRecordingSuite) rigOf(candidates ...string) (*rig, *Router) {
 	s.customer = "hedge-" + uuid.NewString()
 	r := &rig{headers: map[string]time.Duration{}, failing: map[string]error{}, scripts: map[string][]*llmtest.Script{}}
 	registry := NewRegistry()
 	price := routing.Price{PerMillionInputTokens: 1, PerMillionOutputTokens: 2}
-	config := routing.ModalityConfig{
-		Providers: []routing.ProviderConfig{
-			{Provider: "alpha", Model: "quick", Languages: []string{"en"}, Price: price},
-			{Provider: "beta", Model: "steady", Languages: []string{"en"}, Price: price},
-		},
-		Aliases: map[string]routing.Alias{"voice": {Prefer: "alpha/quick", Only: []string{"alpha/quick", "beta/steady"}}},
-	}
-	for _, name := range []string{"alpha", "beta"} {
+	models := map[string]string{"alpha": "quick", "beta": "steady"}
+	var config routing.ModalityConfig
+	var members []string
+	for _, name := range candidates {
+		config.Providers = append(config.Providers,
+			routing.ProviderConfig{Provider: name, Model: models[name], Languages: []string{"en"}, Price: price})
+		members = append(members, name+"/"+models[name])
 		registry.Register(name, func(spec routing.Spec) (Provider, error) { return &pace{rig: r, name: name, model: spec.Model}, nil })
 	}
+	config.Aliases = map[string]routing.Alias{"voice": {Prefer: members[0], Only: members}}
 	router, err := New(Options{Config: config, Registry: registry, Store: s.store, ReplyHedge: recordedHedge})
 	s.Require().NoError(err)
 	r.session, err = router.Start(routing.WithAttribution(s.ctx, routing.Attribution{APIKey: "key-hedge"}),
@@ -75,9 +80,14 @@ func (s *HedgeRecordingSuite) rig() (*rig, *Router) {
 
 // asked puts a reply to the rig, which returns once one of its attempts has said something.
 func (s *HedgeRecordingSuite) asked(r *rig) <-chan *llm.Stream {
+	return s.askedWith(r, r.params())
+}
+
+// askedWith is asked, with params.
+func (s *HedgeRecordingSuite) askedWith(r *rig, params llm.ResponseParams) <-chan *llm.Stream {
 	answered := make(chan *llm.Stream, 1)
 	go func() {
-		stream, err := r.session.Create(s.ctx, r.params())
+		stream, err := r.session.Create(s.ctx, params)
 		s.NoError(err)
 		answered <- stream
 	}()
@@ -158,6 +168,46 @@ func (s *HedgeRecordingSuite) TestARequestThatWasNeverHedgedIsNotTagged() {
 
 	row := s.rows(router, 1)["alpha"]
 	s.NotContains(row.Attributes, routing.AttributeHedge, "it answered in time, so nothing was asked twice")
+	s.NotContains(row.Attributes, routing.AttributeKept)
+}
+
+func (s *HedgeRecordingSuite) TestADroppedSpeculativeReplyIsNotKeptWhicheverAttemptWon() {
+	r, router := s.rig()
+	params := r.params()
+	// A speculative reply its ruling dropped, as the agent labels it.
+	params.Attributes = func() map[string]string {
+		return map[string]string{routing.AttributeSpeculation: "spec-1", routing.AttributeKept: "false"}
+	}
+	answered := s.askedWith(r, params)
+	s.started(r, "alpha")
+	s.started(r, "beta")
+
+	r.script("beta").OutputText("Hello")
+	stream := <-answered
+	r.script("beta").Done()
+	drain(stream)
+
+	rows := s.rows(router, 2)
+	for provider, row := range rows {
+		s.Equal("spec-1", row.Attributes[routing.AttributeSpeculation], provider)
+		s.Equal("turn-1", row.Attributes[routing.AttributeHedge], provider)
+		s.Equal("false", row.Attributes[routing.AttributeKept], "%s: nobody heard the reply, so neither attempt was kept", provider)
+	}
+}
+
+func (s *HedgeRecordingSuite) TestALateRequestWithNoOtherCandidateIsNotTagged() {
+	r, router := s.rigOf("alpha")
+	answered := s.asked(r)
+	s.started(r, "alpha")
+
+	time.Sleep(3 * recordedHedge)
+	r.script("alpha").OutputText("Late, but alone")
+	stream := <-answered
+	r.script("alpha").Done()
+	drain(stream)
+
+	row := s.rows(router, 1)["alpha"]
+	s.NotContains(row.Attributes, routing.AttributeHedge, "nothing else could be asked, so it was asked once")
 	s.NotContains(row.Attributes, routing.AttributeKept)
 }
 

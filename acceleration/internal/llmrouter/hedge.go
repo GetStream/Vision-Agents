@@ -3,7 +3,6 @@ package llmrouter
 import (
 	"context"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
@@ -68,7 +67,6 @@ func (s *Session) hedged(ctx context.Context, params llm.ResponseParams) (*llm.S
 			return nil, stack.Wrap(ctx.Err())
 		case <-tick:
 			tick = nil
-			asked.again()
 			hedge = race(ctx, func(ctx context.Context) (*llm.Stream, func(), error) {
 				return s.askAnother(ctx, params, second)
 			})
@@ -130,19 +128,19 @@ func (h *hedging) keep(chosen *hedgeAttempt) {
 	h.kept = chosen
 }
 
-// label names the request on the attempt's row, once it was asked twice. A nil attempt is a
-// request that was never hedged.
-func (a *hedgeAttempt) label(stat *routing.Stat) {
+// outcome is the request the attempt belongs to and whether the caller was given its
+// response, once the request was asked twice: hedged is false for a request that never was,
+// a nil attempt included.
+func (a *hedgeAttempt) outcome() (id string, kept, hedged bool) {
 	if a == nil {
-		return
+		return "", false, false
 	}
 	a.hedging.mu.Lock()
 	defer a.hedging.mu.Unlock()
 	if !a.hedging.asked {
-		return
+		return "", false, false
 	}
-	stat.Attribute(routing.AttributeHedge, a.hedging.id)
-	stat.Attribute(routing.AttributeKept, strconv.FormatBool(a.hedging.kept == a))
+	return a.hedging.id, a.hedging.kept == a, true
 }
 
 // askAnother opens the response on another candidate of the same target, which is a child of
@@ -152,6 +150,8 @@ func (s *Session) askAnother(ctx context.Context, params llm.ResponseParams, hed
 	if err != nil {
 		return nil, nil, err
 	}
+	// Only now is the request asked twice: with no other candidate it never was.
+	hedge.hedging.again()
 	stream, err := child.attempt(ctx, params, hedge)
 	if err != nil {
 		s.releaseChild(child)
