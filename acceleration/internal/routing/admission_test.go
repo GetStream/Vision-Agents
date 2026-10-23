@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // admitting is a customer's policies, decided in advance.
@@ -22,7 +24,7 @@ func (s *RoutingSuite) newRouterAdmitting(admission Admission, failing string) *
 			if provider+"/"+spec.Model == failing {
 				return &stubProvider{model: spec.Model, startErr: errors.New("upstream is down")}, nil
 			}
-			return &stubProvider{model: spec.Model}, nil
+			return &stubProvider{model: spec.Model, dataPolicy: spec.DataPolicy}, nil
 		})
 	}
 
@@ -88,6 +90,20 @@ func (s *RoutingSuite) TestAnAllowlistDoesNotFailOverToAModelOffIt() {
 
 	s.ErrorContains(err, "quick/en: upstream is down")
 	s.NotContains(err.Error(), "lush/multi:")
+}
+
+func (s *RoutingSuite) TestAProviderIsBuiltForThePolicyFloorAsWellAsTheRequestsOwnPolicy() {
+	no := false
+	router := s.newRouterAdmitting(Admission{DataPolicy: options.DataPolicy{AllowTraining: &no}}, "")
+
+	provider, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "quick/en",
+		DataPolicy: options.DataPolicy{Retention: options.RetentionNone},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(options.DataPolicy{AllowTraining: &no, Retention: options.RetentionNone}, provider.dataPolicy)
 }
 
 func (s *RoutingSuite) TestPolicyTagsMustFitBesideTheRequestsBeforeRouting() {
