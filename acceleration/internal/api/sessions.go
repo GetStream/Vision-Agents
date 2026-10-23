@@ -424,6 +424,11 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 	if s.store == nil {
 		return session.Found{}, errUnknownSession
 	}
+	// The row is written behind the conversation, and stopping takes a session out of the
+	// live set at once, so one stopped a moment ago may not have a row yet.
+	if err := s.sessions.FlushRecords(ctx); err != nil {
+		return session.Found{}, err
+	}
 
 	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
 	if err != nil {

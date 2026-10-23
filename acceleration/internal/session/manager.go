@@ -1340,6 +1340,15 @@ func (m *Manager) Len() int {
 	return len(m.sessions) + m.closing
 }
 
+// FlushRecords waits until every row queued so far is written, so a session that ended a
+// moment ago can be read back from the store.
+func (m *Manager) FlushRecords(ctx context.Context) error {
+	if m.records == nil {
+		return nil
+	}
+	return m.records.Flush(ctx)
+}
+
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
 // taught the memory store. Whoever asks has to have checked the session is the owner's, since
 // one that ended is no longer here to check against.
