@@ -1506,3 +1506,40 @@ func (s *AppsSuite) TestANumberMarkedAttachedWithNoTrunkIsAttachedAgain() {
 	s.Equal(attached.TrunkID, s.number().StreamTrunkID)
 	s.Equal(s.e164, s.vendor.inbound.E164, "the vendor is told to send calls to the line")
 }
+
+func (s *AppsSuite) TestACallFromANumberAttachedInAnotherAppGoesOutOnATrunkOfItsOwn() {
+	s.sealed()
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.ownApp()
+	s.own.OneTrunkPerNumber()
+
+	placed, err := s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(attached.TrunkID), "its callers still reach it")
+	held := s.number()
+	s.Equal(attached.TrunkID, held.StreamTrunkID)
+	s.Zero(held.StreamAppPK)
+	rules := s.own.Rules()
+	s.Require().Len(rules, 1)
+	s.Equal(placed.CallID, s.own.Rule(rules[0])["direct_routing_configs"].(map[string]any)["call_id"],
+		"the call's own rule is pinned to it")
+}
+
+func (s *AppsSuite) TestACallFromANumberLinedInAnotherAppMovesItsLine() {
+	s.sealed()
+	_, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	s.ownApp()
+
+	_, err = s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	s.Empty(s.deployment.Trunks(), "the old app's trunk no longer lists it")
+	s.Empty(s.deployment.Rules())
+	trunks := s.own.Trunks()
+	s.Require().Len(trunks, 1)
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(trunks[0]))
+	s.Equal(int64(4242), s.number().StreamAppPK)
+}

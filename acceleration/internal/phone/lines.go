@@ -3,6 +3,7 @@ package phone
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -18,6 +19,9 @@ const lineCallTemplate = "{{x_stream_call_id}}{{#unless x_stream_call_id}}{{uuid
 
 // trunkCapacity is how many numbers Stream lets one trunk have.
 const trunkCapacity = 50
+
+// errLinedElsewhere is line's error for a number on a trunk in another app.
+var errLinedElsewhere = errors.New("lined in another app")
 
 // TrunkLine is the trunk and rule a number's calls reach Stream through.
 type TrunkLine struct {
@@ -45,11 +49,16 @@ func (s *Service) line(ctx context.Context, stream *Stream, pin int64, held stor
 		if err != nil {
 			return err
 		}
+		// Lined in another app since the caller read it: joining here would point its row
+		// away from the trunk the vendor still sends its callers to.
+		if held.StreamTrunkID != "" && held.StreamAppPK != pin {
+			return stack.Wrap(fmt.Errorf("phone: line %s: %w", held.E164, errLinedElsewhere))
+		}
 		trunks, err := tx.Trunks()
 		if err != nil {
 			return err
 		}
-		if held.StreamTrunkID != "" && held.StreamAppPK == pin {
+		if held.StreamTrunkID != "" {
 			if i := slices.IndexFunc(trunks, func(t store.StreamTrunk) bool { return t.ID == held.StreamTrunkID }); i >= 0 {
 				line, err = s.lineOn(trunks[i], held.E164, held.StreamRouteID)
 				return err
