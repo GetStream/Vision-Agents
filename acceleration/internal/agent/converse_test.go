@@ -17,9 +17,8 @@ import (
 // The cadence is driven at a fraction of its real gap, because what these assert is what
 // is decided rather than how long the deciding waits.
 const (
-	testGap    = 10 * time.Millisecond
-	testRetry  = 20 * time.Millisecond
-	testWithin = time.Second
+	testGap   = 10 * time.Millisecond
+	testRetry = 20 * time.Millisecond
 	// testPatience is shorter than one retry, so the second ruling about words nobody has
 	// added to is the one that gives up on waiting for them.
 	testPatience = 5 * time.Millisecond
@@ -113,7 +112,7 @@ func (s *ConverseSuite) held() candidate {
 	select {
 	case ready := <-s.settling.Ready():
 		return ready
-	case <-time.After(testWithin):
+	case <-time.After(settleFor):
 		s.FailNow("the words never held still")
 		return candidate{}
 	}
@@ -151,7 +150,7 @@ func (s *ConverseSuite) seen() []Event {
 // asynchronous and an assertion made straight away would race it.
 func (s *ConverseSuite) eventually(satisfied func() bool, message string) {
 	s.T().Helper()
-	deadline := time.Now().Add(testWithin)
+	deadline := time.Now().Add(settleFor)
 	for time.Now().Before(deadline) {
 		if satisfied() {
 			return
@@ -1911,7 +1910,7 @@ func (s *ConverseSuite) TestAnUnfinishedThoughtIsPutAgainOnceTheCallerStops() {
 	case again := <-s.settling.Ready():
 		s.Equal("book a table", again.Text)
 		s.NotEqual(ready.ID, again.ID)
-	case <-time.After(testWithin):
+	case <-time.After(settleFor):
 		s.Fail("the caller lost their turn to a controller that wanted to wait")
 	}
 }

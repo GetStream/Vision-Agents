@@ -39,7 +39,11 @@ import (
 
 // settleFor is how long a test waits for an expectation to become true. The flow crosses
 // several goroutines, so the alternative to waiting is asserting on a race.
-const settleFor = 3 * time.Second
+//
+// A wait ends as soon as what it waits for happens, so this is only how long a broken flow
+// takes to fail. It is not 3 s: a shared CI runner missed 3 s on a flow that passes in
+// milliseconds alone (runs 39858977588 and 39860902257).
+const settleFor = 10 * time.Second
 
 // loopbackEdge is a call with no network in it: audio is pushed in from the test and
 // whatever the agent says is kept for inspection.
@@ -226,9 +230,14 @@ type stubLLM struct {
 	refuses error
 
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
-	// a test can write one as it goes and see which were abandoned.
+	// a test can write one as it goes and see which were abandoned. A second response for
+	// the same id, as a reply started before its ruling and the one asked in its place,
+	// takes the key.
 	scripts map[string]*llmtest.Script
 	order   []string
+	// handed is every response handed out, those that lost their key too, so Close ends
+	// each one: a response nobody ends keeps its reader, and the agent's Close, waiting.
+	handed []*llmtest.Script
 
 	// composes are the lines the model writes when the agent asks it for one (compose),
 	// one per request and the last again after that. Empty writes nothing, so a test that
@@ -288,6 +297,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.mu.Lock()
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
+	s.handed = append(s.handed, script)
 	reply := append([]string(nil), s.reply...)
 	thinking := append([]string(nil), s.thinking...)
 	first := len(s.asked) == 1
@@ -369,10 +379,7 @@ func (s *stubLLM) script(responseID string) *llmtest.Script {
 
 func (s *stubLLM) Close() error {
 	s.mu.Lock()
-	scripts := make([]*llmtest.Script, 0, len(s.scripts))
-	for _, script := range s.scripts {
-		scripts = append(scripts, script)
-	}
+	scripts := append([]*llmtest.Script(nil), s.handed...)
 	s.mu.Unlock()
 
 	for _, script := range scripts {
@@ -787,6 +794,9 @@ type AgentSuite struct {
 
 	agent  *Agent
 	events *collector
+	// over is closed when the test ends, before its agent closes, so a fake tool still
+	// holding a call lets it go rather than hold the agent's shutdown.
+	over chan struct{}
 }
 
 func TestAgentSuite(t *testing.T) {
@@ -819,6 +829,7 @@ func (s *AgentSuite) SetupTest() {
 	s.voiceName = ""
 	s.logs = nil
 	s.backup = nil
+	s.over = make(chan struct{})
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -911,8 +922,7 @@ func (s *AgentSuite) joinText() {
 	s.Require().NoError(agent.Join(s.ctx))
 
 	s.events = collect(agent)
-	s.T().Cleanup(func() { <-s.events.done })
-	s.T().Cleanup(func() { _ = agent.Close() })
+	s.closesAtEnd(agent)
 }
 
 // join builds an agent over the stubs and joins the loopback call.
@@ -1061,8 +1071,33 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	// The collector is waited on last, after the agent has closed its event channel, so no
 	// goroutine from this test outlives it.
 	s.events = collect(agent)
-	s.T().Cleanup(func() { <-s.events.done })
-	s.T().Cleanup(func() { _ = agent.Close() })
+	s.closesAtEnd(agent)
+}
+
+// closesAtEnd closes the agent once the test ends. It lets go of the fake tools first, then
+// gives the agent and its event stream settleFor to close, so a goroutine nothing will end
+// fails the test that left it instead of holding the package until go test's 10 m timeout.
+// The test's own T is kept, because the suite has moved back to the parent by cleanup.
+func (s *AgentSuite) closesAtEnd(agent *Agent) {
+	t, over, events := s.T(), s.over, s.events
+	t.Cleanup(func() {
+		select {
+		case <-over:
+		default:
+			close(over)
+		}
+		closed := make(chan struct{})
+		go func() {
+			_ = agent.Close()
+			<-events.done
+			close(closed)
+		}()
+		select {
+		case <-closed:
+		case <-time.After(settleFor):
+			t.Errorf("the agent did not close within %s: one of its goroutines waits on something nothing will end", settleFor)
+		}
+	})
 }
 
 // speak pushes a chunk of a participant's audio into the call.
@@ -1102,6 +1137,18 @@ func (s *AgentSuite) synthesises(turnID string) {
 func (s *AgentSuite) heardSomeOf(turnID string) {
 	s.synthesises(turnID)
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "none of the reply went out")
+}
+
+// replyWentOut waits until the reply the agent is saying has begun to go out. Words said
+// before that are the caller moving on from a reply they never heard, and words said after it
+// are them talking over it; a stub voice says a reply within microseconds, so a test about one
+// of the two waits for its side of that line rather than racing it.
+func (s *AgentSuite) replyWentOut() {
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.speakingTurn != "" && s.agent.voiced == s.agent.speakingTurn
+	}, "the reply never went out")
 }
 
 func (s *AgentSuite) says(participant stt.Participant, text string) {
@@ -1661,6 +1708,9 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.saysInVoice(participant, "what time is my flight", "A")
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
 		"the caller's own turn was never considered")
+	// The second voice waits for the caller's answer to be asked for: said while the first
+	// ruling is still coming back, it is more of the caller's turn and supersedes that ruling.
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
 
 	s.saysInVoice(participant, "mom where is my backpack", "B")
 	s.eventually(func() bool { return len(s.flow.requests()) == 2 },
@@ -1670,9 +1720,12 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.NotContains(asked[0].Input[0].Content, "different voice",
 		"the first voice heard on a track is the caller's")
 	s.Contains(asked[1].Input[0].Content, "different voice")
-	// The caller's answer is asked for on the turn's goroutine, once the flow decision is in,
-	// so it can still be on its way when the second voice has been considered.
-	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the caller was never answered")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			decided, ok := event.(Decided)
+			return ok && decided.Kind == string(ActIgnore)
+		})
+	}, "the second voice was never ruled on")
 	s.Len(s.model.requests(), 1, "only the caller was answered")
 }
 

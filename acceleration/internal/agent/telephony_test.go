@@ -710,7 +710,7 @@ func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() 
 	// which on a phone is indistinguishable from having been cut off.
 	s.ownsTools("")
 	s.join(false)
-	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	runner := s.holdingTool()
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
@@ -914,15 +914,24 @@ func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
 }
 
 // holdingTool answers only when released, whatever its context says, the way the
-// dispatcher runs a call of an on_interrupt: wait binding.
+// dispatcher runs a call of an on_interrupt: wait binding. It also answers once the test is
+// over, so a test that failed before releasing it does not hold the agent's Close.
 type holdingTool struct {
 	began   chan struct{}
 	release chan struct{}
+	over    <-chan struct{}
+}
+
+func (s *AgentSuite) holdingTool() *holdingTool {
+	return &holdingTool{began: make(chan struct{}), release: make(chan struct{}), over: s.over}
 }
 
 func (r *holdingTool) Run(_ context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
 	close(r.began)
-	<-r.release
+	select {
+	case <-r.release:
+	case <-r.over:
+	}
 	return llm.TextParts("order 12 ships tomorrow"), nil
 }
 
@@ -962,7 +971,7 @@ func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTur
 	s.ownsTools("")
 	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
 	s.join(true)
-	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	runner := s.holdingTool()
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
@@ -974,10 +983,11 @@ func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTur
 	s.says(participant, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "stop cancel that lookup")
 	s.eventually(func() bool {
 		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
@@ -1028,14 +1038,16 @@ func (s *AgentSuite) TestAWaitToolNobodyInterruptedIsAnsweredOnceAsBefore() {
 }
 
 // heldCalls answers each call only when its own release channel is closed, whatever its
-// context says, the way the dispatcher runs a call of an on_interrupt: wait binding.
+// context says, the way the dispatcher runs a call of an on_interrupt: wait binding. Like
+// holdingTool, it answers every call once the test is over.
 type heldCalls struct {
 	began   map[string]chan struct{}
 	release map[string]chan struct{}
+	over    <-chan struct{}
 }
 
-func newHeldCalls(ids ...string) *heldCalls {
-	r := &heldCalls{began: map[string]chan struct{}{}, release: map[string]chan struct{}{}}
+func (s *AgentSuite) heldCalls(ids ...string) *heldCalls {
+	r := &heldCalls{began: map[string]chan struct{}{}, release: map[string]chan struct{}{}, over: s.over}
 	for _, id := range ids {
 		r.began[id] = make(chan struct{})
 		r.release[id] = make(chan struct{})
@@ -1045,7 +1057,10 @@ func newHeldCalls(ids ...string) *heldCalls {
 
 func (r *heldCalls) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	close(r.began[call.ID])
-	<-r.release[call.ID]
+	select {
+	case <-r.release[call.ID]:
+	case <-r.over:
+	}
 	return llm.TextParts(call.ID + " result"), nil
 }
 
@@ -1066,6 +1081,7 @@ func (s *AgentSuite) interruptsWaitCallsThenCalls(runner *heldCalls, first []llm
 		s.began(runner, call.ID)
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "stop cancel that lookup")
 	s.eventually(func() bool {
 		answered := 0
@@ -1092,7 +1108,7 @@ func (s *AgentSuite) interruptsWaitCallsThenCalls(runner *heldCalls, first []llm
 func (s *AgentSuite) began(runner *heldCalls, id string) {
 	select {
 	case <-runner.began[id]:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start: " + id)
 	}
 }
@@ -1111,7 +1127,7 @@ func lateResultsIn(messages []llm.Message) []string {
 func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 	// The late result is the caller's message, so it must not come between the next
 	// turn's call and that call's result: a provider refuses the call then.
-	runner := newHeldCalls("call-1", "call-2")
+	runner := s.heldCalls("call-1", "call-2")
 	s.interruptsWaitCallsThenCalls(runner,
 		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
 		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
@@ -1144,7 +1160,7 @@ func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
 	// The next turn's call is interrupted and answered, which closes the open call: the
 	// late result that already came must go into the history then, not wait for a result
 	// that is already there.
-	runner := newHeldCalls("call-1", "call-2")
+	runner := s.heldCalls("call-1", "call-2")
 	s.interruptsWaitCallsThenCalls(runner,
 		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
 		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
@@ -1153,6 +1169,7 @@ func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
 
 	participant := stt.Participant{ID: "alice"}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "stop that too")
 	s.eventually(func() bool {
 		answered := 0
@@ -1185,7 +1202,7 @@ func (s *AgentSuite) TestALateResultWaitsForEveryCallOfTheNextTurn() {
 	s.ownsTools("")
 	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
 	s.join(true)
-	runner := newHeldCalls("call-1", "call-2", "call-3")
+	runner := s.heldCalls("call-1", "call-2", "call-3")
 	s.agent.options.ToolRunner = runner
 	s.model.reply = []string{"Let me check the order."}
 	s.model.then = []string{"Checking."}
@@ -1195,6 +1212,7 @@ func (s *AgentSuite) TestALateResultWaitsForEveryCallOfTheNextTurn() {
 	s.says(participant, "where is my order")
 	s.began(runner, "call-1")
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "stop cancel that lookup")
 	s.eventually(func() bool {
 		for _, m := range s.history() {
@@ -1231,7 +1249,7 @@ func (s *AgentSuite) TestALateResultWaitsForEveryCallOfTheNextTurn() {
 }
 
 func (s *AgentSuite) TestLateResultsHeldBackComeInTheOrderTheyCame() {
-	runner := newHeldCalls("call-1", "call-2", "call-3", "call-4")
+	runner := s.heldCalls("call-1", "call-2", "call-3", "call-4")
 	s.interruptsWaitCallsThenCalls(runner,
 		[]llm.ToolCall{
 			{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
@@ -1420,18 +1438,18 @@ func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
 	}()
 	select {
 	case <-runner.began:
-	case <-time.After(time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.agent.Interrupt()
 	select {
 	case <-runner.stopped:
-	case <-time.After(time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool context was not cancelled")
 	}
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not finish")
 	}
 	s.Zero(countOf[Responded](s.reported()), "cancelled research must not produce an unsolicited follow-up")
@@ -1450,10 +1468,11 @@ func (s *AgentSuite) TestASpokenInterruptionLeavesAToolRunningUntilTheModelDrops
 	s.says(participant, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "hello?")
 	s.eventually(func() bool {
 		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
@@ -1468,7 +1487,7 @@ func (s *AgentSuite) TestASpokenInterruptionLeavesAToolRunningUntilTheModelDrops
 	s.says(participant, "never mind, cancel that lookup")
 	select {
 	case <-runner.stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("the model dropped the tool and it kept running")
 	}
 	s.eventually(func() bool { return s.spokenText("stopped that") }, "the withdrawal was not answered")
@@ -1489,16 +1508,17 @@ func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() 
 	s.says(participant, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "hello?")
 
 	select {
 	case <-runner.stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("the binding asked for its call to be cancelled and it kept running")
 	}
 	s.False(slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) }),
@@ -1508,7 +1528,7 @@ func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() 
 func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
 	s.ownsTools("")
 	s.join(true)
-	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	runner := s.holdingTool()
 	release := sync.OnceFunc(func() { close(runner.release) })
 	defer release()
 	s.agent.options.ToolRunner = runner
@@ -1520,10 +1540,11 @@ func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
 	s.says(participant, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
 	s.mutters(participant, "hello? are you there?")
 	s.eventually(func() bool {
 		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })

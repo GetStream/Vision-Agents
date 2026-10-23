@@ -234,7 +234,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBinding
 	s.says(nash, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
@@ -243,7 +243,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardCancelsAToolWhoseBinding
 
 	select {
 	case <-runner.stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("the binding asked for its call to be cancelled and it kept running")
 	}
 	s.oneDropSince(dropped)
@@ -264,7 +264,7 @@ func (s *AgentSuite) TestSayingMoreBeforeAnyReplyIsHeardAnswersARunningToolStill
 	s.says(nash, "where is my order")
 	select {
 	case <-runner.began:
-	case <-time.After(3 * time.Second):
+	case <-time.After(settleFor):
 		s.FailNow("tool did not start")
 	}
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
