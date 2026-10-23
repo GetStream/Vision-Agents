@@ -11,11 +11,14 @@
 #         drive.readonly, drive.file] under https://www.googleapis.com/auth/.
 #   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
+# And the tools' own pages, opened October 23, 2026 («Last updated 2026-07-16»):
+#   [create] https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/create_file
+#   [copy]   https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/copy_file
 id: google_drive
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
 # false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
-# tools that only read.
-revision: 3
+# tools that only read. 4 asks for drive.file, so create_file and copy_file work (AI-1933).
+revision: 4
 # [plugin]
 name: Google Drive
 category: Documents
@@ -30,8 +33,10 @@ setup:
       description: In a Google Cloud project of your own, enable drive.googleapis.com and drivemcp.googleapis.com in the API Library.
     - title: Set up the consent screen
       description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
-    - title: Add the scope
-      description: Under Data Access, add https://www.googleapis.com/auth/drive.readonly.
+    - title: Add the scopes
+      # [setup] (opened 2026-10-23, «Last updated 2026-10-12»): «paste the scopes for the
+      # Google Drive MCP server», drive.readonly and drive.file.
+      description: Under Data Access, add https://www.googleapis.com/auth/drive.readonly and https://www.googleapis.com/auth/drive.file.
     - title: Create a web client
       # [setup]: a «Web application» client.
       description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
@@ -57,11 +62,12 @@ authorize_params:
   access_type: offline
   prompt: consent
 scopes:
-  # [plugin] scopes: read only. [setup] asks for drive.file as well, which create_file and
-  # copy_file need ([plugin]'s comment); the plugin's one is kept, so a moved grant keeps
-  # what it was granted.
+  # [plugin] scopes: drive.readonly, kept, so a moved grant keeps what it was granted. And
+  # drive.file, which [setup] asks for too: create_file and copy_file each «Requires one of
+  # the following OAuth scopes» drive, drive.appdata and drive.file ([create], [copy]).
   list:
     - https://www.googleapis.com/auth/drive.readonly
+    - https://www.googleapis.com/auth/drive.file
 # No identity, as google_calendar.yaml.
 refresh:
   # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
@@ -73,6 +79,14 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that write, each with the one scope of [create] and [copy] scopes.list asks
+    # for: a validate names it when the grant lacks it, and the source leaves the tool out if
+    # scopes.list stops asking for it (AI-1394).
+    tools:
+      - name: copy_file
+        needs_scopes: [https://www.googleapis.com/auth/drive.file]
+      - name: create_file
+        needs_scopes: [https://www.googleapis.com/auth/drive.file]
     # The tools that only read, from the tool list at
     # https://developers.google.com/workspace/drive/api/reference/mcp (opened 2026-10-22,
     # «Last updated 2026-07-16»): each tool's page under tools_list/ marks it «Read Only
