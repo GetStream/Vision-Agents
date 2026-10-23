@@ -166,8 +166,10 @@ Rewrap deliberately:
   value the server added.
 - **Dates** go through `RouterDates`, which `JSONDecoder.default`, the decoder `DefaultAPI` is
   built with, reads every timestamp with. It exists because Go writes as many fractional digits
-  as a value needs and none when it needs none. Test fractional seconds, no fractional seconds,
-  offsets and malformed input.
+  as a value needs and none when it needs none. Before iOS 26, a format style that includes
+  fractional seconds refuses a timestamp without them, so `RouterDates` reads twice. Test
+  fractional seconds, no fractional seconds, offsets and malformed input, on the oldest
+  simulator runtime there is as well as the newest: Foundation parses differently across them.
 - **Open-ended objects** are StreamCore's `RawJSON`, which the generator already emits.
 
 `generate.py` carries an explicit allowlist of operation ids and **fails if any of them is

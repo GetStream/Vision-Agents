@@ -387,16 +387,18 @@ struct RouterTransport: DefaultAPITransport {
 /// Go's `time.Time` marshals to RFC 3339 with however many fractional digits the value needs
 /// and none when it needs none, so one timestamp is `...:50.89279Z` and the next is `...:50Z`.
 /// A reader that expects one or the other is how a client ends up refusing a perfectly good
-/// agent config.
+/// agent config. Before iOS 26, a format style that includes fractional seconds refuses a
+/// timestamp without them, so one that does not is the second reading.
 struct RouterDates {
     private let iso8601 = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private let wholeSeconds = Date.ISO8601FormatStyle(timeZoneSeparator: .colon)
 
     func encode(_ date: Date) -> String {
         iso8601.format(date)
     }
 
     func decode(_ string: String) throws -> Date {
-        guard let date = try? iso8601.parse(string) else {
+        guard let date = (try? iso8601.parse(string)) ?? (try? wholeSeconds.parse(string)) else {
             throw AgentsError.unreadable("\(string) is not a timestamp")
         }
         return date

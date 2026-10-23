@@ -282,13 +282,15 @@ import Testing
     /// Go writes as many fractional digits as the value needs, and none when it needs none,
     /// so both of these come off the same endpoint on consecutive calls.
     @Test(arguments: [
-        "2026-09-02T18:46:50.89279Z",
-        "2026-09-02T18:46:50.123456789Z",
-        "2026-09-02T18:46:50Z",
-        "2026-09-02T12:46:50-06:00",
+        ("2026-09-02T18:46:50.89279Z", 1_788_374_810.89279),
+        ("2026-09-02T18:46:50.123456789Z", 1_788_374_810.123456),
+        ("2026-09-02T18:46:50Z", 1_788_374_810),
+        ("2026-09-02T12:46:50-06:00", 1_788_374_810),
+        ("2026-09-02T12:46:50.5-06:00", 1_788_374_810.5),
     ])
-    func aTimestampTheRouterWritesIsRead(text: String) throws {
-        #expect(try RouterDates().decode(text).timeIntervalSince1970 > 0)
+    func aTimestampTheRouterWritesIsRead(text: String, seconds: Double) throws {
+        // To the millisecond, which is what the format style keeps.
+        #expect(abs(try RouterDates().decode(text).timeIntervalSince1970 - seconds) < 0.001)
     }
 
     @Test func somethingThatIsNotATimestampIsRefused() {
