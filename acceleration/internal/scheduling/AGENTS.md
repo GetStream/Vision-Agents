@@ -250,7 +250,10 @@ so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTh
    `testenv.Database`, which puts the suite's name before `_test`
    (`model_router_test_<slug>_test` becomes `model_router_store_test_<slug>_test`). They create
    it on first use. `StoreSuite` drops the schema of its own (`internal/store/store_test.go:96`),
-   never of yours.
+   never of yours. `ScheduledTasksSuite` runs on `model_router_scheduled_tasks_test_<slug>_test`
+   (`RouterSuite.database`): a worker claims every task due in its database, so a worker of
+   another suite or package would take its tasks (AI-1555). Each of its tests deletes its tasks
+   when it ends, so the next test's worker finds none.
 2. Keep `redis.addr: localhost:56379` there: `ScheduledTasksSuite` skips without both
    `ROUTER_POSTGRES_DSN` and `ROUTER_REDIS_ADDR` (`internal/api/router_suite_test.go:367`).
 3. Run one package at a time (`-p 1`), as the `parallel-agents` skill says:
@@ -268,6 +271,3 @@ go test -tags integration -p 1 -count=1 -run TestDrainSuite ./cmd/router/
 The store command runs all of `StoreSuite`, more than 500 tests. It took 8 to 14 minutes on a
 loaded machine, and the default `go test` timeout is 10 minutes, so it sets `-timeout 40m`.
 Narrow to one test with `-run 'TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered'`.
-Known flake: AI-1555. AI-1566 is a panic of `TestATaskTextedBySMSArrivesThere` on the first
-run against a fresh database, which step 1 gives you. It did not happen on a fresh database
-on 2026-10-21; if it does, run the test again.
