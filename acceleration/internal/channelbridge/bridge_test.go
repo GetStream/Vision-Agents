@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -122,4 +123,28 @@ func (s *BridgeSuite) TestAWhatsAppReplyPastTheDayIsPastTheWindowUnlessTheManife
 func (s *BridgeSuite) TestAnSMSOrSlackReplyIsNeverPastAWindow() {
 	s.False(pastWindow("telnyx", core.ReplyRule{}, 30*24*time.Hour))
 	s.False(pastWindow("slack_bot", core.ReplyRule{}, 30*24*time.Hour))
+}
+
+// A bridge that holds nothing but replies: a held command's reply never reaches the line,
+// so none of its other parts are needed.
+func (s *BridgeSuite) TestAReleasedCommandIsNoLongerHeld() {
+	b := &Bridge{held: map[string]chan conversation.FinishedReply{}}
+	_, release := b.Hold("cmd-1")
+	s.Len(b.held, 1)
+	release()
+	s.Empty(b.held)
+}
+
+func (s *BridgeSuite) TestAHeldCommandsReplyGoesToItsHolderAndClearsTheEntry() {
+	b := &Bridge{held: map[string]chan conversation.FinishedReply{}}
+	replies, release := b.Hold("cmd-1")
+	defer release()
+	b.Reply(conversation.FinishedReply{CommandID: "cmd-1", Text: "done"})
+	select {
+	case got := <-replies:
+		s.Equal("done", got.Text)
+	default:
+		s.Fail("the holder did not receive the reply")
+	}
+	s.Empty(b.held)
 }

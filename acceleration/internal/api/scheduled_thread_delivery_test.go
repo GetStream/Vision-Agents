@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -262,6 +264,22 @@ func (s *TelnyxChannelSuite) TestATaskWhoseTurnFailsTextsNothing() {
 
 	s.failedAs(err, scheduling.ReasonReplyFailed, false)
 	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+}
+
+// A delivery that failed no longer holds its command's reply: one that arrives afterwards, as
+// a turn that outlived its budget finishes, is sent on the line by the bridge.
+func (s *TelnyxChannelSuite) TestAFailedDeliveryNoLongerHoldsItsCommandsReply() {
+	task, channel := s.scheduledInThread("+13125550001")
+	s.schedulingScript.failScheduled(1)
+	sent := len(s.telnyx.sent())
+	run, _, err := s.deliverTask(task)
+	s.failedAs(err, scheduling.ReasonReplyFailed, false)
+
+	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
+		Customer: task.CustomerID, CID: "agent:" + channel, MessageID: "late", CommandID: "st_" + run.ID, Text: "Late.",
+	})
+
+	s.Equal("Late.", s.took(sent + 1)[sent].text)
 }
 
 // A person who texted STOP is texted nothing, no turn is paid for, and the run is final.
