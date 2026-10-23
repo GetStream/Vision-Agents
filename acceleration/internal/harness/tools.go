@@ -187,8 +187,7 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
 	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
 	"them to the tool (\"last four 553017 Oak Road\" is read back as \"last four digits, 5530, at 17 Oak " +
-	"Road\"), opening with \"One " +
-	"moment, let me check that\" when you call the tool in that reply. Values a tool has " +
+	"Road\"), in the sentence before the call. Values a tool has " +
 	"already accepted are not read back again: after a check passes, go straight on. " +
 	"An ID one of your tools hands out (a ticket, an appointment, an order) comes only from " +
 	"that tool's result: call the tool that makes it first, and never fill it with a number " +
@@ -203,8 +202,10 @@ const sayDo = "Never say something is done (booked, changed, cancelled, sent) un
 	"Once a tool that books or changes something succeeds, the next thing the caller hears " +
 	"is that it is done, in the words your instructions give for it. Ask for a detail neither " +
 	"your instructions nor the tool require (a phone number, notes) at most once, after that. " +
-	"If your instructions say to wait for agreement after a read-back, end your turn after " +
-	"it, with no hold phrase and no call, until they agree. " +
+	"Only if your instructions say to wait for the caller's agreement after a read-back, end " +
+	"your turn after it, with no hold phrase and no call, until they agree. Instructions to " +
+	"confirm details or read them back are not that: read them back in the sentence before " +
+	"the call and make the call in the same reply. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
 	"asking for anything optional again. When a tool does the step you would describe, such " +
 	"as walking the caller through something, call it instead of describing the step, " +
