@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/socketedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -43,7 +44,8 @@ func (s *Server) registerSessionVoice(api huma.API) {
 			"Starting voice on a session that is already on its call changes nothing, and naming " +
 			"another call while it is on is refused. A " +
 			"conversation in writing that ended is carried on under the same id, as a message to " +
-			"it is.",
+			"it is. Voice on a socket session (/v1/agents/socket) that was stopped is refused: " +
+			"the socket was its call, and stopping voice hung it up, so open a new socket.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The agent is on the call"},
 			"409": errorResponse("Voice is on another call"),
@@ -79,6 +81,9 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 		return nil, err
 	}
 	defer sent()
+	if edge, ok := found.Spec().Edge.(*socketedge.Edge); ok && edge.Left() {
+		return nil, errSocketVoiceEnded
+	}
 	var call session.Call
 	if named != nil {
 		if found.Spec().Phone != nil {
@@ -103,9 +108,12 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 		if errors.Is(err, session.ErrNoAgentCallType) {
 			return nil, errNoAgentCallType
 		}
+		if errors.Is(err, socketedge.ErrLeft) {
+			return nil, errSocketVoiceEnded
+		}
 		return nil, invalidRequest(err.Error())
 	}
-	return &sessionVoiceResponse{Body: sessionOf(found)}, nil
+	return &sessionVoiceResponse{Body: sessionOf(ctx, found)}, nil
 }
 
 // stopSessionVoice takes the agent off the session's call.
@@ -117,7 +125,7 @@ func (s *Server) stopSessionVoice(ctx context.Context, request *sessionVoiceRequ
 	if err := found.StopVoice(ctx); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &sessionVoiceResponse{Body: sessionOf(found)}, nil
+	return &sessionVoiceResponse{Body: sessionOf(ctx, found)}, nil
 }
 
 // errVoiceOnAnotherCall refuses naming a call while voice is on a different one.
