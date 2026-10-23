@@ -374,7 +374,8 @@ func shownStep(m *Message, id string) *Part {
 
 // AwaitApproval has the call id of the reply being written wait for owner to allow it, with
 // approval's question and the call's arguments on its step, which DecideApproval settles. The
-// arguments are shown as a client tool's are: valid JSON up to maxClientArguments. The step is
+// arguments are shown as a client tool's are: valid JSON up to maxClientArguments; any other
+// arguments show as a cut preview in the approval's message, so none is approved blind. The step is
 // shown whatever the agent config shows, since somebody is waiting on it. It returns the
 // command the reply answers, which the answer names, and false when owner cannot be asked here
 // (CanAskToConnect) or the reply made no such call.
@@ -393,6 +394,8 @@ func (c *Conversation) AwaitApproval(owner, id, arguments string, approval ToolA
 	part.Approval = &Approval{Title: capRunes(strings.TrimSpace(approval.Title), maxApprovalTitle)}
 	if raw := json.RawMessage(arguments); len(raw) <= maxClientArguments && json.Valid(raw) {
 		part.Arguments = raw
+	} else {
+		part.Approval.Message = capRunes(strings.Join(strings.Fields(arguments), " "), maxApprovalMessage)
 	}
 	m.Sequence++
 	c.save()

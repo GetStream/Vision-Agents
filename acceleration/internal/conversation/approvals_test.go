@@ -143,13 +143,14 @@ func (s *DisplaySuite) TestAHeldCallStopsWaitingWhenItsReplyEnds() {
 	s.Equal("cancelled", current(c).Parts[0].Status)
 }
 
-// The arguments are shown as a client tool's are: valid JSON up to maxClientArguments, else not
-// at all.
-func (s *DisplaySuite) TestAHeldCallShowsOnlyArgumentsThatAreSmallValidJSON() {
+// The arguments are shown as a client tool's are: valid JSON up to maxClientArguments. Any
+// other arguments show as a cut preview in the approval's message, so none is approved blind.
+func (s *DisplaySuite) TestAHeldCallShowsLargeOrInvalidArgumentsAsAPreview() {
 	c := s.open("on_call")
 	_, err := c.BeginCommand("command-a", "Tell Nash a joke on the crm", "")
 	s.Require().NoError(err)
-	for id, arguments := range map[string]string{"call-1": `{"text":`, "call-2": `{"text":"` + strings.Repeat("e", maxClientArguments) + `"}`} {
+	large := `{"text":"` + strings.Repeat("e", maxClientArguments) + `"}`
+	for id, arguments := range map[string]string{"call-1": `{"text":`, "call-2": large} {
 		c.Observe(agent.ToolStarted{ID: id, Tool: "crm__echo", StartedAt: time.Now().UTC()})
 		_, asked := c.AwaitApproval("employee", id, arguments, allowEcho)
 		s.Require().True(asked)
@@ -157,6 +158,15 @@ func (s *DisplaySuite) TestAHeldCallShowsOnlyArgumentsThatAreSmallValidJSON() {
 
 	for _, part := range current(c).Parts {
 		s.Empty(part.Arguments, part.ID)
+		s.Require().NotNil(part.Approval, part.ID)
+		switch part.ID {
+		case "call-1":
+			s.Equal(`{"text":`, part.Approval.Message)
+		case "call-2":
+			s.Len([]rune(part.Approval.Message), maxApprovalMessage)
+			s.True(strings.HasPrefix(part.Approval.Message, `{"text":"eee`))
+			s.True(strings.HasSuffix(part.Approval.Message, "…"))
+		}
 	}
 }
 
