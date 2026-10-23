@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/redis/rueidis"
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -55,9 +56,11 @@ func (s *PolicySuite) usage() *usagetest.Service { return s.service }
 // front is the usage service as an enforcer reaches it: the real one, through a proxy the test
 // can take down, which counts the standings calls made through it.
 type front struct {
-	server    *httptest.Server
-	down      atomic.Bool
-	standings atomic.Int64
+	server *httptest.Server
+	down   atomic.Bool
+	// windowsDown drops the reads of usage windows alone.
+	windowsDown atomic.Bool
+	standings   atomic.Int64
 }
 
 func (s *PolicySuite) front(service *usagetest.Service) *front {
@@ -66,7 +69,7 @@ func (s *PolicySuite) front(service *usagetest.Service) *front {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	f := &front{}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if f.down.Load() {
+		if f.down.Load() || (f.windowsDown.Load() && r.URL.Path == usage.PathWindows) {
 			// The connection drops, as it does when the service is gone.
 			panic(http.ErrAbortHandler)
 		}
@@ -125,7 +128,7 @@ func (s *PolicySuite) billedOn(configs *appconfig.Store, change ...func(*Setting
 
 // admit is Admit, which must refuse nothing outright.
 func (s *PolicySuite) admit(enforcer *Enforcer, appID string) routing.Admission {
-	admitted, err := enforcer.Admit(s.ctx, appID)
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(appID))
 	s.Require().NoError(err)
 	return admitted
 }
@@ -134,7 +137,7 @@ func (s *PolicySuite) admit(enforcer *Enforcer, appID string) routing.Admission 
 func (s *PolicySuite) read(enforcer *Enforcer, organization string) {
 	since := time.Now()
 	s.eventually(func() bool {
-		_, _ = enforcer.Admit(s.ctx, s.app)
+		_, _ = enforcer.Admit(s.ctx, ownerOf(s.app))
 		enforcer.money.mu.Lock()
 		defer enforcer.money.mu.Unlock()
 		acct := enforcer.money.accounts[organization]
@@ -152,9 +155,9 @@ func balanceHeld(enforcer *Enforcer, key string) int64 {
 	return heldWhere(enforcer, key, func(h *hold) bool { return h.balance })
 }
 
-// budgetHeld is what the account holds against its budgets.
-func budgetHeld(enforcer *Enforcer, key string) int64 {
-	return heldWhere(enforcer, key, func(h *hold) bool { return h.budget })
+// limitsHeld is what the account holds against the customer's limits.
+func limitsHeld(enforcer *Enforcer, key string) int64 {
+	return heldWhere(enforcer, key, func(h *hold) bool { return h.limits })
 }
 
 func heldWhere(enforcer *Enforcer, key string, counts func(*hold) bool) int64 {
@@ -183,7 +186,7 @@ func (s *PolicySuite) consistent(enforcer *Enforcer, key string) {
 	}
 	again := &account{}
 	for _, held := range acct.holds {
-		again.count(key, held, 1)
+		again.count(held, 1)
 	}
 	s.Equal(again.held, acct.held, "the balance's running total")
 	if len(again.windows)+len(acct.windows) > 0 {
@@ -242,7 +245,7 @@ func (s *PolicySuite) TestASuspendedOrganizationIsRefusedOutright() {
 
 	var refused error
 	s.eventually(func() bool {
-		_, refused = enforcer.Admit(s.ctx, s.app)
+		_, refused = enforcer.Admit(s.ctx, ownerOf(s.app))
 		return errors.Is(refused, ErrSuspended)
 	}, 5*time.Second, 10*time.Millisecond)
 	s.NotContains(refused.Error(), "chargeback", "why stays with the operator")
@@ -251,12 +254,12 @@ func (s *PolicySuite) TestASuspendedOrganizationIsRefusedOutright() {
 	s.usage().Restore(s.T(), s.org)
 
 	s.eventually(func() bool {
-		_, err := enforcer.Admit(s.ctx, s.app)
+		_, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 		return err == nil
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
-func (s *PolicySuite) TestAnAppBudgetIsMeasuredInTheBackground() {
+func (s *PolicySuite) TestAnAppLimitIsMeasuredInTheBackground() {
 	// A store of the test's own, so the hook is on before anything reads through it.
 	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
 	s.Require().NoError(err)
@@ -266,12 +269,11 @@ func (s *PolicySuite) TestAnAppBudgetIsMeasuredInTheBackground() {
 	configs, err := appconfig.New(appconfig.Options{Store: db})
 	s.Require().NoError(err)
 	enforcer := s.newEnforcer(configs, nil)
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
 	s.spend(s.app, 1_500_000)
 
 	spend := s.spendRefused(enforcer, s.app, ErrBudgetSpent)
-	s.ErrorContains(spend, "app's daily budget of $1.00")
+	s.ErrorContains(spend, "the daily limit of $1.00 on app "+s.app)
 	enforcer.Close()
 	before := reads.reads.Load()
 	for range 100 {
@@ -404,7 +406,7 @@ func (s *PolicySuite) TestShadowModeAdmitsAndLogs() {
 			s.eventually(func() bool {
 				return strings.Contains(enforcer.logs.String(), "would refuse")
 			}, 5*time.Second, 10*time.Millisecond)
-			admitted, err := enforcer.Admit(s.ctx, s.app)
+			admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 			s.NoError(err)
 			s.NoError(admitted.Spend)
 			s.Contains(enforcer.logs.String(), "organization="+s.org)
@@ -418,7 +420,7 @@ func (s *PolicySuite) TestOffModeChecksNothing() {
 	enforcer.Join(s.app, s.org, closedTier)
 
 	s.never(func() bool {
-		admitted, err := enforcer.Admit(s.ctx, s.app)
+		admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 		return err != nil || admitted.Spend != nil
 	}, 300*time.Millisecond, 10*time.Millisecond, "a suspended organization with no credit is admitted")
 	s.Zero(enforcer.front.standings.Load(), "nothing is read")
@@ -480,7 +482,7 @@ func (s *PolicySuite) TestAMissReadsThePoliciesNowAndTheMoneyLater() {
 	enforcer := s.billed()
 	enforcer.front.down.Store(true)
 
-	admitted, err := enforcer.Admit(s.ctx, s.app)
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err)
 	s.Require().NotNil(admitted.DataPolicy.AllowTraining)
@@ -509,7 +511,7 @@ func (s *PolicySuite) TestJoinWarmsTheDecisionAndTheAccount() {
 	_, err = locked.ExecContext(s.ctx, "LOCK TABLE policies IN ACCESS EXCLUSIVE MODE")
 	s.Require().NoError(err)
 	started := time.Now()
-	admitted, err := enforcer.Admit(s.ctx, s.app)
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 	elapsed := time.Since(started)
 
 	s.Require().NoError(err)
@@ -545,7 +547,7 @@ func (s *PolicySuite) TestAHoldIsKeptUntilAReadAfterItsAck() {
 			case <-stop:
 				return
 			case <-time.After(5 * time.Millisecond):
-				_, _ = enforcer.Admit(s.ctx, s.app)
+				_, _ = enforcer.Admit(s.ctx, ownerOf(s.app))
 				over.Store(max(over.Load(), available(enforcer.Enforcer, s.org)))
 			}
 		}
@@ -674,53 +676,114 @@ func (s *PolicySuite) TestAShardThatDoesNotAnswerKeepsUnackedHolds() {
 	s.Contains(enforcer.logs.String(), "past its pending_ttl with no read of its balance to count it, so it is kept")
 }
 
-func (s *PolicySuite) TestBalanceHoldsGoOnTheStandingsWhileBudgetsCannotBeRead() {
+func (s *PolicySuite) TestBalanceHoldsGoOnTheStandingsWhileLimitsCannotBeRead() {
 	enforcer := s.billed()
 	s.usage().Credit(s.T(), s.org, 1_000_000)
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 10_000_000, Interval: store.BudgetDaily}}))
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 10_000_000})
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
-	locked, err := s.store.DB().BeginTx(s.ctx, nil)
-	s.Require().NoError(err)
-	defer locked.Rollback() //nolint:errcheck // nothing was written
-	_, err = locked.ExecContext(s.ctx, "LOCK TABLE requests IN ACCESS EXCLUSIVE MODE")
-	s.Require().NoError(err)
+	s.admit(enforcer.Enforcer, s.app)
+	enforcer.front.windowsDown.Store(true)
 
 	usageID := uuid.Must(uuid.NewV7())
 	enforcer.Spent(s.owner(), usageID, 400_000)
 	enforcer.Acked([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
-	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
 
 	s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
 		"the balance counts it once the usage service does")
 	s.NoError(s.admit(enforcer.Enforcer, s.app).Spend, "no insufficient_credits for spend the balance already counts")
-	s.EqualValues(400_000, budgetHeld(enforcer.Enforcer, s.org), "the budgets wait for a sum that counts it")
+	s.EqualValues(400_000, limitsHeld(enforcer.Enforcer, s.org), "the limits wait for a read of their subjects that counts it")
 
-	s.Require().NoError(locked.Rollback())
-	s.eventually(func() bool { return budgetHeld(enforcer.Enforcer, s.org) == 0 }, 10*time.Second, 10*time.Millisecond,
+	enforcer.front.windowsDown.Store(false)
+	s.eventually(func() bool { return limitsHeld(enforcer.Enforcer, s.org) == 0 }, 10*time.Second, 10*time.Millisecond,
 		"and let it go once one lands")
 	s.consistent(enforcer.Enforcer, s.org)
 }
 
-func (s *PolicySuite) TestBudgetHoldsGoOnTheShardWhileTheUsageServiceIsDown() {
-	enforcer := s.billed()
-	s.usage().Credit(s.T(), s.org, 10_000_000)
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
-	enforcer.Join(s.app, s.org, openTier)
-	s.read(enforcer.Enforcer, s.org)
-	enforcer.front.down.Store(true)
+// counted is an enforcer reading the customer's limits from the counters of a usage service of
+// the test's own, which mirrors its windows to the suites' Redis.
+func (s *PolicySuite) counted() (*Enforcer, *usagetest.Service, rueidis.Client) {
+	service := usagetest.Start(s.T(), usagetest.Options{
+		DSN: usagetest.Database(s.T(), "usage_policy_counters"), RedisURL: usagetest.RedisURL(s.T()),
+		ManageKey: "manage-" + uuid.NewString(), Logger: slog.New(slog.DiscardHandler),
+	})
+	counters := usagetest.Redis(s.T())
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+		settings.Usage, settings.Counters, settings.Fresh = service.Client, counters, time.Hour
+		settings.MaxStale = 2 * time.Hour
+	})
+	return enforcer, service, counters
+}
 
+func (s *PolicySuite) TestALimitIsReadFromTheCounters() {
+	enforcer, service, _ := s.counted()
+	s.limit(store.Limit{Subject: usage.SubjectAPIKey, Level: store.LevelAPIKey, OrganizationID: s.org, AppID: s.app,
+		APIKey: "key-a", LimitMicros: 1_000_000})
+	service.Credit(s.T(), s.org, 10_000_000)
+	enforcer.Join(s.app, s.org, openTier)
+	s.NoError(s.admit(enforcer, s.app).Spend)
+
+	service.Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.AppID, event.APIKey = s.app, "key-a" })
+
+	var spend error
+	s.eventually(func() bool {
+		admitted, err := enforcer.Admit(s.ctx, s.owner())
+		spend = admitted.Spend
+		return err == nil && errors.Is(spend, ErrBudgetSpent)
+	}, 5*time.Second, 10*time.Millisecond, "the counters are read every SpendEvery, though Fresh is an hour")
+	s.ErrorContains(spend, "on key key-a of app "+s.app)
+}
+
+func (s *PolicySuite) TestAMissingCounterIsReadThroughTheService() {
+	enforcer, service, counters := s.counted()
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	service.Credit(s.T(), s.org, 10_000_000)
+	service.Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.AppID = s.app })
+	key := usage.SubjectRef{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app}.Key(usage.CounterPrefix)
+	s.Require().NoError(counters.Do(s.ctx, counters.B().Del().Key(key).Build()).Error(), "as a Redis that lost it")
+	enforcer.Join(s.app, s.org, openTier)
+
+	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
+	exists, err := counters.Do(s.ctx, counters.B().Exists().Key(key).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.EqualValues(1, exists, "the service wrote the counter again")
+}
+
+func (s *PolicySuite) TestAMirroredAckLetsTheLimitsHoldGoOnTheNextCounterRead() {
+	enforcer, service, _ := s.counted()
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 5_000_000})
+	service.Credit(s.T(), s.org, 10_000_000)
+	enforcer.Join(s.app, s.org, openTier)
+	s.admit(enforcer, s.app)
 	usageID := uuid.Must(uuid.NewV7())
 	enforcer.Spent(s.owner(), usageID, 400_000)
-	s.spend(s.app, 400_000)
-	enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000}})
+	s.EqualValues(400_000, limitsHeld(enforcer, s.org))
 
-	s.eventually(func() bool { return budgetHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
-		"the budget's sum counts the written row, so it is not counted twice")
-	s.EqualValues(400_000, balanceHeld(enforcer.Enforcer, s.org), "the balance waits for the usage service")
-	s.consistent(enforcer.Enforcer, s.org)
+	service.Spend(s.T(), s.org, 400_000, func(event *usage.Event) { event.UsageID, event.AppID = usageID, s.app })
+	enforcer.Acked([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 400_000, Mirrored: true}})
+
+	s.eventually(func() bool { return limitsHeld(enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"a counter read after the ack counts the row")
+	s.consistent(enforcer, s.org)
+}
+
+func (s *PolicySuite) TestWithNoCountersALimitReadsTheUsageService() {
+	enforcer := s.billed()
+	s.usage().Credit(s.T(), s.org, 10_000_000)
+	s.limit(store.Limit{Subject: usage.SubjectAPIKey, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	enforcer.Join(s.app, s.org, openTier)
+	s.usage().Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.AppID, event.APIKey = s.app, "key-a" })
+
+	var spend error
+	s.eventually(func() bool {
+		admitted, err := enforcer.Admit(s.ctx, s.owner())
+		spend = admitted.Spend
+		return err == nil && errors.Is(spend, ErrBudgetSpent)
+	}, 5*time.Second, 10*time.Millisecond, "the key's spend is the usage service's")
+	s.ErrorContains(spend, "on every key of app "+s.app+" is spent for key key-a")
+	s.NoError(s.admit(enforcer.Enforcer, s.app).Spend, "work no key started is not the key's")
 }
 
 func (s *PolicySuite) TestAHoldMadeBeforeMidnightCountsAgainstTheBalanceButNotTheNewDay() {
@@ -736,8 +799,7 @@ func (s *PolicySuite) TestAHoldMadeBeforeMidnightCountsAgainstTheBalanceButNotTh
 	})
 	s.usage().Credit(s.T(), s.org, 10_000_000)
 	s.usage().SetLimits(s.T(), s.org, spendHardLimit(new(int64(1_000_000)), nil))
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 5_000_000, Interval: store.BudgetDaily}}))
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 5_000_000})
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
 	enforcer.front.down.Store(true)
@@ -752,12 +814,11 @@ func (s *PolicySuite) TestAHoldMadeBeforeMidnightCountsAgainstTheBalanceButNotTh
 	s.EqualValues(9_000_000, available(enforcer.Enforcer, s.org), "but the balance still counts it")
 	enforcer.money.mu.Lock()
 	acct := enforcer.money.accounts[s.org]
-	today := acct.heldAgainstBudget(scoped{scope: store.ScopeApp, id: s.app,
-		budget: store.Budget{LimitMicros: 5_000_000, Interval: store.BudgetDaily}}, tomorrow)
-	yesterday := acct.heldAgainstBudget(scoped{scope: store.ScopeApp, id: s.app,
-		budget: store.Budget{LimitMicros: 5_000_000, Interval: store.BudgetDaily}}, midnight.Add(-time.Second))
+	app := usage.SubjectRef{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app}
+	today := acct.heldAgainst(app, usage.Daily, tomorrow)
+	yesterday := acct.heldAgainst(app, usage.Daily, midnight.Add(-time.Second))
 	enforcer.money.mu.Unlock()
-	s.Zero(today, "nor against today's budget")
+	s.Zero(today, "nor against today's limit")
 	s.EqualValues(1_000_000, yesterday, "it stays in the window it was made in")
 }
 
@@ -817,7 +878,7 @@ func (s *PolicySuite) TestAPolicyReadThatFailsAdmitsOnceAndIsNotKept() {
 	s.Require().NoError(err)
 
 	started := time.Now()
-	admitted, err := enforcer.Admit(s.ctx, s.app)
+	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
 
 	s.Require().NoError(err, "admitted on a read that did not land")
 	s.NoError(admitted.Spend)
@@ -826,7 +887,7 @@ func (s *PolicySuite) TestAPolicyReadThatFailsAdmitsOnceAndIsNotKept() {
 	s.False(kept, "nothing unread is kept to answer the next request")
 
 	s.Require().NoError(locked.Rollback())
-	_, err = enforcer.Admit(s.ctx, s.app)
+	_, err = enforcer.Admit(s.ctx, ownerOf(s.app))
 	s.Require().NoError(err)
 	_, kept = enforcer.decided(s.app)
 	s.True(kept, "the next request reads them, and keeps what it read")
@@ -865,44 +926,46 @@ func (s *PolicySuite) ack(enforcer *reading, ids []uuid.UUID) {
 	enforcer.Acked(acked)
 }
 
-func (s *PolicySuite) TestStandingsStayFreshWhenBudgetsCannotBeRead() {
+func (s *PolicySuite) TestStandingsStayFreshWhenLimitsCannotBeRead() {
 	enforcer := s.billed()
 	s.usage().Credit(s.T(), s.org, 1_000_000)
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
 	enforcer.Join(s.app, s.org, closedTier)
 	s.read(enforcer.Enforcer, s.org)
 	locked, err := s.store.DB().BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer locked.Rollback() //nolint:errcheck // nothing was written
-	_, err = locked.ExecContext(s.ctx, "LOCK TABLE requests IN ACCESS EXCLUSIVE MODE")
+	_, err = locked.ExecContext(s.ctx, "LOCK TABLE limits IN ACCESS EXCLUSIVE MODE")
 	s.Require().NoError(err)
 
 	app, organization := s.app, s.org
 	s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, 3*quick.MaxStale, 10*time.Millisecond,
-		"a closed tier is not refused for a balance that is read on time while the budgets wait on Postgres")
+		"a closed tier is not refused for a balance that is read on time while the limits wait on Postgres")
 	s.read(enforcer.Enforcer, organization)
 }
 
-func (s *PolicySuite) TestAChangedBudgetIsHeldToTheLastMeasureAtOnce() {
+func (s *PolicySuite) TestAChangedLimitIsHeldToTheLastSpendReadAtOnce() {
 	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.BudgetEvery = time.Hour })
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 2_000_000, Interval: store.BudgetDaily}}))
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.SumEvery = time.Hour })
+	limit := s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 2_000_000})
 	s.spend(s.app, 1_500_000)
-	s.Require().NoError(s.admit(enforcer, s.app).Spend)
+	key := usage.SubjectRef{OrganizationID: s.org, Subject: usage.SubjectApp, AppID: s.app}.Key(usage.CounterPrefix)
 	s.eventually(func() bool {
+		// The subjects are those of the admissions made once the limits were read.
+		s.Require().NoError(s.admit(enforcer, s.app).Spend)
 		enforcer.money.mu.Lock()
 		defer enforcer.money.mu.Unlock()
 		acct := enforcer.money.accounts[s.org]
-		return acct != nil && len(acct.measured) == 1
-	}, 5*time.Second, 10*time.Millisecond, "measured once, when the organization was first wanted")
+		return acct != nil && acct.subjects[key] != nil && !acct.subjects[key].read.IsZero()
+	}, 5*time.Second, 10*time.Millisecond, "summed once, when the subject was first seen")
 
-	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app,
-		store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}}))
+	lower := int64(1_000_000)
+	_, err = s.store.UpdateLimit(s.ctx, s.org, limit.ID, store.LimitChange{LimitMicros: &lower, UpdatedBy: "test"},
+		store.LimitAudit{CustomerID: s.app, Source: store.AuditSourceAPI})
+	s.Require().NoError(err)
 
-	s.ErrorIs(s.admit(enforcer, s.app).Spend, ErrBudgetSpent, "the lower limit against what was measured, with no new sum")
+	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
 }
 
 func (s *PolicySuite) TestAnAppInNoOrganizationLetsGoOfItsHoldOnceWritten() {
@@ -1025,10 +1088,8 @@ func (s *PolicySuite) TestAnAccountNeverReadFollowsItsTiersFailMode() {
 	s.ErrorContains(spend, "could not be read", "past MaxStale with no row ever read, the default fails closed")
 }
 
-func (s *PolicySuite) TestWithNoUsageServiceBudgetsAreReadFromPostgres() {
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{
-		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
-	})
+func (s *PolicySuite) TestWithNoUsageServiceLimitsAreReadFromPostgres() {
+	s.limit(store.Limit{Subject: usage.SubjectOrganization, Level: store.LevelOrganization, OrganizationID: s.org, LimitMicros: 1_000_000})
 	s.never(func() bool { return s.admit(s.enforcer, s.app).Spend != nil }, 200*time.Millisecond, 10*time.Millisecond,
 		"no credit is checked: the organization has none and is admitted")
 
@@ -1038,15 +1099,12 @@ func (s *PolicySuite) TestWithNoUsageServiceBudgetsAreReadFromPostgres() {
 }
 
 func (s *PolicySuite) TestWithNoUsageServiceAWrittenRowLetsItsHoldGo() {
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Budget: &store.Budget{LimitMicros: 2_000_000, Interval: store.BudgetDaily}})
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 2_000_000})
 	s.admit(s.enforcer, s.app)
 	usageID := uuid.Must(uuid.NewV7())
 	s.enforcer.Spent(s.owner(), usageID, 1_500_000)
 	s.Require().NoError(s.admit(s.enforcer, s.app).Spend)
-	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
-		UsageID: usageID, Modality: "llm", CustomerID: s.app, Provider: "openai", Model: "gpt-5.6-luna",
-		StartedAt: time.Now().UTC(), CostMicros: 1_500_000, Success: true,
-	}))
+	s.spendAs(store.Request{UsageID: usageID, CustomerID: s.app, CostMicros: 1_500_000})
 
 	s.enforcer.Written([]routing.Acked{{UsageID: usageID, OrganizationID: s.org, CostMicros: 1_500_000}})
 
@@ -1054,9 +1112,9 @@ func (s *PolicySuite) TestWithNoUsageServiceAWrittenRowLetsItsHoldGo() {
 	s.NoError(s.admit(s.enforcer, s.app).Spend, "counted once, in the shard")
 }
 
-func (s *PolicySuite) TestAnAppInNoOrganizationKeepsToItsOwnBudget() {
+func (s *PolicySuite) TestAnAppInNoOrganizationKeepsToItsOwnLimit() {
 	alone := s.app + "-alone"
-	s.save(store.ScopeApp, alone, store.PolicyDocument{Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily}})
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: alone, AppID: alone, LimitMicros: 1_000_000})
 	s.spend(alone, 1_000_000)
 
 	s.spendRefused(s.enforcer, alone, ErrBudgetSpent)
@@ -1066,7 +1124,7 @@ func (s *PolicySuite) TestAnAppInNoOrganizationKeepsToItsOwnBudget() {
 	}
 }
 
-func (s *PolicySuite) TestAnAppInNoOrganizationWithNoBudgetIsNeverRefused() {
+func (s *PolicySuite) TestAnAppInNoOrganizationWithNoLimitIsNeverRefused() {
 	enforcer := s.billed()
 	alone := s.app + "-alone"
 

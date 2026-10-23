@@ -204,7 +204,8 @@ type demoting struct {
 	done      *bool
 }
 
-func (d demoting) Admit(ctx context.Context, customerID string) (routing.Admission, error) {
+func (d demoting) Admit(ctx context.Context, owner routing.Owner) (routing.Admission, error) {
+	customerID := owner.CustomerID
 	if !*d.done {
 		*d.done = true
 		for _, provider := range d.providers {

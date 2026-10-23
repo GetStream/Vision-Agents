@@ -53,8 +53,6 @@ from .authorization_kind import AuthorizationKind
 from .authorization_request import AuthorizationRequest
 from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
-from .budget import Budget
-from .budget_interval import BudgetInterval
 from .business_profile import BusinessProfile
 from .business_profile_legal_entity_type import BusinessProfileLegalEntityType
 from .business_profile_organization_type import BusinessProfileOrganizationType
@@ -301,6 +299,7 @@ from .plugin_event_arguments import PluginEventArguments
 from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
+from .policy_budget import PolicyBudget
 from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
@@ -564,8 +563,6 @@ __all__ = (
     "AuthorizationRequest",
     "AuthorizePluginRequest",
     "AvailableNumber",
-    "Budget",
-    "BudgetInterval",
     "BusinessProfile",
     "BusinessProfileLegalEntityType",
     "BusinessProfileOrganizationType",
@@ -806,6 +803,7 @@ __all__ = (
     "PluginSetupStep",
     "PluginWithOptions",
     "Policy",
+    "PolicyBudget",
     "PolicyTags",
     "PostalAddress",
     "PrepareVoiceRequest",

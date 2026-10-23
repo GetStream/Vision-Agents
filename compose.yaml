@@ -39,6 +39,8 @@ services:
       # The usage service below. While it is down the rows wait in Postgres to be shipped.
       ROUTER_USAGE_URL: http://usage:8070
       ROUTER_USAGE_TOKEN: ${USAGE_INGEST_TOKEN:-local-usage-token}
+      # The Redis the usage service mirrors spend to, which spend limits read every second.
+      ROUTER_USAGE_REDIS_URL: redis://redis:6379
     ports:
       - "8080:8080"
     depends_on:

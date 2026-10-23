@@ -61,7 +61,7 @@ type Session struct {
 	// admit asks the owner's policies before each response, and screen judges what each
 	// response is asked. Both are nil on a fallback child, which serves a response its
 	// parent already admitted and screened.
-	admit  func(context.Context, string) (routing.Admission, error)
+	admit  func(context.Context, routing.Owner) (routing.Admission, error)
 	screen Screen
 }
 
@@ -369,7 +369,7 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return nil, err
 	}
 	if s.admit != nil {
-		admission, err := s.admit(ctx, s.owner.CustomerID)
+		admission, err := s.admit(ctx, s.owner)
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}

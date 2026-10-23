@@ -19,7 +19,7 @@ import (
 )
 
 // KeyPrefix starts every key the mirror writes: usage:{<org>}:<subject>:<ids>.
-const KeyPrefix = "usage"
+const KeyPrefix = usage.CounterPrefix
 
 // scriptChunk is the most totals one script call writes, so one organization's batch does not
 // hold Redis, which runs a script alone, for long.

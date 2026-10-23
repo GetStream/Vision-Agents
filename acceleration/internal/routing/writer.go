@@ -474,7 +474,7 @@ func (w *Writer) lookup(ctx context.Context, gate Gate, customerID string) (Admi
 		return admission, err
 	}
 	// A refusal is the budget, which the work being recorded has already got past.
-	admission, _ := gate.Admit(ctx, customerID)
+	admission, _ := gate.Admit(ctx, Owner{CustomerID: customerID})
 	return admission, nil
 }
 

@@ -101,6 +101,11 @@ func answerFailure(ctx huma.Context, status int, message string, errs ...error) 
 	}
 	if answer, ok := moneyError(errors.Join(errs...)); ok {
 		recordFailure(ctx.Context(), errors.Join(errs...), "")
+		for name, values := range moneyHeaders(errors.Join(errs...)) {
+			for _, value := range values {
+				ctx.SetHeader(name, value)
+			}
+		}
 		return answer
 	}
 	if status < http.StatusInternalServerError {
@@ -132,6 +137,9 @@ func answerFailure(ctx huma.Context, status int, message string, errs ...error) 
 func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
 	if answer, ok := moneyError(err); ok {
 		recordFailure(r.Context(), err, "")
+		for name, values := range moneyHeaders(err) {
+			w.Header()[name] = values
+		}
 		writeError(w, answer)
 		return
 	}

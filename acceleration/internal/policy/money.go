@@ -15,13 +15,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
-// ErrBudgetSpent is billable work asked for by a customer whose app or organization has spent
-// its budget. The message names which budget and when it resets.
-var ErrBudgetSpent = errors.New("policy: the budget is spent")
+// ErrBudgetSpent is billable work past one of the customer's own spend limits on any subject
+// but an end user: the organization, an app, a key, a category or a team. The message names
+// which limit and when it resets.
+var ErrBudgetSpent = errors.New("policy: the spend limit is reached")
 
 // ErrNoCredits is billable work asked for by an organization whose prepaid balance is spent, or
 // whose balance could not be read for long enough that its tier refuses work it cannot bill.
@@ -47,14 +49,18 @@ func Code(err error) string {
 		return "system_limit_reached"
 	case errors.Is(err, ErrBudgetSpent):
 		return "spend_limit_reached"
+	case errors.Is(err, ErrUserLimit):
+		return "user_limit_reached"
 	}
 	return ""
 }
 
-// refused is a refusal of one of the kinds above, which reads as its message alone.
+// refused is a refusal of one of the kinds above, which reads as its message alone. resets is
+// when a spent limit's window ends, zero for the rest.
 type refused struct {
 	kind    error
 	message string
+	resets  time.Time
 }
 
 func (r *refused) Error() string { return r.message }
@@ -75,14 +81,14 @@ var errNoBalance = refusedWith(ErrNoCredits, "the organization has no credit lef
 const (
 	// standingsChunk is how many organizations one standings call asks about.
 	standingsChunk = 100
-	// readTimeout bounds one standings call, and one budget's sum.
+	// readTimeout bounds one standings call, one read of limits or counters, and one sum.
 	readTimeout = 5 * time.Second
 	// passTimeout bounds one pass of either loop.
 	passTimeout = time.Minute
-	// budgetReads is how many budgets are summed at once. Each is a sum over the request rows
-	// of every shard since its window began, so a few at a time keep a slow Postgres from
-	// being asked for all of them together.
-	budgetReads = 4
+	// sumReads is how many subjects' spend is summed from Postgres at once, with no usage
+	// service. Each is a sum over the request rows of every shard since its window began, so a
+	// few at a time keep a slow Postgres from being asked for all of them together.
+	sumReads = 4
 	// logEvery spaces a failed read's error, and each organization's refusals in the log.
 	logEvery = time.Minute
 )
@@ -92,7 +98,8 @@ const (
 	reasonSuspended  = "suspended"
 	reasonUnreadable = "balance_unreadable"
 	reasonNoCredit   = "no_credit"
-	reasonBudget     = "budget"
+	reasonLimit      = "spend_limit"
+	reasonUserLimit  = "user_limit"
 )
 
 // enforcers is every Enforcer of this process with a running loop, which the oldest-read gauge
@@ -127,8 +134,9 @@ func oldestRead() float64 {
 }
 
 // money is what an Enforcer knows of each organization's money, and the two loops that read it:
-// standings from the usage service every Fresh, and budgets from Postgres every BudgetEvery,
-// so how fresh a balance is never waits on Postgres.
+// standings from the usage service every Fresh, and the customer's limits with what their
+// subjects spent every SpendEvery (spend.go), so how fresh a balance is never waits on
+// Postgres.
 type money struct {
 	enforcer *Enforcer
 	settings Settings
@@ -141,11 +149,13 @@ type money struct {
 	// failModes is what each tier string's row said at the last standing that named it, for an
 	// organization not read yet.
 	failModes map[string]usage.FailMode
+	// shippedAt is when the limits loop last asked the shard which held rows it shipped.
+	shippedAt time.Time
 
-	kick, kickBudgets chan struct{}
-	cancel            context.CancelFunc
-	loops             sync.WaitGroup
-	stopped           sync.Once
+	kick, kickLimits chan struct{}
+	cancel           context.CancelFunc
+	loops            sync.WaitGroup
+	stopped          sync.Once
 
 	errorLogged once
 	refusals    throttle
@@ -155,26 +165,37 @@ type money struct {
 
 // account is what an organization may do with money, read from the usage service (or from
 // Postgres with no usage service), only ever in the background. An app in no organization has
-// one of its own (appAccount), for its budgets alone.
+// one of its own (appAccount), for its limits alone.
 type account struct {
 	// standing is the tier's settings with the spend hard limit, status, balance and spend this
 	// day and month.
 	standing usage.Standing
-	// measured is every budget in its apps' decisions, with what was spent.
-	measured []measured
-	// budgeted is whether the decisions in use hold a budget of the account.
-	budgeted bool
-	// read is when the standing last landed, zero until the first. standingFrom and
-	// measuredFrom are when the last standing that landed, and the last read of every budget
-	// that landed, were asked for: each counts every row its ledger had by then.
-	// balanceFailed is when what the usage service has of the account last could not be
-	// known: a standing that did not land, or the shard not answering which held rows it
-	// shipped. measureFailed is when a sum of its budgets last did not land.
+	// limits are the customer's spend limits, indexed for lookup, and resets its resets of the
+	// current windows, read every Fresh; limitsRead is when they last landed, zero until then.
+	// limited is whether it has any.
+	limits     limitIndex
+	resets     []store.UsageReset
+	limitsRead time.Time
+	limited    bool
+	// subjects is every subject the work admitted here counted for, by its counter's key, with
+	// what it spent at the last read of it.
+	subjects map[string]*subjectSpend
+	// readThrough asks the next read of the subjects' spend to go to the usage service rather
+	// than its counters: an ack said the counters missed a row.
+	readThrough bool
+	// read is when the standing last landed, zero until the first. standingFrom is when the
+	// last standing that landed was asked for, spentFrom when the last read of every limited
+	// subject's spend that landed was, and throughFrom when the last of those that read the
+	// usage service itself, rather than its counters, was: each counts every row its ledger had
+	// by then. balanceFailed is when what the usage service has of the account last could not
+	// be known: a standing that did not land, or the shard not answering which held rows it
+	// shipped. spendFailed is when a read of its subjects' spend last did not land.
 	read          time.Time
 	standingFrom  time.Time
-	measuredFrom  time.Time
+	spentFrom     time.Time
+	throughFrom   time.Time
 	balanceFailed time.Time
-	measureFailed time.Time
+	spendFailed   time.Time
 	// wanted is when this process first asked for it, and used when it last did.
 	wanted time.Time
 	used   time.Time
@@ -185,34 +206,37 @@ type account struct {
 	folded map[uuid.UUID]folded
 	folds  map[fold]uuid.UUID
 	// held is what the holds count against the balance, and windows what they count against
-	// the spend hard limit and the budgets, kept as holds come and go so admission reads a sum.
+	// the spend hard limit and each subject's limits, kept as holds come and go so admission
+	// reads a sum.
 	held    int64
 	windows map[window]int64
 }
 
-// measured is a budget and what was spent against it at the last read.
-type measured struct {
-	scoped
-	spent  int64
-	resets time.Time
+// subjectSpend is one subject's spend in the current window of each interval, as last read.
+type subjectSpend struct {
+	ref  usage.SubjectRef
+	used time.Time
+	// spent is by interval; a window that has since ended counts as nothing spent.
+	spent map[usage.Interval]spentWindow
+	read  time.Time
 }
 
-// budgetKey is which budget a measurement is of: the same scope over the same interval is the
-// same spend, whatever the limit, so a limit changed is held to what was last measured at once.
-type budgetKey struct {
-	scope    store.PolicyScope
-	id       string
-	interval store.BudgetInterval
+// spentWindow is what was spent in the window that starts at start.
+type spentWindow struct {
+	start  time.Time
+	micros int64
 }
 
-func keyOf(budget scoped) budgetKey {
-	return budgetKey{scope: budget.scope, id: budget.id, interval: budget.budget.Interval}
-}
-
-// scope is whose spend a hold counts against.
-type scope struct {
-	kind store.PolicyScope
-	id   string
+// spentIn is what the subject spent in the interval's window that starts at start, as last
+// read, and 0 when it was read in another window or never.
+func (s *subjectSpend) spentIn(interval usage.Interval, start time.Time) int64 {
+	if s == nil {
+		return 0
+	}
+	if window, ok := s.spent[interval]; ok && window.start.Equal(start) {
+		return window.micros
+	}
+	return 0
 }
 
 // start begins the loops, unless money is not enforced at all.
@@ -222,13 +246,13 @@ func (m *money) start(e *Enforcer) {
 	if m.settings.Mode == config.LimitsOff {
 		return
 	}
-	m.kick, m.kickBudgets = make(chan struct{}, 1), make(chan struct{}, 1)
+	m.kick, m.kickLimits = make(chan struct{}, 1), make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	enforcers.Store(e, struct{}{})
 	m.loops.Add(2)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
-	go m.every(ctx, m.settings.BudgetEvery, m.kickBudgets, m.measurePass)
+	go m.every(ctx, m.settings.SpendEvery, m.kickLimits, m.limitsPass)
 }
 
 // stop ends the loops and waits for their passes to finish.
@@ -268,11 +292,16 @@ func (m *money) want(organizationID string) {
 }
 
 func (m *money) wake() {
-	for _, kick := range []chan struct{}{m.kick, m.kickBudgets} {
-		select {
-		case kick <- struct{}{}:
-		default:
-		}
+	for _, kick := range []chan struct{}{m.kick, m.kickLimits} {
+		nudge(kick)
+	}
+}
+
+// nudge asks a loop for a pass at once, unless one is already asked for.
+func nudge(kick chan struct{}) {
+	select {
+	case kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -292,26 +321,17 @@ func (m *money) every(ctx context.Context, interval time.Duration, kick <-chan s
 	}
 }
 
-// inUse is every account in use, and the budgets the decisions in use hold of each. It drops the
-// decisions and the accounts unused for Idle, an account only once it holds nothing, and makes
-// an account for an organization a decision names that has none.
-func (m *money) inUse(now time.Time) ([]string, map[string][]scoped) {
-	budgets := map[string][]scoped{}
+// inUse is every account in use. It drops the decisions and the accounts unused for Idle, an
+// account only once it holds nothing, and makes an account for an organization, or an app in
+// none, that a decision in use names and has none.
+func (m *money) inUse(now time.Time) []string {
 	keys := map[string]bool{}
 	for app, decided := range m.enforcer.inUse(now) {
 		key := decided.organization
 		if key == "" {
-			if len(decided.budgets) == 0 {
-				continue
-			}
 			key = appAccount(app)
 		}
 		keys[key] = true
-		for _, budget := range decided.budgets {
-			if !slices.Contains(budgets[key], budget) {
-				budgets[key] = append(budgets[key], budget)
-			}
-		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -338,7 +358,7 @@ func (m *money) inUse(now time.Time) ([]string, map[string][]scoped) {
 			m.accounts[key] = &account{wanted: now, used: now}
 		}
 	}
-	return slices.Sorted(mapsKeys(keys)), budgets
+	return slices.Sorted(mapsKeys(keys))
 }
 
 // pass reads the standing of every organization in use from the usage service, in calls of
@@ -346,7 +366,7 @@ func (m *money) inUse(now time.Time) ([]string, map[string][]scoped) {
 func (m *money) pass(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, passTimeout)
 	defer cancel()
-	keys, budgets := m.inUse(time.Now())
+	keys := m.inUse(time.Now())
 	if len(keys) == 0 {
 		return
 	}
@@ -371,48 +391,6 @@ func (m *money) pass(ctx context.Context) {
 			acct.balanceFailed = now
 		} else {
 			acct.standingFrom = readFrom
-		}
-		acct.budgeted = len(budgets[key]) > 0
-		m.release(key, acct, now)
-	}
-}
-
-// measurePass sums every budget the decisions in use hold, a few at a time, then lets go of the
-// holds the sums now count. It also asks the shard which held rows it has shipped.
-//
-// It runs every BudgetEvery rather than every Fresh. A sum reads the request rows of every
-// shard since the window began, up to a month of them, while what this router spends is held
-// against the budget from the moment it is recorded; so the cadence only decides how soon
-// another router's spend is counted, which is as soon as before admission moved off the
-// request path, and a slow Postgres delays budgets alone, never a balance.
-func (m *money) measurePass(ctx context.Context) {
-	shipping, cancel := context.WithTimeout(ctx, shippedTimeout)
-	m.shipped(shipping)
-	cancel()
-	// The sums have a pass's time of their own, however long the shard took.
-	ctx, cancel = context.WithTimeout(ctx, passTimeout)
-	defer cancel()
-	_, budgets := m.inUse(time.Now())
-	if len(budgets) == 0 {
-		return
-	}
-	readFrom := time.Now()
-	spent, unmeasured := m.measure(ctx, budgets)
-
-	now := time.Now()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for key, list := range budgets {
-		acct := m.accounts[key]
-		if acct == nil {
-			continue
-		}
-		acct.measured = remeasured(acct.measured, list, spent)
-		acct.budgeted = true
-		if unmeasured[key] {
-			acct.measureFailed = now
-		} else {
-			acct.measuredFrom = readFrom
 		}
 		m.release(key, acct, now)
 	}
@@ -465,65 +443,6 @@ func (m *money) standings(ctx context.Context, keys []string) (map[string]usage.
 	return standings, landed, unread
 }
 
-// measure sums what every budget's scope spent in its current interval, budgetReads at a time,
-// and says which accounts had a budget it could not read.
-func (m *money) measure(ctx context.Context, budgets map[string][]scoped) (map[budgetKey]measured, map[string]bool) {
-	owners := map[budgetKey][]string{}
-	asked := map[budgetKey]scoped{}
-	for key, list := range budgets {
-		for _, budget := range list {
-			owners[keyOf(budget)] = append(owners[keyOf(budget)], key)
-			asked[keyOf(budget)] = budget
-		}
-	}
-	var mu sync.Mutex
-	spent := make(map[budgetKey]measured, len(asked))
-	unmeasured := map[string]bool{}
-	slots := make(chan struct{}, budgetReads)
-	var reading sync.WaitGroup
-	for which, budget := range asked {
-		slots <- struct{}{}
-		reading.Go(func() {
-			defer func() { <-slots }()
-			call, cancel := context.WithTimeout(ctx, readTimeout)
-			total, resets, err := m.enforcer.BudgetSpent(call, budget.scope, budget.id, budget.budget)
-			cancel()
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				for _, key := range owners[which] {
-					unmeasured[key] = true
-				}
-				m.failedRead("could not read what a budget has spent, answering with what was last read", err,
-					"scope", budget.scope, "id", budget.id)
-				return
-			}
-			spent[which] = measured{scoped: budget, spent: total, resets: resets}
-		})
-	}
-	reading.Wait()
-	return spent, unmeasured
-}
-
-// remeasured is the budgets the decisions hold now, each with what was just read for it, or
-// what was read for the same scope and interval before when it could not be.
-func remeasured(previous []measured, budgets []scoped, spent map[budgetKey]measured) []measured {
-	out := make([]measured, 0, len(budgets))
-	for _, budget := range budgets {
-		read, ok := spent[keyOf(budget)]
-		if !ok {
-			index := slices.IndexFunc(previous, func(m measured) bool { return keyOf(m.scoped) == keyOf(budget) })
-			if index < 0 {
-				continue
-			}
-			read = previous[index]
-		}
-		read.scoped = budget
-		out = append(out, read)
-	}
-	return out
-}
-
 // failedRead counts a background read that failed and logs it, at most once a minute.
 func (m *money) failedRead(message string, err error, args ...any) {
 	refreshErrors.Inc()
@@ -548,15 +467,16 @@ func (m *money) oldest() time.Duration {
 	return oldest
 }
 
-// spendable is what the organization's money says of the app's work: a refusal of everything
+// spendable is what the organization's money says of the owner's work: a refusal of everything
 // for a suspended organization, and otherwise why it may spend no money, if it may not. In
 // shadow, both are counted and logged as would refuse and neither is returned; off, neither is
 // worked out.
 //
-// The order is suspension, then the balance, then the spend hard limit, then the budgets.
-// Nothing a customer writes lifts the spend hard limit.
-func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend error) {
+// The order is suspension, then the balance, then the spend hard limit, then the customer's
+// limits. Nothing a customer writes lifts the spend hard limit.
+func (e *Enforcer) spendable(owner routing.Owner, decided decision) (refusal, spend error) {
 	m := &e.money
+	appID := owner.CustomerID
 	organization := decided.organization
 	if organization == "" {
 		// Policies that could not be read name no organization; the one the app came in under
@@ -570,10 +490,7 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 		return nil, nil
 	}
 	if organization == "" {
-		// An app in no organization bills nobody, and has only its own budgets to keep to.
-		if len(decided.budgets) == 0 {
-			return nil, nil
-		}
+		// An app in no organization bills nobody, and has only its own limits to keep to.
 		organization = appAccount(appID)
 	}
 	now := time.Now()
@@ -585,7 +502,7 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 		return nil, nil
 	}
 	acct.used = now
-	refusal, spend, reason := m.refusal(acct, billed(organization), appID, decided, now)
+	refusal, spend, reason, named := m.refusal(acct, organization, owner, decided, now)
 	why, balance, held, read := acct.standing.StatusReason, acct.standing.BalanceMicros, acct.held, acct.read
 	m.mu.Unlock()
 
@@ -593,19 +510,19 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 	if reason == "" {
 		return refusal, spend
 	}
-	named := who(organization)
+	args := who(organization)
 	if billed(organization) {
-		named = append(named, "app", appID)
+		args = append(args, "app", appID)
 	}
 	if !shadow {
 		if reason == reasonSuspended && why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
-			e.logger.Info("refused a suspended organization", append(named, "status_reason", why)...)
+			e.logger.Info("refused a suspended organization", append(args, "status_reason", why)...)
 		}
 		return refusal, spend
 	}
 	wouldRefuse.WithLabelValues(reason).Inc()
 	if m.refusals.due(organization+"\x00"+reason, logEvery) {
-		args := append(named, "reason", reason, "refusal", errors.Join(refusal, spend),
+		args = append(args, "reason", reason, "refusal", errors.Join(refusal, spend),
 			"balance_micros", balance, "held_micros", held)
 		if !read.IsZero() {
 			args = append(args, "read_age", now.Sub(read).Round(time.Millisecond))
@@ -613,54 +530,109 @@ func (e *Enforcer) spendable(appID string, decided decision) (refusal, spend err
 		if reason == reasonSuspended {
 			args = append(args, "status_reason", why)
 		}
-		e.logger.Info("would refuse", args...)
+		e.logger.Info("would refuse", append(args, named...)...)
 	}
 	return nil, nil
 }
 
-// refusal works spendable's answer out of the account, under m.mu, and names the reason. An
-// account that is not billed is an app's in no organization, which keeps to its budgets alone.
-func (m *money) refusal(acct *account, isBilled bool, appID string, decided decision, now time.Time) (refusal, spend error, reason string) {
+// refusal works spendable's answer out of the account, under m.mu, and names the reason, and
+// for a spent limit the subject and the level it was spent at. An account that is not billed is
+// an app's in no organization, which keeps to its limits alone.
+func (m *money) refusal(acct *account, key string, owner routing.Owner, decided decision, now time.Time) (refusal, spend error, reason string, named []any) {
+	isBilled := billed(key)
 	billing := isBilled && m.settings.Usage != nil
+	clock := m.settings.Now()
+	// Most organizations limit nothing, and their admissions work out no subjects. One that
+	// starts to has the subjects of its next admission read at once.
+	var refs []usage.SubjectRef
+	if acct.limited {
+		refs = subjectsOf(owner, limitsOrganization(key))
+		m.see(acct, refs, now)
+	}
 	if acct.read.IsZero() {
-		// Nothing read yet: admitted, unless it has gone unread for MaxStale and the tier it was
-		// last seen on, or failing that the default, fails closed.
+		// No standing read yet: the balance and the spend hard limit admit, unless it has gone
+		// unread for MaxStale and the tier it was last seen on, or failing that the default,
+		// fails closed. The customer's limits are read apart, and apply once they land.
 		if billing && now.Sub(acct.wanted) > m.settings.MaxStale &&
 			m.failModes[m.enforcer.knownTier(decided.organization)] != usage.FailOpen {
-			return nil, errUnreadable, reasonUnreadable
+			return nil, errUnreadable, reasonUnreadable, nil
 		}
-		return nil, nil, ""
-	}
-	standing := acct.standing
-	if standing.Status == usage.AccountSuspended {
-		return ErrSuspended, nil, reasonSuspended
-	}
-	if billing && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
-		return nil, errUnreadable, reasonUnreadable
-	}
-	// The balance counts every hold; a limit or a budget only those made in the window it is
-	// in now.
-	if billing && standing.BalanceMicros-acct.held <= 0 {
-		return nil, errNoBalance, reasonNoCredit
-	}
-	clock := m.settings.Now()
-	for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
-		if err := overHardLimit(standing, interval, acct.heldAgainstLimit(interval, clock), clock); err != nil {
-			return nil, err, string(interval) + "_spend_hard_limit"
+	} else {
+		standing := acct.standing
+		if standing.Status == usage.AccountSuspended {
+			return ErrSuspended, nil, reasonSuspended, nil
+		}
+		if billing && now.Sub(acct.read) > m.settings.MaxStale && standing.Tier.FailMode != usage.FailOpen {
+			return nil, errUnreadable, reasonUnreadable, nil
+		}
+		// The balance counts every hold; a limit only those made in the window it is in now.
+		if billing && standing.BalanceMicros-acct.held <= 0 {
+			return nil, errNoBalance, reasonNoCredit, nil
+		}
+		for _, interval := range []usage.Interval{usage.Daily, usage.Monthly} {
+			if err := overHardLimit(standing, interval, acct.heldAgainstLimit(interval, clock), clock); err != nil {
+				return nil, err, string(interval) + "_spend_hard_limit", nil
+			}
 		}
 	}
-	for _, budget := range decided.budgets {
-		index := slices.IndexFunc(acct.measured, func(m measured) bool { return keyOf(m.scoped) == keyOf(budget) })
-		if index < 0 {
-			continue
+	if err, ref, limit := acct.overLimits(refs, clock); err != nil {
+		reason := reasonLimit
+		if ref.Subject == usage.SubjectUser {
+			reason = reasonUserLimit
 		}
-		read := acct.measured[index]
-		read.budget = budget.budget
-		if err := over(read, acct.heldAgainstBudget(budget, clock), clock); err != nil {
-			return nil, err, reasonBudget
+		return nil, err, reason, []any{"subject", ref.Subject, "level", limit.Level, "interval", limit.Interval, "limit_id", limit.ID}
+	}
+	return nil, nil, "", nil
+}
+
+// overLimits is the refusal of the first of the subjects with no room under one of its limits,
+// in the order subjectsOf gives, each interval from the shortest; nil when every one has room.
+func (a *account) overLimits(refs []usage.SubjectRef, now time.Time) (error, usage.SubjectRef, store.Limit) {
+	if len(a.limits) == 0 {
+		return nil, usage.SubjectRef{}, store.Limit{}
+	}
+	for _, ref := range refs {
+		key := ref.Key(usage.CounterPrefix)
+		spend := a.subjects[key]
+		for _, interval := range usage.Intervals {
+			limit, ok := resolve(a.limits, ref, interval)
+			if !ok {
+				continue
+			}
+			start, end := usage.Window(interval, now)
+			baseline := baselineOf(a.resets, ref, interval, start)
+			held := a.windows[window{subject: key, interval: string(interval), start: start.Unix()}]
+			if room(limit, baseline, spend.spentIn(interval, start), held) > 0 {
+				continue
+			}
+			return limitRefusal(limit, ref, end), ref, limit
 		}
 	}
-	return nil, nil, ""
+	return nil, usage.SubjectRef{}, store.Limit{}
+}
+
+// see notes, under m.mu, that work counted for the subjects, and asks the limits loop to read
+// at once what one with a limit that was never read has spent.
+func (m *money) see(acct *account, refs []usage.SubjectRef, now time.Time) {
+	if acct.subjects == nil {
+		acct.subjects = map[string]*subjectSpend{}
+	}
+	unread := false
+	for _, ref := range refs {
+		key := ref.Key(usage.CounterPrefix)
+		spend := acct.subjects[key]
+		if spend == nil {
+			spend = &subjectSpend{ref: ref}
+			acct.subjects[key] = spend
+		}
+		spend.used = now
+		if spend.read.IsZero() && limited(acct.limits, ref) {
+			unread = true
+		}
+	}
+	if unread && m.kickLimits != nil {
+		nudge(m.kickLimits)
+	}
 }
 
 // overHardLimit is the refusal for an organization with no room left under its spend hard limit
@@ -688,22 +660,6 @@ func overHardLimit(standing usage.Standing, interval usage.Interval, pending int
 		interval, dollars(limit), end.UTC().Format(time.RFC3339))
 }
 
-// over is the refusal for a budget that is spent, counting what is held against it, or nil for
-// one that is not. A budget read in an interval that has since ended counts as nothing spent.
-func over(m measured, pending int64, now time.Time) error {
-	spent := m.spent
-	resets := m.resets
-	if !now.Before(m.resets) {
-		spent = 0
-		_, resets = m.budget.Interval.Window(now)
-	}
-	if spent+pending < m.budget.LimitMicros {
-		return nil
-	}
-	return refusedWith(ErrBudgetSpent, "the %s's %s budget of %s is spent; it resets at %s",
-		m.scope, m.budget.Interval, dollars(m.budget.LimitMicros), resets.UTC().Format(time.RFC3339))
-}
-
 // dollars writes micros as an amount of dollars with cents and thousands separators: $5,000.00.
 func dollars(micros int64) string {
 	sign := ""
@@ -725,12 +681,21 @@ func dollars(micros int64) string {
 // appAccountPrefix starts the key of an app's own account. No organization id holds a NUL.
 const appAccountPrefix = "\x00app\x00"
 
-// appAccount is the key of the account an app in no known organization keeps its own budgets
+// appAccount is the key of the account an app in no known organization keeps its own limits
 // on. It bills nobody, so the usage service is never asked about it.
 func appAccount(appID string) string { return appAccountPrefix + appID }
 
 // billed reports whether an account is an organization's, which the usage service bills.
 func billed(key string) bool { return !strings.HasPrefix(key, appAccountPrefix) }
+
+// limitsOrganization is the organization an account's limits name: the organization, or for an
+// app in none the app itself, as its limits rows carry it.
+func limitsOrganization(key string) string {
+	if app, own := strings.CutPrefix(key, appAccountPrefix); own {
+		return app
+	}
+	return key
+}
 
 // noun is what an account is in a log message: an organization's, or an app's own.
 func noun(key string) string {

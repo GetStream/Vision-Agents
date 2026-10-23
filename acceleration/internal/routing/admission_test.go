@@ -11,7 +11,7 @@ import (
 // admitting is a customer's policies, decided in advance.
 type admitting Admission
 
-func (a admitting) Admit(context.Context, string) (Admission, error) { return Admission(a), nil }
+func (a admitting) Admit(context.Context, Owner) (Admission, error) { return Admission(a), nil }
 
 // newRouterAdmitting returns a router whose customers are held to the admission. Every
 // provider starts unless failing names its model.

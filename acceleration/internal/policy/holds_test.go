@@ -77,7 +77,7 @@ func TestAnIdleAccountGivesItsFoldedIDsBackToTheProcess(t *testing.T) {
 	require.Equal(t, before+2, foldedInProcess.Load())
 	// The folds go while their ids are still remembered, as a fold emptied by an ack does.
 	for id, held := range acct.holds {
-		acct.count(heldOrg, held, -1)
+		acct.count(held, -1)
 		delete(acct.holds, id)
 	}
 	acct.used = time.Now().Add(-time.Hour)

@@ -3,21 +3,27 @@
 // end user may spend in a day, and what the operator has decided about an organization's
 // money: whether it is suspended, its credit, and its spend hard limit.
 //
-// An organization's policy is a floor its apps can tighten and cannot loosen: both budgets
-// apply, a data policy is the stricter of the two, prompt injection is screened if either
-// turns it on, only a model both allow may be routed to, and the organization's tags win
-// over the app's. That is the only reading under which an organization's setting means
-// anything, since an app that could switch it off would make it a suggestion. A daily limit
-// per end user is the app's alone, so it has no organization's to meet.
+// An organization's policy is a floor its apps can tighten and cannot loosen: a data policy
+// is the stricter of the two, prompt injection is screened if either turns it on, only a
+// model both allow may be routed to, and the organization's tags win over the app's. That is
+// the only reading under which an organization's setting means anything, since an app that
+// could switch it off would make it a suggestion. A daily limit per end user is the app's
+// alone, so it has no organization's to meet.
+//
+// The customer's spend limits are rows of their own (store.Limit), one per subject, level and
+// interval: on the organization, an app, a key, an end user, a usage category or a team. Work
+// is refused once any subject it counts for has no room left under its limit, the most
+// specific level's, so the organization's limit still refuses an app whose own has room.
 //
 // Admit is asked before every routed session and every LLM response, an in-process agent's
 // speech included, so it answers from memory. What an app's policies say is its decision,
 // read through appconfig and refreshed in the background once older than Settings.Fresh.
-// What its organization may do with money is its account, read by one loop per Enforcer
-// every Fresh, for every organization in use at once, from the usage service, and its
-// budgets from Postgres; work recorded since that read is held against it by usage id until
-// a read that counts it has landed. The price is that an organization can overshoot by what
-// it starts before its last unit of work is recorded.
+// What its organization may do with money is its account, read by two loops per Enforcer, for
+// every organization in use at once: its standing from the usage service every Fresh, and its
+// limits every Fresh with what their subjects spent, from the usage service's counters every
+// SpendEvery (or summed from Postgres with no usage service). Work recorded since those reads
+// is held against it by usage id until a read that counts it has landed. The price is that an
+// organization can overshoot by what it starts before its last unit of work is recorded.
 package policy
 
 import (
@@ -28,6 +34,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -54,18 +62,25 @@ const tierTTL = 10 * time.Second
 // Settings are how an Enforcer reads money. Production passes Mode and Usage; the rest have
 // defaults, which tests shorten.
 type Settings struct {
-	// Mode is how much of credit, the spend hard limit and budgets is enforced; empty is
+	// Mode is how much of credit, the spend hard limit and spend limits is enforced; empty is
 	// enforce.
 	Mode config.LimitsMode
 	// Usage is the usage service. Nil: money is read from Postgres, with no credit, no tier and
 	// no spend hard limit, as a deployment that bills nobody runs.
 	Usage *usage.Client
-	// Fresh is how often the standings are read, and how old a decision gets before it is read
-	// again in the background; 5 s.
+	// Counters is the Redis the usage service keeps every subject's spend in, which the
+	// customer's limits are read from. Nil: with a usage service, its spend is read from the
+	// service itself every Fresh.
+	Counters rueidis.Client
+	// Fresh is how often the standings and the customer's limits are read, and how old a
+	// decision gets before it is read again in the background; 5 s.
 	Fresh time.Duration
-	// BudgetEvery is how often the budgets are summed from Postgres; 10 s. What this router
-	// spends is held against them at once, so this is how soon another router's is counted.
-	BudgetEvery time.Duration
+	// SpendEvery is how often the limited subjects' spend is read from Counters; 1 s.
+	SpendEvery time.Duration
+	// SumEvery is how often the limited subjects' spend is summed from Postgres with no usage
+	// service, and the shard asked which held rows it shipped; 10 s. What this router spends is
+	// held against them at once, so this is how soon another router's is counted.
+	SumEvery time.Duration
 	// MaxStale is how long an account answers after its last read before its tier's fail
 	// mode decides; 60 s.
 	MaxStale time.Duration
@@ -81,11 +96,12 @@ type Settings struct {
 
 // Defaults of Settings.
 const (
-	defaultFresh       = 5 * time.Second
-	defaultBudgetEvery = 10 * time.Second
-	defaultMaxStale    = time.Minute
-	defaultIdle        = 10 * time.Minute
-	defaultPendingTTL  = 10 * time.Minute
+	defaultFresh      = 5 * time.Second
+	defaultSpendEvery = time.Second
+	defaultSumEvery   = 10 * time.Second
+	defaultMaxStale   = time.Minute
+	defaultIdle       = 10 * time.Minute
+	defaultPendingTTL = 10 * time.Minute
 )
 
 func (s Settings) withDefaults() Settings {
@@ -95,8 +111,11 @@ func (s Settings) withDefaults() Settings {
 	if s.Fresh <= 0 {
 		s.Fresh = defaultFresh
 	}
-	if s.BudgetEvery <= 0 {
-		s.BudgetEvery = defaultBudgetEvery
+	if s.SpendEvery <= 0 {
+		s.SpendEvery = min(defaultSpendEvery, s.Fresh)
+	}
+	if s.SumEvery <= 0 {
+		s.SumEvery = defaultSumEvery
 	}
 	if s.MaxStale <= 0 {
 		s.MaxStale = defaultMaxStale
@@ -166,8 +185,6 @@ type decision struct {
 	ownApp bool
 	// organization is the one the app is in, empty while it is not known.
 	organization string
-	// budgets are the organization's and the app's, from their policies.
-	budgets []scoped
 	// messages and tokens are the daily limits per end user the app's policy sets, nil
 	// where it sets none.
 	messages *int64
@@ -180,13 +197,6 @@ type decision struct {
 	used       time.Time
 	refreshing bool
 	generation uint64
-}
-
-// scoped is a budget and whose it is.
-type scoped struct {
-	scope  store.PolicyScope
-	id     string
-	budget store.Budget
 }
 
 // New returns an Enforcer reading policies from the configuration store and money as the
@@ -214,18 +224,21 @@ func (e *Enforcer) Close() {
 	e.money.stop()
 }
 
-// Admit refuses a customer whose organization is suspended, says in Admission.Spend why the
-// customer may spend no money when it may not, and says what every one of their requests is
-// held to. It answers from memory: a customer it has no decision for has its policies read
-// now, through appconfig, and its money left to the loop, which admits until it lands.
-func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admission, error) {
+// Admit refuses an owner whose organization is suspended, says in Admission.Spend why the
+// owner's work may spend no money when it may not, and says what every one of the customer's
+// requests is held to. The owner's key, user and categories are the subjects the customer's
+// limits are checked for, beside its organization and app. It answers from memory: a customer
+// it has no decision for has its policies read now, through appconfig, and its money left to
+// the loops, which admit until they land.
+func (e *Enforcer) Admit(ctx context.Context, owner routing.Owner) (routing.Admission, error) {
+	customerID := owner.CustomerID
 	if e == nil || customerID == "" {
 		return routing.Admission{}, nil
 	}
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	refusal, spend := e.spendable(customerID, decided)
+	refusal, spend := e.spendable(owner, decided)
 	return routing.Admission{
 		DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags, OrganizationID: decided.organization,
 		Spend: spend,
@@ -458,18 +471,6 @@ func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string,
 	return nil
 }
 
-// BudgetSpent returns what a scope has spent in the budget's current interval, and when that
-// interval ends. It sums the request rows, so only the money loop and a policy read ask it.
-func (e *Enforcer) BudgetSpent(ctx context.Context, scope store.PolicyScope, id string, budget store.Budget) (int64, time.Time, error) {
-	start, end := budget.Interval.Window(e.settings.Now())
-	if scope == store.ScopeOrganization {
-		spent, err := e.config.DB().OrganizationSpendSince(ctx, id, start)
-		return spent, end, err
-	}
-	spent, err := e.config.DB().SpendSince(ctx, id, start)
-	return spent, end, err
-}
-
 // decide answers from the customer's decision whatever its age and starts a background
 // refresh when it is older than Fresh. With no decision at all, the policies are read now,
 // through appconfig, so a data policy or a model allow-list is never skipped; the money is
@@ -581,8 +582,8 @@ func labelled(organization, app store.PolicyDocument) routing.Tags {
 	return routing.Admission{Tags: organization.Tags}.Labelled(app.Tags)
 }
 
-// configuration reads what the app's and the organization's policies say: everything but what
-// either has spent, which the money loop measures.
+// configuration reads what the app's and the organization's policies say. Spend limits are not
+// policies: the limits loop reads them, with what their subjects spent.
 func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, error) {
 	app, organization, organizationID, err := e.policies(ctx, appID)
 	if err != nil {
@@ -601,12 +602,6 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 	if app.Quota != nil {
 		decided.messages = app.Quota.MessagesPerUserPerDay
 		decided.tokens = app.Quota.TokensPerUserPerDay
-	}
-	if organization.Budget != nil && organizationID != "" {
-		decided.budgets = append(decided.budgets, scoped{scope: store.ScopeOrganization, id: organizationID, budget: *organization.Budget})
-	}
-	if app.Budget != nil {
-		decided.budgets = append(decided.budgets, scoped{scope: store.ScopeApp, id: appID, budget: *app.Budget})
 	}
 	return decided, nil
 }

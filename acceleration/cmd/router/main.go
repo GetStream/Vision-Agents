@@ -619,17 +619,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer endUsers.Close()
 	}
 
-	// Budgets, data policies and prompt injection screening are stored per organization
+	// Spend limits, data policies and prompt injection screening are stored per organization
 	// and app, so a deployment without a database enforces none of them, and may run only
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
-	policies, err := newPolicies(settings, configs, usageClient, logger)
+	policies, closeCounters, err := newPolicies(settings, configs, usageClient, logger)
 	if err != nil {
 		return err
 	}
+	defer closeCounters()
 	var gate routing.Gate
 	var shipped, written func([]routing.Acked)
 	if policies != nil {

@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
@@ -38,9 +38,6 @@ const (
 	shippedTimeout = 15 * time.Second
 )
 
-// budgetIntervals is every interval a budget can reset on.
-var budgetIntervals = []store.BudgetInterval{store.BudgetHourly, store.BudgetDaily, store.BudgetWeekly, store.BudgetMonthly}
-
 // foldedInProcess is how many folded ids every account of every Enforcer remembers.
 var foldedInProcess atomic.Int64
 
@@ -56,48 +53,61 @@ var forgottenFolded = promauto.NewCounter(prometheus.CounterOpts{
 //
 // It counts twice over, and each is let go by its own ledger: the balance and the spend hard
 // limit are the usage service's, read with the standings, and are let go once a standing read
-// after the usage service had the row lands; the budgets are the shard's, summed by the budget
-// loop, and are let go once a sum asked for after the shard wrote the row lands. A row the
-// ledger is never known to have is let go PendingTTL after the later of when it was made and
-// when that ledger last could not be read, once a read after that lands; until one lands it
-// is kept, however long.
+// after the usage service had the row lands. The customer's limits count what each of the
+// row's subjects spent: from the usage service's counters, let go once a read of them asked
+// for after an ack that says the counters took the row lands (or a read of the service itself
+// after any ack); with no usage service from the shard, let go once a sum asked for after the
+// shard wrote the row lands. A row the ledger is never known to have is let go PendingTTL
+// after the later of when it was made and when that ledger last could not be read, once a
+// read after that lands; until one lands it is kept, however long.
 type hold struct {
 	app    string
 	micros int64
+	// subjects are the counter keys of every subject the row counts for, and subjectsKey them
+	// joined, which folds are told apart by.
+	subjects    []string
+	subjectsKey string
 	// made is when it was recorded, which its timer runs from; at is the same moment by
-	// Settings.Now, which places it in the UTC windows a limit or a budget counts over.
+	// Settings.Now, which places it in the UTC windows a limit counts over.
 	made time.Time
 	at   time.Time
-	// balance and budget say whether it still counts against the balance and the spend hard
-	// limit, and against the budgets.
+	// balance and limits say whether it still counts against the balance and the spend hard
+	// limit, and against the customer's limits.
 	balance bool
-	budget  bool
-	// ackedAt is when this process knew the usage service had the row, writtenAt when it knew
-	// the shard did; zero until then.
+	limits  bool
+	// ackedAt is when this process knew the usage service had the row, and mirrored whether
+	// that ack said its counters took it; writtenAt is when it knew the shard had it; zero
+	// until then.
 	ackedAt   time.Time
+	mirrored  bool
 	writtenAt time.Time
 	// group is, for a hold that carries others, the state they were folded in; nil for a row's own.
 	group *fold
 }
 
-// fold is what holds are carried together by: one app, one UTC hour (every window a limit or
-// a budget counts over starts on an hour), and the same state in each ledger.
+// fold is what holds are carried together by: one app and the same subjects, one UTC hour
+// (every window a limit counts over starts on an hour), and the same state in each ledger.
 type fold struct {
-	app     string
-	hour    int64
-	balance bool
-	budget  bool
-	acked   bool
-	written bool
+	app      string
+	subjects string
+	hour     int64
+	balance  bool
+	limits   bool
+	acked    bool
+	mirrored bool
+	written  bool
 }
 
 // state is the fold the hold would be carried in.
 func (h *hold) state() fold {
 	return fold{
-		app: h.app, hour: h.at.UTC().Truncate(time.Hour).Unix(), balance: h.balance, budget: h.budget,
-		acked: !h.ackedAt.IsZero(), written: !h.writtenAt.IsZero(),
+		app: h.app, subjects: h.subjectsKey, hour: h.at.UTC().Truncate(time.Hour).Unix(), balance: h.balance, limits: h.limits,
+		acked: !h.ackedAt.IsZero(), mirrored: h.mirrored, written: !h.writtenAt.IsZero(),
 	}
 }
+
+// subjectsSeparator joins a hold's subject keys. No key holds a newline.
+const subjectsSeparator = "\n"
 
 // folded is a usage id carried in a fold, and its share of it.
 type folded struct {
@@ -105,23 +115,22 @@ type folded struct {
 	micros int64
 }
 
-// window is one running total of what an account holds: against the spend hard limit (budget
-// false) or against a budget's scope, over one interval that starts at start.
+// window is one running total of what an account holds: against the spend hard limit (subject
+// empty) or against one subject's limits (its counter key), over one interval that starts at
+// start.
 type window struct {
-	budget   bool
-	kind     store.PolicyScope
-	id       string
+	subject  string
 	interval string
 	start    int64
 }
 
 // count adds sign times the hold to the account's totals, in each ledger it still counts in.
-func (a *account) count(key string, h *hold, sign int64) {
+func (a *account) count(h *hold, sign int64) {
 	if h.balance {
 		a.countBalance(h, sign)
 	}
-	if h.budget {
-		a.countBudget(key, h, sign)
+	if h.limits {
+		a.countLimits(h, sign)
 	}
 }
 
@@ -133,15 +142,11 @@ func (a *account) countBalance(h *hold, sign int64) {
 	}
 }
 
-func (a *account) countBudget(key string, h *hold, sign int64) {
-	scopes := []scope{{kind: store.ScopeApp, id: h.app}}
-	if billed(key) {
-		scopes = append(scopes, scope{kind: store.ScopeOrganization, id: key})
-	}
-	for _, whose := range scopes {
-		for _, interval := range budgetIntervals {
-			start, _ := interval.Window(h.at)
-			a.add(window{budget: true, kind: whose.kind, id: whose.id, interval: string(interval), start: start.Unix()}, sign*h.micros)
+func (a *account) countLimits(h *hold, sign int64) {
+	for _, interval := range usage.Intervals {
+		start, _ := usage.Window(interval, h.at)
+		for _, subject := range h.subjects {
+			a.add(window{subject: subject, interval: string(interval), start: start.Unix()}, sign*h.micros)
 		}
 	}
 }
@@ -162,17 +167,17 @@ func (a *account) heldAgainstLimit(interval usage.Interval, now time.Time) int64
 	return a.windows[window{interval: string(interval), start: start.Unix()}]
 }
 
-// heldAgainstBudget is what the account holds against the budget's scope in the window that
-// now is in.
-func (a *account) heldAgainstBudget(budget scoped, now time.Time) int64 {
-	start, _ := budget.budget.Interval.Window(now)
-	return a.windows[window{budget: true, kind: budget.scope, id: budget.id, interval: string(budget.budget.Interval), start: start.Unix()}]
+// heldAgainst is what the account holds against one subject's limits in the interval's window
+// that now is in.
+func (a *account) heldAgainst(ref usage.SubjectRef, interval usage.Interval, now time.Time) int64 {
+	start, _ := usage.Window(interval, now)
+	return a.windows[window{subject: ref.Key(usage.CounterPrefix), interval: string(interval), start: start.Unix()}]
 }
 
-// Spent holds what a unit of work recorded here cost against its owner's organization and app,
-// under the row's usage id, until the ledgers count the row. Holding it again replaces the
-// amount, restarts its timer and leaves what the ledgers were known to have as it was; holding
-// one carried in a fold again changes nothing. It never waits.
+// Spent holds what a unit of work recorded here cost against its owner's organization and
+// every subject it counts for, under the row's usage id, until the ledgers count the row.
+// Holding it again replaces the amount, restarts its timer and leaves what the ledgers were
+// known to have as it was; holding one carried in a fold again changes nothing. It never waits.
 func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 	if e == nil || owner.CustomerID == "" || usageID == uuid.Nil || micros <= 0 || e.money.off() {
 		return
@@ -195,7 +200,7 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 				return
 			}
 			if held = other.holds[usageID]; held != nil {
-				other.count(previous, held, -1)
+				other.count(held, -1)
 				delete(other.holds, usageID)
 			}
 		}
@@ -210,11 +215,20 @@ func (e *Enforcer) Spent(owner routing.Owner, usageID uuid.UUID, micros int64) {
 		acct.holds = map[uuid.UUID]*hold{}
 	}
 	if held == nil {
-		held = &hold{at: at, balance: m.billing(organization), budget: true}
+		held = &hold{at: at, balance: m.billing(organization), limits: true}
 	}
+	refs := subjectsOf(owner, limitsOrganization(organization))
+	// Its subjects are read with the next spend read once the account has a limit on one,
+	// which is what lets go of it.
+	m.see(acct, refs, now)
+	held.subjects = make([]string, len(refs))
+	for i, ref := range refs {
+		held.subjects[i] = ref.Key(usage.CounterPrefix)
+	}
+	held.subjectsKey = strings.Join(held.subjects, subjectsSeparator)
 	held.app, held.micros, held.made = owner.CustomerID, micros, now
 	acct.holds[usageID] = held
-	acct.count(organization, held, 1)
+	acct.count(held, 1)
 	m.holdOf[usageID] = organization
 }
 
@@ -226,22 +240,24 @@ func (e *Enforcer) Acked(acked []routing.Acked) {
 	if e == nil || e.money.off() {
 		return
 	}
-	e.money.settled(acked, func(h *hold) *time.Time { return &h.ackedAt }, func(f *fold) *bool { return &f.acked })
+	e.money.settled(acked, true, func(h *hold) *time.Time { return &h.ackedAt }, func(f *fold) *bool { return &f.acked })
 }
 
-// Written notes the rows the shard has, which is what a budget is summed from: a hold kept for
-// one of them stops counting against the budgets once a sum asked for after now lands. It is
-// WriterOptions.Written.
+// Written notes the rows the shard has, which is what a deployment with no usage service sums a
+// subject's spend from: a hold kept for one of them stops counting against the customer's
+// limits once a sum asked for after now lands. It is WriterOptions.Written.
 func (e *Enforcer) Written(written []routing.Acked) {
 	if e == nil || e.money.off() {
 		return
 	}
-	e.money.settled(written, func(h *hold) *time.Time { return &h.writtenAt }, func(f *fold) *bool { return &f.written })
+	e.money.settled(written, false, func(h *hold) *time.Time { return &h.writtenAt }, func(f *fold) *bool { return &f.written })
 }
 
 // settled notes that a ledger has the rows: when, in the hold of each, or by moving a folded
-// row into the fold that ledger already has.
-func (m *money) settled(rows []routing.Acked, when func(*hold) *time.Time, has func(*fold) *bool) {
+// row into the fold that ledger already has. For acks it also keeps whether the usage
+// service's counters took the row, and has an account whose counters missed one read the
+// service itself next.
+func (m *money) settled(rows []routing.Acked, acks bool, when func(*hold) *time.Time, has func(*fold) *bool) {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -254,9 +270,15 @@ func (m *money) settled(rows []routing.Acked, when func(*hold) *time.Time, has f
 		if acct == nil {
 			continue
 		}
+		if acks && !row.Mirrored {
+			acct.readThrough = true
+		}
 		if held := acct.holds[row.UsageID]; held != nil {
 			if at := when(held); at.IsZero() {
 				*at = now
+				if acks {
+					held.mirrored = row.Mirrored
+				}
 			}
 			continue
 		}
@@ -274,6 +296,9 @@ func (m *money) settled(rows []routing.Acked, when func(*hold) *time.Time, has f
 			continue
 		}
 		*has(&state) = true
+		if acks {
+			state.mirrored = row.Mirrored
+		}
 		into, intoID := acct.foldInto(state)
 		from.micros -= carried.micros
 		into.micros += carried.micros
@@ -293,13 +318,19 @@ func (m *money) settled(rows []routing.Acked, when func(*hold) *time.Time, has f
 // organization's, with a usage service to bill it.
 func (m *money) billing(key string) bool { return m.settings.Usage != nil && billed(key) }
 
+// counted reports whether an account's subjects' spend is the usage service's, read from its
+// counters, rather than summed from the shard.
+func (m *money) counted(key string) bool { return m.settings.Usage != nil && billed(key) }
+
 // release lets go, under m.mu, of what the reads that landed now count: against the balance,
-// holds acked before the last standing that landed was asked for; against the budgets, holds
-// written before the last sum that landed was asked for, and every hold once no budget is in
-// use. A hold the ledger is never known to have goes PendingTTL after the later of when it was
-// made and when that ledger last failed to read, once a read asked for after that lands.
-// Past maxHolds the oldest are folded.
+// holds acked before the last standing that landed was asked for; against the customer's
+// limits, holds the last read of the subjects' spend that landed counts (counted after their
+// ack, or summed after the shard wrote them), and every hold while the account has no limit. A
+// hold the ledger is never known to have goes PendingTTL after the later of when it was made
+// and when that ledger last failed to read, once a read asked for after that lands. Past
+// maxHolds the oldest are folded.
 func (m *money) release(key string, acct *account, now time.Time) {
+	counted := m.counted(key)
 	ttl := m.settings.PendingTTL
 	var expired, unwritten, waiting, waited int64
 	var emptied []uuid.UUID
@@ -316,18 +347,22 @@ func (m *money) release(key string, acct *account, now time.Time) {
 				waited += held.micros
 			}
 		}
-		if held.budget {
+		if held.limits {
+			acked := !held.ackedAt.IsZero()
 			switch {
-			case !acct.budgeted:
-				acct.letGoBudget(key, held)
-			case !held.writtenAt.IsZero() && held.writtenAt.Before(acct.measuredFrom):
-				acct.letGoBudget(key, held)
-			case !acct.measuredFrom.Before(later(held.made, acct.measureFailed).Add(ttl)):
+			case !acct.limited:
+				acct.letGoLimits(held)
+			case counted && acked && held.ackedAt.Before(acct.throughFrom),
+				counted && acked && held.mirrored && held.ackedAt.Before(acct.spentFrom):
+				acct.letGoLimits(held)
+			case !counted && !held.writtenAt.IsZero() && held.writtenAt.Before(acct.spentFrom):
+				acct.letGoLimits(held)
+			case !acct.spentFrom.Before(later(held.made, acct.spendFailed).Add(ttl)):
 				unwritten += held.micros
-				acct.letGoBudget(key, held)
+				acct.letGoLimits(held)
 			}
 		}
-		if held.balance || held.budget {
+		if held.balance || held.limits {
 			continue
 		}
 		delete(acct.holds, id)
@@ -350,7 +385,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 			append(who(key), "micros", expired, "pending_ttl", ttl)...)
 	}
 	if unwritten > 0 {
-		logger.Warn("usage held against an "+noun(key)+"'s budgets expired before the shard was known to have it",
+		logger.Warn("usage held against an "+noun(key)+"'s spend limits expired before what they read was known to count it",
 			append(who(key), "micros", unwritten, "pending_ttl", ttl)...)
 	}
 	if waiting > 0 && m.waiting.due(key, logEvery) {
@@ -368,9 +403,9 @@ func (a *account) letGoBalance(h *hold) {
 	a.reopen(h)
 }
 
-func (a *account) letGoBudget(key string, h *hold) {
-	a.countBudget(key, h, -1)
-	h.budget = false
+func (a *account) letGoLimits(h *hold) {
+	a.countLimits(h, -1)
+	h.limits = false
 	a.reopen(h)
 }
 
@@ -422,7 +457,13 @@ func (a *account) foldInto(state fold) (*hold, uuid.UUID) {
 	}
 	id := uuid.New()
 	group := state
-	into := &hold{app: state.app, at: time.Unix(state.hour, 0).UTC(), balance: state.balance, budget: state.budget, group: &group}
+	into := &hold{
+		app: state.app, subjectsKey: state.subjects, at: time.Unix(state.hour, 0).UTC(),
+		balance: state.balance, limits: state.limits, mirrored: state.mirrored, group: &group,
+	}
+	if state.subjects != "" {
+		into.subjects = strings.Split(state.subjects, subjectsSeparator)
+	}
 	a.holds[id] = into
 	a.folds[state] = id
 	return into, id
@@ -488,15 +529,19 @@ func (m *money) forgetFolded() {
 
 // shipped asks the shard which of the rows held against a balance with no ack it has shipped
 // to the usage service, as another router's sweeper does without this one hearing of it, and
-// notes them acked now. It runs on the budget loop, which is the one that reads Postgres, at
-// most shippedPerPass of them, the oldest first, within shippedTimeout.
+// notes them acked now, as acks whose counters are not known to have the rows. It runs on the
+// limits loop, which is the one that reads Postgres, every SumEvery, at most shippedPerPass of
+// them, the oldest first, within shippedTimeout.
 //
 // A shard that does not answer is a failed read of the balance for each account asked about:
 // the row it may have shipped is not known to be counted, so the timer of each unacked hold
 // starts again, as it does through an outage of the usage service.
 func (m *money) shipped(ctx context.Context) {
+	if m.settings.Usage == nil {
+		return
+	}
 	db := m.enforcer.config.DB()
-	if m.settings.Usage == nil || db == nil {
+	if db == nil {
 		return
 	}
 	type candidate struct {
@@ -538,7 +583,7 @@ func (m *money) shipped(ctx context.Context) {
 			m.mu.Unlock()
 			return
 		}
-		m.settled(acks(found), func(h *hold) *time.Time { return &h.ackedAt }, func(f *fold) *bool { return &f.acked })
+		m.settled(acks(found), true, func(h *hold) *time.Time { return &h.ackedAt }, func(f *fold) *bool { return &f.acked })
 	}
 }
 

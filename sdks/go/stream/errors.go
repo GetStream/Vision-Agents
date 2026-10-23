@@ -96,10 +96,11 @@ func (e *RouterError) Error() string {
 
 // PaymentRequired reports work refused for money, a 402: the organization's credit is spent
 // (Code insufficient_credits), its spend hard limit for the day or the month is reached
-// (system_limit_reached), or a budget is spent (spend_limit_reached). Retrying does not help
-// until credit is added or the limit resets, which Message says when; a model that costs
-// nothing is still served. A suspended organization is a permission failure instead,
-// account_suspended.
+// (system_limit_reached), or one of the organization's own spend limits is spent
+// (spend_limit_reached). Retrying does not help until credit is added or the limit resets,
+// which Message says when; a model that costs nothing is still served. A suspended
+// organization is a permission failure instead, account_suspended, and a spent limit on one end
+// user is a rate limit, user_limit_reached, with Retry-After.
 func (e *RouterError) PaymentRequired() bool {
 	return e.Type == string(acceleration.ErrorTypePaymentRequired) || e.Status == http.StatusPaymentRequired
 }

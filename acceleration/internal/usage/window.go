@@ -137,6 +137,10 @@ func (r SubjectRef) ids() []string {
 	return nil
 }
 
+// CounterPrefix starts the key of a subject's spend counters, which the usage service writes
+// and admission reads.
+const CounterPrefix = "usage"
+
 // Key is the subject's Redis key after prefix (usage or hold):
 // "<prefix>:{<org>}:<subject>:<ids joined by |>", and "<prefix>:{<org>}:organization" for
 // the organization, which has no other id. The braces put an organization's keys in one

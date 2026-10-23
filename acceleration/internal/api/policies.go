@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -21,12 +20,18 @@ var (
 		Message: "this request names no organization: it needs X-Stream-Organization-Id, " +
 			"or an API key belonging to one",
 	}
+
+	// errBudgetMoved answers a policy that still sends a budget.
+	errBudgetMoved = APIError{
+		Type: ErrorTypeInvalidRequest, Code: codeBudgetMoved,
+		Message: "spend limits moved to /v1/spend/limits: a policy has no budget",
+	}
 )
 
-// Policy is what an organization or an app decided about spend, data handling, prompt
-// injection, which models may be used and how usage is labelled.
+// Policy is what an organization or an app decided about data handling, prompt injection,
+// which models may be used and how usage is labelled.
 type Policy struct {
-	Budget              *Budget           `json:"budget,omitempty"`
+	Budget              map[string]any    `json:"budget,omitempty" deprecated:"true" doc:"Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back."`
 	Quota               *Quota            `json:"quota,omitempty"`
 	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
 	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
@@ -36,25 +41,10 @@ type Policy struct {
 }
 
 func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What an organization or an app decided about spend, data handling, " +
+	schema.Description = "What an organization or an app decided about data handling, " +
 		"prompt injection, which models may be used and how usage is labelled. Every field " +
-		"is optional, and a field left out is no opinion rather than off."
-	return schema
-}
-
-// Budget caps spend across every modality, reset on a UTC boundary each interval.
-type Budget struct {
-	LimitMicros int64          `json:"limit_micros" minimum:"1" example:"100000000" doc:"The cap, in millionths of a dollar."`
-	Interval    BudgetInterval `json:"interval"`
-	SpentMicros *int64         `json:"spent_micros,omitempty" readOnly:"true" doc:"What has been spent in the current interval."`
-	ResetsAt    *time.Time     `json:"resets_at,omitempty" readOnly:"true" doc:"When the current interval ends."`
-}
-
-func (*Budget) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "A cap on spend across every modality, reset on a UTC boundary each " +
-		"interval. Once it is spent every new session and every LLM response is refused until " +
-		"the next interval. Checks are cached for a few seconds, so a busy app can overshoot " +
-		"by what it spends in that time."
+		"is optional, and a field left out is no opinion rather than off. Spend limits are " +
+		"not here: they are /v1/spend/limits."
 	return schema
 }
 
@@ -78,22 +68,6 @@ func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema
 	return schema
 }
 
-// BudgetInterval is how often a budget resets.
-type BudgetInterval string
-
-const (
-	BudgetIntervalHourly  BudgetInterval = "hourly"
-	BudgetIntervalDaily   BudgetInterval = "daily"
-	BudgetIntervalWeekly  BudgetInterval = "weekly"
-	BudgetIntervalMonthly BudgetInterval = "monthly"
-)
-
-func (BudgetInterval) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "BudgetInterval", "How often a budget resets. A week starts on Monday.",
-		string(BudgetIntervalHourly), string(BudgetIntervalDaily),
-		string(BudgetIntervalWeekly), string(BudgetIntervalMonthly))
-}
-
 type policyRequest struct {
 	Body Policy
 }
@@ -110,12 +84,11 @@ func (s *Server) registerPolicies(api huma.API) {
 		Path:        "/v1/policies/app",
 		Summary:     "The calling app's policy",
 		Description: "What the app itself decided. Its organization's policy applies as well, " +
-			"as a floor the app can tighten and cannot loosen: both budgets are enforced, the " +
-			"stricter data policy wins, prompt injection is screened if either turns it on, " +
-			"only a model both allow may be routed to, and the organization's tags win over " +
-			"the app's.",
+			"as a floor the app can tighten and cannot loosen: the stricter data policy wins, " +
+			"prompt injection is screened if either turns it on, only a model both allow may be " +
+			"routed to, and the organization's tags win over the app's.",
 		Responses: map[string]*huma.Response{
-			"200": {Description: "The app's policy, with what its budget has spent so far"},
+			"200": {Description: "The app's policy"},
 		},
 		Errors: errs,
 	}, s.getAppPolicy)
@@ -138,7 +111,7 @@ func (s *Server) registerPolicies(api huma.API) {
 		Description: "Applies to every app the router has seen the organization name. A " +
 			"request that names no organization is a 400.",
 		Responses: map[string]*huma.Response{
-			"200": {Description: "The organization's policy, with what its budget has spent so far"},
+			"200": {Description: "The organization's policy"},
 		},
 		Errors: errs,
 	}, s.getOrganizationPolicy)
@@ -179,6 +152,9 @@ func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*
 	if s.policies == nil {
 		return nil, errNoPolicies
 	}
+	if request.Body.Budget != nil {
+		return nil, errBudgetMoved
+	}
 	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
@@ -216,6 +192,9 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 	organizationID := OrganizationFrom(ctx)
 	if organizationID == "" {
 		return nil, errNoOrganization
+	}
+	if request.Body.Budget != nil {
+		return nil, errBudgetMoved
 	}
 	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body)
 	if err != nil {
@@ -258,16 +237,6 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
 			document.DataPolicy.Retention))
 	}
-	if sent.Budget != nil {
-		budget := store.Budget{LimitMicros: sent.Budget.LimitMicros, Interval: store.BudgetInterval(sent.Budget.Interval)}
-		if budget.LimitMicros < 1 {
-			return Policy{}, stack.Wrap(fmt.Errorf("a budget's limit_micros must be at least 1, not %d", budget.LimitMicros))
-		}
-		if !budget.Interval.Valid() {
-			return Policy{}, stack.Wrap(fmt.Errorf("a budget resets hourly, daily, weekly or monthly, not %q", budget.Interval))
-		}
-		document.Budget = &budget
-	}
 	if err := routing.Tags(sent.Tags).Validate(); err != nil {
 		return Policy{}, err
 	}
@@ -276,9 +245,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 			return Policy{}, stack.Wrap(fmt.Errorf("allowed_models names %q, which is not a provider/model this deployment routes", model))
 		}
 	}
-	// Read before the write, so the entry can say what the setting was. The stored document
-	// is what is diffed rather than the policy as it reads out, because that one carries
-	// what the budget has spent, and a spend moving is not somebody changing a policy.
+	// Read before the write, so the entry can say what the setting was.
 	before, err := s.configs.Policy(ctx, scope, id)
 	if err != nil {
 		return Policy{}, err
@@ -293,33 +260,20 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	return s.policyOf(ctx, scope, id)
 }
 
-// policyOf reads a scope's policy, with what its budget has spent in the current interval.
+// policyOf reads a scope's policy.
 func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id string) (Policy, error) {
 	document, err := s.configs.Policy(ctx, scope, id)
 	if err != nil {
 		return Policy{}, err
 	}
-	policy := Policy{
+	return Policy{
 		Quota:               quotaFor(document.Quota),
 		DataPolicy:          dataPolicyFor(document.DataPolicy),
 		PromptInjection:     document.PromptInjection,
 		AllowedModels:       document.AllowedModels,
 		Tags:                document.Tags,
 		RequireOwnStreamApp: document.RequireOwnStreamApp,
-	}
-	if document.Budget != nil {
-		spent, resets, err := s.policies.BudgetSpent(ctx, scope, id, *document.Budget)
-		if err != nil {
-			return Policy{}, err
-		}
-		policy.Budget = &Budget{
-			LimitMicros: document.Budget.LimitMicros,
-			Interval:    BudgetInterval(document.Budget.Interval),
-			SpentMicros: &spent,
-			ResetsAt:    &resets,
-		}
-	}
-	return policy, nil
+	}, nil
 }
 
 // quotaOf is a sent quota as it is stored. One that sets neither number is no opinion.

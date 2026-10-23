@@ -31,13 +31,16 @@ const (
 	// AuditEndUser is an app's end user whose id was forgotten in the usage records, named by
 	// the id that replaced it, never by the one forgotten (20261111120000_usage_identity.sql).
 	AuditEndUser = "end_user"
+	// AuditSpendLimit is one of the organization's spend limits, named by its id, or a grant or
+	// a reset, named grant:<id> and reset:<id> (20261112120000_limits.sql).
+	AuditSpendLimit = "limit"
 )
 
 // auditResourceTypes is every resource a change may be recorded against, which is the
 // migration's CHECK as Go can read it.
 var auditResourceTypes = []string{
 	AuditAgentConfig, AuditSkill, AuditKnowledge, AuditKnowledgeURL,
-	AuditRouterConfig, AuditPlugin, AuditPolicy, AuditResourcePriceList, AuditEndUser,
+	AuditRouterConfig, AuditPlugin, AuditPolicy, AuditResourcePriceList, AuditEndUser, AuditSpendLimit,
 }
 
 // deploymentResources are the resources that belong to the deployment rather than to one

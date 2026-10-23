@@ -55,7 +55,7 @@ type Gate struct {
 // every routed request asks (policy.Enforcer). Its error refuses everything, as a suspension
 // does; its Spend refuses work that costs money, which every text, call and number does.
 type Money interface {
-	Admit(ctx context.Context, customerID string) (routing.Admission, error)
+	Admit(ctx context.Context, owner routing.Owner) (routing.Admission, error)
 }
 
 // Charging has the gate refuse what money refuses too. It is set once, before the gate is used.
@@ -73,7 +73,8 @@ func (g *Gate) Admit(ctx context.Context, customerID string) error {
 	if g == nil || g.money == nil {
 		return nil
 	}
-	admission, err := g.money.Admit(ctx, customerID)
+	// The key, user and categories are the context's, when the work carries them.
+	admission, err := g.money.Admit(ctx, routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)})
 	if err == nil {
 		err = admission.Spend
 	}
