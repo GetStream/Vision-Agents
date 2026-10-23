@@ -560,6 +560,8 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
+	// monthly is what a number bought here costs a month.
+	monthly int64
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -570,8 +572,11 @@ func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
 	return s.offers, nil
 }
 
-func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
-	return Number{Vendor: s.vendor}, s.err
+func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
+	if s.err != nil {
+		return Number{}, s.err
+	}
+	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
 func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }

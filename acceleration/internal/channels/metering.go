@@ -16,6 +16,14 @@ const (
 	CategoryService   = "service"
 )
 
+// AttributeVendorAccount says whose account at the vendor a message went through when it is
+// not the deployment's: VendorAccountApp, for a line connected with the app's own credentials,
+// whose vendor bills the app.
+const (
+	AttributeVendorAccount = "vendor_account"
+	VendorAccountApp       = "app"
+)
+
 // OriginNotice is the origin of a message sent first, rather than as an answer, when nothing
 // says who asked for it.
 var OriginNotice = routing.JobOrigin("channel_notice")
@@ -38,6 +46,9 @@ func sendFailed(error) string { return "send_failed" }
 
 // textMeter records one message on a channel, to or from other, priced by the channel, its
 // direction and where other is. An app the 10DLC sandbox holds has it priced and given away.
+// A WhatsApp or iMessage line sends through the app's own Meta or Linq account, which bills
+// the app, so its messages are priced and not billed again; an SMS line is a number bought
+// through the router, on the deployment's own Telnyx account, and is billed.
 func (s *Service) textMeter(ctx context.Context, kind Kind, direction, other string, owner routing.Owner) routing.Meter {
 	attributes := map[string]string{
 		phone.AttributeDirection: direction,
@@ -61,6 +72,10 @@ func (s *Service) textMeter(ctx context.Context, kind Kind, direction, other str
 	if held {
 		meter.Free = true
 		meter.Attributes[phone.AttributeDLCSandbox] = "true"
+	}
+	if kind != SMS {
+		meter.Free = true
+		meter.Attributes[AttributeVendorAccount] = VendorAccountApp
 	}
 	return meter
 }

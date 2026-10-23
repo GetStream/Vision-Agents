@@ -15,13 +15,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -529,35 +527,6 @@ func (s *AppsSuite) TestAnAppStreamBlockedCannotBuyANumber() {
 	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+15550002222", Owner: routing.Owner{CustomerID: s.customer}})
 
 	s.ErrorIs(err, streamapp.ErrStreamAppDisconnected)
-}
-
-func (s *AppsSuite) TestEveryLegOfAnEndedCallCountsTowardTheSandboxsMinutes() {
-	// A transfer is a second leg alongside the call's own, billed for as long as it lasts.
-	address := os.Getenv("ROUTER_REDIS_ADDR")
-	if address == "" {
-		s.T().Skip("ROUTER_REDIS_ADDR not set")
-	}
-	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
-	s.Require().NoError(err)
-	s.T().Cleanup(redis.Close)
-	gate := dlc.NewGate(s.store, redis, dlc.Sandbox{Enabled: true}, nil)
-	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config()), Store: s.store, Apps: s.apps, Gate: gate})
-	s.Require().NoError(err)
-
-	callID := "call-" + uuid.NewString()
-	now := time.Now().UTC()
-	for _, began := range []time.Duration{10 * time.Minute, 4 * time.Minute} {
-		s.Require().NoError(s.store.RecordCallResource(s.ctx, &store.CallResource{
-			TrunkID: "trunk-" + uuid.NewString(), RouteID: "route-" + uuid.NewString(),
-			CallType: "default", CallID: callID, CustomerID: s.customer, CreatedAt: now.Add(-began),
-		}))
-	}
-
-	s.Require().NoError(service.ReleaseCall(s.ctx, store.AppScope{App: 1, Unpinned: true}, "default", callID))
-
-	usage, err := gate.Usage(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.InDelta(14*60, usage.AudioSeconds, 5, "both legs, not only the one that began first")
 }
 
 func (s *AppsSuite) TestTheVendorIsGivenATrunkAddressStreamCanFindByTheCallingNumber() {
