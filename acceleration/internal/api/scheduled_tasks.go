@@ -331,6 +331,11 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		task.Instructions = *body.Instructions
 	}
 	if body.DeliverTo != nil {
+		// A task made in a thread is delivered on its thread (deliverOnThread), which
+		// deliver_to does not name.
+		if task.ChannelThread != "" {
+			return nil, invalidRequest("a task made in a thread is delivered on that thread; its deliver_to cannot change")
+		}
 		where, err := deliverToOf(*body.DeliverTo)
 		if err != nil {
 			return nil, err

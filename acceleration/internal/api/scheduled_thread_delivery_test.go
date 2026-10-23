@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -297,6 +298,25 @@ func (s *TelnyxChannelSuite) TestATaskReachesOnlyItsOwnCustomersThread() {
 	s.Equal(1, s.scheduledTurns())
 	s.Equal(firstReplies, s.repliesIn(firstChannel), "the first customer's thread was written nothing")
 	s.NotEqual(firstChannel, secondChannel)
+}
+
+// A thread task is delivered on its thread, so its deliver_to cannot be changed; its other
+// fields can.
+func (s *TelnyxChannelSuite) TestAThreadTasksDeliverToCannotChange() {
+	task, _ := s.scheduledInThread("+13125550001")
+	path := "/v1/agents/scheduled-tasks/" + task.ID
+
+	status, raw := s.serverClient.call(http.MethodPatch, path, UpdateScheduledTaskRequest{DeliverTo: pointerTo([]string{"phone"})})
+
+	s.Equal(http.StatusBadRequest, status, string(raw))
+	s.Contains(string(raw), "a task made in a thread is delivered on that thread")
+	stored, err := s.store.ScheduledTask(context.Background(), task.CustomerID, task.ID)
+	s.Require().NoError(err)
+	s.Equal(task.Channels, stored.Channels)
+	var renamed ScheduledTask
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, path,
+		UpdateScheduledTaskRequest{Title: pointerTo("Stand up")}, &renamed))
+	s.Equal("Stand up", renamed.Title)
 }
 
 // The control: a task an app user's backend made, with no thread, on the same config, is
