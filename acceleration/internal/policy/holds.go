@@ -62,7 +62,9 @@ var forgottenFolded = promauto.NewCounter(prometheus.CounterOpts{
 // after any ack); with no usage service from the shard, let go once a sum asked for after the
 // shard wrote the row lands. A row the ledger is never known to have is let go PendingTTL
 // after the later of when it was made and when that ledger last could not be read, once a
-// read after that lands; until one lands it is kept, however long.
+// read after that lands; until one lands it is kept, however long. For the limits of an
+// account the usage service counts, a stretch in which it acks none of the account's rows is
+// a failed read too (ackless), so the limits' holds outlast it.
 type hold struct {
 	app    string
 	micros int64
@@ -319,8 +321,11 @@ func (m *money) settled(rows []routing.Acked, acks bool, when func(*hold) *time.
 		if acct == nil {
 			continue
 		}
-		if acks && !row.Mirrored {
-			acct.readThrough = true
+		if acks {
+			acct.lastAck = now
+			if !row.Mirrored {
+				acct.readThrough = true
+			}
 		}
 		if held := acct.holds[row.UsageID]; held != nil {
 			if at := when(held); at.IsZero() {
@@ -381,7 +386,10 @@ func (m *money) counted(key string) bool { return m.settings.Usage != nil && bil
 func (m *money) release(key string, acct *account, now time.Time) {
 	counted := m.counted(key)
 	ttl := m.settings.PendingTTL
-	var expired, unwritten, waiting, waited int64
+	if counted && acct.ackless(now, m.settings.Fresh) {
+		acct.acksFailed = now
+	}
+	var expired, unwritten, waiting, waited, unacked int64
 	var emptied []uuid.UUID
 	for id, held := range acct.holds {
 		if held.balance {
@@ -406,9 +414,11 @@ func (m *money) release(key string, acct *account, now time.Time) {
 				acct.letGoLimits(held)
 			case !counted && !held.writtenAt.IsZero() && held.writtenAt.Before(acct.spentFrom):
 				acct.letGoLimits(held)
-			case !acct.spentFrom.Before(later(held.made, acct.spendFailed).Add(ttl)):
+			case !acct.spentFrom.Before(later(held.made, later(acct.spendFailed, acct.acksFailed)).Add(ttl)):
 				unwritten += held.micros
 				acct.letGoLimits(held)
+			case counted && !acked && now.Sub(held.made) > ttl && acct.acksFailed.Equal(now):
+				unacked += held.micros
 			}
 		}
 		if held.granted {
@@ -450,9 +460,26 @@ func (m *money) release(key string, acct *account, now time.Time) {
 		logger.Warn("usage held against an "+noun(key)+" is past its pending_ttl with no read of its balance to count it, so it is kept",
 			append(who(key), "holds", waiting, "micros", waited, "last_failed_read", acct.balanceFailed)...)
 	}
+	if unacked > 0 && m.waiting.due(key+"\x00acks", logEvery) {
+		logger.Warn("usage held against an "+noun(key)+"'s spend limits is past its pending_ttl while the usage service acks none of its rows, so it is kept",
+			append(who(key), "micros", unacked, "last_ack", acct.lastAck)...)
+	}
 	if len(acct.holds) > maxHolds {
 		m.carry(key, acct)
 	}
+}
+
+// ackless reports whether the usage service is acking nothing of the account: it holds against
+// the limits a row made Fresh ago or more that is not acked, and no row of the account was acked
+// since that one was made. The counters cannot have such a row, so release takes that as a
+// failed read of the limits, as long as it lasts, and their holds do not expire through it.
+func (a *account) ackless(now time.Time, fresh time.Duration) bool {
+	for _, held := range a.holds {
+		if held.limits && held.ackedAt.IsZero() && now.Sub(held.made) >= fresh && !a.lastAck.After(held.made) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *account) letGoBalance(h *hold) {

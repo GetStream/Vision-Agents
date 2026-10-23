@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
@@ -30,16 +31,18 @@ const (
 
 // spendRead is what one pass read of one account's subjects: by counter key, then interval.
 // intervals is, by counter key, the intervals each subject has a limit in, which are the only
-// ones summed from the shards. A read of the subjects the counters were missing has the read
-// it is part of as its parent, which fails with it.
+// ones summed from the shards. A read of the subjects the counters could not answer has the
+// read it is part of as its parent, which fails with it; countersFailed says the counters'
+// Redis failed it.
 type spendRead struct {
-	source    spendSource
-	refs      []usage.SubjectRef
-	intervals map[string][]usage.Interval
-	from      time.Time
-	spent     map[string]map[usage.Interval]spentWindow
-	failed    bool
-	parent    *spendRead
+	source         spendSource
+	refs           []usage.SubjectRef
+	intervals      map[string][]usage.Interval
+	from           time.Time
+	spent          map[string]map[usage.Interval]spentWindow
+	failed         bool
+	countersFailed bool
+	parent         *spendRead
 }
 
 func (r *spendRead) fail() {
@@ -52,7 +55,8 @@ func (r *spendRead) fail() {
 // limitsPass reads, for every account in use, its limits and the resets of its current windows
 // every Fresh, and what each subject with a limit spent, as each source's cadence allows; then
 // lets go of the holds the reads now count. Every SumEvery it also asks the shard which held
-// rows it shipped. Nothing here is ever asked on the request path.
+// rows it shipped. Only an account or subject never read is read on the request path
+// (firstRead).
 func (m *money) limitsPass(ctx context.Context) {
 	now := time.Now()
 	if now.Sub(m.shippedAt) >= m.settings.SumEvery {
@@ -71,14 +75,28 @@ func (m *money) limitsPass(ctx context.Context) {
 	if db == nil {
 		return
 	}
-	m.readLimits(ctx, db, keys)
-	reads := m.plan(keys, time.Now())
+	m.readAccounts(ctx, db, keys, false)
+}
+
+// readAccounts reads the accounts' limits and resets when due, then what their limited subjects
+// spent, every one at once when now is set and as each source's cadence allows otherwise, and
+// keeps what landed. It says whether every read it made landed.
+func (m *money) readAccounts(ctx context.Context, db *store.Store, keys []string, now bool) bool {
+	landed := m.readLimits(ctx, db, keys)
+	reads := m.plan(keys, time.Now(), now)
 	if len(reads) == 0 {
-		return
+		return landed
 	}
 	m.readSpend(ctx, db, reads)
+	return m.land(reads) && landed
+}
 
-	now = time.Now()
+// land keeps what the reads found, under m.mu, and lets go of the holds they now count. A read
+// asked before the one a subject last kept is older, and changes nothing of it. It says whether
+// every read landed.
+func (m *money) land(reads map[string]*spendRead) bool {
+	landed := true
+	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for key, read := range reads {
@@ -86,30 +104,145 @@ func (m *money) limitsPass(ctx context.Context) {
 		if acct == nil {
 			continue
 		}
+		if read.countersFailed {
+			acct.countersFailed = now
+		}
 		if read.failed {
+			landed = false
 			acct.spendFailed = now
 		} else {
-			acct.spentFrom = read.from
+			acct.spentFrom = later(acct.spentFrom, read.from)
 			if read.source != fromCounters {
-				acct.throughFrom = read.from
+				acct.throughFrom = later(acct.throughFrom, read.from)
 				acct.readThrough = false
 			}
 		}
 		for _, ref := range read.refs {
 			subject := acct.subjects[ref.Key(usage.CounterPrefix)]
 			spent, ok := read.spent[ref.Key(usage.CounterPrefix)]
-			if subject == nil || !ok {
+			if subject == nil || !ok || read.from.Before(subject.from) {
 				continue
 			}
-			subject.spent, subject.read = spent, now
+			subject.spent, subject.read, subject.from = spent, now, read.from
 		}
 		m.release(key, acct, now)
 	}
+	return landed
+}
+
+// firstRead reads, before an admission, what the customer's limits need that this process never
+// read: the account's limits and resets the first time it sees the account, and what each of the
+// owner's subjects with a limit spent the first time it sees the subject, or again once Idle
+// dropped it. It waits at most FirstRead; the read carries on in the background and is kept when
+// it lands. What has not landed by then is unread, which the tier's fail mode answers for
+// (refusal). One such read is under way per account at a time. Once an admission gave up on it,
+// the next ones do not wait for it, and after one that did not land the next is asked only Fresh
+// later, so an outage costs an admission at most one wait.
+func (m *money) firstRead(ctx context.Context, key string, owner routing.Owner) {
+	db := m.enforcer.config.DB()
+	if db == nil || m.ctx == nil {
+		return
+	}
+	m.want(key)
+	deadline := time.Now().Add(m.settings.FirstRead)
+	for {
+		m.mu.Lock()
+		acct := m.accounts[key]
+		if acct == nil || m.stopping || !m.unread(acct, key, owner, time.Now()) {
+			m.mu.Unlock()
+			return
+		}
+		reading := acct.reading
+		switch {
+		case reading != nil && acct.readingLate:
+			m.mu.Unlock()
+			return
+		case reading == nil && time.Since(acct.firstFailed) < m.settings.Fresh:
+			m.mu.Unlock()
+			return
+		case reading == nil:
+			reading = make(chan struct{})
+			acct.reading = reading
+			m.reads.Add(1)
+			go m.readFirst(db, key, reading)
+		}
+		m.mu.Unlock()
+		timer := time.NewTimer(max(time.Until(deadline), 0))
+		select {
+		case <-reading:
+			timer.Stop()
+		case <-timer.C:
+			m.mu.Lock()
+			if acct.reading == reading {
+				acct.readingLate = true
+			}
+			m.mu.Unlock()
+			return
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		}
+	}
+}
+
+// unread reports, under m.mu, whether an admission of the owner's work needs a read that never
+// landed: the account's limits, or what one of the owner's subjects with a limit spent. It notes
+// the subjects it needs, so the read that follows reads them.
+func (m *money) unread(acct *account, key string, owner routing.Owner, now time.Time) bool {
+	if !acct.limitsRead.IsZero() && !acct.limited {
+		return false
+	}
+	refs := subjectsOf(owner, limitsOrganization(key))
+	if !acct.limitsRead.IsZero() && !slices.ContainsFunc(refs, func(ref usage.SubjectRef) bool {
+		subject := acct.subjects[ref.Key(usage.CounterPrefix)]
+		return (subject == nil || subject.read.IsZero()) && limited(acct.limits, ref)
+	}) {
+		return false
+	}
+	m.see(acct, refs, now)
+	return true
+}
+
+// readFirst is firstRead's read of one account, which closes reading once it is done.
+func (m *money) readFirst(db *store.Store, key string, reading chan struct{}) {
+	defer m.reads.Done()
+	ctx, cancel := context.WithTimeout(m.ctx, readTimeout)
+	defer cancel()
+	landed := m.readAccounts(ctx, db, []string{key}, true)
+	m.mu.Lock()
+	if acct := m.accounts[key]; acct != nil && acct.reading == reading {
+		acct.reading, acct.readingLate = nil, false
+		if !landed {
+			acct.firstFailed = time.Now()
+		}
+	}
+	m.mu.Unlock()
+	close(reading)
+}
+
+// limitsStale reports, under m.mu, whether what the limits of the owner's work are checked
+// against was last read MaxStale ago or never: the account's limits and resets, or what one of
+// its subjects with a limit spent.
+func (m *money) limitsStale(acct *account, refs []usage.SubjectRef, now time.Time) bool {
+	if acct.limitsRead.IsZero() || now.Sub(acct.limitsRead) > m.settings.MaxStale {
+		return true
+	}
+	for _, ref := range refs {
+		if !limited(acct.limits, ref) {
+			continue
+		}
+		subject := acct.subjects[ref.Key(usage.CounterPrefix)]
+		if subject == nil || subject.read.IsZero() || now.Sub(subject.read) > m.settings.MaxStale {
+			return true
+		}
+	}
+	return false
 }
 
 // readLimits reads the limits and resets of the accounts whose were last read Fresh ago or
-// never, in one query of each, and keeps them; a read that fails keeps the last ones.
-func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) {
+// never, in one query of each, and keeps them; a read that fails keeps the last ones. It says
+// whether the read, when one was due, landed.
+func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) bool {
 	now := time.Now()
 	due := map[string]string{}
 	m.mu.Lock()
@@ -120,7 +253,7 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 	}
 	m.mu.Unlock()
 	if len(due) == 0 {
-		return
+		return true
 	}
 	organizations := slices.Sorted(mapsKeys(due))
 	call, cancel := context.WithTimeout(ctx, readTimeout)
@@ -128,12 +261,12 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 	limits, err := db.LimitsFor(call, organizations)
 	if err != nil {
 		m.failedRead("could not read the customers' spend limits, answering with the last ones read", err, "organizations", len(organizations))
-		return
+		return false
 	}
 	resets, err := db.Resets(call, organizations, earliestWindow(m.settings.Now()))
 	if err != nil {
 		m.failedRead("could not read the customers' usage resets, answering with the last ones read", err, "organizations", len(organizations))
-		return
+		return false
 	}
 	byOrganization := map[string][]store.Limit{}
 	for _, limit := range limits {
@@ -151,6 +284,7 @@ func (m *money) readLimits(ctx context.Context, db *store.Store, keys []string) 
 			m.keepLimits(acct, byOrganization[organization], resetsOf[organization], landed)
 		}
 	}
+	return true
 }
 
 // grantsPass reads the live grants of every account with a limit, every Fresh, on a loop of its
@@ -291,61 +425,84 @@ func earliestWindow(now time.Time) time.Time {
 	return earliest
 }
 
-// plan is, for every account with a limit, the subjects whose spend is due a read and where it
-// is read from. It drops, under m.mu, the subjects unused for Idle.
-func (m *money) plan(keys []string, now time.Time) map[string]*spendRead {
+// plan is, for every account with a limit, the subjects whose spend is due a read (every one
+// when all is set) and where it is read from. It drops the subjects unused for Idle.
+func (m *money) plan(keys []string, now time.Time, all bool) map[string]*spendRead {
 	reads := map[string]*spendRead{}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, key := range keys {
-		acct := m.accounts[key]
-		if acct == nil {
-			continue
+		if read := m.planAccount(key, now, all); read != nil {
+			reads[key] = read
 		}
-		for name, subject := range acct.subjects {
-			if now.Sub(subject.used) > m.settings.Idle {
-				delete(acct.subjects, name)
-			}
-		}
-		for name, chosen := range acct.drawn {
-			if now.Sub(chosen.at) > m.settings.Idle {
-				delete(acct.drawn, name)
-			}
-		}
-		if !acct.limited {
-			continue
-		}
-		source, every := fromShards, m.settings.SumEvery
-		switch {
-		case !m.counted(key):
-		case acct.readThrough:
-			source, every = fromService, 0
-		case m.settings.Counters != nil:
-			source, every = fromCounters, m.settings.SpendEvery
-		default:
-			source, every = fromService, m.settings.Fresh
-		}
-		read := &spendRead{source: source, intervals: map[string][]usage.Interval{}}
-		unread := false
-		for name, subject := range acct.subjects {
-			for _, interval := range usage.Intervals {
-				if _, ok := resolve(acct.limits, subject.ref, interval); ok {
-					read.intervals[name] = append(read.intervals[name], interval)
-				}
-			}
-			if len(read.intervals[name]) > 0 {
-				read.refs = append(read.refs, subject.ref)
-				unread = unread || subject.read.IsZero()
-			}
-		}
-		last := later(acct.spentFrom, acct.spendFailed)
-		if len(read.refs) == 0 || (!unread && now.Sub(last) < every) {
-			continue
-		}
-		slices.SortFunc(read.refs, func(a, b usage.SubjectRef) int { return cmp.Compare(a.Key(""), b.Key("")) })
-		reads[key] = read
 	}
 	return reads
+}
+
+// planAccount is plan for one account. m.mu is held only while the account's subjects are
+// copied, one account at a time, and not while their limits are resolved, so an account with
+// many subjects does not hold up the admissions of every other. The index of the limits is
+// replaced whole when they are read again, never changed, so it is read outside the lock.
+func (m *money) planAccount(key string, now time.Time, all bool) *spendRead {
+	type seen struct {
+		name   string
+		ref    usage.SubjectRef
+		unread bool
+	}
+	m.mu.Lock()
+	acct := m.accounts[key]
+	if acct == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	for name, subject := range acct.subjects {
+		if now.Sub(subject.used) > m.settings.Idle {
+			delete(acct.subjects, name)
+		}
+	}
+	for name, chosen := range acct.drawn {
+		if now.Sub(chosen.at) > m.settings.Idle {
+			delete(acct.drawn, name)
+		}
+	}
+	if !acct.limited {
+		m.mu.Unlock()
+		return nil
+	}
+	source, every := fromShards, m.settings.SumEvery
+	switch {
+	case !m.counted(key):
+	case acct.readThrough:
+		source, every = fromService, 0
+	case m.settings.Counters != nil && now.Sub(acct.countersFailed) >= m.settings.Fresh:
+		source, every = fromCounters, m.settings.SpendEvery
+	default:
+		// No counters, or they failed within Fresh: the service, at its own pace.
+		source, every = fromService, m.settings.Fresh
+	}
+	limits, last := acct.limits, later(acct.spentFrom, acct.spendFailed)
+	subjects := make([]seen, 0, len(acct.subjects))
+	for name, subject := range acct.subjects {
+		subjects = append(subjects, seen{name: name, ref: subject.ref, unread: subject.read.IsZero()})
+	}
+	m.mu.Unlock()
+
+	read := &spendRead{source: source, intervals: map[string][]usage.Interval{}}
+	unread := false
+	for _, subject := range subjects {
+		for _, interval := range usage.Intervals {
+			if _, ok := resolve(limits, subject.ref, interval); ok {
+				read.intervals[subject.name] = append(read.intervals[subject.name], interval)
+			}
+		}
+		if len(read.intervals[subject.name]) > 0 {
+			read.refs = append(read.refs, subject.ref)
+			unread = unread || subject.unread
+		}
+	}
+	if len(read.refs) == 0 || (!all && !unread && now.Sub(last) < every) {
+		return nil
+	}
+	slices.SortFunc(read.refs, func(a, b usage.SubjectRef) int { return cmp.Compare(a.Key(""), b.Key("")) })
+	return read
 }
 
 // readSpend reads what each planned account's subjects spent in their current windows.
@@ -370,10 +527,11 @@ func (m *money) readSpend(ctx context.Context, db *store.Store, reads map[string
 	m.sumShards(ctx, db, sums)
 }
 
-// readCounters reads the subjects' current fields from the usage service's counters, in one
-// pipeline. A subject whose current field of any interval is missing (Redis was flushed, or it
-// never spent) is read from the service instead, which writes the counters again; those come
-// back as reads of their own.
+// readCounters reads the subjects' current fields from the usage service's counters, every
+// account's in one pipeline. A subject whose current field of any interval is missing (Redis was
+// flushed, or it never spent) is read from the service instead, which writes the counters again;
+// so is one the counters' Redis failed to answer within countersTimeout, and its account reads
+// the service, not the counters, for the next Fresh. Those come back as reads of their own.
 func (m *money) readCounters(ctx context.Context, reads []*spendRead) []*spendRead {
 	if len(reads) == 0 {
 		return nil
@@ -392,11 +550,12 @@ func (m *money) readCounters(ctx context.Context, reads []*spendRead) []*spendRe
 			commands = append(commands, client.B().Hmget().Key(ref.Key(usage.CounterPrefix)).Field(fields...).Build())
 		}
 	}
-	call, cancel := context.WithTimeout(ctx, readTimeout)
+	call, cancel := context.WithTimeout(ctx, countersTimeout)
 	defer cancel()
 	answers := client.DoMulti(call, commands...)
 	var missing []*spendRead
 	next := 0
+	logged := false
 	for _, read := range reads {
 		through := &spendRead{source: fromService, from: read.from, spent: read.spent, parent: read}
 		for _, ref := range read.refs {
@@ -404,10 +563,12 @@ func (m *money) readCounters(ctx context.Context, reads []*spendRead) []*spendRe
 			next++
 			values, err := answer.ToArray()
 			if err != nil {
-				if !read.failed {
-					m.failedRead("could not read the usage counters of a customer's limited subjects, answering with what was last read", err)
+				if !logged {
+					logged = true
+					m.failedRead("could not read the usage counters of a customer's limited subjects, reading the usage service instead", err)
 				}
-				read.fail()
+				read.countersFailed = true
+				through.refs = append(through.refs, ref)
 				continue
 			}
 			spent := map[usage.Interval]spentWindow{}
@@ -439,27 +600,56 @@ func (m *money) readCounters(ctx context.Context, reads []*spendRead) []*spendRe
 }
 
 // readService reads the subjects' current windows from the usage service, which answers from
-// its Postgres.
+// its Postgres. The accounts are read together, in calls of whole accounts up to
+// usage.MaxSubjects subjects, so a call that fails fails only the accounts it named.
 func (m *money) readService(ctx context.Context, reads []*spendRead) {
+	var batch []*spendRead
+	subjects := 0
 	for _, read := range reads {
 		if len(read.refs) == 0 {
 			continue
 		}
-		call, cancel := context.WithTimeout(ctx, readTimeout)
-		windows, err := m.settings.Usage.Windows(call, read.refs)
-		cancel()
-		if err != nil {
+		if len(batch) > 0 && subjects+len(read.refs) > usage.MaxSubjects {
+			m.readServiceBatch(ctx, batch)
+			batch, subjects = nil, 0
+		}
+		batch, subjects = append(batch, read), subjects+len(read.refs)
+	}
+	if len(batch) > 0 {
+		m.readServiceBatch(ctx, batch)
+	}
+}
+
+func (m *money) readServiceBatch(ctx context.Context, reads []*spendRead) {
+	var refs []usage.SubjectRef
+	whose := map[string]*spendRead{}
+	for _, read := range reads {
+		refs = append(refs, read.refs...)
+		for _, ref := range read.refs {
+			whose[ref.Key(usage.CounterPrefix)] = read
+		}
+	}
+	call, cancel := context.WithTimeout(ctx, readTimeout)
+	windows, err := m.settings.Usage.Windows(call, refs)
+	cancel()
+	if err != nil {
+		for _, read := range reads {
 			read.fail()
-			m.failedRead("could not read the usage windows of a customer's limited subjects, answering with what was last read", err, "subjects", len(read.refs))
+		}
+		m.failedRead("could not read the usage windows of customers' limited subjects, answering with what was last read", err,
+			"accounts", len(reads), "subjects", len(refs))
+		return
+	}
+	for _, window := range windows {
+		key := window.SubjectRef.Key(usage.CounterPrefix)
+		read := whose[key]
+		if read == nil {
 			continue
 		}
-		for _, window := range windows {
-			key := window.SubjectRef.Key(usage.CounterPrefix)
-			if read.spent[key] == nil {
-				read.spent[key] = map[usage.Interval]spentWindow{}
-			}
-			read.spent[key][window.Interval] = spentWindow{start: window.WindowStart, micros: window.SpentMicros}
+		if read.spent[key] == nil {
+			read.spent[key] = map[usage.Interval]spentWindow{}
 		}
+		read.spent[key][window.Interval] = spentWindow{start: window.WindowStart, micros: window.SpentMicros}
 	}
 }
 

@@ -82,8 +82,11 @@ type Settings struct {
 	// held against them at once, so this is how soon another router's is counted.
 	SumEvery time.Duration
 	// MaxStale is how long an account answers after its last read before its tier's fail
-	// mode decides; 60 s.
+	// mode decides, for its balance and for its limits alike; 60 s.
 	MaxStale time.Duration
+	// FirstRead is how long an admission waits for the first read of an account's limits, or of
+	// what a limited subject spent, before its tier's fail mode decides; 250 ms.
+	FirstRead time.Duration
 	// Idle is how long an unused decision or account is kept; 10 minutes.
 	Idle time.Duration
 	// PendingTTL is how long a hold waits for its row to reach the ledger before it is
@@ -100,6 +103,7 @@ const (
 	defaultSpendEvery = time.Second
 	defaultSumEvery   = 10 * time.Second
 	defaultMaxStale   = time.Minute
+	defaultFirstRead  = 250 * time.Millisecond
 	defaultIdle       = 10 * time.Minute
 	defaultPendingTTL = 10 * time.Minute
 )
@@ -119,6 +123,9 @@ func (s Settings) withDefaults() Settings {
 	}
 	if s.MaxStale <= 0 {
 		s.MaxStale = defaultMaxStale
+	}
+	if s.FirstRead <= 0 {
+		s.FirstRead = defaultFirstRead
 	}
 	if s.Idle <= 0 {
 		s.Idle = defaultIdle
@@ -238,7 +245,7 @@ func (e *Enforcer) Admit(ctx context.Context, owner routing.Owner) (routing.Admi
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	refusal, spend, grants := e.spendable(owner, decided)
+	refusal, spend, grants := e.spendable(ctx, owner, decided)
 	return routing.Admission{
 		DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags, OrganizationID: decided.organization,
 		Spend: spend, Grants: grants,
