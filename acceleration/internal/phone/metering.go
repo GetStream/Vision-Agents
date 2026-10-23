@@ -49,8 +49,8 @@ func (s *Service) dialMeter(vendor string, owner routing.Owner) routing.Meter {
 	}
 }
 
-// numberMonth is the usage id of one month of a number: the same month of the same purchase
-// is billed once, however many times it is recorded.
+// numberMonth is the meter of one month of a number, named by the purchase and the month, so
+// the same month of the same purchase is billed once however many times it is recorded.
 func numberMonth(number store.PhoneNumber, month time.Time) routing.Meter {
 	return routing.Meter{
 		Config: routing.ProviderConfig{Provider: number.Vendor, Model: ModelNumber},

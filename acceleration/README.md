@@ -1371,6 +1371,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
 | `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
+| `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
 | `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
@@ -1440,6 +1441,23 @@ vendor is:
    it used;
 2. one `Register` call in the modality's router registry;
 3. its rates in `prices/vendor.json` (see [Prices](#prices)).
+
+**Telephony is billed by what each vendor bills.** Every text that arrives and every one sent
+is a `phone` row under the line's vendor and channel (`telnyx/sms`, `meta/whatsapp`,
+`linq/imessage`), with `messages`, an SMS's `message_segments` (GSM-7 or UCS-2, as a carrier
+counts them) and the MMS beside it (`media_messages`), priced by `direction`, the other party's
+`country` and, for WhatsApp, its `category` (`service`: the agent only writes inside the
+24-hour window). A WhatsApp or iMessage line sends through the app's own Meta or Linq account,
+so its rows are priced and not billed (`vendor_account = "app"`). Each leg of a call (the call
+placed, each transfer into it, a call that arrived) is a `call_legs` row from when it connected
+until `call.session_ended`, then a `call_minutes` row of its `call_seconds`, billed to whoever
+placed the call, or the app under `phone:inbound`, and priced by direction and country; a leg
+nothing ended is ended at four hours and logged. Placing a call is a free `dial` row, for its
+latency and failures. A number is billed every month it is held, on the day it was bought, at
+the price its vendor quoted (`job:number_rental` after the first month), and a 10DLC brand, a
+campaign's review and each of its months at the registrar's fees (`job:dlc_fees`). While the
+10DLC sandbox holds an app, its texts and minutes are priced and given away
+(`dlc_sandbox = "true"`).
 
 **The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
 an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
