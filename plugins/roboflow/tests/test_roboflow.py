@@ -10,7 +10,9 @@ import PIL.Image
 import pytest
 from av import VideoFrame
 from rfdetr import RFDETRSegPreview
+from rfdetr.assets.model_weights import download_pretrain_weights
 from conftest import skip_blockbuster
+from filelock import FileLock
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -48,6 +50,21 @@ def agent_mock(events_manager: EventManager) -> Agent:
     return agent
 
 
+@pytest.fixture(scope="session")
+def seg_preview_weights(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Download the RF-DETR weights once for all xdist workers.
+
+    rfdetr downloads into the working directory through `<name>.tmp`, so workers
+    that start together overwrite and rename each other's file. The workers share
+    the parent of their base temp dir, which holds the lock.
+    """
+    lock = FileLock(tmp_path_factory.getbasetemp().parent / "rfdetr-weights.lock")
+    with lock:
+        # The file name rfdetr gives RFDETRSegPreview's weights (its ModelWeights entry).
+        download_pretrain_weights("rf-detr-seg-preview.pt")
+
+
+@pytest.mark.usefixtures("seg_preview_weights")
 class TestRoboflowLocalDetectionProcessor:
     def test_init_prebuilt_model(self, assets_dir: pathlib.Path):
         RoboflowLocalDetectionProcessor(model_id="rfdetr-seg-preview")

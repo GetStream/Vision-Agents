@@ -1522,6 +1522,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/incognito`.
             internal var incognito: Swift.Bool?
+            /// What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
+            ///
             /// - Remark: Generated from `#/components/schemas/Session/instructions`.
             internal var instructions: Swift.String?
             /// When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
@@ -1603,7 +1605,7 @@ extension Components {
             ///   - forkedFrom: The session this one continued from, empty for one opened fresh.
             ///   - id:
             ///   - incognito: Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
-            ///   - instructions:
+            ///   - instructions: What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
             ///   - lastResponseAt: When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
             ///   - llm: The provider and model answering, once routing has picked one.
             ///   - modality:
