@@ -448,8 +448,71 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	}
 	// The trunk and rule the number was attached with would otherwise outlive it, billed
 	// and pointing a number nobody holds at a call.
-	s.unwire(ctx, customerID, held.StreamAppPK, held.StreamRouteID, held.StreamTrunkID, "released a number")
+	s.unline(ctx, held, "released a number")
 	return s.store.ReleaseNumber(ctx, customerID, e164, time.Now().UTC())
+}
+
+// unline takes a number off its trunk and deletes its rule, in the app they are in, and
+// forgets them on the number. The trunk is deleted with its last number; one the number had
+// to itself, made before trunks were shared, is not a row and is deleted with it. It is
+// best-effort: a failure is logged, never returned, so it cannot mask what the caller was
+// doing.
+func (s *Service) unline(ctx context.Context, held store.PhoneNumber, why string) {
+	if held.StreamTrunkID == "" {
+		return
+	}
+	stream, err := s.streamToRemove(ctx, held.CustomerID, held.StreamAppPK)
+	if err != nil {
+		s.logger.Error("could not reach the Stream app a line was made in", "why", why,
+			"trunk", held.StreamTrunkID, "route", held.StreamRouteID, "error", err)
+		return
+	}
+	group := store.TrunkGroup{CustomerID: held.CustomerID, StreamAppPK: held.StreamAppPK, Vendor: held.Vendor}
+	err = s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+		trunks, err := tx.Trunks()
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(trunks, func(t store.StreamTrunk) bool { return t.ID == held.StreamTrunkID })
+		if i < 0 {
+			s.deleteLines(ctx, stream, held.StreamRouteID, held.StreamTrunkID, why)
+			return tx.ClearLine(held.E164)
+		}
+		if err := stream.DeleteRoute(ctx, held.StreamRouteID); err != nil {
+			s.logger.Error("could not delete a routing rule", "why", why, "route", held.StreamRouteID, "error", err)
+		}
+		trunk := trunks[i]
+		trunk.Numbers = slices.DeleteFunc(slices.Clone(trunk.Numbers), func(n string) bool { return n == held.E164 })
+		if len(trunk.Numbers) == 0 {
+			if err := stream.DeleteTrunk(ctx, trunk.ID); err != nil {
+				s.logger.Error("could not delete a trunk", "why", why, "trunk", trunk.ID, "error", err)
+			}
+			if err := tx.DeleteTrunk(trunk.ID); err != nil {
+				return err
+			}
+			return tx.ClearLine(held.E164)
+		}
+		allowedIPs, err := s.allowlistFor(held.Vendor)
+		if err != nil {
+			return err
+		}
+		// Stored as it should be either way: the trunk's next update resends its numbers,
+		// which mends one Stream failed to take off.
+		err = stream.UpdateTrunk(ctx, trunk.ID, Trunk{
+			Name: "phone-" + held.Vendor + "-" + held.CustomerID, Numbers: trunk.Numbers, AllowedIPs: allowedIPs,
+		})
+		if err != nil {
+			s.logger.Error("could not take a number off a trunk", "why", why, "trunk", trunk.ID, "error", err)
+		}
+		if err := tx.SaveTrunk(trunk); err != nil {
+			return err
+		}
+		return tx.ClearLine(held.E164)
+	})
+	if err != nil {
+		s.logger.Error("could not take a number off its line", "why", why, "number", held.E164,
+			"trunk", held.StreamTrunkID, "error", err)
+	}
 }
 
 // Attachment points a number at the agent: every caller lands in a call of their own,
@@ -469,10 +532,6 @@ type Attached struct {
 	Bridge  Bridge
 }
 
-// inboundCallTemplate names the call each caller lands in: a fresh uuid, which is the id of
-// the session that answers them, so the call is agent:<session id> like any other.
-const inboundCallTemplate = "{{uuid}}"
-
 // NumberKey is the custom field an inbound call carries the number it rang under, which is
 // how the call that arrives is traced back to the number: its name is the session's.
 const NumberKey = "phone_number"
@@ -480,9 +539,11 @@ const NumberKey = "phone_number"
 // ErrNoSealer says this deployment has no keyring to seal or open a number's trunk password.
 var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: set ROUTER_AUTH_KEK")
 
-// Attach creates the Stream trunk and routing rule for a number and tells the vendor to
-// send calls there. This is what turns a bought number into one that reaches an agent.
-// Attaching a number already attached in this app changes nothing and answers what it has.
+// Attach puts a number on the trunk it shares with the customer's other numbers of its
+// vendor, with a rule of its own, and tells the vendor to send calls there. This is what
+// turns a bought number into one that reaches an agent. Without a key to seal the trunk's
+// password, the number gets a trunk of its own. Attaching a number already attached in this
+// app changes nothing and answers what it has.
 func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, error) {
 	if s.store == nil {
 		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs a database to know who holds it"))
@@ -515,9 +576,33 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
-	if held.StreamTrunkID != "" && held.StreamAppPK == pin {
+	if held.AttachedAt != nil && held.StreamAppPK == pin {
 		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
 			Bridge: Bridge{URI: held.BridgeURI}}, nil
+	}
+	// A number lined in another app is taken off there first: the customer's app is where
+	// its calls go now.
+	if held.StreamTrunkID != "" && held.StreamAppPK != pin {
+		s.unline(ctx, held, "re-attached a number in another app")
+		held.StreamTrunkID, held.StreamRouteID = "", ""
+	}
+
+	if s.sealer != nil {
+		line, err := s.line(ctx, stream, pin, held)
+		if err == nil {
+			attached := Attached{TrunkID: line.TrunkID, RouteID: line.RouteID, Bridge: line.Bridge}
+			// The line stays when this fails: the number's calls go out on it.
+			if err := s.finishAttach(ctx, provider, attachment, pin, attached); err != nil {
+				return Attached{}, err
+			}
+			return attached, nil
+		}
+		if !errors.Is(err, store.ErrNoStoredBridge) {
+			return Attached{}, stack.Wrap(err)
+		}
+		// Attached before its trunk's password was kept, so its trunk cannot be shared: it is
+		// replaced by one of its own, which keeps it.
+		s.unline(ctx, held, "re-attached a number")
 	}
 
 	allowedIPs, err := trunkAllowlist(declared)
@@ -553,7 +638,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		Name:          "phone-" + attachment.E164,
 		TrunkIDs:      []string{trunkID},
 		CalledNumbers: []string{attachment.E164},
-		CallID:        inboundCallTemplate,
+		CallID:        lineCallTemplate,
 		CallType:      defaultCallType,
 		Custom:        map[string]string{NumberKey: attachment.E164},
 	})
@@ -565,39 +650,43 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
 	}
-	record := store.NumberAttachment{
-		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
+	attached := Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge}
+	if err := s.finishAttach(ctx, provider, attachment, pin, attached); err != nil {
+		return Attached{}, err
 	}
-	// The address is not secret and a repeat attach answers it. Stream returns the password
-	// only now, and a vendor that asks per call where to send a caller needs it then. Without
-	// a key it is not kept, rather than kept in the clear.
-	record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
+	committed = true
+	return attached, nil
+}
+
+// finishAttach tells the vendor to send the number's calls to its trunk, and records that
+// they go there.
+func (s *Service) finishAttach(ctx context.Context, provider Provider, attachment Attachment, pin int64, attached Attached) error {
+	record := store.NumberAttachment{
+		TrunkID: attached.TrunkID, RouteID: attached.RouteID, StreamAppPK: pin, CallType: defaultCallType,
+	}
+	// The address is not secret and a repeat attach answers it. A vendor that asks per call
+	// where to send a caller needs the password then. Without a key it is not kept, rather
+	// than kept in the clear.
+	record.BridgeURI, record.BridgeUsername = attached.Bridge.URI, attached.Bridge.Username
 	if s.sealer != nil {
-		sealed, err := s.sealer.SealWithAAD(bridge.Password, bridgeAAD(attachment.CustomerID, attachment.E164))
+		sealed, err := s.sealer.SealWithAAD(attached.Bridge.Password, bridgeAAD(attachment.CustomerID, attachment.E164))
 		if err != nil {
-			return Attached{}, stack.Wrap(err)
+			return stack.Wrap(err)
 		}
 		record.BridgePasswordSealed, record.BridgePasswordKEKVersion = sealed, s.sealer.CurrentVersion()
 	}
 
-	err = provider.ConfigureInbound(ctx, Inbound{E164: attachment.E164, Bridge: bridge})
+	err := provider.ConfigureInbound(ctx, Inbound{E164: attachment.E164, Bridge: attached.Bridge})
 	if err != nil {
-		return Attached{}, stack.Wrap(err)
+		return stack.Wrap(err)
 	}
-	// The vendor has already been told to send calls to trunkID. There is no primitive to
+	// The vendor has already been told to send calls to the trunk. There is no primitive to
 	// un-configure a provider's inbound routing, so a failure here leaves the vendor
-	// pointing at a trunk the defer above is about to delete.
+	// pointing at a trunk that, when it is the number's own, is about to be rolled back.
 	if err := s.store.AttachNumber(ctx, attachment.CustomerID, attachment.E164, record); err != nil {
-		return Attached{}, stack.Wrap(err)
+		return stack.Wrap(err)
 	}
-
-	committed = true
-	// A number attached before is pointed somewhere else now, perhaps in another app, and
-	// what it was attached with is removed from wherever that was.
-	if held.StreamTrunkID != "" && held.StreamTrunkID != trunkID {
-		s.unwire(ctx, attachment.CustomerID, held.StreamAppPK, held.StreamRouteID, held.StreamTrunkID, "re-attached a number")
-	}
-	return Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge}, nil
+	return nil
 }
 
 // InboundBridge is the Stream trunk calls to an attached number of the vendor go to, with

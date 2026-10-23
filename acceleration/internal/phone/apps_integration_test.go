@@ -599,7 +599,7 @@ func (s *AppsSuite) TestAnAttachedNumbersCallersEachLandInACallOfTheirOwn() {
 	rule := s.deployment.Rule(attached.RouteID)
 	s.Require().NotNil(rule)
 	direct := rule["direct_routing_configs"].(map[string]any)
-	s.Equal("{{uuid}}", direct["call_id"], "each caller's call is named for the session answering them")
+	s.Equal(lineCallTemplate, direct["call_id"], "each caller's call is named for the session answering them")
 	s.Equal("agent", direct["call_type"])
 	custom := rule["call_configs"].(map[string]any)["custom_data"].(map[string]any)
 	s.Equal(s.e164, custom[NumberKey], "the call says which number it rang")
@@ -996,7 +996,7 @@ func (s *AppsSuite) TestANumberAttachedBeforeSharedTrunksIsAdoptedAsItIs() {
 	s.Require().NoError(err)
 	routeID, err := stream.CreateRoute(s.ctx, Route{
 		Name: "phone-" + s.e164, TrunkIDs: []string{trunkID}, CalledNumbers: []string{s.e164},
-		CallID: inboundCallTemplate, CallType: defaultCallType, Custom: map[string]string{NumberKey: s.e164},
+		CallID: "{{uuid}}", CallType: defaultCallType, Custom: map[string]string{NumberKey: s.e164},
 	})
 	s.Require().NoError(err)
 	bridge, err = bridge.WithNumber(s.e164)
@@ -1263,4 +1263,92 @@ func (s *AppsSuite) TestAFailedTransferFromTheCallsOwnNumberKeepsTheCallsRow() {
 	resources, err := s.store.CallResourcesInApp(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID)
 	s.Require().NoError(err)
 	s.Len(resources, 1, "the call's own leg is still live")
+}
+
+func (s *AppsSuite) TestAttachingANumberThatAlreadyPlacedCallsKeepsItsTrunk() {
+	s.ownApp()
+	s.sealed()
+	s.own.OneTrunkPerNumber()
+	_, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+	lined := s.number()
+
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(lined.StreamTrunkID, attached.TrunkID)
+	s.Equal(lined.StreamRouteID, attached.RouteID)
+	s.Equal([]string{attached.TrunkID}, s.own.Trunks())
+	s.Equal([]string{attached.RouteID}, s.own.Rules())
+	s.Equal(s.e164, s.vendor.inbound.E164, "the vendor is told to send calls to the line")
+	s.NotNil(s.number().AttachedAt)
+}
+
+func (s *AppsSuite) TestReleasingOneOfTwoNumbersKeepsTheTrunkForTheOther() {
+	s.ownApp()
+	s.sealed()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	other, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: second})
+	s.Require().NoError(err)
+	s.Require().Equal(first.TrunkID, other.TrunkID)
+
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Equal([]string{first.TrunkID}, s.own.Trunks())
+	s.Equal([]string{second}, s.own.TrunkNumbers(first.TrunkID))
+	s.Equal([]string{other.RouteID}, s.own.Rules())
+}
+
+func (s *AppsSuite) TestReleasingTheLastNumberDeletesTheTrunk() {
+	s.sealed()
+	_, err := s.callFrom(s.e164)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Empty(s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+	_, err = s.callFrom(s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err, "the next number does not join the deleted trunk")
+	s.Len(s.deployment.Trunks(), 1)
+}
+
+func (s *AppsSuite) TestAFreedPlaceOnAFullTrunkIsTakenBeforeASiblingIsOpened() {
+	s.sealed()
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	for range trunkCapacity - 1 {
+		_, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+		s.Require().NoError(err)
+	}
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	added, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+
+	s.Require().NoError(err)
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks())
+	s.Equal(first.TrunkID, added.TrunkID)
+	s.Len(s.deployment.TrunkNumbers(first.TrunkID), trunkCapacity)
+}
+
+func (s *AppsSuite) TestReattachingAfterRegistrationTakesTheNumberOffItsSharedTrunk() {
+	s.sealed()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	other, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: second})
+	s.Require().NoError(err)
+	s.ownApp()
+
+	moved, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{second}, s.deployment.TrunkNumbers(first.TrunkID), "the other number keeps its trunk")
+	s.Equal([]string{other.RouteID}, s.deployment.Rules())
+	s.Equal([]string{moved.TrunkID}, s.own.Trunks())
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(moved.TrunkID))
+	s.Equal(int64(4242), s.number().StreamAppPK)
 }

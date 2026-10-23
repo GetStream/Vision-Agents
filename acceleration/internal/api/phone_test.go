@@ -3,9 +3,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // PhoneSuite covers the telephony surface of a deployment that declares every vendor and
@@ -140,4 +144,23 @@ func (s *PhoneSuite) TestOnlyTheAppsOwnBackendMayBuyNumbers() {
 		status, _ := as.call(http.MethodGet, "/v1/phone/numbers", nil)
 		return status
 	})
+}
+
+func (s *PhoneSuite) TestANumberThatOnlyPlacedCallsIsNotListedAsAttached() {
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	number := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: number, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	group := store.TrunkGroup{CustomerID: s.customerID(), Vendor: "telnyx"}
+	s.Require().NoError(s.store.InTrunkGroup(ctx, group, func(_ context.Context, tx *store.TrunkGroupTx) error {
+		return tx.SetLine(number, "trunk-"+s.utils.uuid(), "route-"+s.utils.uuid(), store.NumberBridge{})
+	}))
+
+	var numbers []PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
+
+	s.Require().Len(numbers, 1)
+	s.Nil(numbers[0].StreamTrunkId, "its callers reach no agent")
 }

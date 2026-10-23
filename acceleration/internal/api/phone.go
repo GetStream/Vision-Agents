@@ -718,7 +718,8 @@ func phoneNumber(held store.PhoneNumber) PhoneNumber {
 		tags := held.Tags
 		number.Tags = &tags
 	}
-	if held.StreamTrunkID != "" {
+	// A number on a trunk only to place calls is not attached: its callers reach no agent.
+	if held.AttachedAt != nil {
 		trunk := held.StreamTrunkID
 		number.StreamTrunkId = &trunk
 	}
