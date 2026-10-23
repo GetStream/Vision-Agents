@@ -62,7 +62,8 @@ type ServiceOptions struct {
 	// Recorder files purchases as request rows, so a number's monthly charge shows up in
 	// cost reporting next to what the models cost.
 	Recorder *routing.Recorder
-	// Gate refuses a call to somebody who opted out, or past what the sandbox allows.
+	// Gate refuses a call to somebody who opted out, or past what the sandbox allows, and,
+	// when it is charging, a call or a number the organization may not pay for.
 	Gate *dlc.Gate
 	// PublicURL is where this service is reachable from the internet, which the three
 	// vendors that fetch a call plan on answer need in order to fetch it. Without it those
@@ -329,6 +330,11 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	if err := s.Suspended(ctx, purchase.Owner.CustomerID); err != nil {
 		return store.PhoneNumber{}, err
 	}
+	// A number is charged every month from the day it is bought, so an organization that may
+	// not spend money does not buy one.
+	if err := s.gate.Admit(ctx, purchase.Owner.CustomerID); err != nil {
+		return store.PhoneNumber{}, err
+	}
 	// An app Stream blocked could not use a number, so it does not get to pay for one.
 	if s.apps != nil {
 		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
@@ -557,6 +563,11 @@ func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridg
 		return Bridge{}, err
 	}
 	if err := s.Suspended(ctx, stored.CustomerID); err != nil {
+		return Bridge{}, err
+	}
+	// The vendor bills the minutes of a call it answers as surely as one placed, and an agent
+	// on it is billed work too, so a call to an organization that may not pay is not answered.
+	if err := s.gate.Admit(ctx, stored.CustomerID); err != nil {
 		return Bridge{}, err
 	}
 	password, err := s.sealer.OpenWithAADVersion(stored.PasswordSealed, bridgeAAD(stored.CustomerID, e164), stored.KEKVersion)

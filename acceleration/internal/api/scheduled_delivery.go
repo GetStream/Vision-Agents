@@ -254,7 +254,7 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 			continue
 		}
 		var failure *scheduling.Failure
-		reason = cmp.Or(reason, scheduling.ReasonOf(err))
+		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
 	}
@@ -263,6 +263,22 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		return "", "", &scheduling.Missed{Err: err}
 	}
 	return "", "", &scheduling.Failure{Reason: reason, Final: final, Err: err}
+}
+
+// deliveryReason is the code a failed attempt is recorded under. Refused for money, it is the
+// refusal's own code, such as insufficient_credits, and a later attempt may land once the
+// organization has paid; a failure that carries one says so whatever reason it gave.
+func deliveryReason(err error) string {
+	if answer, refused := moneyError(err); refused {
+		return answer.Code
+	}
+	var failure *scheduling.Failure
+	if errors.As(err, &failure) {
+		if answer, refused := moneyError(failure.Err); refused {
+			return answer.Code
+		}
+	}
+	return scheduling.ReasonOf(err)
 }
 
 // undelivered is a failed attempt recorded under reason.

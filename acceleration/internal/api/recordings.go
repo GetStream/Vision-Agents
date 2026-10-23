@@ -210,6 +210,9 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		audio, provider, failure := s.streams.Speech.Record(ctx, recording)
+		if answer, refused := moneyError(failure); refused {
+			return nil, answer
+		}
 		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs, Voice: audio.Voice})
 		return &recordSpeechResponse{Body: speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
@@ -634,7 +637,7 @@ func (RecordingStatus) Schema(registry huma.Registry) *huma.Schema {
 type SpeechRequest struct {
 	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll."`
 	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
-	Inline   *bool              `json:"inline,omitempty" doc:"Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job." default:"false"`
+	Inline   *bool              `json:"inline,omitempty" doc:"Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error, unless it was refused for money, which is answered 402 or 403 as any request is. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job." default:"false"`
 	Options  *TtsOptions        `json:"options,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 	Text     string             `json:"text" doc:"What to say. Whole paragraphs rather than the sentence at a time a socket takes."`
@@ -686,7 +689,7 @@ type Transcription struct {
 type TranscriptionRequest struct {
 	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns."`
 	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
-	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs." default:"false"`
+	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs." default:"false"`
 	Options  *SttOptions        `json:"options,omitempty"`
 	Source   RecordingSource    `json:"source"`
 	Tags     *map[string]string `json:"tags,omitempty" doc:"Cost labels for this job."`

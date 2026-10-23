@@ -3,6 +3,8 @@
 package api
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
@@ -21,6 +27,9 @@ import (
 // acks let go of what was held against them.
 type AdmissionSuite struct {
 	RouterSuite
+	// line is Telnyx ringing the suite's numbers, and logged what the router said of it.
+	line   telnyxRinger
+	logged *lockedLog
 }
 
 func TestAdmissionSuite(t *testing.T) {
@@ -29,7 +38,13 @@ func TestAdmissionSuite(t *testing.T) {
 
 func (s *AdmissionSuite) SetupSuite() {
 	s.limited = true
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	s.Require().NoError(err)
+	s.telnyxPublicKey, s.telnyxConnectionID = public, "1234567890"
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
+	s.line = telnyxRinger{suite: &s.RouterSuite, private: private}
 }
 
 // SetupTest gives every test an app, and so an organization, of its own: what one test grants,
@@ -223,6 +238,131 @@ func (s *AdmissionSuite) TestCreatingASessionWarmsTheDecision() {
 	s.Equal(http.StatusPaymentRequired, status, "with the balance the warmed account read: %s", payload)
 }
 
+// telephony is every way a customer starts paying a phone vendor: buying a number, placing a
+// call and transferring one, each answering its status and failure.
+func (s *AdmissionSuite) telephony() map[string]func() (int, ErrorDetail) {
+	answer := func(path string, body any) func() (int, ErrorDetail) {
+		return func() (int, ErrorDetail) {
+			status, payload := s.serverClient.call(http.MethodPost, path, body)
+			var answered ErrorResponse
+			_ = json.Unmarshal(payload, &answered)
+			return status, answered.Error
+		}
+	}
+	return map[string]func() (int, ErrorDetail){
+		"buy":      answer("/v1/phone/numbers", BuyNumberRequest{Vendor: "twilio", E164: "+15125551234"}),
+		"call":     answer("/v1/phone/calls", PlaceCallRequest{From: "+15125551234", To: "+15550001111"}),
+		"transfer": answer("/v1/phone/calls/transfer", TransferCallRequest{From: "+15125551234", To: "+15550001111", SessionId: "session-" + s.utils.uuid()}),
+	}
+}
+
+func (s *AdmissionSuite) TestAnOrganizationWithNoCreditCanNeitherBuyNorDialNorTransfer() {
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	for name, ask := range s.telephony() {
+		status, failure := ask()
+		s.Equal(http.StatusPaymentRequired, status, name)
+		s.Equal(codeInsufficientCredits, failure.Code, name)
+	}
+}
+
+func (s *AdmissionSuite) TestASuspendedOrganizationCanNeitherBuyNorDialNorTransfer() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.usage.Suspend(s.T(), s.organization(), "fraud review")
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	for name, ask := range s.telephony() {
+		status, failure := ask()
+		s.Equal(http.StatusForbidden, status, name)
+		s.Equal(codeAccountSuspended, failure.Code, name)
+		s.NotContains(failure.Message, "fraud", name)
+	}
+}
+
+func (s *AdmissionSuite) TestWithCreditTelephonyGetsPastItsMoney() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+
+	for name, ask := range s.telephony() {
+		status, failure := ask()
+		s.NotContains([]int{http.StatusPaymentRequired, http.StatusForbidden}, status, "%s: %s", name, failure.Message)
+	}
+}
+
+func (s *AdmissionSuite) TestACallToANumberOfAnOrganizationThatMayNotPayIsHungUp() {
+	e164 := s.utils.number()
+	s.line.attach(e164, "sip:"+e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	status, _, body := s.line.deliver(s.line.call(e164), true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Hangup/>", "the vendor bills an answered call's minutes, and the agent on it")
+	s.NotContains(body, "trunk-password")
+	s.Contains(s.logged.String(), "may not pay for it")
+	s.Contains(s.logged.String(), "code=insufficient_credits")
+
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.Eventually(func() bool {
+		_, _, body := s.line.deliver(s.line.call(e164), true)
+		return strings.Contains(body, "sip:"+e164+"@trunk.sip.example.test")
+	}, 10*time.Second, 50*time.Millisecond, "answered once it has credit")
+
+	s.usage.Suspend(s.T(), s.organization(), "fraud review")
+	s.Eventually(func() bool {
+		_, _, body := s.line.deliver(s.line.call(e164), true)
+		return strings.Contains(body, "<Hangup/>")
+	}, 10*time.Second, 50*time.Millisecond, "and hung up once suspended")
+	s.Contains(s.logged.String(), "code=account_suspended")
+}
+
+func (s *AdmissionSuite) TestInlineSpeechWithNoCreditIsAPaymentRequired() {
+	status, failure := s.refused(http.MethodPost, "/v1/tts/recordings",
+		SpeechRequest{Text: "hello", Inline: pointerTo(true)})
+
+	s.Equal(http.StatusPaymentRequired, status, "not a 202 with the refusal in its body")
+	s.Equal(codeInsufficientCredits, failure.Code)
+}
+
+// ShadowAdmissionSuite is the admission suite's router with ROUTER_LIMITS_MODE=shadow.
+type ShadowAdmissionSuite struct {
+	RouterSuite
+	logged *lockedLog
+}
+
+func TestShadowAdmissionSuite(t *testing.T) {
+	runSuite(t, new(ShadowAdmissionSuite))
+}
+
+func (s *ShadowAdmissionSuite) SetupSuite() {
+	s.limited, s.limitsMode = true, config.LimitsShadow
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *ShadowAdmissionSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *ShadowAdmissionSuite) TestTelephonyIsAdmittedAndLoggedAsWouldRefuse() {
+	organization := s.app.organization.ID
+	s.Require().Eventually(func() bool {
+		s.serverClient.do(http.MethodPost, "/v1/phone/numbers", BuyNumberRequest{Vendor: "twilio", E164: "+15125551234"}, nil)
+		return strings.Contains(s.logged.String(), `msg="would refuse" organization=`+organization)
+	}, 10*time.Second, 50*time.Millisecond, "the no-credit refusal is worked out and logged")
+
+	for path, body := range map[string]any{
+		"/v1/phone/numbers": BuyNumberRequest{Vendor: "twilio", E164: "+15125551234"},
+		"/v1/phone/calls":   PlaceCallRequest{From: "+15125551234", To: "+15550001111"},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, path, body)
+		s.NotContains([]int{http.StatusPaymentRequired, http.StatusForbidden}, status, "%s is admitted: %s", path, failure)
+	}
+}
+
 // TestAMoneyRefusalIsTheCodeNotTheText makes sure moneyError reads what the policy wrapped,
 // however it was joined on the way.
 func (s *AdmissionSuite) TestAMoneyRefusalIsTheCodeNotTheText() {
@@ -231,4 +371,13 @@ func (s *AdmissionSuite) TestAMoneyRefusalIsTheCodeNotTheText() {
 	_, ok = moneyError(nil)
 	s.False(ok)
 	s.True(strings.HasPrefix(refusedRequest(errors.New("routing: unknown target")).Code, "invalid_request"))
+}
+
+func (s *AdmissionSuite) TestAScheduledDeliveryRefusedForMoneyIsRecordedUnderItsCode() {
+	unpaid := fmt.Errorf("%w: %w", dlc.ErrUnpaid, policy.ErrSuspended)
+
+	s.Equal(codeAccountSuspended, deliveryReason(unpaid), "a call or text the gate refused")
+	s.Equal(codeInsufficientCredits, deliveryReason(undeliveredFinally(scheduling.ReasonFailed, policy.ErrNoCredits)),
+		"a session that could not open for it")
+	s.Equal(scheduling.ReasonOnACall, deliveryReason(undelivered(scheduling.ReasonOnACall, errors.New("on a call"))))
 }

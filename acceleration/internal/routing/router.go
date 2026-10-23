@@ -1025,12 +1025,6 @@ func affordable(candidates []Candidate, refusal error, billable func(ProviderCon
 	return free, nil
 }
 
-// Affordable is the candidates the customer may be served by when Admit's Spend refuses them
-// money, for a modality that picks a candidate after Select, as a fallback does.
-func (r *Router[P]) Affordable(candidates []Candidate, spend error) ([]Candidate, error) {
-	return affordable(candidates, spend, r.recorder.Billable)
-}
-
 // permitted narrows candidates to the ones allowed to do this work at all.
 //
 // It reads like serving and fails like it, but it is a different kind of no. A term is

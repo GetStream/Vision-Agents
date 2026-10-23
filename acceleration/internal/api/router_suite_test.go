@@ -43,6 +43,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -178,6 +179,9 @@ type RouterSuite struct {
 	limited    bool
 	usageFront *usageFront
 	enforcer   *policy.Enforcer
+	// limitsMode is the suite's ROUTER_LIMITS_MODE, for a suite to set before it starts the
+	// harness. Empty is enforce.
+	limitsMode config.LimitsMode
 	// owned are the apps the suite made or used, whose rows must all name a key.
 	ownedMu sync.Mutex
 	owned   []string
@@ -498,7 +502,8 @@ func (s *RouterSuite) SetupSuite() {
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger)
+	// Every text, call and number asks the same admission as a model, as in cmd/router.
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -895,6 +900,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
+		Gate:         gate,
 		Logger:       logger,
 	})
 	s.Require().NoError(err)
@@ -906,6 +912,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Store:     s.store,
 		Live:      s.live,
 		Voices:    s.ttsVoices,
+		Gate:      gate,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -1312,7 +1319,7 @@ func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 const suiteFresh = 100 * time.Millisecond
 
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
-	settings := policy.Settings{Fresh: suiteFresh}
+	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, BudgetEvery: suiteFresh}
 	if s.limited {
 		s.shipping = true
 		s.usage = usagetest.Start(s.T(), usagetest.Options{

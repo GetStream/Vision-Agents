@@ -99,6 +99,11 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		hangUp(w, logger, "hung up a telnyx call to a number of an app whose telephony is suspended", "to", to)
 		return
 	}
+	if answer, refused := moneyError(err); refused {
+		hangUp(w, logger, "hung up a telnyx call to a number of an organization that may not pay for it",
+			"to", to, "code", answer.Code)
+		return
+	}
 	if errors.Is(err, store.ErrNoStoredBridge) {
 		hangUp(w, logger, "hung up a telnyx call to a number attached before its trunk was kept: "+
 			"attach the number again", "to", to)

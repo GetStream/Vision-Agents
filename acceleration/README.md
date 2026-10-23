@@ -422,16 +422,17 @@ customer may do, so an agent's speech never waits on a database:
 - An app's policies are read through the configuration cache the first time it is seen, and
   again in the background every 5 s while it is in use. The authenticated request that first
   names an app starts that read, so its first session usually finds it done.
-- Its organization's money is read by one loop per router every 5 s, for every organization in
-  use at once: from the usage service (`ROUTER_USAGE_URL`), 100 organizations a call, the
-  status, the balance, the spend hard limit and this day's and month's spend; and each budget's
-  spend from Postgres. With no usage service there is no credit or spend hard limit, only
-  budgets.
+- Its organization's money is read every 5 s, for every organization in use at once, from the
+  usage service (`ROUTER_USAGE_URL`), 100 organizations a call: the status, the balance, the
+  spend hard limit and this day's and month's spend. Budgets are summed from Postgres on a loop
+  of their own every 10 s, four at a time, so a slow Postgres never makes a balance stale. With
+  no usage service there is no credit or spend hard limit, only budgets.
 - What this router recorded since is held against the organization by usage id, from the
   moment the row is recorded until a read asked for after the usage service acked it (or,
   with none, after the row was written) has landed: counted twice for a moment, never not at
-  all. A hold no ack reaches, as a row another router's sweeper shipped, is dropped after 10
-  minutes and logged.
+  all. A hold no ack reaches, as a row another router's sweeper shipped, is let go once a read
+  asked for 10 minutes after it has landed, and logged; while no read lands, as through an
+  outage of the usage service, every hold is kept.
 
 In that order: a suspended organization is refused everything, 403 `account_suspended`. A
 balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
@@ -441,8 +442,15 @@ budgets, 402 `spend_limit_reached`. A model the deployment runs itself, or one t
 still served past every one of them but a suspension. An organization is admitted until its
 first read lands. Once it has gone a minute without one, its tier's `fail_mode` decides: a
 closed tier refuses work that costs money until the balance can be read, an open one is
-admitted on the last read. The metrics are `router_admission_refresh_errors_total` and
-`router_admission_oldest_read_seconds`.
+admitted on the last read. The metrics are `router_admission_refresh_errors_total`,
+`router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
+by reason.
+
+Telephony asks the same admission: buying a number, placing or transferring a call, and every
+text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
+so a refusal of money refuses it (402, or 403 `account_suspended`), and a call to one of the
+organization's numbers is hung up. Releasing a number is never refused. A scheduled task that
+could not be delivered for money records the refusal's code.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.

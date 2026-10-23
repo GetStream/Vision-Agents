@@ -118,9 +118,11 @@ var responseDescriptions = map[string]string{
 		"or the month is reached whatever its credit (system_limit_reached), or a budget is " +
 		"spent (spend_limit_reached). The message says which, and for a limit when it resets. " +
 		"Work on a model that costs nothing is still served.",
-	"Forbidden": "The caller is known and this operation is server-side only. It needs " +
-		"Stream-Auth-Type: server and a token carrying server: true, which means it cannot " +
-		"be reached from an end user's device.",
+	"Forbidden": "The caller is known and may not do this. Usually the operation is " +
+		"server-side only: it needs Stream-Auth-Type: server and a token carrying server: true, " +
+		"which means it cannot be reached from an end user's device. With code " +
+		"account_suspended, the organization is suspended, and every request is refused until " +
+		"it is restored; the message says to contact support.",
 	"NotFound": "No such modality, provider or shortcut",
 	"InternalError": "Something went wrong that is not the caller's doing. The body says " +
 		"only that: quote the response's X-Request-Id to find out more.",

@@ -954,6 +954,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
+	// Every text, call and number a customer pays for asks the same admission as a model.
+	if policies != nil {
+		dlcGate.Charging(policies)
+	}
 	telephony, err := buildPhone(settings, vendorConfig, prices, pgStore, liveClient, usageWriter, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
