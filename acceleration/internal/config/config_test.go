@@ -388,6 +388,54 @@ func (s *ConfigSuite) TestAManageKeyOfItsOwnIsTaken() {
 	s.Equal("the-manage-key", config.Auth.ManageKey)
 }
 
+func (s *ConfigSuite) TestAUsageServiceWithoutItsTokenIsRefused() {
+	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
+
+	_, _, err := Load("")
+
+	s.Require().ErrorContains(err, "usage.url")
+	s.ErrorContains(err, "ROUTER_USAGE_TOKEN")
+}
+
+func (s *ConfigSuite) TestAUsageURLThatNamesNoServiceIsRefused() {
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "token")
+	for _, address := range []string{"usage:8070", "http://", "ftp://usage:8070"} {
+		s.T().Setenv("ROUTER_USAGE_URL", address)
+
+		_, _, err := Load("")
+
+		s.ErrorContains(err, "usage.url", address)
+	}
+}
+
+func (s *ConfigSuite) TestAUsageTokenWithoutTheServiceIsAllowed() {
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "the-ingest-token")
+
+	settings, _, err := Load("")
+
+	s.Require().NoError(err, "unsetting the URL alone stops shipping")
+	s.Empty(settings.Usage.URL)
+}
+
+func (s *ConfigSuite) TestTheUsageServiceIsReadAndExported() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("usage:\n  url: http://usage:8070\n  token: from-the-file\n"), 0o600))
+	s.T().Setenv("ROUTER_USAGE_TOKEN", "from-the-environment")
+
+	config, _, err := Load(path)
+
+	s.Require().NoError(err)
+	s.Equal(Usage{URL: "http://usage:8070", Token: "from-the-environment"}, config.Usage)
+	s.Equal("http://usage:8070", os.Getenv("ROUTER_USAGE_URL"), "what a file sets reaches the environment")
+}
+
+func (s *ConfigSuite) TestNoUsageServiceIsTheDefault() {
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Empty(config.Usage.URL)
+}
+
 func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

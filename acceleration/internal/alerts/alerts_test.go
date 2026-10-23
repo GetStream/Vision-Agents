@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,6 +122,108 @@ func (s *AlertsSuite) TestIncreasedHoldsOnlyWhenTheCounterRose() {
 	s.Equal(map[string]any{"value": 2.0, "increase": 2.0}, extra)
 	holds, _ = check(now)
 	s.False(holds)
+}
+
+func (s *AlertsSuite) TestAConditionThatHoldsAsTheLoopStopsIsSent() {
+	ctx, cancel := context.WithCancel(context.Background())
+	var holds atomic.Bool
+	late := Condition{Name: "lost", Level: Page, Check: func(time.Time) (bool, map[string]any) { return holds.Load(), nil }}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.loop(time.Hour, time.Minute, late).Run(ctx)
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	holds.Store(true)
+	cancel()
+	<-done
+
+	s.Len(s.sent(), 1, "what the process's last moments did is checked once more")
+}
+
+func (s *AlertsSuite) TestIncreasedSinceAlertStillHoldsAnIncreaseTheLimitHeldBack() {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: "test_lost_total"})
+	check := IncreasedSinceAlert(func() float64 { return Total(counter) }, time.Minute)
+	start := time.Now()
+
+	holds, _ := check(start)
+	s.False(holds)
+	counter.Inc()
+	holds, _ = check(start.Add(time.Second))
+	s.True(holds, "sent")
+	counter.Inc()
+	holds, _ = check(start.Add(10 * time.Second))
+	s.False(holds, "held back by the limit")
+	holds, extra := check(start.Add(61 * time.Second))
+	s.True(holds, "the second increase is sent once the limit passes")
+	s.Equal(1.0, extra["increase"])
+	holds, _ = check(start.Add(2 * time.Minute))
+	s.False(holds, "and not again")
+}
+
+// lostLoop is a loop over one lost condition of counter, checking every 15 s and sending at
+// most once a minute, on a clock the test moves.
+func (s *AlertsSuite) lostLoop(counter prometheus.Counter, now *time.Time) *Loop {
+	limit := time.Minute
+	return New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: limit,
+		Now: func() time.Time { return *now },
+	}, Condition{Name: "lost", Level: Page, Check: IncreasedSinceAlert(func() float64 { return Total(counter) }, limit)})
+}
+
+// ticks runs the loop's checks at each offset from start, as its ticker would.
+func (s *AlertsSuite) ticks(loop *Loop, now *time.Time, start time.Time, offsets ...time.Duration) {
+	for _, offset := range offsets {
+		*now = start.Add(offset)
+		loop.check()
+	}
+}
+
+func (s *AlertsSuite) TestAnIncreaseJustAfterAnAlertIsSentAtTheFirstTickTheLimitAllows() {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: "test_lost_total"})
+	start := time.Now()
+	now := start
+	loop := s.lostLoop(counter, &now)
+
+	counter.Inc()
+	s.ticks(loop, &now, start, 0)
+	s.Require().Len(s.sent(), 1)
+	counter.Inc() // 5 s after the alert
+	// A ticker drifts by microseconds: the 15 s tick lands just before the 75 s one looks back
+	// to, and the 60 s tick just under the limit, so the 75 s tick is the first that may send.
+	s.ticks(loop, &now, start, 15*time.Second-2*time.Microsecond, 30*time.Second, 45*time.Second,
+		time.Minute-time.Microsecond, 75*time.Second-time.Microsecond)
+
+	s.Len(s.sent(), 2, "the second loss is sent once the limit has passed")
+}
+
+func (s *AlertsSuite) TestOneLossAlertsExactlyOnce() {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: "test_lost_total"})
+	start := time.Now()
+	now := start
+	loop := s.lostLoop(counter, &now)
+
+	// Lost just before a check, which a look-back of limit and interval counts again a minute on.
+	counter.Inc()
+	s.ticks(loop, &now, start, 0, 15*time.Second, 30*time.Second, 45*time.Second, time.Minute,
+		75*time.Second, 90*time.Second, 5*time.Minute)
+
+	s.Len(s.sent(), 1)
+}
+
+func (s *AlertsSuite) TestUnchangedForHoldsOnlyWhenTheReadingStoodStill() {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: "test_written_total"})
+	check := UnchangedFor(func() float64 { return Total(counter) }, time.Minute)
+	start := time.Now()
+
+	holds, _ := check(start)
+	s.True(holds, "nothing was ever written")
+	counter.Inc()
+	holds, _ = check(start.Add(30 * time.Second))
+	s.False(holds)
+	holds, _ = check(start.Add(2 * time.Minute))
+	s.True(holds, "nothing written in the last minute")
 }
 
 func (s *AlertsSuite) TestIncreasingForNeedsBothHalvesOfTheSpan() {

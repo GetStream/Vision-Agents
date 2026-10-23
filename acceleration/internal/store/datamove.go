@@ -571,9 +571,11 @@ func (t dataTable) identity() string {
 	if t.name == "phone_numbers" {
 		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL)"
 	}
-	// A request was billed by the deployment that recorded it, so this one never ships it.
+	// A request was billed by the deployment that recorded it, so this one never ships it, and
+	// what that one's usage service answered for it is not this one's: a reship of the rows
+	// this one shipped or had refused leaves it alone.
 	if t.name == "requests" {
-		return "jsonb_build_object('customer_id', ?::text, 'to_ship', false)"
+		return "jsonb_build_object('customer_id', ?::text, 'to_ship', false, 'shipped_at', NULL, 'ship_error', '')"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

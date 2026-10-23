@@ -97,6 +97,10 @@ func (c *Client) Ship(ctx context.Context, events []Event) (Ack, error) {
 		ack.Duplicates += part.Duplicates
 		ack.Mirrored = ack.Mirrored && part.Mirrored
 		for _, rejection := range part.Rejected {
+			// A service of another version could name an event the batch does not hold.
+			if rejection.Index < 0 || rejection.Index >= len(positions) {
+				return fmt.Errorf("usage: %s: the service refused event %d of a batch of %d", PathEvents, rejection.Index, len(positions))
+			}
 			rejection.Index = positions[rejection.Index]
 			ack.Rejected = append(ack.Rejected, rejection)
 		}

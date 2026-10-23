@@ -112,6 +112,37 @@ func Increased(read func() float64) Check {
 	}
 }
 
+// IncreasedSinceAlert holds when the reading is above what it was when the condition last
+// held, and limit has passed since. Given the loop's limit it holds exactly when the loop
+// sends, so each increase is sent once: one the limit held back is sent once it has passed,
+// where Increased forgets it, and none is sent twice.
+func IncreasedSinceAlert(read func() float64, limit time.Duration) Check {
+	var mu sync.Mutex
+	var baseline float64
+	var fired time.Time
+	return func(now time.Time) (bool, map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		value := read()
+		extra := map[string]any{"value": value, "increase": value - baseline}
+		if value <= baseline || (!fired.IsZero() && now.Sub(fired) < limit) {
+			return false, extra
+		}
+		baseline, fired = value, now
+		return true, extra
+	}
+}
+
+// UnchangedFor holds when the reading is what it was span ago.
+func UnchangedFor(read func() float64, span time.Duration) Check {
+	h := &history{span: span}
+	return func(now time.Time) (bool, map[string]any) {
+		value := read()
+		h.add(now, value)
+		return value == h.at(now.Add(-span), 1)[0], map[string]any{"value": value, "over": span.String()}
+	}
+}
+
 // IncreasingFor holds when the reading went up in each of the last two halves of span, so a
 // failure that keeps happening alerts and one that happened once does not.
 func IncreasingFor(read func() float64, span time.Duration) Check {

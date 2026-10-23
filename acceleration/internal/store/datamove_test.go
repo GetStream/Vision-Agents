@@ -797,13 +797,17 @@ func (s *DataMoveSuite) TestARequestFromBeforeUsageIDsIsImportedWithTheSameIDEve
 
 func (s *DataMoveSuite) TestAnImportedRequestKeepsItsUsageIDAndIsNeverShipped() {
 	usageID := uuid.Must(uuid.NewV7())
+	shippedAt := time.Now().UTC().Add(-time.Minute)
 	s.Require().NoError(s.source.RecordRequest(s.ctx, &Request{UsageID: usageID, Modality: "stt", CustomerID: "acme",
-		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true, ToShip: true}))
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true, ToShip: true,
+		ShippedAt: &shippedAt, ShipError: "missing_api_key"}))
 
 	moved := s.movedRequest(false)
 
 	s.Equal(usageID.String(), moved["usage_id"])
 	s.Equal(false, moved["to_ship"], "the deployment that recorded it bills it")
+	s.Nil(moved["shipped_at"], "what the other deployment's usage service answered stays there")
+	s.Equal("", moved["ship_error"])
 }
 
 // takenRequest writes a request of acme's with the id given, as two deployments' own

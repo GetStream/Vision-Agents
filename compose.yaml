@@ -36,6 +36,9 @@ services:
     environment:
       ROUTER_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/model_router?sslmode=disable
       ROUTER_REDIS_ADDR: redis:6379
+      # The usage service below. While it is down the rows wait in Postgres to be shipped.
+      ROUTER_USAGE_URL: http://usage:8070
+      ROUTER_USAGE_TOKEN: ${USAGE_INGEST_TOKEN:-local-usage-token}
     ports:
       - "8080:8080"
     depends_on:
@@ -44,8 +47,8 @@ services:
       redis:
         condition: service_healthy
 
-  # The usage service, from the router's image, on a database of its own. Nothing calls it
-  # until the router is given ROUTER_USAGE_URL.
+  # The usage service, from the router's image, on a database of its own. The router ships
+  # the usage it records here.
   usage-db:
     image: postgres:16-alpine
     environment:

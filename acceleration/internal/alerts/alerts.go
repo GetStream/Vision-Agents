@@ -92,7 +92,8 @@ func (l *Loop) Add(conditions ...Condition) {
 	l.conditions = append(l.conditions, conditions...)
 }
 
-// Run checks every condition at once and then every interval, until ctx is done.
+// Run checks every condition at once and then every interval, until ctx is done, and once more
+// then: what a process's last moments did, such as the rows its shutdown lost, is still sent.
 func (l *Loop) Run(ctx context.Context) {
 	ticker := time.NewTicker(l.options.Every)
 	defer ticker.Stop()
@@ -100,6 +101,7 @@ func (l *Loop) Run(ctx context.Context) {
 		l.check()
 		select {
 		case <-ctx.Done():
+			l.check()
 			return
 		case <-ticker.C:
 		}

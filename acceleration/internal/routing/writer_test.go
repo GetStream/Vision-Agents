@@ -26,13 +26,17 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
 // WriterSuite runs the writer against a database of its own, since it empties requests and
-// locks the table, and the shared Redis, under a customer of each test's own.
+// locks the table, and the shared Redis, under a customer of each test's own. The shipping
+// tests run the real usage service, on a database of its own, behind an httptest server.
 type WriterSuite struct {
 	suite.Suite
 	ctx      context.Context
@@ -41,6 +45,9 @@ type WriterSuite struct {
 	logs     *lockedBuffer
 	logger   *slog.Logger
 	customer string
+	// organization is the test's own, which its rows are billed to.
+	organization string
+	usageDSN     string
 }
 
 func TestWriterSuite(t *testing.T) {
@@ -70,6 +77,7 @@ func (s *WriterSuite) SetupSuite() {
 
 	s.live, err = live.New(live.Options{Address: address})
 	s.Require().NoError(err)
+	s.usageDSN = usagetest.Database(s.T(), "writer_usage")
 }
 
 func (s *WriterSuite) TearDownSuite() {
@@ -87,6 +95,7 @@ func (s *WriterSuite) SetupTest() {
 	s.logs = &lockedBuffer{}
 	s.logger = slog.New(slog.NewTextHandler(s.logs, nil))
 	s.customer = "writer-" + uuid.NewString()
+	s.organization = usagetest.Organization()
 }
 
 // lockedBuffer is a log the writer writes while the test reads it.
@@ -232,7 +241,8 @@ func (s *WriterSuite) hold(writer *Writer) (release func()) {
 // lostRow is the row a "usage row lost" line carries, decoded as replaying it would.
 var lostRow = regexp.MustCompile(`msg="usage row lost".* row=("(?:[^"\\]|\\.)*")`)
 
-// recording captures what a writer reports to Sentry.
+// recording captures what an alerts loop sends to Sentry, through a real client with no DSN
+// whose BeforeSend keeps each event and drops it.
 type recording struct {
 	mu     sync.Mutex
 	events []*sentry.Event
@@ -251,29 +261,28 @@ func (r *recording) hub(s *WriterSuite) *sentry.Hub {
 	return sentry.NewHub(client, sentry.NewScope())
 }
 
-// lostRows adds up the rows every lost-row event reports.
-func (r *recording) lostRows() int {
+// alerted is the events of the alert named.
+func (r *recording) alerted(name string) []*sentry.Event {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rows := 0
+	var named []*sentry.Event
 	for _, event := range r.events {
-		if event.Tags["usage_alert"] == "lost" {
-			rows += event.Contexts["usage"]["rows"].(int)
+		if event.Tags["usage_alert"] == name {
+			named = append(named, event)
 		}
 	}
-	return rows
+	return named
 }
 
-func (r *recording) tagged(key, value string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	count := 0
-	for _, event := range r.events {
-		if event.Tags[key] == value {
-			count++
+// condition is the router's alert condition named, checked by a loop that allows one event of
+// it every limit.
+func condition(name string, limit time.Duration) alerts.Condition {
+	for _, condition := range Alerts(limit) {
+		if condition.Name == name {
+			return condition
 		}
 	}
-	return count
+	panic("no router alert is named " + name)
 }
 
 func (s *WriterSuite) TestARowIsWrittenOnce() {
@@ -354,12 +363,13 @@ func (s *WriterSuite) TestAFullQueueLosesTheRowLoudly() {
 	}
 
 	s.Require().NotEmpty(lost, "a queue of one cannot take three rows while the first is stuck")
-	s.risen(usageLost.WithLabelValues(lostQueueFull), lostBefore, float64(len(lost)))
+	// A row past the queue is lost by the writer's first stage, which counts it and then logs it.
+	for _, id := range lost {
+		s.Require().Eventually(func() bool { return strings.Contains(s.logs.String(), "usage_id="+id.String()) },
+			5*time.Second, time.Millisecond)
+	}
 	s.Equal(float64(len(lost)), testutil.ToFloat64(usageLost.WithLabelValues(lostQueueFull))-lostBefore)
 	s.Equal(float64(25*len(lost)), testutil.ToFloat64(usageLostMicros)-microsBefore)
-	for _, id := range lost {
-		s.Contains(s.logs.String(), "usage_id="+id.String())
-	}
 	s.Contains(s.logs.String(), `msg="usage row lost" reason=queue_full`)
 	release()
 	s.written(len(sent) - len(lost))
@@ -528,19 +538,26 @@ func (s *WriterSuite) TestWithNoUsageServiceRowsAreNotQueued() {
 
 func (s *WriterSuite) TestTheWriterMarksAMissingKeyUnattributed() {
 	before := testutil.ToFloat64(usageUnattributed)
-	writer := s.newWriter(nil)
-	keyless := s.row(func(request *store.Request) { request.AgentID = "agent-without-a-key" })
-	keyed := s.row(func(request *store.Request) { request.APIKey = "key-1" })
+	service := s.usageService()
+	writer := s.shippingWriter(service, nil)
+	keyless := s.owned(func(request *store.Request) { request.AgentID = "agent-without-a-key" })
+	keyed := s.owned(func(request *store.Request) { request.APIKey = "key-1" })
 
 	writer.enqueue(keyless)
 	writer.enqueue(keyed)
 
-	rows := s.written(2)
-	s.Equal(unattributed, rows[0].APIKey)
+	rows := s.shipped(2)
+	s.Equal(Unattributed, rows[0].APIKey)
 	s.Equal("key-1", rows[1].APIKey)
 	s.Equal(1.0, testutil.ToFloat64(usageUnattributed)-before)
 	s.Contains(s.logs.String(), "agent=agent-without-a-key", "the log names where the owner site that missed it is")
 	s.Contains(s.logs.String(), `level=WARN msg="usage row recorded with no api key or origin"`)
+	keys := map[uuid.UUID]string{}
+	for _, event := range s.events(service) {
+		keys[event.UsageID] = event.APIKey
+	}
+	s.Equal(map[uuid.UUID]string{keyless.request.UsageID: Unattributed, keyed.request.UsageID: "key-1"}, keys,
+		"the service accepts a row no key started")
 }
 
 func (s *WriterSuite) TestManyRequestIDsADataMoveTookDoNotHoldTheWriterUp() {
@@ -658,14 +675,23 @@ func (s *WriterSuite) TestAHungLookupHoldsABatchUpForOneLookupTimeout() {
 }
 
 func (s *WriterSuite) TestTheWriterDefaultsAMissingTier() {
-	writer := s.newWriter(nil)
+	service := s.usageService()
+	writer := s.shippingWriter(service, nil)
+	untiered := s.owned(nil)
+	tiered := s.owned(func(request *store.Request) { request.OrganizationTier = "tier-a" })
 
-	writer.enqueue(s.row(nil))
-	writer.enqueue(s.row(func(request *store.Request) { request.OrganizationTier = "tier-a" }))
+	writer.enqueue(untiered)
+	writer.enqueue(tiered)
 
-	rows := s.written(2)
-	s.Equal(defaultTier, rows[0].OrganizationTier)
+	rows := s.shipped(2)
+	s.Equal(usage.DefaultTier, rows[0].OrganizationTier)
 	s.Equal("tier-a", rows[1].OrganizationTier)
+	tiers := map[uuid.UUID]string{}
+	for _, event := range s.events(service) {
+		tiers[event.UsageID] = event.OrganizationTier
+	}
+	s.Equal(map[uuid.UUID]string{untiered.request.UsageID: usage.DefaultTier, tiered.request.UsageID: "tier-a"}, tiers,
+		"the service accepts both")
 }
 
 func (s *WriterSuite) TestTwoRecordersShareOneWriter() {
@@ -727,48 +753,66 @@ func (s *WriterSuite) TestARowPostgresRefusesIsLostAloneAndTheRestAreWritten() {
 	s.Contains(s.logs.String(), "usage_id="+refused.request.UsageID.String())
 }
 
-func (s *WriterSuite) TestLostRowsAreReportedToSentryAtMostOnceAMinute() {
+func (s *WriterSuite) TestALostRowRaisesTheLostAlert() {
 	var reported recording
-	writer := NewWriter(WriterOptions{
-		Store: s.store, Live: s.live, Logger: s.logger, QueueSize: 1, WriteTimeout: 200 * time.Millisecond, Hub: reported.hub(s),
-	})
+	limit, every := time.Second, 50*time.Millisecond
+	loop := alerts.New(alerts.Options{
+		Hub: reported.hub(s), Logger: s.logger, Source: Source("test", "pod"), Tags: map[string]string{"shard": "test"},
+		Every: every, Limit: limit,
+	}, condition("lost", limit))
+	writer := s.newWriter(func(options *WriterOptions) { options.QueueSize = 1 })
 	s.lock()
-
 	s.Require().True(writer.enqueue(s.row(nil)), "the first row is kept, and stuck")
-	lost := 0
-	for range 4 {
-		s.Require().False(writer.enqueue(s.row(nil)))
-		lost++
-		// The first loss is reported at once, and the others wait for the minute to pass.
-		s.Require().Eventually(func() bool { return reported.lostRows() > 0 }, 5*time.Second, time.Millisecond)
-	}
-
-	s.Never(func() bool { return reported.tagged("usage_alert", "lost") > 1 }, 200*time.Millisecond, 10*time.Millisecond)
-	s.Less(reported.lostRows(), lost, "the rest wait for the minute to pass")
-
-	ctx, cancel := context.WithTimeout(s.ctx, 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(s.ctx, 2500*time.Millisecond)
 	defer cancel()
-	writer.Close(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		loop.Run(ctx)
+	}()
 
-	s.Equal(2, reported.tagged("usage_alert", "lost"), "what was waiting is reported as the writer closes")
-	s.Equal(lost+1, reported.lostRows(), "every row lost, the one Close gave up on too, is in a report")
+	lost := 0
+	for started := time.Now(); time.Since(started) < 2200*time.Millisecond; time.Sleep(10 * time.Millisecond) {
+		if !writer.enqueue(s.row(nil)) {
+			lost++
+		}
+	}
+	<-done
+
+	events := reported.alerted("lost")
+	s.Greater(lost, 100)
+	s.GreaterOrEqual(len(events), 2, "rows kept being lost past the limit")
+	s.LessOrEqual(len(events), 3, "one event a second, however many rows are lost")
+	for i := 1; i < len(events); i++ {
+		s.GreaterOrEqual(events[i].Timestamp.Sub(events[i-1].Timestamp), limit-50*time.Millisecond)
+	}
+	s.Equal(sentry.LevelFatal, events[0].Level, "a lost row pages")
+	s.Equal(map[string]string{"usage_alert": "lost", "source": "router/test/pod", "shard": "test"}, events[0].Tags)
 }
 
-func (s *WriterSuite) TestAFailingWriteIsReportedToSentryAtMostOnceAMinute() {
-	var reported recording
+func (s *WriterSuite) TestAWriteThatKeepsFailingRaisesWriteFailing() {
 	errorsBefore := testutil.ToFloat64(usageWriteErrors)
-	writer := s.newWriter(func(options *WriterOptions) {
-		options.WriteTimeout = 50 * time.Millisecond
-		options.Hub = reported.hub(s)
-	})
+	failing := condition("write_failing", time.Minute)
+	writer := s.newWriter(func(options *WriterOptions) { options.WriteTimeout = 50 * time.Millisecond })
 	release := s.lock()
+	start := time.Now()
+	holds, _ := failing.Check(start)
+	s.Require().False(holds)
 
 	writer.enqueue(s.row(nil))
-	s.risen(usageWriteErrors, errorsBefore, 3)
+	s.risen(usageWriteErrors, errorsBefore, 1)
+	holds, _ = failing.Check(start.Add(time.Minute))
+	s.False(holds, "failing for a minute is not yet failing")
+	s.risen(usageWriteErrors, testutil.ToFloat64(usageWriteErrors), 1)
+	holds, extra := failing.Check(start.Add(2 * time.Minute))
+	s.True(holds, "failing for two minutes with nothing written")
+	s.Equal(alerts.Page, failing.Level)
+	s.Contains(extra, "written")
+
 	release()
 	s.written(1)
-
-	s.Equal(1, reported.tagged("component", "usage_writer"))
+	holds, _ = failing.Check(start.Add(3 * time.Minute))
+	s.False(holds, "a row written ends it")
 }
 
 func (s *WriterSuite) TestTheQueueGaugesCountWhatIsNotWritten() {
