@@ -365,9 +365,18 @@ type usage struct {
 }
 
 type tokenDetails struct {
-	CachedTokens int64 `json:"cached_tokens"`
-	TextTokens   int64 `json:"text_tokens"`
-	AudioTokens  int64 `json:"audio_tokens"`
+	CachedTokens        int64          `json:"cached_tokens"`
+	CachedTokensDetails *modalityCount `json:"cached_tokens_details"`
+	TextTokens          int64          `json:"text_tokens"`
+	AudioTokens         int64          `json:"audio_tokens"`
+	ImageTokens         int64          `json:"image_tokens"`
+	ReasoningTokens     int64          `json:"reasoning_tokens"`
+}
+
+type modalityCount struct {
+	TextTokens  int64 `json:"text_tokens"`
+	AudioTokens int64 `json:"audio_tokens"`
+	ImageTokens int64 `json:"image_tokens"`
 }
 
 type serverItem struct {
@@ -1393,18 +1402,32 @@ func (s *STS) speaker() sts.Participant {
 	return s.participant
 }
 
-// usageOf is what a reply cost in this package's words.
+// usageOf is what a reply cost in this package's words. OpenAI bills each modality at its
+// own rate, text far below audio, so the split is kept; the reasoning is inside the output
+// text.
 func usageOf(reported *usage) sts.Usage {
 	if reported == nil {
 		return sts.Usage{}
 	}
 	cost := sts.Usage{InputTokens: reported.InputTokens, OutputTokens: reported.OutputTokens}
-	if reported.InputTokenDetails != nil {
-		cost.CachedInputTokens = reported.InputTokenDetails.CachedTokens
-		cost.InputAudioTokens = reported.InputTokenDetails.AudioTokens
+	if input := reported.InputTokenDetails; input != nil {
+		cost.CachedInputTokens = input.CachedTokens
+		cost.InputTextTokens = input.TextTokens
+		cost.InputAudioTokens = input.AudioTokens
+		cost.InputImageTokens = input.ImageTokens
+		if cached := input.CachedTokensDetails; cached != nil {
+			cost.CachedInputTextTokens = cached.TextTokens
+			cost.CachedInputAudioTokens = cached.AudioTokens
+			cost.CachedInputImageTokens = cached.ImageTokens
+		}
 	}
-	if reported.OutputTokenDetails != nil {
-		cost.OutputAudioTokens = reported.OutputTokenDetails.AudioTokens
+	if output := reported.OutputTokenDetails; output != nil {
+		cost.OutputTextTokens = output.TextTokens
+		cost.OutputAudioTokens = output.AudioTokens
+		cost.ReasoningTokens = output.ReasoningTokens
+		// The split replaces the output total in the price, so whatever the details leave
+		// out is billed as text rather than not at all.
+		cost.OutputTextTokens += max(reported.OutputTokens-output.TextTokens-output.AudioTokens, 0)
 	}
 	return cost
 }

@@ -58,10 +58,12 @@ date; it rarely gives the API model id, and almost never gives a price. Those tw
 config is made of, so a subagent told "the id is probably X" will write X and move on. Name the
 gap instead and tell it to settle the question from the vendor's own docs and report what it
 found — `router.yaml` treats price as something this deployment is billed, not a guess.
-Tell it two more price facts: a missing `per_million_cached_input_tokens` bills cached tokens at
-the input rate, so write the vendor's cached rate when it has one; and a model the deployment
-runs itself takes `local: true` instead of a price, or it is logged as billable work with no
-price.
+Tell it three more price facts: a missing `per_million_cached_input_tokens` bills cached tokens at
+the input rate, so write the vendor's cached rate when it has one; cache writes, a long-prompt
+surcharge, service tiers and per-modality speech rates go in
+`per_million_cache_write_input_tokens`, `context_tiers`, `service_tiers` and `rates` (the
+OpenAI and Gemini Live entries are the examples); and a model the deployment runs itself takes
+`local: true` instead of a price, or it is logged as billable work with no price.
 
 Tell each subagent to finish with a draft PR per [pr](../pr/SKILL.md), and to commit per
 [commit](../commit/SKILL.md). A subagent that cannot get the model working must still say so and

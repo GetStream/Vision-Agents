@@ -5,7 +5,9 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
@@ -25,6 +27,23 @@ func legacyCostMicros(p Price, usage Usage) int64 {
 		p.PerImage*float64(usage.Images) +
 		p.PerMegapixel*float64(usage.Pixels)/1_000_000
 	return int64(dollars * 1_000_000)
+}
+
+// atItsContextTier is the price a prompt of that length is billed at: the legacy price knew
+// no long-prompt tier, so a usage past one is compared with the rates the tier multiplies.
+func atItsContextTier(p Price, usage Usage) Price {
+	billed := p
+	for _, tier := range p.ContextTiers {
+		if usage.InputTokens <= tier.AboveInputTokens {
+			continue
+		}
+		billed = p
+		billed.PerMillionInputTokens *= tier.Input
+		billed.PerMillionCachedInputTokens *= tier.Input
+		billed.PerMillionCacheWriteInputTokens *= tier.Input
+		billed.PerMillionOutputTokens *= tier.Output
+	}
+	return billed
 }
 
 // legacyRequestMicros is how a search was priced before: the rate per thousand set outright.
@@ -95,7 +114,7 @@ func (s *RoutingSuite) TestPriceEntriesCostWhatPriceCostMicrosDid() {
 		for _, provider := range section.Providers {
 			name := string(modality) + "/" + provider.Name()
 			for _, usage := range usages {
-				price := provider.Price
+				price := atItsContextTier(provider.Price, usage)
 				if usage == cached && price.PerMillionInputTokens != 0 && price.PerMillionCachedInputTokens == 0 {
 					atTheInputRate = append(atTheInputRate, name)
 					price.PerMillionCachedInputTokens = price.PerMillionInputTokens
@@ -130,7 +149,7 @@ func (s *RoutingSuite) TestPriceEntriesCostWhatPriceCostMicrosDidForAnyUsage() {
 					Images:       random.Int64N(5),
 					Pixels:       random.Int64N(20_000_000),
 				}
-				price := provider.Price
+				price := atItsContextTier(provider.Price, usage)
 				if price.PerMillionCachedInputTokens != 0 {
 					usage.CachedInputTokens = random.Int64N(input + 1)
 				}
@@ -178,6 +197,29 @@ func (s *RoutingSuite) TestAServiceTierThePriceListDoesNotNameIsPricedAtTheDefau
 
 	s.EqualValues(1_000_000, quote(list, LLM, provider, map[string]string{"service_tier": "flex"}, used).CostMicros)
 	s.EqualValues(2_000_000, quote(list, LLM, provider, map[string]string{"service_tier": "default"}, used).CostMicros)
+}
+
+func (s *RoutingSuite) TestATierThePriceListDoesNotNameIsLoggedOnce() {
+	provider := ProviderConfig{Provider: "openai", Model: "gpt", Price: Price{
+		PerMillionInputTokens: 2,
+		ServiceTiers:          map[string]float64{"flex": 0.5},
+	}}
+	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
+	s.Require().NoError(err)
+	logs := &bytes.Buffer{}
+	done := make(chan struct{})
+	close(done)
+	// It keeps every stat in its queue rather than writing it anywhere.
+	recorder := &Recorder{modality: LLM, live: &live.Client{}, pricer: list, logger: slog.New(slog.NewTextHandler(logs, nil)),
+		queue: make(chan queued, 16), done: done}
+
+	for _, tier := range []string{"turbo", "turbo", "flex", "default", ""} {
+		recorder.Record(provider, Stat{Usage: Usage{InputTokens: 1_000}, Attributes: map[string]string{"service_tier": tier}})
+	}
+
+	s.Equal(1, strings.Count(logs.String(), "does not name"), "one line per model and tier, and none for a tier it names")
+	s.Contains(logs.String(), "service_tier=turbo")
+	s.Contains(logs.String(), "model=gpt")
 }
 
 func (s *RoutingSuite) TestConfigRejectsAServiceTierAtNoRate() {

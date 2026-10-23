@@ -9,7 +9,11 @@
 # hour by the throughput you measured. A model sets whichever unit it is billed in and
 # leaves the rest at zero. A model with no price costs zero and is logged as billable work
 # with no price, unless its price says free: true or the model says local: true, which is
-# one this deployment runs itself.
+# one this deployment runs itself. rates prices what the per_* fields do not name, such as a
+# speech-to-speech model's tokens by modality, as usd per a number of units; context_tiers
+# multiply the input and output rates of a whole request whose prompt is longer than
+# above_input_tokens; service_tiers multiply every rate of a request the vendor says it
+# served at that tier.
 #
 # supports lists the optional terms a model can express: diarization, a speaking speed, a
 # domain filter. A request asking for one is only routed to a model that declared it, so a
@@ -2096,10 +2100,9 @@ tts:
 # ability to call a function or take a typed turn, and the two transcripts whether the model
 # writes down what it heard and what it said.
 #
-# Prices are estimates. These models bill audio in, audio out and text at three different
-# rates, and Price has one token bucket, so the audio rates are applied to every token and
-# the split is lost. It is the perplexity/sonar treatment, and the same caveat: what makes
-# it an estimate is the shape of Price, not the vendor's list.
+# OpenAI Realtime and Gemini Live bill each modality at its own rate, text far below audio,
+# and report the split on every reply, so their rates are by modality. The per-token rates
+# beside them are the audio ones, and price a reply whose vendor reported only its totals.
 sts:
   providers:
     # Gemini 3.8 Live, generally available since September 2026 and what Google now point
@@ -2110,7 +2113,11 @@ sts:
     # Tools are non-blocking by default: the model closes its turn when it calls one, so a
     # slow tool no longer holds the conversation, though it stays quiet until the answer
     # comes. It takes no thinking level. Turns are a silence timer, not semantic. Billed
-    # like 3.1: audio in at $3/1M tokens, out at $12/1M. Google do not train on paid-tier
+    # like 3.1, per million tokens: text in at $0.75, images and video at $1, audio at $3;
+    # text out at $4.50, thinking included, and audio at $12
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-10-23). Each turn is billed for the
+    # whole context so far, and Google publish no cached rate for these models, so a cached
+    # token costs what a fresh one does. Google do not train on paid-tier
     # traffic and log it "for a limited period of time" with no figure, with no
     # zero-retention path on the Developer API, so this cannot serve a request naming a
     # retention ceiling.
@@ -2128,6 +2135,12 @@ sts:
       price:
         per_million_input_tokens: 3.0
         per_million_output_tokens: 12.0
+        rates:
+          input_text_tokens: { usd: 0.75, per: 1000000 }
+          input_image_tokens: { usd: 1.00, per: 1000000 }
+          input_audio_tokens: { usd: 3.00, per: 1000000 }
+          output_text_tokens: { usd: 4.50, per: 1000000 }
+          output_audio_tokens: { usd: 12.00, per: 1000000 }
 
     # Gemini 3.8 Live Extended Thinking, a separate model id rather than a setting on the
     # one above. It reasons in the background and runs tools asynchronously while speaking
@@ -2136,7 +2149,7 @@ sts:
     # both at high thinking and 1.35s to first audio. It refuses a session
     # without a thinking level and the provider sends low, its floor, unless overwrites say
     # otherwise, so the benchmark figures are for a slower setting than the default. Same
-    # rates as 3.8 Live, with the thinking billed as output. Same data terms.
+    # rates as 3.8 Live, with the thinking billed as text output. Same data terms.
     - provider: gemini
       model: gemini-3.8-live-extended-thinking
       description: "Near the top of the Artificial Analysis speech-to-speech board. Thinks in the background and talks while a tool runs. Sees images."
@@ -2151,6 +2164,12 @@ sts:
       price:
         per_million_input_tokens: 3.0
         per_million_output_tokens: 12.0
+        rates:
+          input_text_tokens: { usd: 0.75, per: 1000000 }
+          input_image_tokens: { usd: 1.00, per: 1000000 }
+          input_audio_tokens: { usd: 3.00, per: 1000000 }
+          output_text_tokens: { usd: 4.50, per: 1000000 }
+          output_audio_tokens: { usd: 12.00, per: 1000000 }
 
     # Gemini 3.1 Flash Live, which Google now call a legacy preview in favour of 3.8 Live.
     # Kept rather than removed because it still answers, passes the live suite and is the
@@ -2173,12 +2192,21 @@ sts:
       price:
         per_million_input_tokens: 3.0
         per_million_output_tokens: 12.0
+        rates:
+          input_text_tokens: { usd: 0.75, per: 1000000 }
+          input_image_tokens: { usd: 1.00, per: 1000000 }
+          input_audio_tokens: { usd: 3.00, per: 1000000 }
+          output_text_tokens: { usd: 4.50, per: 1000000 }
+          output_audio_tokens: { usd: 12.00, per: 1000000 }
 
     # GPT-Realtime-2.1, GPT-Realtime-2's update on the same socket and at the same rates,
     # better at spoken letters and digits, silence, noise and being interrupted. Artificial
     # Analysis put it at 75.2 on their speech-to-speech index against 2's 73.6, and it
     # resolves 45.7% of their tau-Voice support calls against 39.8%, at 1.21s to first
-    # audio. Audio in at $32/1M tokens, $0.40/1M cached, out at $64/1M. OpenAI do not train
+    # audio. Per million tokens: audio in at $32, $0.40 cached, out at $64; text in at $4,
+    # $0.40 cached, out at $24, reasoning included; images in at $5, $0.50 cached
+    # (developers.openai.com/api/docs/pricing, read 2026-10-23). The instructions are text,
+    # and most of a voice session's prompt. OpenAI do not train
     # on API traffic and keep it thirty days for abuse monitoring; zero retention is an
     # enterprise setting.
     - provider: openai
@@ -2196,6 +2224,15 @@ sts:
         per_million_input_tokens: 32.0
         per_million_cached_input_tokens: 0.40
         per_million_output_tokens: 64.0
+        rates:
+          input_text_tokens: { usd: 4.00, per: 1000000 }
+          cached_input_text_tokens: { usd: 0.40, per: 1000000 }
+          input_audio_tokens: { usd: 32.00, per: 1000000 }
+          cached_input_audio_tokens: { usd: 0.40, per: 1000000 }
+          input_image_tokens: { usd: 5.00, per: 1000000 }
+          cached_input_image_tokens: { usd: 0.50, per: 1000000 }
+          output_text_tokens: { usd: 24.00, per: 1000000 }
+          output_audio_tokens: { usd: 64.00, per: 1000000 }
 
     # GPT-Realtime-2, which 2.1 above replaces at the same price. It stays declared because
     # callers name it outright, and a name that is no longer declared is an unknown target
@@ -2215,6 +2252,15 @@ sts:
         per_million_input_tokens: 32.0
         per_million_cached_input_tokens: 0.40
         per_million_output_tokens: 64.0
+        rates:
+          input_text_tokens: { usd: 4.00, per: 1000000 }
+          cached_input_text_tokens: { usd: 0.40, per: 1000000 }
+          input_audio_tokens: { usd: 32.00, per: 1000000 }
+          cached_input_audio_tokens: { usd: 0.40, per: 1000000 }
+          input_image_tokens: { usd: 5.00, per: 1000000 }
+          cached_input_image_tokens: { usd: 0.50, per: 1000000 }
+          output_text_tokens: { usd: 24.00, per: 1000000 }
+          output_audio_tokens: { usd: 64.00, per: 1000000 }
 
     # GPT-Live-1 is not a Realtime model: it is served by the Live API at /v1/live/sessions,
     # which is its own package. It listens and speaks at once, has no turn detector to tune,
@@ -2381,6 +2427,16 @@ llm:
         per_million_cached_input_tokens: 0.028
         per_million_output_tokens: 0.26
 
+    # Every OpenAI text model here is priced by the same rules
+    # (developers.openai.com/api/docs/pricing, read 2026-10-23): a prompt written to the
+    # cache, for the 30 minutes the provider asks for by not naming a retention, costs 1.25
+    # times input; a prompt over 272k tokens costs twice the input, cached and write rates
+    # and 1.5 times the output for the whole request; and the tier OpenAI answer that they
+    # served a request at multiplies every rate: flex and batch half, fast twice, and
+    # ultrafast, which only GPT-6 Astra and GPT-6.1 Sol offer, six times. Fast was called
+    # priority until July 2026, and GPT-5.6 and earlier still answer priority for a fast
+    # request, so priority is priced as fast. A tier not named here is priced at the
+    # default rates and logged.
     - provider: openai
       model: gpt-5.6-luna
       description: "OpenAI's small, fast model. Reads images, and costs little."
@@ -2393,7 +2449,10 @@ llm:
       price:
         per_million_input_tokens: 0.20
         per_million_cached_input_tokens: 0.02
+        per_million_cache_write_input_tokens: 0.25
         per_million_output_tokens: 1.20
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # GPT-6 Luna, which takes over from GPT-5.6 Luna as what vlm prefers: half the input
     # price and well under half the output, and Artificial Analysis put it at the lowest cost
@@ -2422,7 +2481,10 @@ llm:
       price:
         per_million_input_tokens: 0.10
         per_million_cached_input_tokens: 0.01
+        per_million_cache_write_input_tokens: 0.125
         per_million_output_tokens: 0.50
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
     # is the dearest of this tier by some way and its thinking is billed as output, which is
@@ -2506,11 +2568,16 @@ llm:
       price:
         per_million_input_tokens: 2.00
         per_million_cached_input_tokens: 0.20
+        per_million_cache_write_input_tokens: 2.50
         per_million_output_tokens: 12.00
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no
-    # longer declared is an unknown target rather than a failover.
+    # longer declared is an unknown target rather than a failover. These are OpenAI's
+    # promotional rates, "available at least through November 21, 2026"; the list price
+    # they replace is $5 in, $0.50 cached and $30 out.
     - provider: openai
       model: gpt-5.6-sol
       description: "OpenAI's previous frontier model, and still what llm-smart prefers. GPT-6 Sol is stronger and cheaper."
@@ -2521,9 +2588,12 @@ llm:
       tier: high-quality
       input_modalities: [image]
       price:
-        per_million_input_tokens: 5.00
-        per_million_cached_input_tokens: 0.50
-        per_million_output_tokens: 30.00
+        per_million_input_tokens: 4.00
+        per_million_cached_input_tokens: 0.40
+        per_million_cache_write_input_tokens: 5.00
+        per_million_output_tokens: 20.00
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # Anthropic's own pick for most work, and top of the Artificial Analysis Intelligence
     # Index at 58 - at max effort. The provider reaches it over Anthropic's
@@ -2614,6 +2684,7 @@ llm:
         per_million_input_tokens: 0.10
         per_million_cached_input_tokens: 0.01
         per_million_output_tokens: 0.50
+        context_tiers: [{ above_input_tokens: 100000, input: 5, output: 5 }]
 
     # Moondream 3 over its OpenAI-compatible chat completions: a small vision model that
     # answers questions about a picture. It accepts tools and never calls one, so it is no
@@ -2657,6 +2728,7 @@ llm:
         per_million_input_tokens: 2.00
         per_million_cached_input_tokens: 0.50
         per_million_output_tokens: 6.00
+        context_tiers: [{ above_input_tokens: 199999, input: 2, output: 2 }]
 
     # GPT-6 Sol, which GPT-6.1 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright, and because it is the Sol that can still be
@@ -2679,7 +2751,10 @@ llm:
       price:
         per_million_input_tokens: 2.00
         per_million_cached_input_tokens: 0.20
+        per_million_cache_write_input_tokens: 2.50
         per_million_output_tokens: 10.00
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2 }
 
     # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
     # llm-thinking prefers, so this is the model the skills run on unless it is down.
@@ -2703,7 +2778,10 @@ llm:
       price:
         per_million_input_tokens: 2.00
         per_million_cached_input_tokens: 0.10
+        per_million_cache_write_input_tokens: 2.50
         per_million_output_tokens: 10.00
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2, ultrafast: 6 }
 
     # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
     # the Artificial Analysis Intelligence Index, the top of the non-Anthropic field. It
@@ -2725,7 +2803,10 @@ llm:
       price:
         per_million_input_tokens: 10.00
         per_million_cached_input_tokens: 1.00
+        per_million_cache_write_input_tokens: 12.50
         per_million_output_tokens: 50.00
+        context_tiers: [{ above_input_tokens: 272000, input: 2, output: 1.5 }]
+        service_tiers: { flex: 0.5, batch: 0.5, fast: 2, priority: 2, ultrafast: 6 }
 
     # Meta's Muse Spark 1.3 on their hosted Model API, 48 on the Artificial Analysis
     # Intelligence Index at max effort and 45 at xhigh, and at around 230-250 output tokens
@@ -3404,7 +3485,7 @@ decision_model:
 
     # Everything below is reached through OpenRouter's Decisions API with one key, at
     # OpenRouter's listed rate (openrouter.ai/api/v1/models?output_modalities=decisions,
-    # read 2026-10-09). None declares a data_policy: what happens to a request depends on
+    # read 2026-10-09) unless its entry says otherwise. None declares a data_policy: what happens to a request depends on
     # the vendor OpenRouter forwards it to, so a customer who asks for a policy is kept
     # away from all of them rather than promised something nobody checked.
     #
@@ -3430,6 +3511,9 @@ decision_model:
 
     # Clef Flash is Cloudflare's 9B decision model, and the most accurate on fine-grained
     # intents of the five JevStation compared (jevstation.com/decision-models, 2026-10-07).
+    # Its rate, like Liquid D1's and Clef's below, is what OpenRouter charged per input
+    # token in the cost it returned with each answer (2026-10-20), which differs from
+    # OpenRouter's listed rate.
     - provider: openrouter
       model: cloudflare/clef-flash
       description: "Cloudflare's small decision model. Very quick, and sharp on fine-grained intents."
@@ -3437,7 +3521,7 @@ decision_model:
       realtime: true
       tier: low-latency
       price:
-        per_million_input_tokens: 0.021
+        per_million_input_tokens: 0.038
 
     - provider: openrouter
       model: respan/span-01-lite
@@ -3455,11 +3539,11 @@ decision_model:
       realtime: true
       tier: low-latency
       price:
-        per_million_input_tokens: 0.04
+        per_million_input_tokens: 0.02
 
     # Clef is the 27B sibling of Clef Flash and tops the Decision Index (Decision Index
-    # 0.2.1, 2026-09-28), at roughly five times Clef Flash's latency and ten times its
-    # price. It is the slower, better judge the accuracy shortcuts below resolve to.
+    # 0.2.1, 2026-09-28), at roughly five times Clef Flash's latency and a little more than
+    # its price. It is the slower, better judge the accuracy shortcuts below resolve to.
     - provider: openrouter
       model: cloudflare/clef
       description: "Cloudflare's large decision model. The most accurate here, slower and dearer than Clef Flash."
@@ -3467,7 +3551,7 @@ decision_model:
       realtime: true
       tier: high-quality
       price:
-        per_million_input_tokens: 0.24
+        per_million_input_tokens: 0.042
 
     # Kev 4B reads 8,192 tokens at most, so a long policy and a long turn can overflow it.
     - provider: openrouter

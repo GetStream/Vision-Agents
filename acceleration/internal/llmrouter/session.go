@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,7 +29,7 @@ var tracer = tracing.Tracer("llmrouter")
 // test.
 type statRecorder interface {
 	Record(routing.ProviderConfig, routing.Stat)
-	Quote(routing.ProviderConfig, routing.Usage) pricing.Quote
+	QuoteStat(routing.ProviderConfig, routing.Stat) pricing.Quote
 }
 
 // errClosed is what a session answers once it has been closed.
@@ -131,9 +132,18 @@ func (s *Session) Model() string { return s.config.Model }
 // Capabilities is what the model serving this session accepts.
 func (s *Session) Capabilities() llm.Capabilities { return s.provider.Capabilities() }
 
-// Quote is what that usage of this session's provider costs, priced as its row is, so a
-// caller can report a cost without reaching for the router's prices.
-func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
+// Quote is what that usage of this session's provider costs on its tokens alone, with no
+// cache writes and at the default service tier. QuoteResponse prices a response as its
+// row is.
+func (s *Session) Quote(usage routing.Usage) pricing.Quote {
+	return s.recorder.QuoteStat(s.config, routing.Stat{Usage: usage})
+}
+
+// QuoteResponse is what a response from this session's provider costs, priced as its row
+// is, so a caller can report a cost without reaching for the router's prices.
+func (s *Session) QuoteResponse(response llm.Response) pricing.Quote {
+	return s.recorder.QuoteStat(s.config, reported(response))
+}
 
 // ContextWindow is how many tokens of prompt this session's model takes, or zero when
 // its config does not say.
@@ -184,18 +194,35 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		"output_tokens", response.Usage.OutputTokens,
 		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
 		"success", served(response), "error_code", errorCode(response))
-	usage := routing.Usage{
-		InputTokens:       response.Usage.InputTokens,
-		CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
-		OutputTokens:      response.Usage.OutputTokens,
+	composed := llm.Compose(params).Scaled(response.Usage.InputTokens)
+	stat := reported(response)
+	usage := stat.Usage
+	stat.Owner = s.owner
+	stat.StartedAt = startedAt
+	stat.OperationID = response.ID
+	stat.Purpose = params.Purpose
+	stat.TurnID = params.TurnID
+	stat.DurationMs = durationMs
+	stat.InputParts = store.InputParts{
+		InstructionTokens:    composed.Instructions,
+		MessageTokens:        composed.Messages,
+		ToolDefinitionTokens: composed.ToolDefinitions,
+		ToolUseTokens:        composed.ToolUse,
+		ImageTokens:          composed.Images,
+		VideoTokens:          composed.Video,
 	}
+	// Time to first token is what the caller actually waited for; the rest of the answer
+	// arrives while they are already reading or hearing it.
+	stat.LatencyMs = measuredLatency(response, ttftMs)
+	stat.Success = served(response)
+	stat.ErrorCode = errorCode(response)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
 			Success: served(response), ErrorCode: errorCode(response),
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
-			OutputTokens: usage.OutputTokens, CostMicros: s.Quote(usage).CostMicros})
+			OutputTokens: usage.OutputTokens, CostMicros: s.recorder.QuoteStat(s.config, stat).CostMicros})
 	}
 
 	// The debit is taken here rather than where the response was asked for, because what a
@@ -208,29 +235,47 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	// it cost exactly as much as one they read.
 	s.debit(charged, response.Usage.InputTokens+response.Usage.OutputTokens)
 
-	composed := llm.Compose(params).Scaled(response.Usage.InputTokens)
-	s.recorder.Record(s.config, routing.Stat{
-		Owner:       s.owner,
-		StartedAt:   startedAt,
-		OperationID: response.ID,
-		Purpose:     params.Purpose,
-		TurnID:      params.TurnID,
-		DurationMs:  durationMs,
-		Usage:       usage,
-		InputParts: store.InputParts{
-			InstructionTokens:    composed.Instructions,
-			MessageTokens:        composed.Messages,
-			ToolDefinitionTokens: composed.ToolDefinitions,
-			ToolUseTokens:        composed.ToolUse,
-			ImageTokens:          composed.Images,
-			VideoTokens:          composed.Video,
+	s.recorder.Record(s.config, stat)
+}
+
+// reported is what a response's row is priced by: its tokens, and what the provider said
+// beyond them.
+func reported(response llm.Response) routing.Stat {
+	return routing.Stat{
+		Usage: routing.Usage{
+			InputTokens:       response.Usage.InputTokens,
+			CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
+			OutputTokens:      response.Usage.OutputTokens,
 		},
-		// Time to first token is what the caller actually waited for; the rest of the
-		// answer arrives while they are already reading or hearing it.
-		LatencyMs: measuredLatency(response, ttftMs),
-		Success:   served(response),
-		ErrorCode: errorCode(response),
-	})
+		Meters:     reportedMeters(response.Usage),
+		Attributes: reportedAttributes(response),
+	}
+}
+
+// reportedMeters is what the provider reported beyond the row's columns: the prompt it
+// wrote to its cache, which it bills at a rate of its own.
+func reportedMeters(usage llm.Usage) pricing.Quantities {
+	if usage.InputTokensDetails.CacheWriteTokens == 0 {
+		return nil
+	}
+	return pricing.Quantities{pricing.CacheWriteInputTokens: usage.InputTokensDetails.CacheWriteTokens}
+}
+
+// reportedAttributes is what the provider said about how it served the response: the tier,
+// which chooses the price, and the reasoning, which is shown and never priced, since the
+// output tokens already include it.
+func reportedAttributes(response llm.Response) map[string]string {
+	attributes := map[string]string{}
+	if response.ServiceTier != "" {
+		attributes["service_tier"] = response.ServiceTier
+	}
+	if reasoning := response.Usage.OutputTokensDetails.ReasoningTokens; reasoning != 0 {
+		attributes["reasoning_tokens"] = strconv.FormatInt(reasoning, 10)
+	}
+	if len(attributes) == 0 {
+		return nil
+	}
+	return attributes
 }
 
 // served reports whether a response ran to its end as asked. One the caller closed first

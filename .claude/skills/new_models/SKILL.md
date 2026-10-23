@@ -76,8 +76,11 @@ is the cheapest thing on the list, because the client already exists and the wor
 Anthropic was in exactly that state — `internal/llm/anthropic` with nothing routed to it.
 
 When you report a price, report the cached-input rate too if the vendor has one: an entry with
-no `per_million_cached_input_tokens` bills cached tokens at its input rate. A model the
-deployment runs itself has no price; its entry says `local: true`.
+no `per_million_cached_input_tokens` bills cached tokens at its input rate. Report the other
+dimensions a vendor prices by as well: cache writes (`per_million_cache_write_input_tokens`),
+a dearer long prompt (`context_tiers`), service tiers (`service_tiers`) and, for speech to
+speech, each modality's rate (`rates`). A model the deployment runs itself has no price;
+its entry says `local: true`.
 
 ## 4. Report
 

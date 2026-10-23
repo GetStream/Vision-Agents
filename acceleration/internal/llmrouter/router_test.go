@@ -326,6 +326,23 @@ func (s *LLMRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
 	}).CostMicros, "a million tokens each way at $1 in and $2 out is $3")
 }
 
+func (s *LLMRouterSuite) TestAResponseIsQuotedWithItsCacheWritesAndTier() {
+	session, _ := s.sessionFor(routing.ProviderConfig{Provider: "openai", Model: "gpt", Price: routing.Price{
+		PerMillionInputTokens:           2,
+		PerMillionCacheWriteInputTokens: 2.5,
+		PerMillionOutputTokens:          12,
+		ServiceTiers:                    map[string]float64{"flex": 0.5},
+	}})
+
+	quote := session.QuoteResponse(llm.Response{ServiceTier: "flex", Usage: llm.Usage{
+		InputTokens:        2_389,
+		InputTokensDetails: llm.InputTokensDetails{CacheWriteTokens: 2_386},
+		OutputTokens:       22,
+	}})
+
+	s.EqualValues(3_118, quote.CostMicros, "3 fresh, 2,386 written and 22 generated tokens, at half price")
+}
+
 func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {
 	session, provider := s.newSession()
 	s.Empty(session.Capabilities().ReasoningEfforts)

@@ -400,6 +400,7 @@ func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
 		},
 		TotalTokens: response.Usage.TotalTokens,
 	})
+	w.ServiceTier(string(response.ServiceTier))
 
 	switch response.Status {
 	case "incomplete":

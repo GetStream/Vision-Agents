@@ -294,6 +294,7 @@ type usageMetadata struct {
 	PromptTokenCount        int64            `json:"promptTokenCount"`
 	CachedContentTokenCount int64            `json:"cachedContentTokenCount"`
 	ResponseTokenCount      int64            `json:"responseTokenCount"`
+	ThoughtsTokenCount      int64            `json:"thoughtsTokenCount"`
 	PromptTokensDetails     []modalityTokens `json:"promptTokensDetails"`
 	ResponseTokensDetails   []modalityTokens `json:"responseTokensDetails"`
 }
@@ -1039,32 +1040,60 @@ func (s *STS) settleTurn(interrupted bool) {
 	s.emitter.Send(turn.Complete(ProviderName, s.options.Model, interrupted, usage))
 }
 
-// usageOf is what the server's count means in this package's words.
+// usageOf is what the server's count means in this package's words. Google bills each
+// modality at its own rate, on the details rather than promptTokenCount, which they fall
+// short of. Thinking is not in responseTokenCount and is billed as text output, as is any
+// part of the response the details leave out, such as a function call.
 func usageOf(reported usageMetadata) sts.Usage {
 	cost := sts.Usage{
 		InputTokens:       reported.PromptTokenCount,
 		CachedInputTokens: reported.CachedContentTokenCount,
-		OutputTokens:      reported.ResponseTokenCount,
+		OutputTokens:      reported.ResponseTokenCount + reported.ThoughtsTokenCount,
+		ReasoningTokens:   reported.ThoughtsTokenCount,
 	}
 	for _, detail := range reported.PromptTokensDetails {
-		if detail.Modality == "AUDIO" {
+		switch detail.Modality {
+		case "TEXT":
+			cost.InputTextTokens += detail.TokenCount
+		case "AUDIO":
 			cost.InputAudioTokens += detail.TokenCount
+		// Google price video at the image rate.
+		case "IMAGE", "VIDEO":
+			cost.InputImageTokens += detail.TokenCount
 		}
 	}
+	// A prompt with no details is priced at the audio rate, the dearest and what a prompt
+	// with no split costs: summed with a turn that has them, it would otherwise go unbilled.
+	if len(reported.PromptTokensDetails) == 0 {
+		cost.InputAudioTokens = reported.PromptTokenCount
+	}
 	for _, detail := range reported.ResponseTokensDetails {
-		if detail.Modality == "AUDIO" {
+		switch detail.Modality {
+		case "TEXT":
+			cost.OutputTextTokens += detail.TokenCount
+		case "AUDIO":
 			cost.OutputAudioTokens += detail.TokenCount
 		}
 	}
+	undescribed := max(reported.ResponseTokenCount-cost.OutputTextTokens-cost.OutputAudioTokens, 0)
+	cost.OutputTextTokens += undescribed + reported.ThoughtsTokenCount
 	return cost
 }
 
+// sumUsage adds two turns' usage, as a reply that spans several is billed for each.
 func sumUsage(a, b sts.Usage) sts.Usage {
 	return sts.Usage{
-		InputTokens:       a.InputTokens + b.InputTokens,
-		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
-		OutputTokens:      a.OutputTokens + b.OutputTokens,
-		InputAudioTokens:  a.InputAudioTokens + b.InputAudioTokens,
-		OutputAudioTokens: a.OutputAudioTokens + b.OutputAudioTokens,
+		InputTokens:            a.InputTokens + b.InputTokens,
+		CachedInputTokens:      a.CachedInputTokens + b.CachedInputTokens,
+		OutputTokens:           a.OutputTokens + b.OutputTokens,
+		InputTextTokens:        a.InputTextTokens + b.InputTextTokens,
+		InputAudioTokens:       a.InputAudioTokens + b.InputAudioTokens,
+		InputImageTokens:       a.InputImageTokens + b.InputImageTokens,
+		CachedInputTextTokens:  a.CachedInputTextTokens + b.CachedInputTextTokens,
+		CachedInputAudioTokens: a.CachedInputAudioTokens + b.CachedInputAudioTokens,
+		CachedInputImageTokens: a.CachedInputImageTokens + b.CachedInputImageTokens,
+		OutputTextTokens:       a.OutputTextTokens + b.OutputTextTokens,
+		OutputAudioTokens:      a.OutputAudioTokens + b.OutputAudioTokens,
+		ReasoningTokens:        a.ReasoningTokens + b.ReasoningTokens,
 	}
 }

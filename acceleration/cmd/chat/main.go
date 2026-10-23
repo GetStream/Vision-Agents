@@ -267,11 +267,7 @@ func (t *talker) ask(ctx context.Context, question string) error {
 // how many tokens it spent and what it cost.
 func (t *talker) summarise(response llm.Response) string {
 	usage := response.Usage
-	costMicros := t.session.Quote(routing.Usage{
-		InputTokens:       usage.InputTokens,
-		CachedInputTokens: usage.InputTokensDetails.CachedTokens,
-		OutputTokens:      usage.OutputTokens,
-	}).CostMicros
+	costMicros := t.session.QuoteResponse(response).CostMicros
 
 	summary := fmt.Sprintf("%s/%s  first token %.0fms  %d in  %d out  $%.6f",
 		response.Provider, response.Model,

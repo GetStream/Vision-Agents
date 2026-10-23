@@ -1,6 +1,7 @@
 package stsrouter
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -135,8 +136,9 @@ func (s *Session) SampleRate() int { return s.provider.SampleRate() }
 // Capabilities is what the model serving this session can be asked for.
 func (s *Session) Capabilities() sts.Capabilities { return s.provider.Capabilities() }
 
-// Quote is what that usage of this session's provider costs, priced as its row is, so a
-// caller can report a cost without reaching for the router's prices.
+// Quote is what that usage of this session's provider costs on its totals, as a reply whose
+// vendor reports no split by modality is priced, so a caller can report a cost without
+// reaching for the router's prices. A row with a split is priced by the split instead.
 func (s *Session) Quote(usage routing.Usage) pricing.Quote { return s.recorder.Quote(s.config, usage) }
 
 // STS exposes the underlying provider so callers can reach provider-specific features.
@@ -196,6 +198,8 @@ func (s *Session) observe(event sts.Event) bool {
 				CachedInputTokens: typed.Usage.CachedInputTokens,
 				OutputTokens:      typed.Usage.OutputTokens,
 			},
+			Meters:     modalityMeters(typed.Usage),
+			Attributes: usageAttributes(typed.Usage),
 			// Time to first byte is what the caller actually waited for; the rest of the
 			// reply arrives while they are already hearing it.
 			LatencyMs: typed.TimeToFirstByteMs,
@@ -259,6 +263,49 @@ func (s *Session) settle(complete sts.ResponseComplete) (reply, float64, bool) {
 	}
 	delete(s.inFlight, complete.ResponseID)
 	return reply{startedAt: current.startedAt.UTC(), errorCode: current.errorCode}, heardMs, true
+}
+
+// modalityMeters is the reply's tokens by modality, which a vendor that bills each at its
+// own rate reports and the price list prices in place of the totals. Each input modality is
+// fresh, its cached part taken out, as the totals' input tokens are. Nil for a vendor that
+// reports no split, which is priced on its totals.
+func modalityMeters(usage sts.Usage) pricing.Quantities {
+	meters := pricing.Quantities{}
+	add := func(meter pricing.Meter, quantity int64) {
+		if quantity > 0 {
+			meters[meter] = quantity
+		}
+	}
+	add(pricing.InputTextTokens, usage.InputTextTokens-usage.CachedInputTextTokens)
+	add(pricing.InputAudioTokens, usage.InputAudioTokens-usage.CachedInputAudioTokens)
+	add(pricing.InputImageTokens, usage.InputImageTokens-usage.CachedInputImageTokens)
+	add(pricing.CachedInputTextTokens, usage.CachedInputTextTokens)
+	add(pricing.CachedInputAudioTokens, usage.CachedInputAudioTokens)
+	add(pricing.CachedInputImageTokens, usage.CachedInputImageTokens)
+	add(pricing.OutputTextTokens, usage.OutputTextTokens)
+	add(pricing.OutputAudioTokens, usage.OutputAudioTokens)
+	if len(meters) == 0 {
+		return nil
+	}
+	return meters
+}
+
+// usageAttributes explains the reply's tokens without pricing them: the thinking, which the
+// output already includes, and the part of the prompt the vendor's split leaves out, which
+// Gemini Live does not bill.
+func usageAttributes(usage sts.Usage) map[string]string {
+	attributes := map[string]string{}
+	if usage.ReasoningTokens > 0 {
+		attributes["reasoning_tokens"] = strconv.FormatInt(usage.ReasoningTokens, 10)
+	}
+	split := usage.InputTextTokens + usage.InputAudioTokens + usage.InputImageTokens
+	if missing := usage.InputTokens - split; split > 0 && missing > 0 {
+		attributes["prompt_tokens_not_in_details"] = strconv.FormatInt(missing, 10)
+	}
+	if len(attributes) == 0 {
+		return nil
+	}
+	return attributes
 }
 
 func errorCode(failure sts.Error) string {
