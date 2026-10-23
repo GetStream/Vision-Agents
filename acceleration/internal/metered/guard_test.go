@@ -118,8 +118,8 @@ var withoutSuite = map[string]string{
 	"internal/llm/custom": "the customer's own endpoint, which no suite can reach",
 	"internal/llm/moondream": "it takes no tools and is there to read pictures, so its own integration test " +
 		"asks it what is in one and checks it reports its tokens",
-	"internal/llm/cerebras": "no model of Cerebras's is in the router's config since gemma-4-31b was archived, " +
-		"and the account answered payment_required (#1149): there is nothing to run the suite on",
+	"internal/llm/cerebras": "no model of Cerebras's is in the router's config since gemma-4-31b was archived " +
+		"(#1149): there is nothing to run the suite on",
 }
 
 // source is one non-test Go file of the tree, parsed.
