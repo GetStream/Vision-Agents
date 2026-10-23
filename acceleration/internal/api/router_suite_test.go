@@ -124,6 +124,23 @@ func runSuite(t *testing.T, s suite.TestingSuite) {
 	suite.Run(t, s)
 }
 
+// BeforeTest, in a suite with a database of its own, requires that no scheduled task is left
+// and empties the table once the test is done, whoever's tasks they are, so none a test leaves
+// due is claimed by the next test's worker. It runs after SetupTest, which may start tasks of its own.
+func (s *RouterSuite) BeforeTest(_, _ string) {
+	if s.database == "" || s.store == nil {
+		return
+	}
+	t := s.T()
+	count, err := s.store.DB().NewSelect().Model((*store.ScheduledTask)(nil)).Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, count, "a task is left from an earlier test or run")
+	t.Cleanup(func() {
+		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
+		require.NoError(t, err)
+	})
+}
+
 // suiteKEK seals the secrets of the keys the suite makes. It is the same for every suite,
 // so a fixture one suite loaded opens in another.
 const suiteKEK = "router suite"
@@ -419,6 +436,12 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(migrate(ctx, pgStore, options.DSN))
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
+	if s.database != "" {
+		// Only a suite's own database is emptied, never the shared one. A run killed by
+		// -timeout skips its cleanups, and the database outlives it.
+		_, err := pgStore.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(ctx)
+		s.Require().NoError(err)
+	}
 
 	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	s.Require().NoError(err)

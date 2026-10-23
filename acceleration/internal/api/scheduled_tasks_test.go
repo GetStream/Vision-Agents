@@ -318,14 +318,6 @@ func (s *ScheduledTasksSuite) SetupSuite() {
 
 func (s *ScheduledTasksSuite) SetupTest() {
 	s.useApp(s.data.createApp())
-	// The test's tasks go with it, once its worker stopped, so none it leaves due is
-	// claimed by the next test's worker.
-	customer := s.customerID()
-	s.T().Cleanup(func() {
-		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).
-			Where("customer_id = ?", customer).Exec(context.Background())
-		s.Require().NoError(err)
-	})
 	s.scheduledMu.Lock()
 	s.scheduled = nil
 	s.scheduledMu.Unlock()
