@@ -60,22 +60,32 @@ func (s *SocketHangUpSuite) SetupTest() {
 	s.useFixture("standard")
 }
 
+// greetingVoice is the voice the socket's session speaks in, started by the time the socket
+// answers with its session.
+func (s *SocketHangUpSuite) greetingVoice() *tts.Emitter {
+	return s.voice.emitter
+}
+
 func (s *SocketHangUpSuite) TestACallerHangingUpMidGreetingIsNoFailure() {
 	connection := s.serverClient.opens("/v1/agents/socket")
 	s.Require().NoError(connection.WriteJSON(map[string]any{
 		"type": "start", "session": map[string]any{"greeting": map[string]any{"text": "hello there"}},
 	}))
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	var answered frame
+	s.Require().NoError(connection.ReadJSON(&answered))
+	s.Require().Equal("session", answered["type"], "the socket answered %v", answered)
 	// Ten seconds of greeting, far more than the socket's 400 ms of queue, so the agent is
 	// still publishing when the caller goes.
+	voice := s.greetingVoice()
 	speaking := make(chan struct{})
 	go func() {
 		defer close(speaking)
 		chunk := audio.PcmData{Samples: make([]int16, 1600), SampleRate: 16_000, Channels: 1}
 		for range 100 {
-			s.voice.emitter.Send(tts.AudioChunk{SynthesisID: "greeting", Audio: chunk})
+			voice.Send(tts.AudioChunk{SynthesisID: "greeting", Audio: chunk})
 		}
 	}()
-	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
 	for {
 		kind, _, err := connection.ReadMessage()
 		s.Require().NoError(err, "the greeting never reached the socket")
