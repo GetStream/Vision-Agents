@@ -301,3 +301,23 @@ func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T)
 		assert.True(t, got, "%s: a name no spelling holds exactly is still refused", said)
 	}
 }
+
+func TestAnIDListedUnderItsPluralIsPassedOn(t *testing.T) {
+	// τ³ retail: get_user_details lists the caller's orders as bare strings, and
+	// get_order_details with one of them was refused, so the agent transferred the caller.
+	tools := []string{"get_user_details", "get_order_details", "get_item_details"}
+	history := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_user_details"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"user_id": "chen_silva_7485", "orders": ["#W3069600", "#W9571698"], "item_ids": ["6065192424"]}`},
+	}
+	call := func(name, arguments string) llm.ToolCall { return llm.ToolCall{Name: name, Arguments: arguments} }
+
+	_, _, _, unfound := unfoundID(history, call("get_order_details", `{"order_id":"#W9571698"}`), tools)
+	assert.False(t, unfound, "an order the user's record lists")
+	_, _, _, unfound = unfoundID(history, call("get_item_details", `{"item_id":"6065192424"}`), tools)
+	assert.False(t, unfound, "an item listed under item_ids")
+	_, _, _, unfound = unfoundID(history, call("get_order_details", `{"order_id":"#W0000000"}`), tools)
+	assert.True(t, unfound, "an order nothing listed is still refused")
+	_, _, _, unfound = unfoundID(history, call("get_order_details", `{"order_id":"6065192424"}`), tools)
+	assert.True(t, unfound, "an item's ID is not an order's")
+}

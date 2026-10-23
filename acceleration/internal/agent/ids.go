@@ -619,7 +619,24 @@ func walkIDs(value any, at string, found func(at, id string)) {
 			walkIDs(inner, name, found)
 		}
 	case []any:
+		// A list under the plural of a thing holds its IDs, "orders" order IDs and "item_ids"
+		// item IDs: τ-bench's get_user_details answers "orders": ["#W3069600", ...], and
+		// get_order_details with one of them was refused as an ID no tool had given.
+		listed := ""
+		if entity, plural := strings.CutSuffix(at, "s"); plural && entity != "" {
+			listed = entity
+			if !strings.HasSuffix(entity, "_id") {
+				listed += "_id"
+			}
+		}
 		for _, inner := range typed {
+			switch inner.(type) {
+			case string, float64:
+				if listed != "" {
+					walkIDs(inner, listed, found)
+					continue
+				}
+			}
 			walkIDs(inner, at, found)
 		}
 	case string:
