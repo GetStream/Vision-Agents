@@ -12,8 +12,8 @@ func TestResultsAreMovedStraightAfterTheirCall(t *testing.T) {
 	spoke := llm.Message{Role: llm.User, Content: "New member ID is XYZ987654."}
 	result := llm.Message{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`}
 
-	assert.Equal(t, []llm.Message{call, result, spoke}, strictToolOrder([]llm.Message{call, spoke, result}))
-	assert.Equal(t, []llm.Message{call, result, spoke}, strictToolOrder([]llm.Message{call, result, spoke}),
+	assert.Equal(t, []llm.Message{call, result, spoke}, StrictToolOrder([]llm.Message{call, spoke, result}))
+	assert.Equal(t, []llm.Message{call, result, spoke}, StrictToolOrder([]llm.Message{call, result, spoke}),
 		"an order that is already right is left alone")
 }
 
@@ -22,7 +22,7 @@ func TestACallWithNoResultIsAnsweredAndAnOrphanResultBecomesANote(t *testing.T) 
 	first := llm.Message{Role: llm.ToolResult, ToolCallID: "c1", Content: "ok"}
 	orphan := llm.Message{Role: llm.ToolResult, ToolCallID: "c0", Content: "earlier"}
 
-	got := strictToolOrder([]llm.Message{orphan, call, first})
+	got := StrictToolOrder([]llm.Message{orphan, call, first})
 	assert.Equal(t, llm.User, got[0].Role)
 	assert.Equal(t, "Tool result: earlier", got[0].Content)
 	assert.Equal(t, []llm.Message{call, first, {Role: llm.ToolResult, ToolCallID: "c2", Content: stoppedResult}}, got[1:])
