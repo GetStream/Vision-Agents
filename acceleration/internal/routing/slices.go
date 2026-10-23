@@ -197,9 +197,25 @@ func (s *Slices) end(record bool) {
 	})
 }
 
-// endLocked records the current slice as ending at, and starts the next there. The caller
-// holds the lock.
+// endLocked records the current slice as ending at, and starts the next there. A slice that
+// crosses a UTC midnight is recorded as one slice per day it covers, each numbered in turn:
+// a row is dated by its start, and each day's rows are what is checked against that day of a
+// provider's records. The caller holds the lock.
 func (s *Slices) endLocked(at time.Time, last bool) {
+	for midnight := nextMidnight(s.from); midnight.Before(at); midnight = nextMidnight(midnight) {
+		s.sliceLocked(midnight, false)
+	}
+	s.sliceLocked(at, last)
+}
+
+// nextMidnight is the first UTC midnight after t.
+func nextMidnight(t time.Time) time.Time {
+	return t.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+}
+
+// sliceLocked records the slice from s.from to at, and starts the next there. The caller
+// holds the lock.
+func (s *Slices) sliceLocked(at time.Time, last bool) {
 	elapsed := at.Sub(s.start)
 	total := int64(elapsed / time.Second)
 	if last && elapsed%time.Second > 0 {
