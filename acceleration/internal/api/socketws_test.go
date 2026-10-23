@@ -219,6 +219,24 @@ func (s *SocketSessionSuite) TestADeviceOpensASocketSessionWithoutAHistory() {
 	}
 }
 
+// The session frame carries the agent's instructions to a backend and never to a device.
+func (s *SocketSessionSuite) TestOnlyTheBackendReadsTheInstructionsInTheSessionFrame() {
+	configured := "Answer about " + s.utils.uuid()
+	config := s.data.instructedAgent(configured)
+	framed := func(caller *testClient) map[string]any {
+		connection := caller.opens("/v1/agents/socket")
+		s.Require().NoError(connection.WriteJSON(map[string]any{
+			"type": "start", "session": map[string]any{"config_id": *config},
+		}))
+		answered := s.readFrame(connection)
+		s.Require().Equal("session", answered["type"], "the socket answered %v", answered)
+		return answered["session"].(map[string]any)
+	}
+
+	s.NotContains(framed(s.client), "instructions")
+	s.Equal(configured, framed(s.serverClient)["instructions"])
+}
+
 // opensIn opens a socket session for device in the zone, and waits until it is answered.
 func (s *SocketSessionSuite) opensIn(device *testClient, zone string) {
 	connection := device.opens("/v1/agents/socket")

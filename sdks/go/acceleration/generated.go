@@ -6585,7 +6585,9 @@ type Session struct {
 	Id         string  `json:"id"`
 
 	// Incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
-	Incognito    *bool   `json:"incognito,omitempty"`
+	Incognito *bool `json:"incognito,omitempty"`
+
+	// Instructions What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
 	Instructions *string `json:"instructions,omitempty"`
 
 	// LastResponseAt When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
@@ -10697,7 +10699,7 @@ type ClientInterface interface {
 	// GetSession One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14913,7 +14915,7 @@ func (c *Client) DeleteSession(ctx context.Context, id string, reqEditors ...Req
 // GetSession One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -30169,7 +30171,7 @@ type ClientWithResponsesInterface interface {
 	// GetSessionWithResponse One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -50989,7 +50991,7 @@ func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, id 
 // GetSessionWithResponse One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
 //
 // Returns a wrapper object for the known response body format(s).
 //

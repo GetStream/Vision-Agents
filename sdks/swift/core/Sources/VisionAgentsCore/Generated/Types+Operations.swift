@@ -262,7 +262,7 @@ internal enum Operations {
     /// One session
     ///
     /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-    /// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
+    /// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for, and the instructions of a running session, which a device is never given.
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.

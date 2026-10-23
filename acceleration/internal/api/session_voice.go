@@ -113,7 +113,7 @@ func (s *Server) startSessionVoice(ctx context.Context, request *startSessionVoi
 		}
 		return nil, invalidRequest(err.Error())
 	}
-	return &sessionVoiceResponse{Body: sessionOf(found)}, nil
+	return &sessionVoiceResponse{Body: sessionOf(ctx, found)}, nil
 }
 
 // stopSessionVoice takes the agent off the session's call.
@@ -125,7 +125,7 @@ func (s *Server) stopSessionVoice(ctx context.Context, request *sessionVoiceRequ
 	if err := found.StopVoice(ctx); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &sessionVoiceResponse{Body: sessionOf(found)}, nil
+	return &sessionVoiceResponse{Body: sessionOf(ctx, found)}, nil
 }
 
 // errVoiceOnAnotherCall refuses naming a call while voice is on a different one.

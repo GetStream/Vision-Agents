@@ -50,6 +50,17 @@ func (s *SessionUpdateSuite) TestADeviceCannotMoveASessionOntoAnotherModel() {
 	s.Nil(s.client.getSession(opened.Id).Title, "a refused update changes nothing")
 }
 
+// A device renaming its session is not given its brief, and the backend still is.
+func (s *SessionUpdateSuite) TestOnlyTheBackendReadsTheBriefBackFromARename() {
+	owner := s.data.createUser()
+	request, brief := s.data.briefed(textSession(nil))
+	opened := s.serverClient.actingFor(owner).createSession(request)
+	renamed := UpdateSessionRequest{Title: pointerTo("Practice")}
+
+	s.Nil(owner.updateSession(opened.Id, renamed).Instructions)
+	s.Equal(brief, value(s.serverClient.actingFor(owner).updateSession(opened.Id, renamed).Instructions))
+}
+
 func (s *SessionUpdateSuite) TestAnotherUserCannotRenameASession() {
 	opened := s.client.createSession(textSession(nil))
 
