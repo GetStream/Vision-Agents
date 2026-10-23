@@ -171,6 +171,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
+        # Who is a member of the conversation's channel, or is being made one.
+        self._channel_members: set[str] = set()
         self.channel_type = "agent"
         self._agent_user_id: str | None = None
         self._track_resolver = TrackResolver()
@@ -330,6 +332,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
                 call=self._call,
             )
         )
+        await self._add_channel_members([core_participant.user_id])
 
     async def _on_sfu_participant_left(self, event: sfu_events.ParticipantLeftEvent):
         core_participant = _to_core_participant(event.participant)
@@ -349,11 +352,49 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
     async def create_conversation(self, call: Call, user: User, instructions: str):
         channel = self.client.chat.channel(self.channel_type, call.id)
-        await channel.get_or_create(
+        response = await channel.get_or_create(
             data=ChannelInput(created_by_id=user.id),
         )
         self.conversation = StreamConversation(instructions, [], channel)
+        self._channel_members = {
+            member.user_id for member in response.data.members if member.user_id
+        }
+        # The people on the call read the conversation from their own apps, and a
+        # channel shows it to its members only. Whoever joins later is added then.
+        on_call = (
+            self._real_connection.participants_state.get_participants()
+            if self._real_connection is not None
+            else []
+        )
+        await self._add_channel_members(
+            [user.id or "", *(participant.user_id for participant in on_call)]
+        )
         return self.conversation
+
+    async def _add_channel_members(self, user_ids: list[str]) -> None:
+        """Make people members of the conversation's channel, so their apps can read it."""
+        if self.conversation is None:
+            return
+        missing = [
+            user_id
+            for user_id in dict.fromkeys(user_ids)
+            if user_id and user_id not in self._channel_members
+        ]
+        if not missing:
+            return
+        # Noted before the request, so a participant who joins meanwhile is not added twice.
+        self._channel_members.update(missing)
+        try:
+            await self.conversation.channel.update(
+                add_members=[
+                    ChannelMemberRequest(user_id=user_id) for user_id in missing
+                ]
+            )
+        except StreamApiException:
+            self._channel_members.difference_update(missing)
+            logger.exception(
+                "Could not add %s to the conversation's channel", ", ".join(missing)
+            )
 
     def _require_authenticated(self) -> None:
         if self._agent_user_id is None:

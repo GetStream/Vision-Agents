@@ -125,6 +125,55 @@ class TestStreamConversation:
         assert request.custom.get("generating") is True
         assert request.custom.get("source") == "agent"
 
+    async def test_the_agents_reply_is_marked_ai_generated(
+        self, stream_conversation, mock_channel
+    ):
+        # Stream's AI components show a message as the agent's streamed reply only when it
+        # is marked so. Unmarked, the agent's words show as a plain bubble with raw Markdown.
+        await stream_conversation.upsert_message(
+            role="assistant", user_id="agent", content="Hi", completed=False
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        request = mock_channel.send_message.call_args[0][0]
+        assert request.custom.get("ai_generated") is True
+
+    async def test_a_participants_turn_is_not_marked_ai_generated(
+        self, stream_conversation, mock_channel
+    ):
+        await stream_conversation.send_message(
+            role="user", user_id="user123", content="Hello"
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        request = mock_channel.send_message.call_args[0][0]
+        assert "ai_generated" not in request.custom
+
+    async def test_every_message_of_a_long_reply_is_marked_ai_generated(
+        self, stream_conversation, mock_channel
+    ):
+        # A reply that outgrows one message goes on in another, which is the agent's too.
+        await stream_conversation.upsert_message(
+            role="assistant",
+            user_id="agent",
+            content="Hi",
+            message_id="reply",
+            completed=False,
+        )
+        await stream_conversation.upsert_message(
+            role="assistant",
+            user_id="agent",
+            content="word " * 400,
+            message_id="reply",
+            completed=True,
+            replace=True,
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        created = [call.args[0] for call in mock_channel.send_message.call_args_list]
+        assert len(created) == 2
+        assert all(request.custom.get("ai_generated") is True for request in created)
+
     async def test_a_message_with_no_sender_is_kept_but_not_written(
         self, stream_conversation, mock_channel
     ):

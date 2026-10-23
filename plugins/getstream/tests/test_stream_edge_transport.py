@@ -6,8 +6,10 @@ from uuid import uuid4
 import pytest
 from getstream.models import QueryUsersPayload, UserRequest
 from getstream.video.rtc import ConnectionManager
+from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from vision_agents.core.edge.types import User
+from vision_agents.plugins.getstream.sfu_events import ParticipantJoinedEvent
 from vision_agents.plugins.getstream.stream_edge_transport import (
     StreamConnection,
     StreamEdge,
@@ -232,3 +234,47 @@ class TestStreamEdge:
             assert created[0].custom == {"is_agent": False}
         finally:
             await edge.close()
+
+    @pytest.mark.integration
+    async def test_the_people_on_the_call_are_members_of_the_conversation(
+        self,
+    ) -> None:
+        """Whoever is on the call, or joins it later, can read the conversation."""
+        edge = StreamEdge()
+        agent_id = f"test-conversation-agent-{uuid4()}"
+        caller_id = f"test-conversation-caller-{uuid4()}"
+        late_id = f"test-conversation-late-{uuid4()}"
+        call = edge.client.video.call("default", str(uuid4()))
+        try:
+            await edge.authenticate(User(id=agent_id, name="Agent"))
+            await edge.create_users([User(id=caller_id), User(id=late_id)])
+            edge._call = call
+            edge._real_connection = ConnectionManager(user_id=agent_id, call=call)
+            edge._real_connection.participants_state._add_participant(
+                Participant(user_id=caller_id, track_lookup_prefix="caller")
+            )
+
+            conversation = await edge.create_conversation(call, User(id=agent_id), "")
+            edge.events.send(
+                ParticipantJoinedEvent(
+                    payload=events_pb2.ParticipantJoined(
+                        participant=Participant(
+                            user_id=late_id, track_lookup_prefix="late"
+                        )
+                    )
+                )
+            )
+            await edge.events.wait()
+
+            response = await conversation.channel.get_or_create()
+            members = {member.user_id for member in response.data.members}
+            assert members == {agent_id, caller_id, late_id}
+        finally:
+            edge._real_connection = None
+            try:
+                await edge.client.chat.channel(edge.channel_type, call.id).delete(
+                    hard_delete=True
+                )
+                await edge.client.delete_users([agent_id, caller_id, late_id])
+            finally:
+                await edge.close()

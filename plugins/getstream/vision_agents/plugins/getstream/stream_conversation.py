@@ -26,6 +26,19 @@ def _source_of(message: Message) -> str:
     return SOURCE_AGENT if message.role == "assistant" else SOURCE_SPEECH
 
 
+def _authorship_of(message: Message) -> dict[str, str | bool]:
+    """The fields a message is created with that say who wrote it.
+
+    ``ai_generated`` is how Stream's AI components tell the agent's streamed reply
+    from what people said, as the Go agent marks it. Set when a message is created,
+    it stays through the updates that follow.
+    """
+    fields: dict[str, str | bool] = {"source": _source_of(message)}
+    if message.role == "assistant":
+        fields["ai_generated"] = True
+    return fields
+
+
 class StreamConversation(Conversation):
     """Persists the message history to a Stream channel with automatic chunking.
 
@@ -142,7 +155,7 @@ class StreamConversation(Conversation):
                     "chunk_group": message.id,
                     "chunk_index": i,
                     "total_chunks": len(chunks),
-                    "source": _source_of(message),
+                    **_authorship_of(message),
                 },
             )
 
@@ -241,7 +254,7 @@ class StreamConversation(Conversation):
                         "chunk_group": message.id,
                         "chunk_index": i,
                         "total_chunks": new_chunk_count,
-                        "source": _source_of(message),
+                        **_authorship_of(message),
                     },
                 )
 
