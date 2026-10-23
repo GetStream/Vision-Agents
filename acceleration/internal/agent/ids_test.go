@@ -261,6 +261,22 @@ func TestANumberReadOutInDashedGroupsIsOneNumber(t *testing.T) {
 	}
 }
 
+func TestASpellingEndsWhereTheCallerStoppedSpelling(t *testing.T) {
+	for said, spelled := range map[string][]string{
+		"Sorry about that. The name is Alkafor, o k a f o r. Mom, mom, look at this.": {"okafor"},
+		"Hi. This is Dana Fisher. That's f i s c h e r. I need to book a flight":      {"fischer"},
+		"The name for the booking is Alvarez, that's a l v a r e z, Will be six":      {"alvarez"},
+		"It's P-A-T-E-L.":                        {"patel"},
+		"J. O. H. N. Smith":                      {"john"},
+		"First name, n o a h. Last name, i t o.": {"noah", "ito"},
+		"Lay Wilson. That's l e i w i l s o n.":  {"leiwilson", "lei", "wilson"},
+		"Name is Alkafor. PIN 4471.":             nil,
+		"Okay. It's j o eight n s m i t h. Uh":   {"nsmith"},
+	} {
+		assert.Equal(t, spelled, spelledNames(said), said)
+	}
+}
+
 func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T) {
 	// Each is what the transcriber wrote on a benchmark call where the name was refused.
 	for said, arguments := range map[string]string{
@@ -269,14 +285,19 @@ func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T)
 		"N n o a h. First name, n o a h. Last name, i t o.":                                      `{"first_name":"Noah","last_name":"Ito"}`,
 		"Noah Ito. That's n o a a last Last name, i t o. First name, n o a h. Last name, i t o.": `{"first_name":"Noah","last_name":"Ito"}`,
 		"Sure. First First name i i v a n Last name, h e r n a n d e z. No, just i v a n":        `{"first_name":"Ivan","last_name":"Hernandez"}`,
-		"Okay. It's j o eight n s m i t h. Uh, do you need my birthday too?":                     `{"full_name":"John Smith"}`,
+		"It's j o eight n s m i t h. Sorry, it's j o h n. That's John. And then s m i t h":       `{"full_name":"John Smith"}`,
 	} {
 		_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: said}},
 			llm.ToolCall{Name: "lookup", Arguments: arguments})
 		assert.False(t, got, said)
 	}
-	_, spelled, got := misspelledName([]llm.Message{{Role: llm.User, Content: "That's f i s c h e r. I need a flight."}},
-		llm.ToolCall{Name: "book_flight", Arguments: `{"passenger_name":"Dana Fisher"}`})
-	assert.True(t, got, "the transcriber's Fisher is still not the Fischer spelled")
-	assert.Equal(t, "fischeri", spelled)
+	for said, arguments := range map[string]string{
+		"That's f i s c h e r. I need a flight.": `{"passenger_name":"Dana Fisher"}`,
+		"The name is Okafor, o k a f o r.":       `{"name":"Kafor"}`,
+		"Okay. It's j o eight n s m i t h. Uh":   `{"full_name":"John Smith"}`,
+	} {
+		_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: said}},
+			llm.ToolCall{Name: "lookup", Arguments: arguments})
+		assert.True(t, got, "%s: a name no spelling holds exactly is still refused", said)
+	}
 }
