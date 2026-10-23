@@ -259,3 +259,19 @@ func TestA2xxCrossingOurCancelWithAnOfferIsACKedWithAnAnswerThatRejectsIt(t *tes
 		"a=ptime:20\r\n"+
 		"a=inactive\r\n", string(ack))
 }
+
+func TestTheStreamInviteCarriesTheCallID(t *testing.T) {
+	leg := &sipLeg{side: streamSide, callID: "abc", target: sip.Uri{User: "+15550001111", Host: "sip.stream.test"}}
+
+	req := leg.newInvite(nil)
+
+	require.Equal(t, "abc", req.GetHeader(CallIDHeader).Value())
+}
+
+func TestTheCustomerInviteCarriesNoCallID(t *testing.T) {
+	leg := &sipLeg{side: customerSide, target: sip.Uri{User: "+15550001111", Host: "sip.carrier.test"}}
+
+	req := leg.newInvite(nil)
+
+	require.Nil(t, req.GetHeader(CallIDHeader))
+}

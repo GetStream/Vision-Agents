@@ -277,7 +277,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 
 	// The person is called from one of this service's numbers, and once they answer the
 	// TeXML dials the trunk, so the agent and the person are on the same call.
-	texml, err := renderTexml(outbound.Bridge, 0, outbound.InitialDigits)
+	texml, err := renderTexml(outbound.Bridge.WithCallID(outbound.CallID), 0, outbound.InitialDigits)
 	if err != nil {
 		return phone.Dialed{}, err
 	}

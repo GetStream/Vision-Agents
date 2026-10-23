@@ -355,7 +355,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("twilio: %w", err))
 	}
 
-	instructions, err := dialBridge(outbound.Bridge)
+	instructions, err := dialBridge(outbound.Bridge.WithCallID(outbound.CallID))
 	if err != nil {
 		return phone.Dialed{}, err
 	}

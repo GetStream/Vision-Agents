@@ -81,7 +81,8 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 		to:        sip.Uri{User: cfg.Call.From, Host: streamURI.Host},
 		transport: cfg.Stream.Transport, reinviteHost: streamURI.Host,
 		username: cfg.Stream.Username, password: cfg.Stream.Password,
-		log: log.With("leg", streamSide),
+		callID: cfg.Call.CallID,
+		log:    log.With("leg", streamSide),
 	}
 	customer.onDialog = func(id string) { reg.add(id, customer) }
 	stream.onDialog = func(id string) { reg.add(id, stream) }

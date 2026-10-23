@@ -232,6 +232,26 @@ func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
 	s.Equal("queued", placed.Status)
 }
 
+func (s *TelnyxSuite) TestTheTrunkLegCarriesTheCallID() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.CallID = "abc"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("sip:+15125550100@app.sip.example.com?x-stream-call-id=abc", s.texml().Dial.Sip.URI)
+}
+
+func (s *TelnyxSuite) TestAnOutboundWithoutACallIDDialsThePlainURI() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Equal("sip:+15125550100@app.sip.example.com", s.texml().Dial.Sip.URI)
+}
+
 func (s *TelnyxSuite) TestCredentialsWithXMLSpecialCharactersAreEscaped() {
 	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
 

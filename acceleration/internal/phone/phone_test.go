@@ -72,6 +72,17 @@ func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
 	}, implemented)
 }
 
+func (s *PhoneSuite) TestAProviderWithoutAStreamLegIsPerCall() {
+	s.Equal(StreamLegPerCall, StreamLegOf(&stub{vendor: "twilio"}))
+}
+
+func (s *PhoneSuite) TestTheCallIDRidesOnTheBridgeURIAsAQueryParameter() {
+	bridge := Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"}
+
+	s.Equal("sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=a+b", bridge.WithCallID("a b").URI)
+	s.Equal(bridge, bridge.WithCallID(""))
+}
+
 func (s *PhoneSuite) TestEveryImplementedVendorButDidwwCanPlaceACall() {
 	// DIDWW sells numbers and has no call control API at all, so there is nothing to ask
 	// it to dial with. A caller can see that before buying a number from it rather than

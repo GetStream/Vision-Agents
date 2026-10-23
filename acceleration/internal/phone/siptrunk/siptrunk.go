@@ -98,7 +98,7 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 		Stream: sipbridge.StreamTrunk{
 			URI: outbound.Bridge.URI, Username: outbound.Bridge.Username, Password: outbound.Bridge.Password,
 		},
-		Call:   sipbridge.CallParams{From: outbound.From, To: outbound.To, RingTimeout: outbound.RingTimeout},
+		Call:   sipbridge.CallParams{From: outbound.From, To: outbound.To, RingTimeout: outbound.RingTimeout, CallID: outbound.CallID},
 		Logger: p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id),
 	}.WithDefaults()
 	if err := config.Validate(); err != nil {

@@ -365,6 +365,33 @@ func (s *TwilioSuite) TestDiallingOutBridgesTheAnsweredCallIntoTheTrunk() {
 	s.Equal("queued", placed.Status)
 }
 
+func (s *TwilioSuite) TestTheTrunkLegCarriesTheCallID() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"},
+		CallID: "abc",
+	})
+	s.Require().NoError(err)
+
+	s.Contains(s.seen.form.Get("Twiml"), "<Sip>sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=abc</Sip>")
+}
+
+func (s *TwilioSuite) TestAnOutboundWithoutACallIDDialsThePlainURI() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.form.Get("Twiml"), "x-stream-call-id")
+}
+
 func (s *TwilioSuite) TestTheRingTimeoutAndInitialDigitsRideOnTheCallRatherThanTheTwiml() {
 	// Both concern the leg to the person: Timeout is how long they are rung for, and
 	// SendDigits is pressed at them once they answer. The TwiML runs after that and only
