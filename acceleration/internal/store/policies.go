@@ -120,6 +120,51 @@ type AppOrganization struct {
 	SeenAt         time.Time `bun:"seen_at,notnull"`
 }
 
+// OrganizationTier is the tier Stream last sent for an organization, an opaque string, kept for
+// work no request carried.
+type OrganizationTier struct {
+	bun.BaseModel `bun:"table:organization_tiers,alias:ot"`
+
+	OrganizationID string    `bun:"organization_id,pk"`
+	Tier           string    `bun:"tier,notnull"`
+	SeenAt         time.Time `bun:"seen_at,notnull"`
+}
+
+// SetOrganizationTier records the tier an organization was seen with at seenAt. A tier seen
+// earlier than the one recorded changes nothing: routers write what they saw in the background,
+// and two writes may land in either order. Earlier is by each writing router's clock, so
+// routers whose clocks disagree by more than the gap between two tiers may keep the older.
+func (s *Store) SetOrganizationTier(ctx context.Context, organizationID, tier string, seenAt time.Time) error {
+	if organizationID == "" || tier == "" {
+		return errors.New("store: an organization's tier needs an organization and a tier")
+	}
+	seen := &OrganizationTier{OrganizationID: organizationID, Tier: tier, SeenAt: seenAt.UTC()}
+	_, err := s.db.NewInsert().Model(seen).
+		On("CONFLICT (organization_id) DO UPDATE").
+		Set("tier = EXCLUDED.tier").
+		Set("seen_at = EXCLUDED.seen_at").
+		Where("ot.seen_at < EXCLUDED.seen_at").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set organization tier: %w", err))
+	}
+	return nil
+}
+
+// TierOf returns the tier an organization was last seen with, or nothing for one never seen
+// with any.
+func (s *Store) TierOf(ctx context.Context, organizationID string) (string, error) {
+	var seen OrganizationTier
+	err := s.db.NewSelect().Model(&seen).Where("organization_id = ?", organizationID).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: tier of: %w", err))
+	}
+	return seen.Tier, nil
+}
+
 // Policy returns a scope's document. A scope nobody has written a policy for gets the
 // empty document rather than an error, since that is what almost every scope is.
 func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (PolicyDocument, error) {

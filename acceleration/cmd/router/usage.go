@@ -187,7 +187,8 @@ func replayRows(ctx context.Context, pgStore *store.Store, rows []store.Request,
 
 // lostRows reads the rows of every lost-row line of a text log, as the writer would have
 // written them: queued to ship when there is a usage service, with its defaults for a key and
-// a tier the row was lost before it got. It counts the lost-row lines it could not read: a row
+// a tier the row was lost before it got, and without a user id the usage service would refuse
+// the event for, which a router from before the rule may have logged. It counts the lost-row lines it could not read: a row
 // that could not be encoded, or one with no usage id, which could not be written once.
 func lostRows(log io.Reader, toShip bool) ([]store.Request, int, error) {
 	var rows []store.Request
@@ -207,6 +208,7 @@ func lostRows(log io.Reader, toShip bool) ([]store.Request, int, error) {
 		row.ID, row.ToShip, row.ShippedAt, row.ShipError = 0, toShip, nil, ""
 		row.APIKey = cmp.Or(row.APIKey, routing.Unattributed)
 		row.OrganizationTier = cmp.Or(row.OrganizationTier, usageservice.DefaultTier)
+		row.UserID = routing.RecordedUser(row.UserID)
 		rows = append(rows, row)
 	}
 	if err := scanner.Err(); err != nil {

@@ -100,7 +100,8 @@ func (s *RecorderSuite) recordedAs(modality Modality, prices pricing.Pricer, con
 	customer := uuid.NewString()
 	recorder := NewRecorder(modality, s.store, nil, prices, slog.New(slog.NewTextHandler(s.logs, nil)))
 	for _, stat := range stats {
-		stat.CustomerID = customer
+		// A key, as every owner site names one: a row without one is logged as an error.
+		stat.CustomerID, stat.APIKey = customer, "key-a"
 		recorder.Record(config, stat)
 	}
 	recorder.Close()

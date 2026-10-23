@@ -52,6 +52,11 @@ var (
 		Name:      "usage_unattributed_total",
 		Help:      "Usage rows written with no API key or origin, under the key unattributed",
 	})
+	usageUserIDDropped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "usage_user_id_dropped_total",
+		Help:      "Usage rows recorded without their end user id because the usage service would refuse the event for it, by why",
+	}, []string{"reason"})
 	usageUnresolved = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "usage_unresolved_total",

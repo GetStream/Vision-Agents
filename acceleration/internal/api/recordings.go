@@ -122,7 +122,7 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 
 	// The job outlives the request that asked for it, so it runs under a context of its
 	// own: a caller that has been handed an id and hung up is still owed a transcript.
-	go s.transcribe(job, sttrouter.Recording{
+	go s.transcribe(routing.AttributionFrom(ctx), job, sttrouter.Recording{
 		CustomerID: customerID,
 		Tags:       tags,
 		Options:    held,
@@ -214,7 +214,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		return nil, err
 	}
 
-	go s.record(job, recording)
+	go s.record(routing.AttributionFrom(ctx), job, recording)
 
 	return &recordSpeechResponse{Body: speechOf(job)}, nil
 }
@@ -237,8 +237,8 @@ func (s *Server) getSpeech(ctx context.Context, request *getSpeechRequest) (*get
 }
 
 // transcribe runs one transcription job to its end and writes down what happened.
-func (s *Server) transcribe(job store.Recording, recording sttrouter.Recording) {
-	ctx, cancel := context.WithTimeout(context.Background(), recordingDeadline)
+func (s *Server) transcribe(attribution routing.Attribution, job store.Recording, recording sttrouter.Recording) {
+	ctx, cancel := context.WithTimeout(routing.WithAttribution(context.Background(), attribution), recordingDeadline)
 	defer cancel()
 
 	transcription, config, err := s.streams.Transcriptions.Transcribe(ctx, recording)
@@ -271,8 +271,8 @@ func (s *Server) transcribe(job store.Recording, recording sttrouter.Recording) 
 }
 
 // record runs one speech job to its end and writes down what happened.
-func (s *Server) record(job store.Recording, recording ttsrouter.Recording) {
-	ctx, cancel := context.WithTimeout(context.Background(), recordingDeadline)
+func (s *Server) record(attribution routing.Attribution, job store.Recording, recording ttsrouter.Recording) {
+	ctx, cancel := context.WithTimeout(routing.WithAttribution(context.Background(), attribution), recordingDeadline)
 	defer cancel()
 
 	recorded, config, err := s.streams.Speech.Record(ctx, recording)

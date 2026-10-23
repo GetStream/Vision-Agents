@@ -512,6 +512,12 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.ConnectorSelections = selectionsOf(*row)
 	// And so do their consents, back to the page the chat was opened with.
 	spec.ReturnURL = row.ReturnURL
+	// Its usage stays under the key and categories it was opened with. The user is the one
+	// asking, who is the row's own; the organization and its tier are as they are now.
+	if row.APIKey != "" {
+		spec.Attribution = routing.AttributionFrom(ctx)
+		spec.Attribution.APIKey, spec.Attribution.UsageCategories = row.APIKey, row.UsageCategories
+	}
 	// The row keeps the call voice was last on, which voice goes back to once started.
 	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }

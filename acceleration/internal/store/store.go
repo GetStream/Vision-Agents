@@ -854,6 +854,7 @@ func (s *Store) CustomerSpend(
 	from, to time.Time,
 	limit int,
 	tags map[string]string,
+	who UsageFilter,
 ) ([]SpendBucket, error) {
 	if !granularity.Valid() {
 		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
@@ -879,6 +880,8 @@ func (s *Store) CustomerSpend(
 		args = append(args, groupBy)
 	}
 	args = append(args, customerID, from, to, string(filter))
+	narrowed, narrowing := who.where()
+	args = append(args, narrowing...)
 
 	// Each shard's groups unfolded, and the biggest picked over all of them: a group too small
 	// to keep in one shard may be the biggest once the others are added.
@@ -891,8 +894,8 @@ SELECT
 FROM requests
 WHERE customer_id = ?
   AND started_at >= ? AND started_at < ?
-  AND tags @> ?::jsonb
-GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr)
+  AND tags @> ?::jsonb%s
+GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr, narrowed)
 
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]spendRow, error) {
 		var rows []spendRow
@@ -903,6 +906,34 @@ GROUP BY 1, 2`, granularity.truncateUnit(), valueExpr)
 		return nil, stack.Wrap(fmt.Errorf("store: customer spend: %w", err))
 	}
 	return foldSpend(lists, limit), nil
+}
+
+// UsageFilter narrows usage to who asked for it: the key or origin it was started with, the end
+// user it was for, and categories every row carries, a team among them as team:<name>. The zero
+// filter narrows nothing.
+type UsageFilter struct {
+	APIKey     string
+	UserID     string
+	Categories []string
+}
+
+// where is the filter as conditions on requests, each opening with AND, and their arguments.
+func (f UsageFilter) where() (string, []any) {
+	var conditions strings.Builder
+	var args []any
+	if f.APIKey != "" {
+		conditions.WriteString("\n  AND api_key = ?")
+		args = append(args, f.APIKey)
+	}
+	if f.UserID != "" {
+		conditions.WriteString("\n  AND user_id = ?")
+		args = append(args, f.UserID)
+	}
+	if len(f.Categories) > 0 {
+		conditions.WriteString("\n  AND usage_categories @> ?")
+		args = append(args, pgdialect.Array(f.Categories))
+	}
+	return conditions.String(), args
 }
 
 // tagValueRow is what one value of one cost label key was spent on.

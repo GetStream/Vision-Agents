@@ -38,6 +38,9 @@ func Alerts(limit time.Duration) []alerts.Condition {
 		{Name: "ship_stale", Level: alerts.Page, Check: aboveFor(unshippedOldest, shipStaleSeconds, shipStaleFor, "oldest_unshipped_started_seconds_ago")},
 		{Name: "unowned", Level: alerts.Warn, Check: alerts.IncreasingFor(func() float64 { return alerts.Total(usageUnowned) }, unownedFor)},
 		{Name: "pending_slow", Level: alerts.Warn, Check: aboveFor(oldestPending, pendingSlowSeconds, 0, "oldest_pending_seconds")},
+		// A site that owns work and names neither a key nor an origin: its rows are billed, and
+		// counted against no key's limit.
+		{Name: "unattributed", Level: alerts.Warn, Check: alerts.IncreasedSinceAlert(func() float64 { return alerts.Total(usageUnattributed) }, limit)},
 	}
 }
 

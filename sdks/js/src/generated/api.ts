@@ -4300,10 +4300,10 @@ export type components = {
             readonly limit?: number;
         };
         /**
-         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app.
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it.
          * @enum {string}
          */
-        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list";
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user";
         /**
          * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
          * @enum {string}
@@ -5890,7 +5890,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), budget_exceeded (a 403: the app or organization has spent its budget, and the message says which and when it resets, so retrying before then is refused again), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -16568,6 +16568,10 @@ export interface operations {
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
+                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. */
+                readonly api_key?: string;
+                /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
+                readonly category?: readonly string[];
                 /** @description Start of the window, inclusive. */
                 readonly from: string;
                 readonly granularity?: components["schemas"]["Granularity"];
@@ -16577,8 +16581,12 @@ export interface operations {
                 readonly limit?: number;
                 /** @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several. */
                 readonly tag?: readonly string[];
+                /** @description Only count usage for this team: its users' tokens name it in their team claim. */
+                readonly team?: string;
                 /** @description End of the window, exclusive. */
                 readonly to: string;
+                /** @description Only count usage for this end user of the app. */
+                readonly user_id?: string;
             };
             readonly header?: never;
             readonly path?: never;

@@ -83,6 +83,10 @@ type Options struct {
 	Instructions string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
+	// Attribution is who beside the customer every request the agent makes is billed to and
+	// asked for by: the key and the usage categories the session was opened with, its user
+	// and its id.
+	Attribution routing.Attribution
 	// Caller is the end user who asked for this conversation, which is who its daily
 	// limits are counted against. Empty for one a customer's own backend started, which is
 	// not limited.
@@ -614,11 +618,12 @@ func New(options Options) (*Agent, error) {
 
 	logger := options.Logger.With("customer", options.CustomerID, "session", options.SessionID, "call", options.CallID)
 	owner := routing.Owner{
-		CustomerID: options.CustomerID,
-		Caller:     options.Caller,
-		AgentID:    options.AgentID,
-		CallID:     options.CallID,
-		Tags:       options.Tags,
+		CustomerID:  options.CustomerID,
+		Attribution: options.Attribution,
+		Caller:      options.Caller,
+		AgentID:     options.AgentID,
+		CallID:      options.CallID,
+		Tags:        options.Tags,
 	}
 
 	settling := newCadence(cadenceGapFromEnv(logger), 0, 0, logger)
@@ -732,7 +737,9 @@ func (a *Agent) Join(ctx context.Context) error {
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: already joined"))
 	}
-	a.ctx, a.cancel = context.WithCancel(ctx)
+	// Everything the agent opens from here on is owned by the session's attribution, whoever's
+	// context it joined with.
+	a.ctx, a.cancel = context.WithCancel(routing.WithAttribution(ctx, a.options.Attribution))
 	a.joined = true
 	a.mu.Unlock()
 
@@ -4327,7 +4334,7 @@ func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Se
 		}
 	}
 	return func(ctx context.Context) (*llmrouter.Session, error) {
-		return a.options.LLM.Start(ctx, llmrouter.Request{
+		return a.options.LLM.Start(routing.WithAttribution(ctx, a.options.Attribution), llmrouter.Request{
 			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
 			AgentID: a.options.AgentID, CallID: a.options.CallID,
 			Tags: a.options.Tags, Target: target,

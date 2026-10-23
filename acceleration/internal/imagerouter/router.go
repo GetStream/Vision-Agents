@@ -112,11 +112,12 @@ func New(options Options) (*Router, error) {
 // router can send it.
 func (r *Router) Generate(ctx context.Context, request Request) (Generation, error) {
 	core := routing.Request{
-		CustomerID: request.CustomerID,
-		Tags:       request.Tags,
-		Target:     request.Target,
-		Providers:  request.Providers,
-		Terms:      request.Image.Terms(),
+		CustomerID:  request.CustomerID,
+		Attribution: routing.AttributionFrom(ctx),
+		Tags:        request.Tags,
+		Target:      request.Target,
+		Providers:   request.Providers,
+		Terms:       request.Image.Terms(),
 	}
 	if core.Target == "" && len(core.Providers) == 0 {
 		core.Target = DefaultTarget

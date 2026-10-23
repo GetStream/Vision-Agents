@@ -20,6 +20,10 @@ def _get_kwargs(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    api_key: str | Unset = UNSET,
+    user_id: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    category: list[str] | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -45,6 +49,18 @@ def _get_kwargs(
         json_tag = tag
 
     params["tag"] = json_tag
+
+    params["api_key"] = api_key
+
+    params["user_id"] = user_id
+
+    params["team"] = team
+
+    json_category: list[str] | Unset = UNSET
+    if not isinstance(category, Unset):
+        json_category = category
+
+    params["category"] = json_category
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -116,6 +132,10 @@ def sync_detailed(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    api_key: str | Unset = UNSET,
+    user_id: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    category: list[str] | Unset = UNSET,
 ) -> Response[ErrorResponse | list[SpendBucket]]:
     """What the calling customer spent, grouped
 
@@ -135,6 +155,13 @@ def sync_detailed(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
+        api_key (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat.
+        user_id (str | Unset): Only count usage for this end user of the app.
+        team (str | Unset): Only count usage for this team: its users' tokens name it in their
+            team claim.
+        category (list[str] | Unset): Only count usage carrying every one of these usage
+            categories, as the tokens name them. Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,6 +178,10 @@ def sync_detailed(
         from_=from_,
         to=to,
         tag=tag,
+        api_key=api_key,
+        user_id=user_id,
+        team=team,
+        category=category,
     )
 
     response = client.get_httpx_client().request(
@@ -169,6 +200,10 @@ def sync(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    api_key: str | Unset = UNSET,
+    user_id: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    category: list[str] | Unset = UNSET,
 ) -> ErrorResponse | list[SpendBucket] | None:
     """What the calling customer spent, grouped
 
@@ -188,6 +223,13 @@ def sync(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
+        api_key (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat.
+        user_id (str | Unset): Only count usage for this end user of the app.
+        team (str | Unset): Only count usage for this team: its users' tokens name it in their
+            team claim.
+        category (list[str] | Unset): Only count usage carrying every one of these usage
+            categories, as the tokens name them. Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,6 +247,10 @@ def sync(
         from_=from_,
         to=to,
         tag=tag,
+        api_key=api_key,
+        user_id=user_id,
+        team=team,
+        category=category,
     ).parsed
 
 
@@ -217,6 +263,10 @@ async def asyncio_detailed(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    api_key: str | Unset = UNSET,
+    user_id: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    category: list[str] | Unset = UNSET,
 ) -> Response[ErrorResponse | list[SpendBucket]]:
     """What the calling customer spent, grouped
 
@@ -236,6 +286,13 @@ async def asyncio_detailed(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
+        api_key (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat.
+        user_id (str | Unset): Only count usage for this end user of the app.
+        team (str | Unset): Only count usage for this team: its users' tokens name it in their
+            team claim.
+        category (list[str] | Unset): Only count usage carrying every one of these usage
+            categories, as the tokens name them. Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -252,6 +309,10 @@ async def asyncio_detailed(
         from_=from_,
         to=to,
         tag=tag,
+        api_key=api_key,
+        user_id=user_id,
+        team=team,
+        category=category,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -268,6 +329,10 @@ async def asyncio(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    api_key: str | Unset = UNSET,
+    user_id: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    category: list[str] | Unset = UNSET,
 ) -> ErrorResponse | list[SpendBucket] | None:
     """What the calling customer spent, grouped
 
@@ -287,6 +352,13 @@ async def asyncio(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
+        api_key (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat.
+        user_id (str | Unset): Only count usage for this end user of the app.
+        team (str | Unset): Only count usage for this team: its users' tokens name it in their
+            team claim.
+        category (list[str] | Unset): Only count usage carrying every one of these usage
+            categories, as the tokens name them. Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -305,5 +377,9 @@ async def asyncio(
             from_=from_,
             to=to,
             tag=tag,
+            api_key=api_key,
+            user_id=user_id,
+            team=team,
+            category=category,
         )
     ).parsed

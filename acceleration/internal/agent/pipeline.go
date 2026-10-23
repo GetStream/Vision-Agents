@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -611,7 +612,7 @@ func (a *Agent) openSpeech(ctx context.Context, s Settings, delegating bool) (*s
 	a.mu.Unlock()
 
 	on := true
-	session, err := a.options.STS.Start(ctx, stsrouter.Request{
+	session, err := a.options.STS.Start(routing.WithAttribution(ctx, a.options.Attribution), stsrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,

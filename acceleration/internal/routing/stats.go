@@ -31,17 +31,18 @@ const (
 type Owner struct {
 	// CustomerID owns the request. Every statistic is keyed by it.
 	CustomerID string
+	// Attribution is who beside the customer the work is billed to and asked for by, the
+	// session it ran in included. All of it is recorded on the row.
+	Attribution
 	// Caller is the end user the work was done for, when it was asked for by a device
 	// rather than by the customer's own backend. It is what daily limits are counted
-	// against, and it is not recorded: a stat row is what the customer is billed for, and
-	// which of their users asked is theirs to know rather than ours to keep.
+	// against. The user a row records is Attribution's, which leaves out a name nobody
+	// checked.
 	Caller Caller
 	// AgentID is the agent the work was done for. Empty outside a conversation.
 	AgentID string
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string
-	// SessionID is the agent session the work ran in. Empty outside one.
-	SessionID string
 	// Tags are the customer's own cost labels, carried onto every row so spend can be
 	// broken down by whatever the customer cares about.
 	Tags Tags
@@ -257,9 +258,11 @@ func (r *Recorder) lose(config ProviderConfig, entry Stat, cause error) {
 	r.writer.lose([]store.Request{request}, lostInvalid, cause)
 }
 
-// priced is the stat's row priced, and the quote of its quantities.
+// priced is the stat's row priced, and the quote of its quantities. It builds each row Record
+// writes or lose loses once, so a user id left off is counted once per row.
 func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pricing.Quote) {
 	request := row(r.modality, config, entry)
+	request.UserID = userOnRow(entry.CustomerID, entry.UserID)
 	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
 	request.BaseCostMicros, request.PriceVersion = priced.BaseCostMicros, priced.Version
@@ -307,6 +310,11 @@ func row(modality Modality, config ProviderConfig, entry Stat) store.Request {
 		UsageID:           entry.UsageID,
 		Modality:          string(modality),
 		CustomerID:        entry.CustomerID,
+		OrganizationID:    entry.OrganizationID,
+		OrganizationTier:  entry.OrganizationTier,
+		APIKey:            entry.APIKey,
+		UserID:            RecordedUser(entry.UserID),
+		UsageCategories:   entry.UsageCategories,
 		AgentID:           entry.AgentID,
 		SessionID:         entry.SessionID,
 		CallID:            entry.CallID,
@@ -329,6 +337,14 @@ func row(modality Modality, config ProviderConfig, entry Stat) store.Request {
 		Success:           entry.Success,
 		ErrorCode:         entry.ErrorCode,
 		ErrorMessage:      store.SafeLogText(entry.ErrorMessage),
+	}
+	if entry.CallerKind != "" {
+		// A copy: the stat's map may be shared with whatever recorded it.
+		request.Attributes = maps.Clone(entry.Attributes)
+		if request.Attributes == nil {
+			request.Attributes = map[string]string{}
+		}
+		request.Attributes[CallerAttribute] = entry.CallerKind
 	}
 	if entry.LatencyMs > 0 {
 		latency := entry.LatencyMs

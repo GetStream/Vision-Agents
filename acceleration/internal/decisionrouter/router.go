@@ -91,11 +91,12 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	}
 
 	core := routing.Request{
-		CustomerID: request.CustomerID,
-		AgentID:    request.AgentID,
-		CallID:     request.CallID,
-		Tags:       request.Tags,
-		Target:     target,
+		CustomerID:  request.CustomerID,
+		Attribution: routing.AttributionFrom(ctx),
+		AgentID:     request.AgentID,
+		CallID:      request.CallID,
+		Tags:        request.Tags,
+		Target:      target,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

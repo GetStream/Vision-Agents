@@ -49,6 +49,9 @@ const (
 // finishWithin bounds how long the agent is given to finish its last sentence.
 const finishWithin = 10 * time.Second
 
+// cliAttribution owns what the agent does: an operator ran it, and no key started it.
+var cliAttribution = routing.Attribution{APIKey: routing.CLIOrigin("agent")}
+
 // The person the browser joins the call as, so the agent has somebody to talk to.
 const (
 	demoUserID   = "demo-caller"
@@ -242,6 +245,7 @@ func run(options options, logger *slog.Logger) error {
 		Edge:           edge,
 		Instructions:   options.prompt(),
 		CustomerID:     options.customerID,
+		Attribution:    cliAttribution,
 		AgentID:        options.agent(),
 		CallID:         options.callID,
 		Tags:           options.tags.Tags,
@@ -376,7 +380,7 @@ func buildTelephony(
 	}
 
 	return service.Line(phone.LineOptions{
-		Owner:        routing.Owner{CustomerID: options.customerID, Tags: options.tags.Tags},
+		Owner:        routing.Owner{CustomerID: options.customerID, Attribution: cliAttribution, Tags: options.tags.Tags},
 		From:         options.number,
 		CallID:       options.callID,
 		CallType:     options.callType,

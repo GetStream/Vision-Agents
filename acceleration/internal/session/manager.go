@@ -264,6 +264,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := spec.Normalize(); err != nil {
 		return nil, stack.Wrap(err)
 	}
+	if spec.Attribution.APIKey == "" {
+		spec.Attribution = routing.AttributionFrom(ctx)
+	}
+	spec.Attribution.SessionID = spec.ID
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
 		return nil, stack.Wrap(errors.New("session: this deployment routes no speech-to-speech model"))
@@ -627,6 +631,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Text:          spec.Text,
 			Instructions:  spec.prompt(),
 			CustomerID:    spec.CustomerID,
+			Attribution:   spec.Attribution,
 			Caller:        spec.Caller,
 			AgentID:       spec.AgentID,
 			ConfigID:      spec.ConfigID,
@@ -783,7 +788,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
 			if !spec.NoReview {
-				m.reviews.Review(row(created), spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
+				m.reviews.Review(row(created), spec.Attribution, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
 			}
 		})
 		m.calls.Started(row(created))
@@ -1472,10 +1477,11 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 
 	return guardrail.New(ctx, policy, guardrail.Deps{
 		Owner: routing.Owner{
-			CustomerID: spec.CustomerID,
-			AgentID:    spec.AgentID,
-			CallID:     spec.CallID,
-			Tags:       spec.Tags,
+			CustomerID:  spec.CustomerID,
+			Attribution: spec.Attribution,
+			AgentID:     spec.AgentID,
+			CallID:      spec.CallID,
+			Tags:        spec.Tags,
 		},
 		Classifier: m.options.Classifier,
 		LLM:        m.options.LLM,
@@ -1683,7 +1689,7 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 	}
 
 	return m.options.Phone.Line(phone.LineOptions{
-		Owner:        routing.Owner{CustomerID: spec.CustomerID, Tags: spec.Tags},
+		Owner:        routing.Owner{CustomerID: spec.CustomerID, Attribution: spec.Attribution, Tags: spec.Tags},
 		From:         spec.Phone.Number,
 		CallID:       spec.CallID,
 		CallType:     spec.CallType,

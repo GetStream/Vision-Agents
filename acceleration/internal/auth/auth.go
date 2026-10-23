@@ -13,9 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // Mode names how a request proves who it is.
@@ -102,7 +105,23 @@ const (
 	// is believed from one; from an end user's device it would let one person claim
 	// another's address. The router keeps the latest one per user (store.SetUserEmail).
 	EmailHeader = "X-Stream-User-Email"
+	// APIKeyIDHeader, TierHeader and UsageCategoriesHeader are what the proxy says every
+	// usage entry is named by beside the app: the public key the request was made with, the
+	// organization's tier, an opaque string, and the usage categories the token names, its
+	// team among them as team:<name>, joined with commas. In APIKey mode the key is the one
+	// verified and the tier is not read; a server-side caller, or any caller in NoAuth mode,
+	// may name its categories in UsageCategoriesHeader.
+	APIKeyIDHeader        = "X-Stream-Api-Key-Id"
+	TierHeader            = "X-Stream-Organization-Tier"
+	UsageCategoriesHeader = "X-Stream-Usage-Categories"
 )
+
+// NoAuthKey is the key every request in NoAuth mode is recorded under, since none is presented.
+const NoAuthKey = "noauth"
+
+// ErrInvalidUsageCategories is usage categories that break the rule every usage entry is held
+// to (usage.CheckCategories). The request is refused rather than recorded under fewer.
+var ErrInvalidUsageCategories = errors.New("auth: invalid usage categories")
 
 const (
 	// AuthTypeServer is a request an integration makes for itself, from a process the
@@ -178,6 +197,15 @@ type Principal struct {
 	// Email is the address a server-side caller said UserID signs in with (EmailHeader).
 	// Empty for every other caller, whatever it sent.
 	Email string
+	// APIKey is the public key the request was made with, never its secret: NoAuthKey in
+	// NoAuth mode, and empty behind a proxy that did not say.
+	APIKey string
+	// OrganizationTier is the organization's tier as the proxy named it. Empty in every other
+	// mode, where the organization's last known tier applies.
+	OrganizationTier string
+	// UsageCategories are what the customer counts the request's usage under, sorted, each
+	// once, the user's team among them as team:<name>. Nil names none.
+	UsageCategories []string
 }
 
 // App is what an API key resolves to.
@@ -273,7 +301,11 @@ func (open) Authenticate(_ context.Context, r *http.Request) (Principal, error) 
 	if app == "" {
 		return Principal{}, ErrUnauthenticated
 	}
-	return Principal{AppID: app, Kind: KindServer, ServerSide: true}, nil
+	categories, err := headerCategories(r)
+	if err != nil {
+		return Principal{}, err
+	}
+	return Principal{AppID: app, Kind: KindServer, ServerSide: true, APIKey: NoAuthKey, UsageCategories: categories}, nil
 }
 
 // ProxyOptions says how much the proxy in front of the router vouches for.
@@ -338,12 +370,21 @@ func (p proxied) Authenticate(_ context.Context, r *http.Request) (Principal, er
 	if named == "" && (!p.declares || kind == KindServer) {
 		named = strings.TrimSpace(r.URL.Query().Get(UserParam))
 	}
+	// The key, the tier and the categories are believed as the app id is: the proxy writes
+	// them for the caller it authenticated and deletes a caller's own.
+	categories, err := headerCategories(r)
+	if err != nil {
+		return Principal{}, err
+	}
 	principal := Principal{
-		OrganizationID: strings.TrimSpace(r.Header.Get(OrganizationHeader)),
-		AppID:          app,
-		UserID:         named,
-		Kind:           kind,
-		ServerSide:     kind == KindServer,
+		OrganizationID:   strings.TrimSpace(r.Header.Get(OrganizationHeader)),
+		AppID:            app,
+		UserID:           named,
+		Kind:             kind,
+		ServerSide:       kind == KindServer,
+		APIKey:           strings.TrimSpace(r.Header.Get(APIKeyIDHeader)),
+		OrganizationTier: strings.TrimSpace(r.Header.Get(TierHeader)),
+		UsageCategories:  categories,
 	}
 	if principal.ServerSide {
 		principal.Email = strings.TrimSpace(r.Header.Get(EmailHeader))
@@ -395,6 +436,17 @@ func (k keyed) Authenticate(ctx context.Context, r *http.Request) (Principal, er
 		UserID:         userClaim(claims),
 		Kind:           KindAuthenticated,
 		ServerSide:     serverSide,
+		APIKey:         key,
+	}
+	// The categories a token was signed with are the app's own word for them, as the proxy
+	// reads them. A backend may name them in the header instead, since it could sign any.
+	if principal.UsageCategories, err = claimCategories(claims); err != nil {
+		return Principal{}, err
+	}
+	if principal.UsageCategories == nil && serverSide {
+		if principal.UsageCategories, err = headerCategories(r); err != nil {
+			return Principal{}, err
+		}
 	}
 	switch {
 	case serverSide:
@@ -471,6 +523,63 @@ func serverToken(claims jwt.MapClaims) bool {
 	default:
 		return false
 	}
+}
+
+// headerCategories reads UsageCategoriesHeader: categories joined with commas, the team's
+// among them as team:<name>. None is nil.
+func headerCategories(r *http.Request) ([]string, error) {
+	joined := strings.TrimSpace(r.Header.Get(UsageCategoriesHeader))
+	if joined == "" {
+		return nil, nil
+	}
+	categories := strings.Split(joined, ",")
+	for i, category := range categories {
+		categories[i] = strings.TrimSpace(category)
+	}
+	return checkedCategories(categories)
+}
+
+// claimCategories reads a verified token's usage_categories and team claims as the proxy
+// reads them: team: is reserved for the team claim, which is added as team:<name>. None is nil.
+func claimCategories(claims jwt.MapClaims) ([]string, error) {
+	var categories []string
+	if raw, named := claims["usage_categories"]; named && raw != nil {
+		listed, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("%w: the usage_categories claim is not an array of strings", ErrInvalidUsageCategories)
+		}
+		for _, entry := range listed {
+			category, ok := entry.(string)
+			if !ok {
+				return nil, fmt.Errorf("%w: the usage_categories claim is not an array of strings", ErrInvalidUsageCategories)
+			}
+			if _, team := usage.TeamOf(category); team {
+				return nil, fmt.Errorf("%w: %s is reserved, use the team claim", ErrInvalidUsageCategories, usage.TeamPrefix)
+			}
+			categories = append(categories, category)
+		}
+	}
+	if raw, named := claims["team"]; named && raw != nil {
+		team, ok := raw.(string)
+		if !ok || team == "" || strings.Contains(team, ":") {
+			return nil, fmt.Errorf("%w: the team claim is one name of 1 to %d letters, digits, _ . and -", ErrInvalidUsageCategories, usage.MaxTeamLength)
+		}
+		categories = append(categories, usage.TeamPrefix+team)
+	}
+	return checkedCategories(categories)
+}
+
+// checkedCategories is categories sorted, each once, or why they break the rule.
+func checkedCategories(categories []string) ([]string, error) {
+	if len(categories) == 0 {
+		return nil, nil
+	}
+	slices.Sort(categories)
+	categories = slices.Compact(categories)
+	if err := usage.CheckCategories(categories); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidUsageCategories, strings.TrimPrefix(err.Error(), "usage: "))
+	}
+	return categories, nil
 }
 
 // credentials pulls the key and the token off a request. The query string is the socket's

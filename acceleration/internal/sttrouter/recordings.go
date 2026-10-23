@@ -97,6 +97,7 @@ func (r *Recordings) Transcribe(
 	}
 	request := routing.Request{
 		CustomerID:    recording.CustomerID,
+		Attribution:   routing.AttributionFrom(ctx),
 		Tags:          recording.Tags,
 		Target:        target,
 		Providers:     recording.Options.Providers,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -112,8 +113,9 @@ func newReviewer(router *llmrouter.Router, pgStore *store.Store, logger *slog.Lo
 
 // Review starts a pass over a finished call, judged by guide, or by the default guide when
 // it is empty. A call nobody said anything on is not reviewed: there is nothing to
-// summarise, and asking would cost the customer money to be told so.
-func (r *reviewer) Review(call store.Call, target, guide string, said []spoken) {
+// summarise, and asking would cost the customer money to be told so. The review is owned by
+// whoever the session was.
+func (r *reviewer) Review(call store.Call, attribution routing.Attribution, target, guide string, said []spoken) {
 	if len(said) == 0 {
 		return
 	}
@@ -125,7 +127,7 @@ func (r *reviewer) Review(call store.Call, target, guide string, said []spoken) 
 	go func() {
 		defer r.running.Done()
 
-		ctx, cancel := context.WithTimeout(r.ctx, reviewTimeout)
+		ctx, cancel := context.WithTimeout(routing.WithAttribution(r.ctx, attribution), reviewTimeout)
 		defer cancel()
 
 		err := r.review(ctx, call, target, guide, said)

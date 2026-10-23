@@ -28,7 +28,7 @@ func (s *UsageAlertsSuite) named(name string) alerts.Condition {
 	return alerts.Condition{}
 }
 
-func (s *UsageAlertsSuite) TestTheRouterHasItsSixConditions() {
+func (s *UsageAlertsSuite) TestTheRouterHasItsSevenConditions() {
 	levels := map[string]alerts.Level{}
 	for _, condition := range Alerts(time.Minute) {
 		levels[condition.Name] = condition.Level
@@ -36,8 +36,21 @@ func (s *UsageAlertsSuite) TestTheRouterHasItsSixConditions() {
 
 	s.Equal(map[string]alerts.Level{
 		"lost": alerts.Page, "rejected": alerts.Page, "write_failing": alerts.Page, "ship_stale": alerts.Page,
-		"unowned": alerts.Warn, "pending_slow": alerts.Warn,
+		"unowned": alerts.Warn, "pending_slow": alerts.Warn, "unattributed": alerts.Warn,
 	}, levels)
+}
+
+func (s *UsageAlertsSuite) TestAnUnattributedRowWarnsOnce() {
+	unattributed := s.named("unattributed")
+	start := time.Now()
+	usageUnattributed.Inc()
+
+	holds, _ := unattributed.Check(start)
+	s.Require().True(holds, "sent")
+	for _, tick := range []time.Duration{15 * time.Second, time.Minute, 5 * time.Minute} {
+		holds, _ = unattributed.Check(start.Add(tick))
+		s.False(holds, tick)
+	}
 }
 
 func (s *UsageAlertsSuite) TestARowLostJustAfterTheLostAlertStillHoldsAtTheFirstTickTheLimitAllows() {

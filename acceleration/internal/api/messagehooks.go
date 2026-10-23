@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -101,6 +102,16 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		s.logger.Debug("ignoring a message event", "type", eventType)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// chatHookAttribution owns the work a message starts outside a session a key opened: no key
+// started it, and its sender is a user of the app Stream signed the delivery for.
+func chatHookAttribution(customerID string, event messageEvent) routing.Attribution {
+	attribution := routing.Attribution{APIKey: routing.OriginHookChat, UserID: event.Message.User.ID}
+	if routing.RecordedUser(attribution.UserID) != "" {
+		attribution.CallerKind = routing.CallerUser
+	}
+	return attribution
 }
 
 // addressed reports whether a message is one somebody wrote to an agent.

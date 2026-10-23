@@ -5,6 +5,8 @@ package store
 import (
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
@@ -84,6 +86,31 @@ func (s *StoreSuite) TestAnAppBelongsToTheOrganizationItWasLastSeenUnder() {
 	organization, err := s.store.OrganizationOf(s.ctx, "app-1")
 	s.Require().NoError(err)
 	s.Equal("org-2", organization)
+}
+
+func (s *StoreSuite) TestAnOrganizationHasTheTierItWasLastSeenWith() {
+	organization := "org-" + uuid.NewString()
+	unknown, err := s.store.TierOf(s.ctx, organization)
+	s.Require().NoError(err)
+	s.Empty(unknown)
+
+	s.Require().NoError(s.store.SetOrganizationTier(s.ctx, organization, "tier-a", s.base))
+	s.Require().NoError(s.store.SetOrganizationTier(s.ctx, organization, "tier-b", s.base.Add(time.Second)))
+
+	tier, err := s.store.TierOf(s.ctx, organization)
+	s.Require().NoError(err)
+	s.Equal("tier-b", tier)
+}
+
+func (s *StoreSuite) TestATierSeenEarlierThanTheRecordedOneChangesNothing() {
+	// Routers write what they saw in the background, so the older write may land last.
+	organization := "org-" + uuid.NewString()
+	s.Require().NoError(s.store.SetOrganizationTier(s.ctx, organization, "tier-b", s.base.Add(time.Second)))
+	s.Require().NoError(s.store.SetOrganizationTier(s.ctx, organization, "tier-a", s.base))
+
+	tier, err := s.store.TierOf(s.ctx, organization)
+	s.Require().NoError(err)
+	s.Equal("tier-b", tier)
 }
 
 func (s *StoreSuite) TestSpendSinceCountsOnlyTheCustomerAndTheWindow() {

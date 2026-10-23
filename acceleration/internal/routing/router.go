@@ -149,6 +149,10 @@ type Admission struct {
 	// OrganizationID is the organization the customer is in, who its work is billed to.
 	// Empty when it is not known yet.
 	OrganizationID string
+	// OrganizationTier is that organization's current tier, which replaces the one a row was
+	// opened with, so a session's later work carries a tier Stream changed. Empty when it is
+	// not known.
+	OrganizationTier string
 }
 
 // Labelled returns the tags with the policies' laid over them, leaving the ones passed in
@@ -208,7 +212,8 @@ type Router[P Provider] struct {
 // backend does for itself, which is not limited.
 type Caller struct {
 	// UserID is who the customer's token named. It is only unique within the customer, so
-	// a limit keyed by it is keyed by the pair.
+	// a limit keyed by it is keyed by the pair. An anonymous caller's is the name it goes by,
+	// counted against but never recorded: the user a row records is Attribution.UserID.
 	UserID string
 	// IP is where the request came from, as far as the trusted proxies can tell.
 	IP string
@@ -255,6 +260,9 @@ func ScheduledTurn(ctx context.Context) bool {
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
 	CustomerID string
+	// Attribution is who beside the customer the work is billed to and asked for by. A
+	// router takes it from the context it is opened with (AttributionFrom).
+	Attribution
 	// Caller is the end user the work is for, when the request came from a device rather
 	// than from the customer's own backend. It is what daily limits are counted against.
 	Caller Caller
@@ -317,11 +325,12 @@ type Request struct {
 // Owner returns who the request is billed to and how it is labelled.
 func (r Request) Owner() Owner {
 	return Owner{
-		CustomerID: r.CustomerID,
-		Caller:     r.Caller,
-		AgentID:    r.AgentID,
-		CallID:     r.CallID,
-		Tags:       r.Tags,
+		CustomerID:  r.CustomerID,
+		Attribution: r.Attribution,
+		Caller:      r.Caller,
+		AgentID:     r.AgentID,
+		CallID:      r.CallID,
+		Tags:        r.Tags,
 	}
 }
 

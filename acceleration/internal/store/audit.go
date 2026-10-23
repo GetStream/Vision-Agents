@@ -28,13 +28,16 @@ const (
 	// have no customer_id, so no app's audit query lists them
 	// (20261110120000_audit_log_manage.sql).
 	AuditResourcePriceList = "price_list"
+	// AuditEndUser is an app's end user whose id was forgotten in the usage records, named by
+	// the id that replaced it, never by the one forgotten (20261111120000_usage_identity.sql).
+	AuditEndUser = "end_user"
 )
 
 // auditResourceTypes is every resource a change may be recorded against, which is the
 // migration's CHECK as Go can read it.
 var auditResourceTypes = []string{
 	AuditAgentConfig, AuditSkill, AuditKnowledge, AuditKnowledgeURL,
-	AuditRouterConfig, AuditPlugin, AuditPolicy, AuditResourcePriceList,
+	AuditRouterConfig, AuditPlugin, AuditPolicy, AuditResourcePriceList, AuditEndUser,
 }
 
 // deploymentResources are the resources that belong to the deployment rather than to one

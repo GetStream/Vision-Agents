@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -81,6 +83,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
@@ -159,6 +162,16 @@ type RouterSuite struct {
 	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
 	// written nowhere.
 	appRefuses bool
+	// proxied authenticates as a router behind Stream's proxy does, believing the headers it
+	// writes, so a test names its caller with proxiedClient rather than a key.
+	proxied bool
+	// shipping ships the conversation model's rows to a usage service of the suite's own,
+	// usage, as cmd/router's writer does.
+	shipping bool
+	usage    *usagetest.Service
+	// owned are the apps the suite made or used, whose rows must all name a key.
+	ownedMu sync.Mutex
+	owned   []string
 	// deploymentKnown has the suite's Stream say which app is the deployment's own, as a
 	// deployment-mode router that was given its app id does.
 	deploymentKnown bool
@@ -405,6 +418,9 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(migrated.err)
 	s.store = pgStore
 	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
+	// Registered before everything that records, so it runs once all of it has closed and
+	// written what it held.
+	s.T().Cleanup(s.assertEveryRowNamesAKey)
 
 	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	s.Require().NoError(err)
@@ -841,6 +857,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Pricer: pricer, Logger: logger,
 		Models: llmrouter.NewCustomModels(s.configs, s.sealer, false),
+		Writer: s.shippingWriter(gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
@@ -978,9 +995,58 @@ func (s *RouterSuite) sessionManager(
 	return sessions
 }
 
+// own notes an app the suite made or used.
+func (s *RouterSuite) own(appID string) {
+	s.ownedMu.Lock()
+	defer s.ownedMu.Unlock()
+	if !slices.Contains(s.owned, appID) {
+		s.owned = append(s.owned, appID)
+	}
+}
+
+// assertEveryRowNamesAKey fails the suite when anything it drove recorded usage with neither a
+// key nor an origin: the owner site that wrote it was missed.
+func (s *RouterSuite) assertEveryRowNamesAKey() {
+	s.ownedMu.Lock()
+	owned := slices.Clone(s.owned)
+	s.ownedMu.Unlock()
+	if len(owned) == 0 {
+		return
+	}
+	var rows []store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).
+		Where("customer_id IN (?)", bun.In(owned)).Where("api_key = ?", routing.Unattributed).
+		Scan(context.Background()))
+	for _, row := range rows {
+		s.Failf("a usage row names no key", "customer %s, %s %s/%s, purpose %q, session %q, agent %q",
+			row.CustomerID, row.Modality, row.Provider, row.Model, row.Purpose, row.SessionID, row.AgentID)
+	}
+}
+
+// shippingWriter is the writer the conversation model records through when the suite ships,
+// and nil, a writer of the router's own, when it does not.
+func (s *RouterSuite) shippingWriter(gate routing.Gate, logger *slog.Logger) *routing.Writer {
+	if !s.shipping {
+		return nil
+	}
+	s.usage = usagetest.Start(s.T(), usagetest.Options{Logger: logger})
+	writer := routing.NewWriter(routing.WriterOptions{
+		Store: s.store, Live: s.live, Logger: logger, Gate: gate, Usage: s.usage.Client, Source: "router/suite/" + s.utils.uuid(),
+	})
+	s.T().Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		writer.Close(ctx)
+	})
+	return writer
+}
+
 // authenticator resolves a key the way a deployment in api_key mode does: the row is read
 // from Postgres and its secret unsealed, so the credentials a test holds are real ones.
 func (s *RouterSuite) authenticator() auth.Authenticator {
+	if s.proxied {
+		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: true})
+	}
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
@@ -1239,6 +1305,7 @@ func (s *RouterSuite) useFixture(name string) {
 // useApp points the clients at an app, each as a new caller of its kind.
 func (s *RouterSuite) useApp(app testApp) {
 	s.app = app
+	s.own(app.app.ID)
 	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: noCredential}
 	s.anonymousClient = s.data.createAnonymous()
 	s.guestClient = s.data.createGuest()
@@ -1537,6 +1604,7 @@ func (d testData) createAppAdmitting(settings store.AppSettings) testApp {
 // are held.
 func (d testData) keyed(organization store.Organization, app store.App) testApp {
 	s, ctx := d.suite, context.Background()
+	s.own(app.ID)
 	key, secret, err := auth.NewCredential(auth.Test)
 	s.Require().NoError(err)
 	sealed, err := s.sealer.Seal(secret)
@@ -1730,7 +1798,7 @@ func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
 // authMode is the mode the suite's router says it runs in: proxy in app mode, which only a
 // gateway serves, though the suite's callers still sign with the app's key.
 func (s *RouterSuite) authMode() auth.Mode {
-	if s.appMode {
+	if s.appMode || s.proxied {
 		return auth.Proxy
 	}
 	return auth.APIKey

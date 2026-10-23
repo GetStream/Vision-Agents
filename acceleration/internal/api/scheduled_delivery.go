@@ -97,10 +97,21 @@ type scheduledDelivery struct {
 	Channels       []string `json:"channels,omitempty"`
 	// Due is when the occurrence came due, or when the hold on it ended.
 	Due time.Time `json:"due"`
+	// APIKey and UsageCategories are the task's: the key and categories that scheduled it.
+	APIKey          string   `json:"api_key,omitempty"`
+	UsageCategories []string `json:"usage_categories,omitempty"`
 }
 
 func (d scheduledDelivery) owner() session.Owner {
 	return session.Owner{CustomerID: d.CustomerID, UserID: d.UserID, Kind: auth.Kind(d.CallerKind)}
+}
+
+// attribution owns an occurrence's work as whoever scheduled the task: its key, its user and
+// its categories. The router acts, so the caller is the server, as scheduledOwnerContext says.
+// A task created before tasks kept a key reads back job:scheduled_task (the migration); one
+// that names none now is a gap the writer reports.
+func (d scheduledDelivery) attribution() routing.Attribution {
+	return routing.Attribution{APIKey: d.APIKey, UserID: d.UserID, CallerKind: routing.CallerServer, UsageCategories: d.UsageCategories}
 }
 
 // scheduledPeerAnswer is what the node holding a conversation answers a
@@ -149,21 +160,23 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		due = *held
 	}
 	delivery := scheduledDelivery{
-		CustomerID:     task.CustomerID,
-		TaskID:         task.ID,
-		RunID:          claimed.Run.ID,
-		SessionID:      task.SessionID,
-		ConversationID: task.ConversationID,
-		ConfigID:       task.ConfigID,
-		UserID:         task.UserID,
-		CallerKind:     task.CallerKind,
-		Timezone:       task.Timezone,
-		CommandID:      "st_" + claimed.Run.ID,
-		Text:           scheduledPrompt(claimed, time.Now()),
-		Channels:       task.Channels,
-		Due:            due,
+		CustomerID:      task.CustomerID,
+		TaskID:          task.ID,
+		RunID:           claimed.Run.ID,
+		SessionID:       task.SessionID,
+		ConversationID:  task.ConversationID,
+		ConfigID:        task.ConfigID,
+		UserID:          task.UserID,
+		CallerKind:      task.CallerKind,
+		APIKey:          task.APIKey,
+		UsageCategories: task.UsageCategories,
+		Timezone:        task.Timezone,
+		CommandID:       "st_" + claimed.Run.ID,
+		Text:            scheduledPrompt(claimed, time.Now()),
+		Channels:        task.Channels,
+		Due:             due,
 	}
-	ctx = routing.WithScheduledTurn(ctx)
+	ctx = routing.WithAttribution(routing.WithScheduledTurn(ctx), delivery.attribution())
 	if s.sessions == nil {
 		return "", "", errors.New("this router runs no sessions")
 	}
@@ -677,6 +690,7 @@ func (s *Server) openTaskSession(ctx context.Context, delivery scheduledDelivery
 	spec.Greeting = ""
 	spec.Caller = routing.Caller{UserID: delivery.UserID, ServerSide: true}
 	spec.CallerKind = auth.Kind(delivery.CallerKind)
+	spec.Attribution = delivery.attribution()
 	spec.Timezone = delivery.Timezone
 	tagScheduled(&spec.Custom, delivery)
 	created, err := s.sessions.Create(ctx, spec)
@@ -734,7 +748,7 @@ func (s *Server) deliverByPhone(ctx context.Context, delivery scheduledDelivery,
 		return "", "", undeliveredFinally(scheduling.ReasonRungAlready, errors.New("a call was placed for this occurrence already"))
 	}
 	placed, err := s.phone.Call(ctx, phone.CallRequest{
-		Owner:     routing.Owner{CustomerID: delivery.CustomerID},
+		Owner:     routing.Owner{CustomerID: delivery.CustomerID, Attribution: delivery.attribution()},
 		From:      from,
 		To:        to,
 		SessionID: sessionID,
@@ -763,6 +777,7 @@ func callSpec(config store.AgentConfig, delivery scheduledDelivery, agentID stri
 	spec.ConversationID = delivery.ConversationID
 	spec.Caller = routing.Caller{UserID: delivery.UserID, ServerSide: true}
 	spec.CallerKind = auth.Kind(delivery.CallerKind)
+	spec.Attribution = delivery.attribution()
 	spec.Timezone = delivery.Timezone
 	// The agent placed this call, so it is told how to get past whatever
 	// answers.
@@ -909,5 +924,6 @@ func scheduledOwnerContext(ctx context.Context, delivery scheduledDelivery) cont
 	ctx = context.WithValue(ctx, serverSideContextKey{}, true)
 	ctx = context.WithValue(ctx, kindContextKey{}, auth.Kind(delivery.CallerKind))
 	ctx = routing.WithCaller(ctx, routing.Caller{UserID: delivery.UserID, ServerSide: true})
+	ctx = routing.WithAttribution(ctx, delivery.attribution())
 	return routing.WithScheduledTurn(ctx)
 }

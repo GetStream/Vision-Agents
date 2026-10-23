@@ -67,6 +67,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 )
 
@@ -1093,6 +1094,13 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				"requests from this level of user"))
 			return
 		}
+		// The categories are what the request's usage is counted under, so a request naming
+		// ones that break the rule is refused rather than counted under fewer.
+		if errors.Is(err, auth.ErrInvalidUsageCategories) {
+			writeError(w, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
+				Message: strings.TrimPrefix(err.Error(), "auth: ")})
+			return
+		}
 		if err == nil && principal.AppID != "" {
 			ctx := context.WithValue(r.Context(), customerContextKey{}, principal.AppID)
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
@@ -1104,14 +1112,42 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				ServerSide: principal.ServerSide,
 			})
 			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
+			ctx = routing.WithAttribution(ctx, attributionOf(principal))
 			r = r.WithContext(ctx)
-			s.policies.Join(principal.AppID, principal.OrganizationID)
+			s.policies.Join(principal.AppID, principal.OrganizationID, principal.OrganizationTier)
 			s.recordUser(ctx, principal)
 			s.recordEmail(ctx, principal)
 			s.keepServerToken(ctx, r, principal.AppID)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// attributionOf is who a request's usage is recorded as asked for by. The user is recorded as
+// given, a backend's included, since per-user usage and limits are counted by it, unless the
+// usage service would refuse its events for the id (routing.RecordedUser); an anonymous
+// caller's is a name nobody checked, so it is not, as recordUser does not keep it either.
+func attributionOf(principal auth.Principal) routing.Attribution {
+	attribution := routing.Attribution{
+		OrganizationID:   principal.OrganizationID,
+		OrganizationTier: principal.OrganizationTier,
+		APIKey:           principal.APIKey,
+		UsageCategories:  principal.UsageCategories,
+	}
+	switch principal.Kind {
+	case auth.KindServer:
+		attribution.CallerKind = routing.CallerServer
+	case auth.KindAuthenticated:
+		attribution.CallerKind = routing.CallerUser
+	case auth.KindGuest:
+		attribution.CallerKind = routing.CallerGuest
+	case auth.KindAnonymous:
+		attribution.CallerKind = routing.CallerAnonymous
+	}
+	if principal.Kind.Verified() {
+		attribution.UserID = principal.UserID
+	}
+	return attribution
 }
 
 // keepServerToken holds the server token the proxy forwarded for the caller's app. Only a
@@ -1636,6 +1672,10 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	who, failure := usageFilterOf(request)
+	if failure != nil {
+		return nil, failure
+	}
 	if s.store == nil {
 		return nil, invalidRequest("statistics are not available: no database configured")
 	}
@@ -1650,7 +1690,7 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	}
 
 	buckets, err := s.store.CustomerSpend(ctx, customerID, groupBy,
-		granularityOf(request.Granularity.ptr()), request.From, request.To, limit, tags)
+		granularityOf(request.Granularity.ptr()), request.From, request.To, limit, tags, who)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -1665,6 +1705,29 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 		})
 	}
 	return &getSpendResponse{Body: spend}, nil
+}
+
+// usageFilterOf is who a spend request narrows the usage to. A team is the category
+// team:<name>, which every row the team's users asked for carries.
+func usageFilterOf(request *getSpendRequest) (store.UsageFilter, error) {
+	var who store.UsageFilter
+	if key := request.APIKey.ptr(); key != nil {
+		who.APIKey = *key
+	}
+	if user := request.UserID.ptr(); user != nil {
+		who.UserID = *user
+	}
+	if categories := request.Category.ptr(); categories != nil {
+		who.Categories = append(who.Categories, *categories...)
+	}
+	if team := request.Team.ptr(); team != nil {
+		who.Categories = append(who.Categories, usage.TeamPrefix+*team)
+	}
+	if err := usage.CheckCategories(who.Categories); err != nil {
+		return store.UsageFilter{}, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
+			Message: strings.TrimPrefix(err.Error(), "usage: ")}
+	}
+	return who, nil
 }
 
 // getTagKeys returns which cost labels the calling customer's spend carries.
@@ -2162,6 +2225,10 @@ type getSpendRequest struct {
 	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
+	APIKey      optionalParam[string]      `query:"api_key" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
+	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
+	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
+	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`
 }
 
 type getSpendResponse struct {
