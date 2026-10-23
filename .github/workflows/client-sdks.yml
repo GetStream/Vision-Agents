@@ -7,6 +7,7 @@ on:
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
+      - 'Package.swift'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
+      - 'Package.swift'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
@@ -55,6 +57,7 @@ jobs:
               - '.github/workflows/client-sdks.yml'
             swift:
               - 'sdks/swift/**'
+              - 'Package.swift'
               - 'examples/voice_agents/swift_demo/app/**'
               - 'acceleration/api/openapi.yaml'
               - '.github/workflows/client-sdks.yml'
@@ -153,12 +156,11 @@ jobs:
         id: packages
         with:
           path: ${{ runner.temp }}/spm
-          key: spm-${{ runner.os }}-xcode27-${{ hashFiles('sdks/swift/**/Package.swift', 'sdks/swift/**/Package.resolved', 'examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: spm-${{ runner.os }}-xcode27-${{ hashFiles('Package.swift', 'examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-xcode27-
 
       # The package is iOS only, so it is tested on a simulator rather than with `swift test`.
       - name: Build core tests
-        working-directory: sdks/swift/core
         timeout-minutes: 15
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
@@ -176,7 +178,6 @@ jobs:
       # waiting after the tests have finished. A failure's diagnostics take the simulator
       # ten minutes to give up on and add nothing the test log lacks.
       - name: Test core
-        working-directory: sdks/swift/core
         timeout-minutes: 10
         run: |
           xcodebuild test-without-building -scheme vision-agents-core -destination "platform=iOS Simulator,id=$SIMULATOR" \

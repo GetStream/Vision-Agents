@@ -49,7 +49,7 @@ Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 run it on a simulator. The app
 takes `stream-chat-swift` from its `develop` branch, because the AI components it uses
 (`AIConversationView`, `AIToolAuthorizationView`) are not in a released `StreamChatAI` yet.
-Close `SwiftDemo.xcodeproj` first: it opens the same local package, `sdks/swift/core`, and Xcode
+Close `SwiftDemo.xcodeproj` first: it opens the same local package, the repository's root, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
 The router needs `XAI_API_KEY` for the chat's model and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY`

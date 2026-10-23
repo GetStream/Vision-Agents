@@ -18,9 +18,13 @@ one with `@StateObject` or `@ObservedObject`, and observing a `VoiceSession` fol
 conversation too. It is iOS only, because Stream Video is and Stream Chat's macOS build does
 not compile under Swift 6.
 
-SPM has no way to depend on a subdirectory of a tagged repository, so the examples reach the
-package by path. Shipping it means splitting `core/` into its own repository from CI, or a
-package registry.
+An app adds it with Swift Package Manager from this repository,
+`https://github.com/GetStream/Vision-Agents.git`, and takes the `VisionAgentsCore` product. Its
+manifest is the `Package.swift` at the root of the repository, the only place SwiftPM looks, and
+its versions are the repository's `v` tags, which release the Python packages too. The tags from
+before the first one with Swift in it (0.7.0 or later) have no manifest, so keep them out of the
+range. SwiftPM clones the whole repository the first time, about 300 MB, and only fetches what
+is new after that. The examples reach the package by path, so they build against the checkout.
 
 ## Using them
 
@@ -301,10 +305,10 @@ hand-written against the contract in
 
 ## Tests
 
-The package is iOS only, so the tests run on a simulator rather than with `swift test`:
+The package is iOS only, so the tests run on a simulator rather than with `swift test`, from
+the root of the repository:
 
 ```bash
-cd sdks/swift/core
 xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
