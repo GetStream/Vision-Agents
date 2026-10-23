@@ -1081,3 +1081,21 @@ func (s *AppsSuite) TestALineNeedsAKeyToSealTheTrunksPassword() {
 	s.ErrorIs(err, ErrNoSealer)
 	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
 }
+
+func (s *AppsSuite) TestOneNumberLinedTwiceAtOnceIsOnItsTrunkOnce() {
+	s.ownApp()
+	s.sealed()
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Go(func() {
+			_, err := s.lineFor(s.customer, s.e164)
+			s.NoError(err)
+		})
+	}
+	wait.Wait()
+
+	trunks := s.own.Trunks()
+	s.Require().Len(trunks, 1)
+	s.Equal([]string{s.e164}, s.own.TrunkNumbers(trunks[0]))
+	s.Len(s.own.Rules(), 1)
+}

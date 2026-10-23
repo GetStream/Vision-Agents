@@ -38,6 +38,12 @@ func (s *Service) line(ctx context.Context, stream *Stream, pin int64, held stor
 	var line TrunkLine
 	var joined *joining
 	err := s.store.InTrunkGroup(ctx, group, func(ctx context.Context, tx *store.TrunkGroupTx) error {
+		// Read again under the lock: a concurrent line() for the same number may have just
+		// put it on a trunk, and joining again would list it twice.
+		held, err := s.store.Number(ctx, held.CustomerID, held.E164)
+		if err != nil {
+			return err
+		}
 		trunks, err := tx.Trunks()
 		if err != nil {
 			return err
@@ -56,7 +62,8 @@ func (s *Service) line(ctx context.Context, stream *Stream, pin int64, held stor
 	})
 	if err != nil {
 		if joined != nil {
-			s.leave(ctx, stream, group, joined)
+			// The join may have failed because ctx was cancelled; the undo still has to run.
+			s.leave(context.WithoutCancel(ctx), stream, group, joined)
 		}
 		return TrunkLine{}, err
 	}
@@ -104,7 +111,7 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 		joined.trunkID = id
 		sealed, err := s.sealer.SealWithAAD(bridge.Password, trunkAAD(held.CustomerID, id))
 		if err != nil {
-			return TrunkLine{}, stack.Wrap(err)
+			return TrunkLine{}, stack.Wrap(fmt.Errorf("phone: seal the password of trunk %s: %w", id, err))
 		}
 		password = bridge.Password
 		trunk = store.StreamTrunk{
@@ -133,7 +140,7 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 	// The number keeps a copy sealed to itself, which is what InboundBridge opens.
 	sealed, err := s.sealer.SealWithAAD(password, bridgeAAD(held.CustomerID, held.E164))
 	if err != nil {
-		return TrunkLine{}, stack.Wrap(err)
+		return TrunkLine{}, stack.Wrap(fmt.Errorf("phone: seal the trunk password of %s: %w", held.E164, err))
 	}
 	if err := tx.SaveTrunk(trunk); err != nil {
 		return TrunkLine{}, err
@@ -197,7 +204,7 @@ func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGrou
 	}
 	sealed, err := s.sealer.SealWithAAD(password, trunkAAD(held.CustomerID, held.StreamTrunkID))
 	if err != nil {
-		return TrunkLine{}, stack.Wrap(err)
+		return TrunkLine{}, stack.Wrap(fmt.Errorf("phone: seal the password of trunk %s: %w", held.StreamTrunkID, err))
 	}
 
 	// An update resends every field, so the rule is given again all it was made with.
