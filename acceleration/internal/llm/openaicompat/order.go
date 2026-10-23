@@ -6,12 +6,12 @@ import "github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 // talked over it and it was abandoned.
 const stoppedResult = "(no result: the call was stopped before it answered)"
 
-// strictToolOrder puts each tool call's results straight after it. What came between them,
+// StrictToolOrder puts each tool call's results straight after it. What came between them,
 // such as what the caller said while the tool ran, follows the results in its own order. A
 // result whose call is not in the history (cut off by a history limit) becomes a note from
 // the caller's side, and a call with no result is given one, so every call is answered
 // exactly once.
-func strictToolOrder(input []llm.Message) []llm.Message {
+func StrictToolOrder(input []llm.Message) []llm.Message {
 	results := map[string]int{}
 	for i, message := range input {
 		if message.Role == llm.ToolResult && message.ToolCallID != "" {

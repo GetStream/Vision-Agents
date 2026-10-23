@@ -331,6 +331,11 @@ func (s *Server) updateScheduledTask(ctx context.Context, request *updateSchedul
 		task.Instructions = *body.Instructions
 	}
 	if body.DeliverTo != nil {
+		// A task made in a thread is delivered on its thread (deliverOnThread), which
+		// deliver_to does not name.
+		if task.ChannelThread != "" {
+			return nil, invalidRequest("a task made in a thread is delivered on that thread; its deliver_to cannot change")
+		}
 		where, err := deliverToOf(*body.DeliverTo)
 		if err != nil {
 			return nil, err
@@ -944,7 +949,7 @@ type ScheduledTaskRun struct {
 	Attempts     int        `json:"attempts"`
 	StartedAt    *time.Time `json:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
-	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered or already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise."`
+	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's) or connection_removed (a thread task's line was removed); on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise."`
 }
 
 // ScheduledTaskPage is a page of scheduled tasks.

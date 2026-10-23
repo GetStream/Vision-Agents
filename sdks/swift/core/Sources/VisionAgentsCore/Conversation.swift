@@ -93,10 +93,10 @@ public struct Conversation: Sendable, Hashable {
             state = .idle
 
         case .delegated:
-            state = .working(working + [event["skill"].stringValue])
+            state = .working(working + [event.string("skill")])
 
         case .taskSettled, .taskCancelled:
-            let left = working.filter { $0 != event["skill"].stringValue }
+            let left = working.filter { $0 != event.string("skill") }
             state = left.isEmpty ? .responding : .working(left)
 
         case .interrupted:

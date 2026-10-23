@@ -36,11 +36,24 @@ type compaction struct {
 // is nearing the model's context window or prefix caching has stopped paying for keeping
 // the full transcript verbatim. It reports whether it started any, so the conversation can
 // record that its own memory was rewritten.
+//
+// A prompt whose history does not continue the one judged before it was rewritten in
+// between, by a compaction landing, and no provider can have cached what it opens with. Its
+// cache miss says nothing about whether caching pays, so it is not taken as a reason to
+// compact. Taken as one, every summary emptied the cache that started the next: a voice
+// call compacted 12 to 21 times, about every other turn, on a history of a few thousand
+// tokens.
 func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) (bool, error) {
+	h.mu.Lock()
+	rewritten := h.measured != nil && !appendsTo(h.measured, history)
+	h.measured = append([]llm.Message(nil), history...)
+	h.mu.Unlock()
+
 	if h.tasks == nil || len(history) < compactionMinMessages || inputTokens < compactionMinTokens {
 		return false, nil
 	}
-	if !h.nearingContextWindow(inputTokens) && float64(cachedTokens)/float64(inputTokens) >= compactionCacheRatio {
+	if !h.nearingContextWindow(inputTokens) &&
+		(rewritten || float64(cachedTokens)/float64(inputTokens) >= compactionCacheRatio) {
 		return false, nil
 	}
 

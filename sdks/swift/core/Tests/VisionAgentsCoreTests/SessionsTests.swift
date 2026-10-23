@@ -24,14 +24,26 @@ import Testing
         let server = try SessionServer()
         defer { server.listener.cancel() }
         let agents = VisionAgents(url: try await server.url(), customerID: "acme")
-        let custom: [String: JSONValue] = ["tier": .string("gold"), "seats": .number(3)]
+        let custom: [String: RawJSON] = ["tier": .string("gold"), "seats": .number(3)]
 
         let session = try await agents.sessions.update("s1", description: "Billing", custom: custom)
 
         #expect(session.description == "Billing")
         #expect(session.custom == custom)
         let request = try await server.request()
-        #expect(request.body == ["description": .string("Billing"), "custom": .object(custom)])
+        #expect(request.body == ["description": .string("Billing"), "custom": .dictionary(custom)])
+    }
+
+    @Test func aDeleteAnsweredWithNoContentSucceeds() async throws {
+        let server = try SessionServer(answer: .init(status: 204, headers: [:], body: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        try await agents.sessions.delete("s1")
+
+        let request = try await server.request()
+        #expect(request.method == "DELETE")
+        #expect(request.path == "/v1/agents/sessions/s1")
     }
 
     @Test func aVoiceSessionAsksToStartVoiceAndIsOnItsOwnCall() async throws {
@@ -61,7 +73,7 @@ import Testing
 
         let body = try await server.request().body
         #expect(body["start_voice"] == nil)
-        #expect(body["greeting"] == .object(["text": .string("Hello."), "mode": .string("variation")]))
+        #expect(body["greeting"] == .dictionary(["text": .string("Hello."), "mode": .string("variation")]))
     }
 
     @Test func aSessionSaysWhereItsSignInsGoBackTo() async throws {
@@ -86,7 +98,7 @@ struct SessionServer {
         let query: String
         /// By lowercased name.
         let headers: [String: String]
-        let body: [String: JSONValue]
+        let body: [String: RawJSON]
     }
 
     /// What to answer instead of a session.
@@ -165,7 +177,7 @@ struct SessionServer {
                     .flatMap { Int($0.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) } ?? 0
                 let body = buffer[end.upperBound...]
                 if body.count >= length {
-                    let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: body)) ?? [:]
+                    let fields = (try? JSONDecoder().decode([String: RawJSON].self, from: body)) ?? [:]
                     let line = head[0].split(separator: " ").map(String.init)
                     let target = line[1].split(separator: "?", maxSplits: 1).map(String.init)
                     let path = target[0]
@@ -192,8 +204,8 @@ struct SessionServer {
         }
     }
 
-    private static func session(path: String, fields: [String: JSONValue]) -> Answer {
-        var session: [String: JSONValue] = [
+    private static func session(path: String, fields: [String: RawJSON]) -> Answer {
+        var session: [String: RawJSON] = [
             "id": .string(String(path.split(separator: "/").last ?? "")),
             "agent_id": .string("a1"), "call_id": .string(""), "call_type": .string("default"),
             "created_at": .string("2026-10-02T17:00:00Z"), "modality": .string("text"),

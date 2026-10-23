@@ -90,20 +90,20 @@ enum DeviceTools {
     private static let reminder = AgentTool(
         name: "add_reminder",
         description: "Adds a reminder to the person's Reminders, with an alert when it is due.",
-        parameters: .object([
+        parameters: .dictionary([
             "type": .string("object"),
-            "properties": .object([
-                "title": .object([
+            "properties": .dictionary([
+                "title": .dictionary([
                     "type": .string("string"),
                     "description": .string("what to remind them of, such as Call mum"),
                 ]),
-                "due": .object([
+                "due": .dictionary([
                     "type": .string("string"),
                     "description": .string(
                         "when, as an ISO 8601 date and time with their UTC offset, such as "
                             + "2026-10-16T18:00:00+02:00. Leave it out for no due time."),
                 ]),
-                "summary": .object([
+                "summary": .dictionary([
                     "type": .string("string"),
                     "description": .string(
                         "the reminder and its time as they would read it, such as Call mum, "

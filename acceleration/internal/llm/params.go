@@ -49,7 +49,9 @@ type ResponseParams struct {
 	// It means nothing to a provider whose Capabilities do not report Store.
 	Store bool
 	// PreviousResponseID continues from a stored response, so only what has been added
-	// since needs sending. Empty replays the whole conversation.
+	// since needs sending. Empty replays the whole conversation. The stored response holds
+	// the instructions it was given, so a provider does not send them again: continue only
+	// with the same instructions, and replay the conversation when they change.
 	PreviousResponseID string
 	// Conversation is a provider-held conversation this response belongs to. It cannot
 	// be combined with PreviousResponseID.

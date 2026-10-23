@@ -31,6 +31,7 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
                  v
         internal/api/scheduled_delivery.go DeliverScheduledTask
                  |   quiet hours? -> Postponed
+                 |   channel_thread? -> internal/api/scheduled_thread_delivery.go deliverOnThread
                  |   session live here | on a peer (POST /internal/scheduled-tasks/deliver)
                  |   | ended: reopen from its row | none yet: open one
                  v
@@ -38,6 +39,14 @@ debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `accelerati
           conversation  Session.FollowUp(command id "st_<run id>")
           sms | whatsapp | imessage   same turn's words -> channels.Service.Notify
           phone         phone.Service.Call -> call session -> task as first turn
+
+        deliverOnThread (a task made in an SMS or WhatsApp thread; deliver_to is not read):
+          channel_threads row, the task's customer's and user's   else thread_gone
+          channelbridge.Bridge.Reachable: connection, opt-out, sandbox gate, WhatsApp 24 h
+          lease the thread's turn (store.TakeChannelThreadTurn)
+          the session on the thread channel, else one opened as answerThread opens it
+          Session.FollowUp("st_<run id>"), wait for the reply   -> Bridge.Reply texts it
+          delivered_to sms (telnyx) | whatsapp
 ```
 
 ## Terms
@@ -152,9 +161,7 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   (`telnyx`) or WhatsApp thread session (`api.threadSession`, `personalThreads`) is offered
   the tools when its person writes, and not when someone else in the thread does; the task's `user_id` is the Stream user the bridge writes the person as
   (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
-  `channel_thread` its thread channel. A Slack thread is shared and is offered none. Delivery
-  back to the thread is AI-1843: until then such a task's run fails `delivery_failed`
-  (the ended thread session is not reopened, `sessions.go` `reopenedFromRow`).
+  `channel_thread` its thread channel. A Slack thread is shared and is offered none.
   `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
   `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
   `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,
@@ -163,6 +170,43 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestWhatsAppChannelSuite/TestAWhatsAppThreadSchedulesForThePersonWhoWrote`,
   `TestLinqChannelSuite/TestALinqChatIsNotOfferedTheTools`,
   `TestSlackChannelSuite/TestASlackThreadIsNotOfferedTheTools`.
+- **A task made in a thread is delivered back to that thread (AI-1843).** `deliverOnThread`
+  opens the thread's conversation as `answerThread` does (the session the backend keeps on the
+  channel, else one on the task's config, closed after the turn), under the thread's turn lease,
+  and runs the follow-up. The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
+  and sends it through the same path (`Bridge.Send`), so the run is `delivered_to` `sms` or
+  `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
+  sends the reply the thread holds without a second turn; a person who opted out by then is
+  `channel_unreachable`, final. The task stores `deliver_to` `sms` or `whatsapp`
+  (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
+  Before the turn,
+  `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
+  person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), WhatsApp
+  past 24 h since the person last wrote with no `after_window` template in the manifest
+  (`outside_window`, final). A thread row that is gone, of another customer, or of another person is
+  `thread_gone`, final. A task without `channel_thread` is delivered as before.
+  `TestTelnyxChannelSuite/TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread`,
+  `TestTelnyxChannelSuite/TestARetriedOccurrenceIsNotTextedTwice`,
+  `TestTelnyxChannelSuite/TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt`,
+  `TestTelnyxChannelSuite/TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread`,
+  `TestTelnyxChannelSuite/TestATaskWhoseTurnFailsTextsNothing`,
+  `TestTelnyxChannelSuite/TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestAThreadTaskInItsQuietHoursIsHeld`,
+  `TestTelnyxChannelSuite/TestAThreadTasksDeliverToCannotChange`,
+  `TestTelnyxChannelSuite/TestAThreadTaskSaysItIsDeliveredOnTheThreadsChannel`,
+  `TestTelnyxChannelSuite/TestATaskScheduledInATasksTurnIsDeliveredOnTheThreadToo`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskSaysItIsDeliveredOnWhatsApp`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptedOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestATaskOnARemovedLineFailsFinally`,
+  `TestTelnyxChannelSuite/TestATaskWhoseThreadIsGoneFailsFinally`,
+  `TestTelnyxChannelSuite/TestATaskNeverReachesAnotherPersonsThread`,
+  `TestTelnyxChannelSuite/TestATaskReachesOnlyItsOwnCustomersThread`,
+  `TestTelnyxChannelSuite/TestATaskWithoutAThreadIsDeliveredAsBefore` (control),
+  `TestTelnyxSandboxSuite/TestATaskPastTheSandboxsDailyLimitIsHeldBack`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskWithinTheWindowIsSentOnTheThread`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskPastTheWindowIsNotSent`,
+  `TestBridgeSuite/TestAWhatsAppReplyPastTheDayIsPastTheWindowUnlessTheManifestHasATemplate` (unit).
 - **A caller's own tool with a scheduling name keeps the name.**
   `TestScheduledTasksSuite/TestACallersOwnScheduleTaskKeepsTheName`.
 - **Another user's task is a 404.** `TestScheduledTasksSuite/TestTheOwnerReachesATaskItsBackendMadeAndAnotherUserDoesNot`.

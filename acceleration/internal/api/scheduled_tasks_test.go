@@ -37,6 +37,22 @@ type schedulingScript struct {
 	turns [][]llm.ToolCall
 	// rounds is the tool calls of the next rounds a tool's answer starts, one entry for each.
 	rounds [][]llm.ToolCall
+	// failing is how many scheduled turns each model opened from now on fails.
+	failing int
+}
+
+// failScheduled has every model opened from now on fail its next times a scheduled task comes
+// due, for a session the test cannot reach before it opens.
+func (s *schedulingScript) failScheduled(times int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failing = times
+}
+
+func (s *schedulingScript) failingTurns() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failing
 }
 
 // planRound queues the tool calls of the next round a tool's answer starts: a later round
@@ -80,7 +96,7 @@ func (s *schedulingScript) next() []llm.ToolCall {
 func (s *schedulingScript) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.turns, s.rounds = nil, nil
+	s.turns, s.rounds, s.failing = nil, nil, 0
 }
 
 // schedulingModel is a model that asks for the tool calls its test queued and

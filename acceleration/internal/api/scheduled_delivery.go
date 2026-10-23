@@ -140,7 +140,9 @@ func (a scheduledPeerAnswer) failure() error {
 // follow up in it; live on another, hand the occurrence to that node and
 // take its word for where it landed; ended, reopen it from its row the way
 // a message to an ended chat does, and hold it until it has answered. A
-// task whose first occurrence has no session yet opens one on its config.
+// task whose first occurrence has no session yet opens one on its config. A
+// task made in an SMS or WhatsApp thread is carried out in that thread
+// (deliverOnThread), whatever its channels say.
 func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
 	task := claimed.Task
 	// A hold ends after the occurrence came due: its lateness counts from then.
@@ -174,6 +176,9 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		if until, held := quietHold(task, time.Now()); held {
 			return "", "", &scheduling.Postponed{Until: until}
 		}
+	}
+	if task.ChannelThread != "" {
+		return s.deliverOnThread(ctx, delivery, task.ChannelThread)
 	}
 	if delivery.SessionID != "" {
 		if _, live := s.sessions.Get(delivery.SessionID, delivery.owner()); live {

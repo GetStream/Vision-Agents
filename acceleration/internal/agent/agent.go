@@ -330,6 +330,10 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// compactedAway is what compaction took out of history, oldest first. The model reads
+	// a summary of it instead, but what the caller said and the tools returned are still
+	// facts of the call, and the checks on a tool call's arguments are made against them.
+	compactedAway []llm.Message
 	// opened is the line the agent opened the conversation with before anybody spoke, told
 	// to the model in its instructions rather than kept as a turn (Say).
 	opened string
@@ -1205,6 +1209,16 @@ func (a *Agent) History() []llm.Message {
 	return append([]llm.Message(nil), a.history...)
 }
 
+// record returns the whole call: what compaction took out of the history as well as the
+// history itself. Whether a caller said a value or a tool returned it does not stop being
+// true when the model is handed a summary instead. Before this, an ID a tool returned was
+// refused as made up once the result had been summarised away.
+func (a *Agent) record() []llm.Message {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append(append([]llm.Message(nil), a.compactedAway...), a.history...)
+}
+
 // Finish waits for the agent to stop talking, so a caller can hang up without cutting off
 // the last sentence. Work still running counts as talking: the caller was told an answer
 // was coming. It returns the context's error if the wait outlasts it.
@@ -1751,6 +1765,7 @@ func (a *Agent) ask(ready candidate) {
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
 		Ended:        ready.Ended,
+		InParts:      a.converse.inParts(ready.Participant.ID),
 	}); err != nil {
 		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
@@ -3726,6 +3741,7 @@ func (a *Agent) applyCompaction(compacted harness.Compacted) {
 		return
 	}
 	before := len(a.history)
+	a.compactedAway = append(a.compactedAway, a.history[:len(compacted.Prefix)]...)
 	tail := append([]llm.Message(nil), a.history[len(compacted.Prefix):]...)
 	a.history = append([]llm.Message{{
 		Role:    llm.System,
@@ -4286,6 +4302,7 @@ func turnOf(synthesisID string) string {
 func (a *Agent) Continue(previous *Agent) {
 	previous.mu.Lock()
 	history := append([]llm.Message(nil), previous.history...)
+	compactedAway := append([]llm.Message(nil), previous.compactedAway...)
 	// A copy: the old agent can still keep a turn between this and its Close, and would
 	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
@@ -4294,6 +4311,7 @@ func (a *Agent) Continue(previous *Agent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = history
+	a.compactedAway = compactedAway
 	a.speakers = speakers
 	a.opened = opened
 }

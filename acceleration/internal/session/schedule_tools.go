@@ -213,6 +213,11 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 	if !ok {
 		return refusal(scheduling.CodeScheduleInPast, "that schedule has no occurrence left; its last one has passed"), nil
 	}
+	// A task made in a thread is delivered on that thread's channel.
+	deliverTo := store.ScheduledTaskDeliveredConversation
+	if r.thread != "" {
+		deliverTo = r.spec.ThreadDelivery
+	}
 	task := store.ScheduledTask{
 		CustomerID:      r.spec.CustomerID,
 		ConfigID:        r.spec.ConfigID,
@@ -229,7 +234,7 @@ func (r *scheduleRunner) schedule(ctx context.Context, call llm.ToolCall) ([]llm
 		RRule:           parsed.Repeat,
 		NextRunAt:       &next,
 		State:           store.ScheduledTaskActive,
-		Channels:        []string{store.ScheduledTaskDeliveredConversation},
+		Channels:        []string{deliverTo},
 		CreatedBy:       "agent",
 	}
 	if !parsed.Until.IsZero() {

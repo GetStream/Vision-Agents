@@ -28,13 +28,24 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	}
 	var said strings.Builder
 	var results []any
+	// texts are results that are not JSON objects or lists: τ-bench's find_user_id_by_email
+	// answers with the bare ID, noah_ito_3850, under no key to look it up by.
+	var texts []string
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
-			said.WriteString(" " + message.Content + " " + digitsFor(message.Content))
+			said.WriteString(" " + message.Content + " " + withSpokenSeparators(digitsFor(message.Content)))
 		case llm.ToolResult:
+			if failedResult(message.Content) {
+				// A refusal quotes the value it refused, which does not make it returned.
+				continue
+			}
 			var result any
-			if json.Unmarshal([]byte(message.Content), &result) == nil {
+			if json.Unmarshal([]byte(message.Content), &result) != nil {
+				texts = append(texts, message.Content)
+			} else if text, bare := result.(string); bare {
+				texts = append(texts, text)
+			} else {
 				results = append(results, result)
 			}
 		}
@@ -69,7 +80,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 				}
 			})
 		}
-		if !returned {
+		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
 		}
 	}
@@ -273,7 +284,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
-			sources = append(sources, message.Content, digitsFor(message.Content))
+			sources = append(sources, message.Content, withSpokenSeparators(digitsFor(message.Content)))
 			for _, number := range digitRun.FindAllString(digitsFor(message.Content), -1) {
 				if len(number) >= 3 && !slices.Contains(heard, number) {
 					heard = append(heard, number)
@@ -337,6 +348,11 @@ func unheardResult(key, value string, heard []string) string {
 // misspelledName reports a name argument that is not the name the caller spelled out
 // letter by letter. The caller said "The name is Okafor, o k a f o r" and every model booked
 // the transcriber's "Alkafor" or "Alcophor".
+//
+// A name the caller spelled exactly at some point in the call is let through even where
+// another spelling is close to it: the transcriber hears the same letters differently from
+// one spelling to the next ("n o a h", then "n o a a"), and holding the name to whichever
+// close spelling came first refused Noah and Ivan as the callers had spelled them.
 func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled string, misspelled bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -347,9 +363,7 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 		if message.Role != llm.User {
 			continue
 		}
-		for _, match := range spelledOut.FindAllStringSubmatch(message.Content, -1) {
-			spellings = append(spellings, strings.Join(strings.FieldsFunc(match[1], func(r rune) bool { return !unicode.IsLetter(r) }), ""))
-		}
+		spellings = append(spellings, spelledNames(message.Content)...)
 	}
 	if len(spellings) == 0 {
 		return "", "", false
@@ -361,9 +375,11 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 		}
 		for _, word := range strings.Fields(text) {
 			word = alphanumeric(word)
+			if len(word) < 3 || slices.Contains(spellings, word) {
+				continue
+			}
 			for _, spelling := range spellings {
-				spelling = strings.ToLower(spelling)
-				if word != spelling && len(word) >= 3 && closeTo(word, spelling) {
+				if closeTo(word, spelling) {
 					return text, spelling, true
 				}
 			}
@@ -372,10 +388,85 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 	return "", "", false
 }
 
-// spelledOut matches three or more single letters read out one at a time: "o k a f o r",
-// "P-A-T-E-L". The first letter starts a word: in "that's a l v a r e z" the s ends one, and
-// read as a spelled letter it made Alvarez "Salvarez".
-var spelledOut = regexp.MustCompile(`(?i)(?:^|[^\p{L}'’])([a-z](?:[\s,.-]+[a-z]\b){2,})`)
+// spelledNames are the names a caller spelled out in one message, lowercase: three or more
+// single letters read out one at a time, "o k a f o r", "P-A-T-E-L", "J. O. H. N.".
+//
+// A spelling's letters are joined by one kind of separator, spaces, commas, hyphens or
+// periods, and a change of separator ends it: in "f i s c h e r. I need" the period ends
+// the sentence, and read as one more letter the "I" made Fischer "fischeri". A letter only
+// counts when it stands alone: in "that's a l v a r e z" the s ends a word, and read as a
+// spelled letter it made Alvarez "Salvarez".
+//
+// A caller who says a name and then spells it with the next one in a single breath ("Lay
+// Wilson. That's l e i w i l s o n") gives the transcriber no pause to write. A spelling
+// that opens or closes with a name said in the same message is also read as the two
+// names, so Lei and Wilson are each spelled as well as leiwilson.
+func spelledNames(text string) []string {
+	runes := []rune(strings.ToLower(text))
+	alone := func(at int) bool {
+		return at < len(runes) && unicode.IsLetter(runes[at]) &&
+			(at == 0 || !unicode.IsLetter(runes[at-1]) && runes[at-1] != '\'' && runes[at-1] != '’') &&
+			(at+1 == len(runes) || !unicode.IsLetter(runes[at+1]))
+	}
+	var runs []string
+	for at := 0; at < len(runes); at++ {
+		if !alone(at) {
+			continue
+		}
+		letters := []rune{runes[at]}
+		kind := rune(0)
+		for {
+			next := at + 1
+			for next < len(runes) && strings.ContainsRune(" \t\n,.-", runes[next]) {
+				next++
+			}
+			if next == at+1 || !alone(next) {
+				break
+			}
+			separator := separatorKind(runes[at+1 : next])
+			if kind == 0 {
+				kind = separator
+			} else if separator != kind {
+				break
+			}
+			letters = append(letters, runes[next])
+			at = next
+		}
+		if len(letters) >= 3 {
+			runs = append(runs, string(letters))
+		}
+	}
+	if len(runs) == 0 {
+		return nil
+	}
+	said := strings.FieldsFunc(string(runes), func(r rune) bool { return !unicode.IsLetter(r) })
+	spellings := slices.Clone(runs)
+	for _, run := range runs {
+		for _, word := range said {
+			if len(word) < 3 || len(run)-len(word) < 2 {
+				continue
+			}
+			if rest, opens := strings.CutPrefix(run, word); opens {
+				spellings = append(spellings, word, rest)
+			}
+			if rest, closes := strings.CutSuffix(run, word); closes {
+				spellings = append(spellings, rest, word)
+			}
+		}
+	}
+	return spellings
+}
+
+// separatorKind names what joins two spelled letters: a comma, a period or a hyphen when
+// there is one, and a space when there is only space.
+func separatorKind(between []rune) rune {
+	for _, kind := range []rune{',', '.', '-'} {
+		if slices.Contains(between, kind) {
+			return kind
+		}
+	}
+	return ' '
+}
 
 // closeTo reports whether two words are near enough to be one name heard two ways: the same
 // first or last two letters, and lengths within three.
@@ -540,6 +631,14 @@ func walkIDs(value any, at string, found func(at, id string)) {
 			found(at, fmt.Sprint(typed))
 		}
 	}
+}
+
+// holdsValue reports whether a result written as text gives wanted as one of its words, as
+// the bare noah_ito_3850 does. wanted is already alphanumeric.
+func holdsValue(result, wanted string) bool {
+	return slices.ContainsFunc(strings.FieldsFunc(result, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("_-#", r)
+	}), func(word string) bool { return alphanumeric(word) == wanted })
 }
 
 // alphanumeric lowercases text and drops everything but letters and digits, so "T-1842"

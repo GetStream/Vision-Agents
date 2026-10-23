@@ -85,8 +85,14 @@ var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
 	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true},
 	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
-	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber},
+	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber, window: whatsAppWindow},
 }
+
+// whatsAppWindow is Meta's customer service window: free text may be sent within 24 hours of
+// the person's last message, and only an approved template after it
+// (https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages#customer-service-windows),
+// internal/channels' whatsappWindow.
+const whatsAppWindow = 24 * time.Hour
 
 // episodeSource is one connector's card source and the person its message's author is.
 type episodeSource struct {
@@ -106,6 +112,10 @@ type episodeSource struct {
 	// chats is a thread key that is a chat, not the person a reply reaches: a Linq chat id
 	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
 	chats bool
+	// window is how long after the person's last message the provider takes free text, when
+	// it limits that; zero is no limit. A manifest whose reply has an after_window template
+	// still reaches the person past it (Reachable).
+	window time.Duration
 }
 
 // recipientOf is the opt-out recipient an author id or a thread key is.
@@ -184,6 +194,8 @@ type Bridge struct {
 	working sync.WaitGroup
 	mu      sync.Mutex
 	turns   map[string]*holder
+	// held are the replies callers send themselves (Hold), by the command they answer.
+	held map[string]chan conversation.FinishedReply
 }
 
 // New validates the options and returns a Bridge.
@@ -214,6 +226,7 @@ func New(options Options) (*Bridge, error) {
 		gate:       options.Gate,
 		logger:     logger,
 		turns:      map[string]*holder{},
+		held:       map[string]chan conversation.FinishedReply{},
 	}, nil
 }
 
@@ -311,13 +324,46 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 // may have posted it. It runs off the caller, which is the conversation's writer; a reply it
 // cannot send is logged.
 func (b *Bridge) Reply(reply conversation.FinishedReply) {
+	b.mu.Lock()
+	held, holding := b.held[reply.CommandID]
+	delete(b.held, reply.CommandID)
+	b.mu.Unlock()
+	if holding {
+		held <- reply
+		return
+	}
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
-		if err := b.reply(reply); err != nil {
+		// A reply nobody may be sent (refusesReply) is no failure to log.
+		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
+}
+
+// Hold hands the reply that answers commandID to the caller instead of sending it, so the
+// caller sends it (Send) and learns whether it went out, as a scheduled task's delivery
+// records. release stops holding it.
+func (b *Bridge) Hold(commandID string) (replies <-chan conversation.FinishedReply, release func()) {
+	held := make(chan conversation.FinishedReply, 1)
+	b.mu.Lock()
+	b.held[commandID] = held
+	b.mu.Unlock()
+	return held, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.held[commandID] == held {
+			delete(b.held, commandID)
+		}
+	}
+}
+
+// Send sends a reply as Reply does, on the caller, and answers why it did not go out:
+// ErrOptedOut or ErrHeldBack, the provider refusing it, or the store failing. A reply sent
+// already is nil.
+func (b *Bridge) Send(reply conversation.FinishedReply) error {
+	return b.reply(reply)
 }
 
 // reply finds the thread a finished reply is in, claims it, and sends it, again on a failure
@@ -337,7 +383,7 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 	}
 	// Nothing follows an opt-out's confirmation (keywords.go), not even a reply the agent
 	// was writing when the person texted STOP; nor a reply past the sandbox's daily limit.
-	if may, err := b.mayReply(ctx, thread); err != nil || !may {
+	if err := b.refusesReply(ctx, thread); err != nil {
 		return err
 	}
 	text := withFiles(reply.Text, reply.Files)
@@ -370,10 +416,9 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 		time.Sleep(b.retries[attempt])
 		// Nor after a STOP that came in during the wait, or the limit another reply reached.
 		checking, done := context.WithTimeout(context.Background(), sendTimeout)
-		may, checked := b.mayReply(checking, thread)
+		err = b.refusesReply(checking, thread)
 		done()
-		if checked != nil || !may {
-			err = checked
+		if err != nil {
 			break
 		}
 	}

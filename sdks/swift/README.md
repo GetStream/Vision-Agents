@@ -3,8 +3,9 @@
 One iOS package for talking to an agent from a phone, `core/`, whose module is
 `VisionAgentsCore`: the generated client, the session socket and the conversation state, the
 Stream Chat channel a text conversation is kept in, and `VoiceSession`, which joins the agent's
-call over Stream Video. It depends on the OpenAPI runtime, `stream-chat-swift` 5.13+
-(`StreamChat`) and `stream-video-swift` (`StreamVideo`).
+call over Stream Video. It depends on `stream-chat-swift` 5.13+ (`StreamChat`),
+`stream-video-swift` (`StreamVideo`) and the `StreamCore` both of them stand on. `User` and
+`RawJSON` are StreamCore's, and `import VisionAgentsCore` brings them in.
 
 It has no views. The views are Stream Chat's AI components, the `StreamChatAI` library of the
 same `stream-chat-swift` package, which render what the router writes into a conversation's
@@ -12,13 +13,18 @@ channel: the reply streaming in, each round of the model's reasoning, each tool 
 question a tool asks before it runs. Add `StreamChatAI` to the app target beside
 `VisionAgentsCore`; it needs Xcode 27 to add with SPM.
 
-iOS 17 is the floor. It is `@Observable`'s floor, and the alternative was an `ObservableObject`
-path beside it to serve devices that will not be running a new SDK anyway. It is iOS only,
-because Stream Video is and Stream Chat's macOS build does not compile under Swift 6.
+iOS 15 is the floor. `AgentSession` and `VoiceSession` are `ObservableObject`s, so a view holds
+one with `@StateObject` or `@ObservedObject`, and observing a `VoiceSession` follows its
+conversation too. It is iOS only, because Stream Video is and Stream Chat's macOS build does
+not compile under Swift 6.
 
-SPM has no way to depend on a subdirectory of a tagged repository, so the examples reach the
-package by path. Shipping it means splitting `core/` into its own repository from CI, or a
-package registry.
+An app adds it with Swift Package Manager from this repository,
+`https://github.com/GetStream/Vision-Agents.git`, and takes the `VisionAgentsCore` product. Its
+manifest is the `Package.swift` at the root of the repository, the only place SwiftPM looks, and
+its versions are the repository's `v` tags, which release the Python packages too. The tags from
+before the first one with Swift in it (0.7.0 or later) have no manifest, so keep them out of the
+range. SwiftPM clones the whole repository the first time, about 300 MB, and only fetches what
+is new after that. The examples reach the package by path, so they build against the checkout.
 
 ## Using them
 
@@ -284,22 +290,10 @@ uv run sdks/swift/generate.py --check   # does the filter still agree with the s
 uv run sdks/swift/generate.py           # regenerate
 ```
 
-Regenerating needs Apple's generator on disk at `.codegen/swift/swift-openapi-generator`:
-
-```bash
-mkdir -p /tmp/oapigen && cd /tmp/oapigen
-cat > Package.swift <<'EOF'
-// swift-tools-version:6.0
-import PackageDescription
-let package = Package(
-    name: "oapigen",
-    dependencies: [.package(url: "https://github.com/apple/swift-openapi-generator", exact: "1.13.1")]
-)
-EOF
-swift build -c release --product swift-openapi-generator
-mkdir -p <repo>/.codegen/swift
-cp .build/release/swift-openapi-generator <repo>/.codegen/swift/
-```
+The generator is the one Stream Chat and Stream Video generate their clients with, in
+`tools/openapi` of the `chat` repository, so regenerating needs that repository checked out
+beside this one (`../chat`) and Go. Its `DefaultAPI` and models run on StreamCore's
+`DefaultAPITransport` and `DefaultAPIClientMiddleware`, which `Backend.swift` implements.
 
 The generated code is `internal`, and every type crossing the public API is hand-written in
 `Models.swift`. That is what lets the spec churn without breaking anybody: a field added to
@@ -311,10 +305,10 @@ hand-written against the contract in
 
 ## Tests
 
-The package is iOS only, so the tests run on a simulator rather than with `swift test`:
+The package is iOS only, so the tests run on a simulator rather than with `swift test`, from
+the root of the repository:
 
 ```bash
-cd sdks/swift/core
 xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
