@@ -1,6 +1,7 @@
 // Package server is the usage service's HTTP API: producers ship events to it, and routers
-// read what subjects spent and organizations' standings from it. Every operation but the
-// health check takes the ingest token.
+// read what subjects spent and organizations' standings from it, with the ingest token; the
+// operator manages tiers, accounts and credit through the management API, with the manage
+// key. The health check takes neither.
 package server
 
 import (
@@ -49,19 +50,23 @@ const (
 // Options configure a Server.
 type Options struct {
 	Ledger *ledger.Ledger
-	// IngestToken is the bearer token every operation but the health check takes.
+	// IngestToken is the bearer token of the producers' and routers' operations.
 	IngestToken string
-	Logger      *slog.Logger
+	// ManageKey is what the management API takes in X-Manage-Key; empty turns it off.
+	ManageKey string
+	Logger    *slog.Logger
 	// Now is the clock answers are stamped with; nil is time.Now.
 	Now func() time.Time
 }
 
 // Server answers the usage service's API.
 type Server struct {
-	ledger *ledger.Ledger
-	token  [sha256.Size]byte
-	logger *slog.Logger
-	now    func() time.Time
+	ledger    *ledger.Ledger
+	token     [sha256.Size]byte
+	manageKey [sha256.Size]byte
+	manageOn  bool
+	logger    *slog.Logger
+	now       func() time.Time
 }
 
 // New returns a server over options.Ledger.
@@ -69,13 +74,20 @@ func New(options Options) (*Server, error) {
 	if options.Ledger == nil || options.IngestToken == "" {
 		return nil, errors.New("server: a ledger and an ingest token are required")
 	}
+	if options.ManageKey == options.IngestToken {
+		return nil, errors.New("server: the manage key cannot be the ingest token, which every producer holds")
+	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Server{ledger: options.Ledger, token: sha256.Sum256([]byte(options.IngestToken)), logger: options.Logger, now: options.Now}, nil
+	return &Server{
+		ledger: options.Ledger, token: sha256.Sum256([]byte(options.IngestToken)),
+		manageKey: sha256.Sum256([]byte(options.ManageKey)), manageOn: options.ManageKey != "",
+		logger: options.Logger, now: options.Now,
+	}, nil
 }
 
 // Handler serves the API.
@@ -94,9 +106,14 @@ func (s *Server) register(router chi.Router) huma.API {
 				Title:   "Usage service",
 				Version: "0.1.0",
 				Description: "Records the usage events producers ship, once per usage id, keeps what every subject spent in " +
-					"every daily, weekly, bi-weekly and monthly window, and mirrors those totals to Redis. It does not price " +
-					"(the producer sends what the work cost), authenticate customers, or admit requests. Reachable only " +
-					"inside the cluster, from the producers and the routers.",
+					"every daily, weekly, bi-weekly and monthly window, and mirrors those totals to Redis. It keeps each " +
+					"organization's account (credit, spend, status and its own settings), debited in the transaction that " +
+					"records its events, and what each tier string decides; routers read both in organizations' standings. " +
+					"It does not price (the producer sends what the work cost), authenticate customers, or admit requests. " +
+					"Reachable only inside the cluster, from the producers, the routers and the operator's management " +
+					"tools.\n\nA request whose shape the schema refuses is a 422. The management API's own failures carry a " +
+					"`code` beside the problem's fields: `invalid_request` (400), `unauthenticated` (401), `not_configured` " +
+					"(404: the service has no manage key), `default_tier` and `idempotency_key_reused` (409).",
 			},
 			Servers: []*huma.Server{{URL: "http://localhost:8070"}},
 			Components: &huma.Components{
@@ -106,6 +123,12 @@ func (s *Server) register(router chi.Router) huma.API {
 						Type:        "http",
 						Scheme:      "bearer",
 						Description: "The service's ingest token, USAGE_INGEST_TOKEN, held by the producers and routers.",
+					},
+					manageScheme: {
+						Type:        "apiKey",
+						In:          "header",
+						Name:        manageKeyHeader,
+						Description: "The service's manage key, USAGE_MANAGE_KEY, held by the operator's management tools alone.",
 					},
 				},
 			},
@@ -166,12 +189,17 @@ func (s *Server) register(router chi.Router) huma.API {
 		Method:      http.MethodPost,
 		Path:        usage.PathStandings,
 		Summary:     "Read organizations' standings",
-		Description: "One standing per organization asked about, in the order asked. At most " +
+		Description: "One standing per organization asked about, in the order asked, each on the tier asked about: its " +
+			"tier's settings (the `default` tier's when the tier has no row, with `fallback_tier`), its own overrides " +
+			"and the settings in force, its status, what was granted and spent, its balance, and its spend in the " +
+			"current UTC day and calendar month. Read from the database every time, so a change shows in the next " +
+			"read. An organization with no account is active with nothing granted or spent. At most " +
 			strconv.Itoa(usage.MaxOrganizations) + " organizations, else 413.",
 		Tags:     []string{tag},
 		Security: security,
-		Errors:   []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusRequestEntityTooLarge},
+		Errors:   []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable},
 	}, s.standings)
+	s.registerManage(api)
 	return api
 }
 
@@ -198,11 +226,17 @@ func dropBodyEcho(_ huma.Context, _ string, v any) (any, error) {
 }
 
 // requireToken answers 401 to an operation that takes the ingest token when the request does
-// not carry it, before its body is read.
+// not carry it, before its body is read, and hands a management operation to
+// requireManageKey: neither credential opens the other's operations.
 func (s *Server) requireToken(api huma.API) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		if len(ctx.Operation().Security) == 0 {
+		security := ctx.Operation().Security
+		if len(security) == 0 {
 			next(ctx)
+			return
+		}
+		if _, manage := security[0][manageScheme]; manage {
+			s.requireManageKey(ctx, next)
 			return
 		}
 		sent, ok := strings.CutPrefix(ctx.Header("Authorization"), "Bearer ")
@@ -365,21 +399,25 @@ type standingsOutput struct {
 	Body usage.Standings
 }
 
-func (s *Server) standings(_ context.Context, input *standingsInput) (*standingsOutput, error) {
+func (s *Server) standings(ctx context.Context, input *standingsInput) (*standingsOutput, error) {
 	started := time.Now()
 	defer func() { standingSeconds.Observe(time.Since(started).Seconds()) }()
 	organizations := input.Body.Organizations
 	if len(organizations) > usage.MaxOrganizations {
 		return nil, huma.Error413RequestEntityTooLarge(fmt.Sprintf("a read names at most %d organizations, this one %d", usage.MaxOrganizations, len(organizations)))
 	}
-	output := &standingsOutput{Body: usage.Standings{AsOf: s.now().UTC(), Standings: make([]usage.Standing, 0, len(organizations))}}
 	for i, organization := range organizations {
 		if organization.OrganizationID == "" {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("organizations[%d]: organization_id is required", i))
 		}
-		output.Body.Standings = append(output.Body.Standings, usage.Standing{OrganizationID: organization.OrganizationID})
 	}
-	return output, nil
+	asOf := s.now().UTC()
+	standings, err := s.ledger.Standings(ctx, organizations)
+	if err != nil {
+		s.logger.Error("could not read standings", "organizations", len(organizations), "error", err)
+		return nil, huma.Error503ServiceUnavailable("the standings could not be read")
+	}
+	return &standingsOutput{Body: usage.Standings{AsOf: asOf, Standings: standings}}, nil
 }
 
 // Spec renders the service's OpenAPI document, which internal/usage/server/openapi.yaml
@@ -396,6 +434,7 @@ func Spec() ([]byte, error) {
 	if err := decoder.Decode(&document); err != nil {
 		return nil, fmt.Errorf("server: spec: %w", err)
 	}
+	numbers(document)
 	var out bytes.Buffer
 	out.WriteString("# Generated by `go run ./cmd/usage openapi` from the operations in internal/usage/server. Do not edit.\n")
 	encoder := yaml.NewEncoder(&out)
@@ -407,4 +446,26 @@ func Spec() ([]byte, error) {
 		return nil, fmt.Errorf("server: spec: %w", err)
 	}
 	return out.Bytes(), nil
+}
+
+// numbers turns every json.Number in the document into an int64, or a float64 when it is not
+// whole, since yaml quotes a json.Number and `minimum: "0"` is a string, not a bound.
+func numbers(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			value[key] = numbers(child)
+		}
+	case []any:
+		for i, child := range value {
+			value[i] = numbers(child)
+		}
+	case json.Number:
+		if integer, err := value.Int64(); err == nil {
+			return integer
+		}
+		float, _ := value.Float64()
+		return float
+	}
+	return value
 }

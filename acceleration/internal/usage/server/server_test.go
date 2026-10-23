@@ -53,9 +53,9 @@ func (s *ServerSuite) SetupTest() {
 	s.logs = &lockedBuffer{}
 	s.service = usagetest.Start(s.T(), usagetest.Options{
 		DSN: s.dsn, RedisURL: usagetest.RedisURL(s.T()), Logger: slog.New(slog.NewTextHandler(s.logs, nil)),
+		ManageKey: "manage-" + uuid.NewString(),
 	})
-	_, err := s.service.Ledger.DB().ExecContext(s.ctx, "TRUNCATE usage_events, usage_windows")
-	s.Require().NoError(err)
+	usagetest.Empty(s.T(), s.service.Ledger)
 }
 
 func (s *ServerSuite) TearDownTest() {
@@ -427,7 +427,9 @@ func (s *ServerSuite) TestStandingsAnswerTheOrganizationsAskedAbout() {
 	}})
 
 	s.Require().NoError(err)
-	s.Equal([]usage.Standing{{OrganizationID: "o2"}, {OrganizationID: "o1"}}, standings)
+	s.Require().Len(standings, 2)
+	s.Equal([]string{"o2", "o1"}, []string{standings[0].OrganizationID, standings[1].OrganizationID})
+	s.Equal([]string{"tier-a", ""}, []string{standings[0].OrganizationTier, standings[1].OrganizationTier})
 }
 
 func (s *ServerSuite) TestAStandingsReadWithoutAnOrganizationIsRefused() {

@@ -146,7 +146,8 @@ type written struct {
 }
 
 // Ingest records the events that pass the contract's check and are not recorded yet, and adds
-// exactly those to their windows, in one transaction. Then it writes the windows' totals to
+// exactly those to their windows and their organizations' spend, in one transaction, so a
+// balance is never behind what was recorded. Then it writes the windows' totals to
 // the mirror, before returning, so an event acked is already in Redis unless Redis failed.
 // The windows of an event recorded by an earlier call are written too: that call may have
 // committed and then died before its own mirror write, and the producer is sending it again.
@@ -202,7 +203,7 @@ func (l *Ledger) Ingest(ctx context.Context, events []usage.Event) (Result, erro
 			return err
 		}
 		result.Windows = totals
-		return nil
+		return debit(ctx, tx, result.Accepted)
 	})
 	if err != nil {
 		return Result{Rejected: result.Rejected}, err

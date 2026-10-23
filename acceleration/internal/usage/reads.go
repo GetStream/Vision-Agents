@@ -37,9 +37,25 @@ type StandingOrganization struct {
 	OrganizationTier string `json:"organization_tier,omitempty"`
 }
 
-// Standing is what the service knows about one organization that admission reads.
+// Standing is what the service knows about one organization that admission reads. An
+// organization with no account is active, with nothing granted and nothing spent.
 type Standing struct {
 	OrganizationID string `json:"organization_id"`
+	// OrganizationTier is the tier string the standing was asked for, which may have no row.
+	OrganizationTier string `json:"organization_tier"`
+	// Tier is the row of the tier asked about, or the default tier's when it has none.
+	Tier         Tier `json:"tier"`
+	FallbackTier bool `json:"fallback_tier" doc:"The tier asked about has no row: tier is the default tier's."`
+	// Limits are the tier's with the organization's overrides laid over them, the settings
+	// in force; Overrides are the organization's own.
+	Limits        Limits        `json:"limits" doc:"The settings in force: the tier's with the organization's overrides laid over them."`
+	Overrides     Limits        `json:"limit_overrides" doc:"The organization's own settings, each replacing the tier's."`
+	Status        AccountStatus `json:"status" enum:"active,suspended"`
+	StatusReason  string        `json:"status_reason,omitempty" doc:"Why the organization is suspended."`
+	GrantedMicros int64         `json:"granted_micros" doc:"Every credit entry summed."`
+	SpentMicros   int64         `json:"spent_micros" doc:"Every billable event's cost summed."`
+	BalanceMicros int64         `json:"balance_micros" doc:"granted_micros less spent_micros."`
+	SpendWindows  SpendWindows  `json:"spend_windows" doc:"The organization's spend in the current UTC day and calendar month, for the spend hard limit."`
 }
 
 // Standings is the answer to a StandingQuery, one standing per organization asked about.

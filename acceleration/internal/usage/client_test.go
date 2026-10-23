@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
@@ -34,8 +35,7 @@ func (s *ClientSuite) SetupSuite() {
 
 func (s *ClientSuite) SetupTest() {
 	s.service = usagetest.Start(s.T(), usagetest.Options{DSN: s.dsn})
-	_, err := s.service.Ledger.DB().ExecContext(s.ctx, "TRUNCATE usage_events, usage_windows")
-	s.Require().NoError(err)
+	usagetest.Empty(s.T(), s.service.Ledger)
 }
 
 func (s *ClientSuite) TestTheClientShipsAndReads() {
@@ -92,6 +92,26 @@ func (s *ClientSuite) TestAnEventNoBodyCanHoldIsRejectedAndTheRestShipped() {
 	s.Contains(ack.Rejected[0].Message, "not sent")
 	s.Equal(2, ack.Rejected[1].Index, "the service's rejection, at its place among the events shipped")
 	s.Equal(usage.ReasonAPIKey, ack.Rejected[1].Reason)
+}
+
+func (s *ClientSuite) TestTheClientReadsAnOrganizationsStanding() {
+	_, _, err := s.service.Ledger.AddCredit(s.ctx, ledger.CreditEntry{
+		OrganizationID: "o1", Kind: usage.CreditTopUp, AmountMicros: 5000, IdempotencyKey: "payment-1", Actor: "proxy",
+	})
+	s.Require().NoError(err)
+	_, err = s.service.Client.Ship(s.ctx, []usage.Event{usagetest.Event("o1", func(e *usage.Event) { e.CostMicros = 1200 })})
+	s.Require().NoError(err)
+
+	standings, err := s.service.Client.Standings(s.ctx, usage.StandingQuery{Organizations: []usage.StandingOrganization{
+		{OrganizationID: "o1", OrganizationTier: "tier-a"},
+	}})
+
+	s.Require().NoError(err)
+	s.Require().Len(standings, 1)
+	s.Equal(int64(3800), standings[0].BalanceMicros)
+	s.Equal(int64(1200), standings[0].SpendWindows.Daily.SpentMicros)
+	s.Equal(usage.BuiltInDefaultTier(), standings[0].Tier)
+	s.True(standings[0].FallbackTier)
 }
 
 func (s *ClientSuite) TestTheClientSplitsEventsTooBigForOneBody() {

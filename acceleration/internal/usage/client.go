@@ -18,6 +18,9 @@ const (
 	PathEvents    = "/v1/events"
 	PathWindows   = "/v1/windows"
 	PathStandings = "/v1/standings"
+	// PathManage prefixes the management API, which takes the manage key and never the
+	// ingest token.
+	PathManage = "/v1/manage"
 )
 
 const (

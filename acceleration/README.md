@@ -1403,9 +1403,37 @@ ships to it yet.
 ```bash
 USAGE_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/usage?sslmode=disable' \
 USAGE_INGEST_TOKEN=local-usage-token USAGE_REDIS_URL=redis://localhost:56379 \
+USAGE_MANAGE_KEY=local-usage-manage-key USAGE_TIERS_FILE=tiers/dev.json \
   go run ./cmd/usage            # or `docker compose build router && docker compose up usage`
 go run ./cmd/usage --help       # every setting
 ```
+
+**Accounts and tiers.** Every organization has an account: its credit (`granted_micros`,
+the sum of its credit entries), its spend (`spent_micros`, debited in the transaction that
+records its events, so a batch sent twice debits once), its status (`active` or
+`suspended`), and its own value for any of its tier's settings (`limit_overrides`). A tier is
+a string producers send on every event; the service assigns none. Its row holds its
+`fail_mode` (what admission does while it cannot read a balance) and its `limits`: a spend
+hard limit per UTC day and calendar month (0 or absent is none), per-channel counts,
+recipients, countries and concurrency, sandbox bounds, and a low-balance threshold. A tier
+string with no row gets the `default` row's, which cannot be deleted. The code names no tier
+but `default`: the rows are data. At start the service adds the tiers of an operator's tier
+file (`USAGE_TIERS_FILE`) that the database lacks, then a built-in `default` (fail closed,
+nothing else) if there is still none; a tier the database has is changed only through the
+API. `tiers/dev.json` holds made-up tiers for the local stack and the tests.
+
+```bash
+go run ./cmd/usage tiers check --file tiers/dev.json   # exits non-zero on the first error
+go run ./cmd/usage tiers sync --dry-run                # what the next start would add
+```
+
+`POST /v1/standings` answers, per organization, the tier asked about (`fallback_tier` when it
+has no row), the overrides and the settings in force, the status, the balance, and the
+organization's spend in the current day and month. The management API under `/v1/manage`
+(tiers, accounts, limits, credit, suspension, usage) takes `USAGE_MANAGE_KEY` in
+`X-Manage-Key` and an actor in `X-Stream-Actor-Id`, never the ingest token; without the key
+every route answers 404 `not_configured`. Each change is written to `manage_audit` with its
+actor. A credit is written once per `Idempotency-Key`, and only its sign is checked.
 
 The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
 A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,
