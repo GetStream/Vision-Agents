@@ -424,13 +424,7 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 	if s.store == nil {
 		return session.Found{}, errUnknownSession
 	}
-	// The row is written behind the conversation, and stopping takes a session out of the
-	// live set at once, so one stopped a moment ago may not have a row yet.
-	if err := s.sessions.FlushRecords(ctx); err != nil {
-		return session.Found{}, err
-	}
-
-	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
+	row, err := s.storedSession(ctx, owner.CustomerID, id)
 	if err != nil {
 		return session.Found{}, errUnknownSession
 	}
@@ -442,6 +436,21 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 		return session.Found{}, errUnknownSession
 	}
 	return session.Found{Stored: &row}, nil
+}
+
+// storedSession reads a session's row. The row is written behind the conversation, and stopping
+// takes a session out of the live set at once, so one stopped a moment ago may not have a row
+// yet: on a miss it waits for the writer and reads again. A row already there is answered at
+// once, so a stalled writer holds up only a read that missed.
+func (s *Server) storedSession(ctx context.Context, customerID, id string) (store.AgentSession, error) {
+	row, err := s.store.StoredSession(ctx, customerID, id)
+	if err == nil || s.sessions == nil {
+		return row, err
+	}
+	if flushErr := s.sessions.FlushRecords(ctx); flushErr != nil {
+		return store.AgentSession{}, flushErr
+	}
+	return s.store.StoredSession(ctx, customerID, id)
 }
 
 // reopenSettleGap is how long a reopened conversation's agent stays quiet, with nothing left

@@ -1999,6 +1999,36 @@ func (s *ScheduledTasksSuite) TestACreateNamingASessionFollowsUpInIt() {
 	s.Equal(http.StatusNotFound, status, "a session is only its own user's to schedule into")
 }
 
+// The row is written behind the conversation, so a session stopped while the writer is behind
+// has left the live set before its row exists; a create naming it waits for the row.
+func (s *ScheduledTasksSuite) TestACreateNamingASessionThatEndedBeforeItsRowWasWrittenFollowsUpInIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	release := s.stallTheRecordWriter()
+	opened := s.openScheduling(user, config, nil)
+	user.stopSession(opened.Id)
+
+	body := taskRequest(config)
+	body.ConfigId, body.SessionId = nil, &opened.Id
+	answered := make(chan int, 1)
+	go func() {
+		var created ScheduledTask
+		answered <- s.serverClient.actingFor(user).do(http.MethodPost, "/v1/agents/scheduled-tasks", body, &created)
+	}()
+	// Well under recordWriteTimeout (5s, internal/session/records.go), so only the create
+	// waiting for the writer keeps it unanswered this long.
+	s.Never(func() bool { return len(answered) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the create answered before the writer had written the session's row")
+	release()
+
+	select {
+	case status := <-answered:
+		s.Equal(http.StatusCreated, status)
+	case <-time.After(10 * time.Second):
+		s.FailNow("the create never answered")
+	}
+}
+
 // An occurrence follows up by carrying the conversation on, so a create naming a session
 // that keeps none is refused rather than failing at every occurrence until it pauses.
 func (s *ScheduledTasksSuite) TestACreateNamingASessionThatKeepsNoConversationIsRefused() {
