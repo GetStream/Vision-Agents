@@ -67,6 +67,9 @@ type PolicyDocument struct {
 	// BalanceWarningMicros is the balance, in micros, at or below which the organization is
 	// warned, over its tier's; on an organization's document only.
 	BalanceWarningMicros *int64 `json:"balance_warning_micros,omitempty"`
+	// ToolOutputRetention is the longest any of the scope's sessions keeps what its tools
+	// were given and gave back. An agent config can shorten it and never lengthen it.
+	ToolOutputRetention options.Retention `json:"tool_output_retention,omitempty"`
 }
 
 // Quota is what one end user may spend in a UTC day. A nil field is no opinion, so the

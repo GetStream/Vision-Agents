@@ -633,6 +633,45 @@ func (s *Store) AppendResponseItems(ctx context.Context, items []AgentResponseIt
 	return nil
 }
 
+// redactToolOutputSQL is AgentResponseItem.Redact for up to ?1 rows of this shard whose
+// redact_at is no later than ?0, oldest first. SKIP LOCKED because every router of the
+// shard runs it: two of them on one row would wait on each other for nothing.
+const redactToolOutputSQL = `
+WITH due AS (
+    SELECT response_id, ordinal FROM agent_response_items
+    WHERE redact_at IS NOT NULL AND redact_at <= ?0
+    ORDER BY redact_at
+    LIMIT ?1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE agent_response_items AS t SET
+    text = '',
+    payload = jsonb_strip_nulls(jsonb_build_object(
+        'call_id', t.payload->'call_id',
+        'product', t.payload->'product',
+        'sdk', t.payload->'sdk',
+        'error', CASE WHEN t.payload->'error' IS NOT NULL THEN to_jsonb('redacted'::text) END,
+        'redacted', true)),
+    redact_at = NULL
+FROM due
+WHERE t.response_id = due.response_id AND t.ordinal = due.ordinal`
+
+// RedactToolOutput takes the arguments and output out of up to limit tool items in this
+// router's shard whose time to be redacted has come by now, and returns how many it
+// redacted. Each row's time was set from its own customer's retention when it was written,
+// so a run reads no customer's settings and touches no row that is not due. The other
+// shards' routers redact theirs.
+func (s *Store) RedactToolOutput(ctx context.Context, now time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	result, err := s.shard.NewRaw(redactToolOutputSQL, now, limit).Exec(ctx)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: redact tool output: %w", err))
+	}
+	return result.RowsAffected()
+}
+
 // SessionItems returns a session's items in the order they happened, across every turn.
 //
 // One flat stream rather than a list per turn, because that is how a conversation reads and
