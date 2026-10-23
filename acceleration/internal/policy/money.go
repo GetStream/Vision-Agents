@@ -86,6 +86,10 @@ const (
 	// countersTimeout bounds one read of the counters, which happens every SpendEvery; past it,
 	// the subjects are read from the usage service instead.
 	countersTimeout = time.Second
+	// firstWindow is how long a batch of first reads gathers accounts before it is read, and
+	// firstBatches how many batches are read at once.
+	firstWindow  = 15 * time.Millisecond
+	firstBatches = 4
 	// passTimeout bounds one pass of any loop.
 	passTimeout = time.Minute
 	// grantsTimeout bounds one read of the grants, on their own loop.
@@ -171,6 +175,11 @@ type money struct {
 	reads    sync.WaitGroup
 	stopping bool
 	stopped  sync.Once
+	// firstQueue is the accounts the batch of first reads gathering now will read, and
+	// firstGathering whether one is; firstSlots bounds the batches read at once.
+	firstQueue     map[string]bool
+	firstGathering bool
+	firstSlots     chan struct{}
 
 	errorLogged once
 	refusals    throttle
@@ -290,6 +299,7 @@ func (m *money) start(e *Enforcer) {
 	m.kick, m.kickLimits, m.kickGrants = make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.ctx, m.cancel = ctx, cancel
+	m.firstSlots = make(chan struct{}, firstBatches)
 	enforcers.Store(e, struct{}{})
 	m.loops.Add(3)
 	go m.every(ctx, m.settings.Fresh, m.kick, m.pass)
@@ -626,11 +636,12 @@ func (m *money) refusal(acct *account, key string, owner routing.Owner, decided 
 			}
 		}
 	}
-	// Limits read MaxStale ago or never, or a limited subject's spend, are answered as the tier
-	// says, as a balance is. An account last read with no limit keeps admitting: a limit is
-	// written to the Postgres it cannot read.
-	if (acct.limited || acct.limitsRead.IsZero()) && m.enforcer.config.DB() != nil &&
-		m.limitsStale(acct, refs, now) && m.failsClosed(acct, decided.organization) {
+	// Limits read MaxStale ago, or a limited subject's spend read then or never, are answered as
+	// the tier says, as a balance is. Limits never read admit: the background read lands within
+	// seconds, which bounds what is spent past one. An account last read with no limit keeps
+	// admitting, since a limit is written to the Postgres it cannot read; and with no usage
+	// service there is no tier, and every account admits.
+	if acct.limited && m.settings.Usage != nil && m.limitsStale(acct, refs, now) && m.failsClosed(acct, decided.organization) {
 		return nil, refusedWith(ErrBudgetSpent, "the %s's spend limits could not be read, so work that costs money "+
 			"is refused until they can be; try again shortly", noun(key)), reasonLimitsRead, nil
 	}
@@ -768,8 +779,8 @@ func (m *money) see(acct *account, refs []usage.SubjectRef, now time.Time) {
 
 // failsClosed reports, under m.mu, whether the account's tier refuses billable work it cannot
 // check: as its standing says once one landed, else as the last standing of the tier the
-// organization was last seen on said. An account with neither, as one with no usage service or
-// an app in no organization, follows the default tier, which fails closed.
+// organization was last seen on said. An account with neither, as an app in no organization,
+// follows the default tier, which fails closed.
 func (m *money) failsClosed(acct *account, organization string) bool {
 	if !acct.read.IsZero() && acct.standing.Tier.FailMode != "" {
 		return acct.standing.Tier.FailMode != usage.FailOpen

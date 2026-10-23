@@ -1096,39 +1096,113 @@ func (s *PolicySuite) TestASubjectSeenAgainAfterIdleIsReadBeforeItsAdmission() {
 	s.ErrorIs(s.admit(enforcer, s.app).Spend, ErrBudgetSpent, "read again at its next admission, with the sums an hour away")
 }
 
-func (s *PolicySuite) TestAFirstReadThatDoesNotLandFollowsTheTier() {
+func (s *PolicySuite) TestLimitsNeverReadAdmitWhateverTheTier() {
+	enforcer := s.billed(func(settings *Settings) { settings.Idle = time.Minute })
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.lockLimits()
+	enforcer.Join(s.app, s.org, closedTier)
+	s.eventually(func() bool {
+		enforcer.money.mu.Lock()
+		defer enforcer.money.mu.Unlock()
+		acct := enforcer.money.accounts[s.org]
+		return acct != nil && !acct.read.IsZero()
+	}, 5*time.Second, 5*time.Millisecond, "the standing is read; the limits wait on Postgres")
+
+	started := time.Now()
+	spend := s.admit(enforcer.Enforcer, s.app).Spend
+	waited := time.Since(started)
+
+	s.GreaterOrEqual(waited, defaultFirstRead, "it waited for the first read")
+	s.Less(waited, 4*defaultFirstRead, "for FirstRead, not for the read")
+	s.NoError(spend, "a closed tier admits on limits never read, until they land")
+	started = time.Now()
+	s.NoError(s.admit(enforcer.Enforcer, s.app).Spend)
+	s.Less(time.Since(started), defaultFirstRead, "the next waits on the read under way no longer than its own")
+}
+
+func (s *PolicySuite) TestASubjectsFirstReadThatDoesNotLandFollowsTheTier() {
 	for tier, refused := range map[string]bool{closedTier: true, openTier: false} {
 		s.Run(tier, func() {
 			s.SetupTest()
 			enforcer := s.billed(func(settings *Settings) { settings.Idle = time.Minute })
 			s.usage().Credit(s.T(), s.org, 1_000_000)
 			s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
-			s.lockLimits()
+			enforcer.front.windowsDown.Store(true)
 			enforcer.Join(s.app, s.org, tier)
 			s.eventually(func() bool {
 				enforcer.money.mu.Lock()
 				defer enforcer.money.mu.Unlock()
 				acct := enforcer.money.accounts[s.org]
-				return acct != nil && !acct.read.IsZero()
-			}, 5*time.Second, 5*time.Millisecond, "the standing is read; the limits wait on Postgres")
+				return acct != nil && !acct.read.IsZero() && acct.limited
+			}, 5*time.Second, 5*time.Millisecond, "the standing and the limits are read; the app's spend cannot be")
 
-			started := time.Now()
 			spend := s.admit(enforcer.Enforcer, s.app).Spend
-			waited := time.Since(started)
 
-			s.GreaterOrEqual(waited, defaultFirstRead, "it waited for the first read")
-			s.Less(waited, 4*defaultFirstRead, "for FirstRead, not for the read")
 			if !refused {
 				s.NoError(spend, "an open tier admits")
 				return
 			}
 			s.ErrorIs(spend, ErrBudgetSpent)
 			s.ErrorContains(spend, "spend limits could not be read")
-			started = time.Now()
-			s.ErrorIs(s.admit(enforcer.Enforcer, s.app).Spend, ErrBudgetSpent)
-			s.Less(time.Since(started), defaultFirstRead, "the next waits on the read under way no longer than its own")
 		})
 	}
+}
+
+func (s *PolicySuite) TestWithNoUsageServiceLimitsThatCannotBeReadAdmit() {
+	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	s.Require().NoError(s.admit(s.enforcer, s.app).Spend)
+	s.lockLimits()
+
+	app := s.app
+	s.never(func() bool { return s.admit(s.enforcer, app).Spend != nil }, 3*quick.MaxStale, 10*time.Millisecond,
+		"a self-hosted router has no tier, and admits on the last limits read")
+}
+
+// limitsReads counts the reads of the limits table a store makes.
+type limitsReads struct{ reads atomic.Int64 }
+
+func (*limitsReads) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context { return ctx }
+
+func (r *limitsReads) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if strings.Contains(event.Query, `FROM "limits"`) {
+		r.reads.Add(1)
+	}
+}
+
+func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
+	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = db.Close() })
+	reads := &limitsReads{}
+	db.DB().AddQueryHook(reads)
+	configs, err := appconfig.New(appconfig.Options{Store: db})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.Fresh, settings.SumEvery = time.Hour, time.Hour })
+	const accounts = 60
+	apps := make([]string, accounts)
+	for i := range apps {
+		apps[i] = fmt.Sprintf("%s-%02d", s.app, i)
+		organization := fmt.Sprintf("%s-%02d", s.org, i)
+		s.Require().NoError(s.store.JoinOrganization(s.ctx, apps[i], organization))
+		s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: organization, AppID: apps[i], LimitMicros: 1})
+		s.spendAs(store.Request{CustomerID: apps[i], CostMicros: 1})
+	}
+	before := reads.reads.Load()
+
+	var refused atomic.Int64
+	var admitting sync.WaitGroup
+	for _, app := range apps {
+		admitting.Go(func() {
+			if admitted, err := enforcer.Admit(s.ctx, ownerOf(app)); err == nil && errors.Is(admitted.Spend, ErrBudgetSpent) {
+				refused.Add(1)
+			}
+		})
+	}
+	admitting.Wait()
+
+	s.EqualValues(accounts, refused.Load(), "every first admission read its limit and spend first")
+	s.LessOrEqual(reads.reads.Load()-before, int64(accounts/10), "in batches, not a read of the limits per account")
 }
 
 func (s *PolicySuite) TestAChangedLimitIsHeldToTheLastSpendReadAtOnce() {
