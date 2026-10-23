@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +50,9 @@ type RuntimeSuite struct {
 	customer string
 	// refuses makes every call the manager opens refuse the agent.
 	refuses bool
+	// edges are the calls the manager opened, in order.
+	edgesMu sync.Mutex
+	edges   []*quietEdge
 }
 
 func TestRuntimeSuite(t *testing.T) {
@@ -79,6 +83,7 @@ func (s *RuntimeSuite) SetupTest() {
 	s.customer = "runtime-" + uuid.NewString()
 	s.refuses = false
 	s.manager = nil
+	s.edges = nil
 }
 
 // manages builds a manager over stub providers that keeps its sessions in Postgres.
@@ -112,6 +117,9 @@ func (s *RuntimeSuite) manages() {
 		Logger: logger,
 		Edge: func(context.Context, Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			edge := newQuietEdge()
+			s.edgesMu.Lock()
+			s.edges = append(s.edges, edge)
+			s.edgesMu.Unlock()
 			if s.refuses {
 				return refusingEdge{edge}, nil
 			}
@@ -143,6 +151,11 @@ func (s *RuntimeSuite) opens(spec Spec) (*Session, error) {
 // and returns the session's runtime rows, oldest first.
 func (s *RuntimeSuite) runtime(sessionID string) []store.Request {
 	s.Require().NoError(s.manager.Shutdown())
+	return s.written(sessionID)
+}
+
+// written is the session's runtime rows written so far, oldest first.
+func (s *RuntimeSuite) written(sessionID string) []store.Request {
 	var rows []store.Request
 	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).
 		Where("customer_id = ?", s.customer).
@@ -225,6 +238,48 @@ func (s *RuntimeSuite) TestASessionThatFailsToOpenIsNotBilled() {
 	s.Require().Error(err)
 
 	s.Empty(s.runtime(id), "the time spent failing to join is not the customer's")
+	kept, err := s.store.SessionExists(s.ctx, id)
+	s.Require().NoError(err)
+	s.False(kept, "a session that never opened is not one to list or count")
+}
+
+func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny() {
+	s.manages()
+	first, err := s.opens(Spec{})
+	s.Require().NoError(err)
+	second, err := s.opens(Spec{})
+	s.Require().NoError(err)
+	// Each call is still speaking, so closing it waits for the speech to go out.
+	s.edgesMu.Lock()
+	edges := slices.Clone(s.edges)
+	s.edgesMu.Unlock()
+	s.Require().Len(edges, 2)
+	for _, edge := range edges {
+		edge.holdSpeech(true)
+	}
+
+	down := make(chan error, 1)
+	go func() { down <- s.manager.Shutdown() }()
+	time.Sleep(4 * runtimeSlice)
+	before := len(s.written(first.ID())) + len(s.written(second.ID()))
+	time.Sleep(6 * runtimeSlice)
+	s.Equal(before, len(s.written(first.ID()))+len(s.written(second.ID())),
+		"no session goes on being billed while another one is being closed")
+	select {
+	case <-down:
+		s.Fail("shutdown should still be waiting on a call that is speaking")
+	default:
+	}
+
+	for _, edge := range edges {
+		edge.holdSpeech(false)
+	}
+	select {
+	case err := <-down:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.Fail("shutdown never finished")
+	}
 }
 
 func (s *RuntimeSuite) TestTheGreetingIsTheSessionsFirstRecordedTurn() {

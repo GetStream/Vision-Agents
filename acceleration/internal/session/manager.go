@@ -820,15 +820,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	// An incognito session is never handed the recorder, so nothing downstream has to
-	// remember to check the flag: there is simply nowhere for it to write. It is handed over,
-	// and the session's row queued, before the fan-out starts: the fan-out reads it, and
-	// records the greeting's turn, which would be refused ahead of the row it belongs to.
+	// remember to check the flag: there is simply nowhere for it to write. It is handed over
+	// before the fan-out that reads it starts, and holds what the session says until its row
+	// is written, once it has joined.
+	var records *pending
 	if m.records != nil && !spec.Incognito {
-		created.records = m.records
-		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC())
-		})
-		m.records.Opened(sessionRow(created), toolRows(created))
+		records = &pending{next: m.records}
+		created.records = records
 	}
 
 	// The fan-out starts before joining so nothing said between joining and the first
@@ -865,6 +863,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			}
 		})
 		m.calls.Started(row(created))
+	}
+	if records != nil {
+		kept, offered := sessionRow(created), toolRows(created)
+		records.open(func() { m.records.Opened(kept, offered) })
+		created.closers = append(created.closers, func() {
+			m.records.Closed(created.id, time.Now().UTC())
+		})
 	}
 
 	m.mu.Lock()
@@ -1449,6 +1454,11 @@ func (m *Manager) Shutdown() error {
 	m.sessions = map[string]*Session{}
 	m.mu.Unlock()
 
+	// Each close may wait for the agent to finish speaking, so every session stops being
+	// billed before the first of them is closed.
+	for _, found := range running {
+		found.runtime.Stop()
+	}
 	var failures []error
 	for _, found := range running {
 		if err := found.Close(); err != nil {
