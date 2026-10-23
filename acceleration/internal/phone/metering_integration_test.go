@@ -536,6 +536,22 @@ func (s *MeteringSuite) TestEveryLegOfAnEndedCallCountsTowardTheSandboxsMinutes(
 	}
 }
 
+func (s *MeteringSuite) TestALegTheSweepEndedDoesNotCountTowardTheSandboxsMinutes() {
+	s.withSandbox(dlc.Sandbox{Enabled: true})
+	s.Require().NoError(s.service.gate.SetRecipients(s.ctx, s.customer, []string{"+15125550123"}))
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, "phone-1")
+	s.clock.advance(MaxCallLength + time.Minute)
+
+	_, err := s.service.SweepLegs(s.ctx)
+	s.Require().NoError(err)
+
+	s.Equal(store.LegSwept, s.row(ModelCallMinutes).Attributes[AttributeEndedBy])
+	usage, err := s.service.gate.Usage(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Zero(usage.AudioSeconds, "nothing says how long it really lasted")
+}
+
 func (s *MeteringSuite) TestALegCarriesItsAppsOrganization() {
 	organization := "org-" + uuid.NewString()
 	_, err := s.store.DB().NewInsert().Model(&store.AppOrganization{

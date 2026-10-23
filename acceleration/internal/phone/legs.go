@@ -355,9 +355,10 @@ func (s *Service) RunLegSweep(ctx context.Context, every time.Duration) {
 
 // settleLeg bills an ended leg's minutes to whoever it was opened for, and the first time,
 // counts them toward the 10DLC sandbox, which gives them away while it holds the app. A leg
-// the sweep ended is given away too.
+// the sweep ended is given away too, and not counted: nothing says how long it really lasted,
+// and four hours of it would use up the sandbox's minutes.
 func (s *Service) settleLeg(ctx context.Context, leg store.CallLeg, first bool) {
-	if first && leg.EndedAt != nil {
+	if first && leg.EndedAt != nil && leg.EndReason != store.LegSwept {
 		s.gate.Talked(ctx, leg.CustomerID, leg.EndedAt.Sub(*leg.StartedAt))
 	}
 	meter := routing.Meter{
