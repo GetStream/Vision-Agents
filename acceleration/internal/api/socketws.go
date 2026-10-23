@@ -129,6 +129,10 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	spec.Edge = edge
 
 	created, err := s.sessions.Create(ctx, spec)
+	if answer, refused := moneyError(err); refused {
+		refuseWith(answer)
+		return
+	}
 	if errors.Is(err, session.ErrSessionExists) || err != nil {
 		refuse(err.Error())
 		return

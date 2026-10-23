@@ -74,8 +74,9 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 	liveClient, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(liveClient.Close)
-	policies, err := policy.New(&appconfig.Store{}, logger)
+	policies, err := policy.New(&appconfig.Store{}, policy.Settings{}, logger)
 	require.NoError(t, err)
+	t.Cleanup(policies.Close)
 
 	limiter, err := newDailyLimiter(liveClient, quota.Limits{}, nil, logger)
 	require.NoError(t, err)

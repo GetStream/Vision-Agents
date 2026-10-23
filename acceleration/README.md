@@ -121,6 +121,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
+| `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and budgets the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
@@ -399,7 +400,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
-| `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
+| `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses on a model that costs money are refused with a 402 `spend_limit_reached`. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
 | `quota` | On an app's policy only: what one end user may spend in a UTC day, in place of the deployment's default. An organization's policy that sets it is a 400. See [Daily limits](#daily-limits) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
@@ -411,8 +412,60 @@ letter-spaced text first so an encoded attack is judged on what it says.
 
 An organization's budget sums the apps the router has seen that organization name. Behind a
 proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app. `noauth`
-reads no organization, so only app policies apply there. Decisions are cached per app for 10s,
-so a budget can overshoot by what is spent in that window, and every read fails open.
+reads no organization, so only app policies apply there. Every read of a policy fails open.
+
+### Admission
+
+Before every routed session and every LLM response the router answers from memory what the
+customer may do, so an agent's speech never waits on a database:
+
+- An app's policies are read through the configuration cache the first time it is seen, and
+  again in the background every 5 s while it is in use. The authenticated request that first
+  names an app starts that read, so its first session usually finds it done.
+- Its organization's money is read every 5 s, for every organization in use at once, from the
+  usage service (`ROUTER_USAGE_URL`), 100 organizations a call: the status, the balance, the
+  spend hard limit and this day's and month's spend. Budgets are summed from Postgres on a loop
+  of their own every 10 s, four at a time, so a slow Postgres never makes a balance stale. With
+  no usage service there is no credit or spend hard limit, only budgets.
+- What this router recorded since is held by usage id from the moment the row is recorded,
+  and each ledger lets go of it on its own read: against the balance and the spend hard
+  limit, once a standing asked for after the usage service had the row lands (its ack, or the
+  shard showing the row shipped, as by another router's sweeper); against the budgets, once a
+  sum asked for after the shard wrote the row lands. Counted twice for a moment, never not at
+  all. A row a ledger is never known to have is let go 10 minutes after the later of when it
+  was held and when that ledger last failed to read, and logged; while no read lands, every
+  hold is kept. A limit or a budget counts only what was held in its current UTC window; the
+  balance counts everything held.
+
+In that order: a suspended organization is refused everything, 403 `account_suspended`. A
+balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
+The organization's spend hard limit, per UTC day and calendar month, refuses it however much
+credit is left, 402 `system_limit_reached`; nothing a customer writes lifts it. Then the
+budgets, 402 `spend_limit_reached`. A model the deployment runs itself, or one that is free, is
+still served past every one of them but a suspension. An organization is admitted until its
+first read lands. Once it has gone a minute without one, its tier's `fail_mode` decides: a
+closed tier refuses work that costs money until the balance can be read, an open one is
+admitted on the last read. The metrics are `router_admission_refresh_errors_total`,
+`router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
+by reason.
+
+Telephony asks the same admission: buying a number, placing or transferring a call, and every
+text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
+so a refusal of money refuses it (402, or 403 `account_suspended`). A call to one of the
+organization's numbers is refused: on Telnyx it is rejected before it is answered, so it is
+not billed. Over Stream SIP the bridge has already answered the caller when the router hears
+of the call, so no agent is dispatched and the call is ended through Stream at once; the few
+seconds it was up are billed by the vendor. The same holds for a telephony suspension.
+Releasing a number is never refused. A campaign is refused at start, and one refused midway
+pauses with the refusal's code as `paused_reason`, giving the contact it was about to ring
+back to be rung once it is started again. A scheduled task that could not be delivered for
+money records the refusal's code.
+
+Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
+remembering up to 100,000 folded usage ids (about 15 MB per account at most), and the process
+remembers at most 500,000 folded ids across every account (about 60 MB). A folded id past
+either cap is forgotten (`router_admission_folded_ids_forgotten_total`): it is then held
+until its fold's timer rather than its ack, which only ever refuses sooner.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.

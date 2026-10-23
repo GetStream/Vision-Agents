@@ -102,13 +102,16 @@ func storageRecorder(ctx context.Context, settings config.Config, pgStore *store
 	if err != nil {
 		return nil, nil, err
 	}
-	policies, err := policy.New(configs, logger)
+	// The job admits nothing, so it reads no money and holds none: its policies only attribute
+	// each row.
+	policies, err := policy.New(configs, policy.Settings{Mode: config.LimitsOff}, logger)
 	if err != nil {
 		configs.Close()
 		return nil, nil, err
 	}
 	fallback, err := prices.Embedded(nil, release, logger)
 	if err != nil {
+		policies.Close()
 		configs.Close()
 		return nil, nil, err
 	}
@@ -126,6 +129,7 @@ func storageRecorder(ctx context.Context, settings config.Config, pgStore *store
 		defer cancel()
 		writer.Close(drained)
 		stopReading()
+		policies.Close()
 		configs.Close()
 	}, nil
 }

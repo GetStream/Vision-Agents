@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -148,11 +149,19 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
 	}
-	// A suspension that cannot be read leaves the call unanswered too: it is there to stop
-	// fraud that costs money.
+	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
+	// costs money.
 	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
-		s.logger.Info("left an arriving call to a suspended app unanswered",
+		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to a suspended app",
 			"call", event.CallCid, "customer", number.CustomerID, "error", err)
+		return
+	}
+	// The vendor bills the minutes of a call an agent answers, and the agent is billed work,
+	// so an organization that may not pay has nobody answer.
+	if err := s.gate.Admit(r.Context(), number.CustomerID); err != nil {
+		answer, _ := moneyError(err)
+		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to an organization that may not pay for it",
+			"call", event.CallCid, "customer", number.CustomerID, "code", answer.Code)
 		return
 	}
 	// Only a call that rings a number is worth recording as delivered: every video call in
@@ -216,6 +225,29 @@ func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event call
 	if err := s.phone.ReleaseCall(r.Context(), origin.scope(), callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
 	}
+}
+
+// endRefusedTimeout bounds ending a refused call at Stream, which runs after the hook answers.
+const endRefusedTimeout = 10 * time.Second
+
+// refuseArrivingCall dispatches no agent to a call and ends it at Stream at once. Stream's SIP
+// bridge has answered the caller by the time the call's session starts (the caller is its
+// first participant), so a call left alone would run until the caller hung up, and the vendor
+// bills its seconds; it is ended off the request, so the hook still answers at once.
+func (s *Server) refuseArrivingCall(r *http.Request, number store.PhoneNumber, callType, callID, why string, attributes ...any) {
+	s.logger.Info(why+"; ending it", attributes...)
+	if s.phone == nil {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, endRefusedTimeout)
+		defer cancel()
+		if err := s.phone.EndCall(ctx, number.CustomerID, number.StreamAppPK, callType, callID); err != nil {
+			s.logger.Warn("could not end a refused arriving call; it runs until the caller hangs up",
+				append(attributes, "end_error", err)...)
+		}
+	}()
 }
 
 // endCallEpisodes closes the episodes of an ended call and has them summarized off the request

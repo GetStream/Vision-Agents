@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
 // classifier stands in for a provider so the screen can be driven without credentials.
@@ -54,6 +55,8 @@ type PolicySuite struct {
 	enforcer *Enforcer
 	app      string
 	org      string
+	// service is the usage service the money tests read from (money_test.go).
+	service *usagetest.Service
 }
 
 func TestPolicySuite(t *testing.T) {
@@ -71,14 +74,33 @@ func (s *PolicySuite) SetupSuite() {
 	s.Require().NoError(db.Migrate(s.ctx))
 	s.store = db
 	s.T().Cleanup(func() { s.Require().NoError(db.Close()) })
+	s.startUsage()
+}
+
+// quick is how fast a test's enforcer reads money: a pass every 50 ms, an account trusted for
+// 200 ms, and whatever goes unused or unacked dropped well inside a test.
+var quick = Settings{
+	Fresh: 50 * time.Millisecond, BudgetEvery: 50 * time.Millisecond, MaxStale: 200 * time.Millisecond,
+	Idle: 100 * time.Millisecond, PendingTTL: 300 * time.Millisecond,
+}
+
+// newEnforcer is an Enforcer over configs at quick's pace with the settings changed, closed
+// when the test ends.
+func (s *PolicySuite) newEnforcer(configs *appconfig.Store, logger *slog.Logger, change ...func(*Settings)) *Enforcer {
+	settings := quick
+	for _, apply := range change {
+		apply(&settings)
+	}
+	enforcer, err := New(configs, settings, logger)
+	s.Require().NoError(err)
+	s.T().Cleanup(enforcer.Close)
+	return enforcer
 }
 
 func (s *PolicySuite) SetupTest() {
 	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
-	enforcer, err := New(configs, nil)
-	s.Require().NoError(err)
-	s.enforcer = enforcer
+	s.enforcer = s.newEnforcer(configs, nil)
 	stamp := time.Now().UnixNano()
 	s.app = fmt.Sprintf("app-%d", stamp)
 	s.org = fmt.Sprintf("org-%d", stamp)
@@ -139,20 +161,57 @@ func (s *PolicySuite) TestAnAppInNoOrganizationIsAdmittedWithNone() {
 	s.Empty(admitted.OrganizationID)
 }
 
+// eventually is Require().Eventually polled on the test's own goroutine. Testify's polls on
+// another and may leave one running past the test, reading the next test's app and
+// organization as SetupTest writes them.
+func (s *PolicySuite) eventually(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) {
+	s.T().Helper()
+	deadline := time.Now().Add(waitFor)
+	for !condition() {
+		if time.Now().After(deadline) {
+			s.Require().Fail("Condition never satisfied", msgAndArgs...)
+		}
+		time.Sleep(tick)
+	}
+}
+
+// never is Never polled on the test's own goroutine, as eventually is.
+func (s *PolicySuite) never(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) {
+	s.T().Helper()
+	for deadline := time.Now().Add(waitFor); time.Now().Before(deadline); time.Sleep(tick) {
+		if condition() {
+			s.Fail("Condition satisfied", msgAndArgs...)
+			return
+		}
+	}
+}
+
+// spendRefused is what Admit's Spend says once the money loop has read what it waits for.
+func (s *PolicySuite) spendRefused(enforcer *Enforcer, appID string, kind error) error {
+	var spend error
+	s.eventually(func() bool {
+		admitted, err := enforcer.Admit(s.ctx, appID)
+		s.Require().NoError(err, "a refusal of money is no refusal of free work")
+		spend = admitted.Spend
+		return errors.Is(spend, kind)
+	}, 5*time.Second, 10*time.Millisecond, "refused with %v", kind)
+	return spend
+}
+
 func (s *PolicySuite) TestAnAppThatSpentItsBudgetIsRefused() {
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{
 		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
 	})
 	s.spend(s.app, 400_000)
-	_, err := s.enforcer.Admit(s.ctx, s.app)
-	s.Require().NoError(err, "under budget")
+	s.never(func() bool {
+		admitted, err := s.enforcer.Admit(s.ctx, s.app)
+		return err != nil || admitted.Spend != nil
+	}, 200*time.Millisecond, 10*time.Millisecond, "under budget")
 
 	s.spend(s.app, 700_000)
-	s.enforcer.forget(s.app)
-	_, err = s.enforcer.Admit(s.ctx, s.app)
+	spend := s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
 
-	s.ErrorIs(err, ErrBudgetSpent)
-	s.ErrorContains(err, "app's daily budget of $1.00")
+	s.ErrorContains(spend, "app's daily budget of $1.00")
 }
 
 func (s *PolicySuite) TestAnOrganizationBudgetIsSpentByAllOfItsApps() {
@@ -163,10 +222,9 @@ func (s *PolicySuite) TestAnOrganizationBudgetIsSpentByAllOfItsApps() {
 	})
 	s.spend(sibling, 1_000_000)
 
-	_, err := s.enforcer.Admit(s.ctx, s.app)
+	spend := s.spendRefused(s.enforcer, s.app, ErrBudgetSpent)
 
-	s.ErrorIs(err, ErrBudgetSpent)
-	s.ErrorContains(err, "organization's hourly budget")
+	s.ErrorContains(spend, "organization's hourly budget")
 }
 
 func (s *PolicySuite) TestAnAppCanTightenItsOrganizationsDataPolicyButNotLoosenIt() {
@@ -367,8 +425,7 @@ func (s *PolicySuite) TestAPolicyReadErrorRequiresItsOwnApp() {
 	s.Require().NoError(closed.Close())
 	configs, err := appconfig.New(appconfig.Options{Store: closed})
 	s.Require().NoError(err)
-	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 
 	requires, err := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
 
@@ -457,15 +514,14 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	s.Require().NoError(closed.Close())
 	configs, err := appconfig.New(appconfig.Options{Store: closed})
 	s.Require().NoError(err)
-	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 
 	s.Equal(deployment, enforcer.Limits(s.ctx, s.app, deployment))
 }
 
 func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	// The policies are cached in Redis and the spend is not, so closing Postgres once the
-	// cache is warm fails the budget's read alone.
+	// cache is warm fails the budget's read alone, which the money loop makes, never Admit.
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
@@ -475,8 +531,7 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
-	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
-	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
 	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app, store.PolicyDocument{
 		Quota:  quotaOf(new(int64(20_000)), nil),
 		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
@@ -486,8 +541,12 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	enforcer.forget(s.app)
 
 	limits := enforcer.Limits(s.ctx, s.app, deployment)
+	requires, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
 
-	_, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
-	s.Require().Error(unread, "the spend could not be read")
 	s.EqualValues(20_000, limits.MessagesPerDay, "the app's limit, not the deployment's")
+	s.NoError(unread, "the policies were read; only what the budget spent could not be")
+	s.False(requires)
+	admitted, err := enforcer.Admit(s.ctx, s.app)
+	s.NoError(err)
+	s.NoError(admitted.Spend, "a budget never measured refuses nothing")
 }

@@ -79,7 +79,7 @@ func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumb
 	}
 }
 
-func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnswered() {
+func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnsweredAndIsEnded() {
 	s.hold("default", s.callID)
 	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
 		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
@@ -90,6 +90,9 @@ func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnswered() {
 	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
 
 	s.nothingReaches(worker.Calls(), "a suspended app's agent answered a call")
+	s.Contains(s.logged.String(), "refused an arriving call to a suspended app; ending it")
+	s.Eventually(func() bool { return strings.Contains(s.logged.String(), "could not end a refused arriving call") },
+		5*time.Second, 20*time.Millisecond, "ended at Stream, which the suite's phone service has no credentials for")
 }
 
 func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {

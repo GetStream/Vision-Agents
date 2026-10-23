@@ -26,6 +26,11 @@ func (b *Bridge) allowed(ctx context.Context, customerID, connectorID, to string
 		b.logger.Info("the sandbox gate held a channel message back", "connector", connectorID, "customer", customerID)
 		return false, nil
 	}
+	if errors.Is(err, dlc.ErrUnpaid) {
+		b.logger.Info("held a channel message back: the organization may not pay for it", "connector", connectorID,
+			"customer", customerID, "reason", err)
+		return false, nil
+	}
 	return err == nil, err
 }
 

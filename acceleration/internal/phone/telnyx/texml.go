@@ -26,6 +26,12 @@ func RenderInbound(bridge phone.Bridge) (phone.Plan, error) {
 	return phone.Plan{ContentType: texmlContentType, Body: body}, nil
 }
 
+// RenderReject refuses a call without answering it, so the caller hears it rejected and no
+// second of it is billed. Telnyx only leaves a call unanswered when Reject is its first verb.
+func RenderReject() phone.Plan {
+	return phone.Plan{ContentType: texmlContentType, Body: []byte(xml.Header + `<Response><Reject reason="rejected"/></Response>`)}
+}
+
 // RenderHangup ends a call there is nowhere to send.
 func RenderHangup() phone.Plan {
 	return phone.Plan{ContentType: texmlContentType, Body: []byte(xml.Header + "<Response><Hangup/></Response>")}
