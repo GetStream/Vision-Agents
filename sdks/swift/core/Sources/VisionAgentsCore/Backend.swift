@@ -1,6 +1,5 @@
 import Foundation
 import StreamCore
-import os
 
 /// The one identity Stream's own SDKs connect with: the app's key, the user `setUser` named
 /// and their token. It is the identity the router is reached with, so chat and video need
@@ -209,7 +208,7 @@ final class Identity: Sendable {
         let disconnect: @Sendable (any Sendable) async -> Void
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = AllocatedUnfairLock(State())
 
     var user: User? { state.withLock { $0.user } }
 

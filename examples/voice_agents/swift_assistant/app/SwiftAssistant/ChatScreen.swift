@@ -128,7 +128,7 @@ struct ChatScreen: View {
             if isWelcoming {
                 SuggestionsView(suggestions: Self.starters) { send($0) }
             }
-            if let failure = failure ?? chat?.failure ?? chat?.session.conversation.failure {
+            if let failure = failure ?? chat?.failure ?? chat?.conversation.failure {
                 Text(failure)
                     .font(.caption)
                     .foregroundStyle(.red)

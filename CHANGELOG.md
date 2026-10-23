@@ -6,6 +6,10 @@
 
 `turn_id` is optional in the session socket's `tool_approval`: an answer to a connector call held for approval needs none. The Go client's generated `acceleration.ToolApprovalCommand.TurnId` is now a `*string`, so code that sets it takes its address (AI-1640, #1182).
 
+### The Swift SDK runs on iOS 15, and its sessions are `ObservableObject`s
+
+`VisionAgentsCore` needs iOS 15 rather than 17. `AgentSession` and `VoiceSession` are `ObservableObject`s with `@Published` properties in place of `@Observable`, so a view holds one with `@StateObject` or `@ObservedObject` rather than `@State`. A `VoiceSession` passes its `session`'s changes on as its own, so observing it follows its conversation too. An app's own `@Observable` model that reads a session subscribes to its publishers, as the Swift demos' `AgentChat` does with `$conversation`.
+
 ### The Swift SDK's `User` and JSON values are StreamCore's
 
 `VisionAgentsCore` now generates its client with the generator Stream Chat and Stream Video use, on StreamCore, and drops its own copies of what StreamCore already has. `User` is StreamCore's: `User(id:name:imageURL:)`, with `name` optional and `imageURL` a `URL` in place of `image`. `JSONValue` is gone in favour of StreamCore's `RawJSON`, in tool arguments and parameters, `AgentEvent.fields`, and `custom` on sessions and guests: `.object` is `.dictionary`, `.null` is `.nil`, and `stringValue`, `boolValue` and `arrayValue` are optional, so `arguments["id"]?.stringValue ?? ""` reads as before. `import VisionAgentsCore` brings both in. The SDK no longer depends on swift-openapi-runtime, swift-openapi-urlsession or swift-http-types.
