@@ -418,9 +418,9 @@ type CallLeg struct {
 	RemoteNumber string `bun:"remote_number,notnull"`
 	// Country is what the leg's minutes are priced by: where an outbound leg rang, and the
 	// country of the number an inbound one rang. Empty when unknown.
-	Country   string            `bun:"country,notnull"`
-	AgentID   string            `bun:"agent_id,notnull"`
-	Tags      map[string]string `bun:"tags,type:jsonb,nullzero"`
+	Country string            `bun:"country,notnull"`
+	AgentID string            `bun:"agent_id,notnull"`
+	Tags    map[string]string `bun:"tags,type:jsonb,nullzero"`
 	// DialedAt is when the vendor took the dial, or the call arrived. StartedAt is when the
 	// leg's phone joined, nil while it rings; EndedAt nil while the leg is open; EndReason
 	// what ended it (LegLeft and the rest).
